@@ -29,7 +29,7 @@ func (o AdmissionOutcome) String() string {
 }
 
 // AdmissionFeatures is the evidence the admission decision reads for one
-// candidate: the judge's four answers plus its abstention, and the
+// candidate: the judge's five answers plus its abstention, and the
 // deterministic signals the emission context supplies. A feature the
 // caller cannot establish stays false and never counts as failing —
 // absence of evidence is not evidence.
@@ -38,6 +38,7 @@ type AdmissionFeatures struct {
 	Dimension          bool
 	NotPersonPlaceWork bool
 	Atomic             bool
+	NotFormGenre       bool
 	JudgeDefer         bool
 	CategoryOther      bool
 	NoAnchor           bool
@@ -78,6 +79,7 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 		!f.Dimension,
 		!f.NotPersonPlaceWork,
 		!f.Atomic,
+		!f.NotFormGenre,
 		f.CategoryOther,
 		f.NoAnchor,
 	} {
@@ -97,8 +99,9 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 
 // DecisionRuleSetVersion pins the admission and promotion rules; the
 // promote log lines carry it so rule changes are traceable. Nothing
-// stores it: both rules are pure and re-run over stored criteria.
-const DecisionRuleSetVersion = "v1"
+// stores it: both rules are pure and re-run over stored criteria. v2
+// adds not_form_genre to the feature set the pinned rules read.
+const DecisionRuleSetVersion = "v2"
 
 // RecurrenceFloor is the promotion minimum of
 // docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live

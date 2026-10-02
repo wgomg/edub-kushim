@@ -26,6 +26,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
@@ -2836,6 +2837,48 @@ func TestListProvisional(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("tag %d not found in provisional list", tagID)
+	}
+}
+
+func TestListProvisionalIdentityHold(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "hold-anchor-tag")
+	candidateID := database.MustCreateTag(t, env.client.Queries, "hold-candidate-tag")
+	_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", candidateID)
+	testutil.AssertNoError(t, err, "set provisional")
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "hold-candidate-doc")
+	database.MustAddDocumentTag(t, env.client.Queries, docID, candidateID)
+
+	_, err = env.client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindFoldGate,
+		Candidate:      "hold candidate tag",
+		Criteria:       []byte(`{"proposed_fold":"hold anchor tag"}`),
+		Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	})
+	testutil.AssertNoError(t, err, "seed refused fold gate")
+
+	w := rec()
+	r := req(t, "GET", "/api/v1/tags/provisional", nil)
+	h.ListProvisional(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var resp ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+
+	found := false
+	for _, tag := range resp.Results {
+		if tag.ID == candidateID {
+			found = true
+			testutil.AssertEqual(t, tag.IdentityHold, "hold anchor tag", "identity hold anchor")
+		}
+	}
+	if !found {
+		t.Errorf("tag %d not found in provisional list", candidateID)
 	}
 }
 

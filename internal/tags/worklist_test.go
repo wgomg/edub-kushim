@@ -42,6 +42,7 @@ func TestDeriveWorklists_Twins(t *testing.T) {
 		{"borderline gray", 0.8, 4, 3, 0, 1},
 		{"below the floor", 0.65, 4, 3, 0, 0},
 		{"mass floor applies to gray too", 0.8, 1, 3, 0, 0},
+		{"mass floor drops a mass-2 pair", 0.95, 2, 2, 0, 0},
 	}
 
 	for _, tc := range cases {
@@ -68,18 +69,21 @@ func TestDeriveWorklists_Siblings(t *testing.T) {
 		name         string
 		containmentA float64
 		containmentB float64
+		massA        int64
+		massB        int64
 		wantSiblings int
 		wantGray     int
 	}{
-		{"redundant", 0.9, 0.2, 1, 0},
-		{"borderline gray", 0.7, 0.2, 0, 1},
-		{"too weak", 0.5, 0.5, 0, 0},
-		{"redundancy counts from either direction", 0.2, 0.85, 1, 0},
+		{"redundant", 0.9, 0.2, 4, 3, 1, 0},
+		{"borderline gray", 0.7, 0.2, 4, 3, 0, 1},
+		{"too weak", 0.5, 0.5, 4, 3, 0, 0},
+		{"redundancy counts from either direction", 0.2, 0.85, 4, 3, 1, 0},
+		{"mass floor drops a mass-2 pair", 0.9, 0.2, 2, 2, 0, 0},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w := DeriveWorklists([]Record{overlapRecord("a", "b", 0.5, tc.containmentA, tc.containmentB, 4, 3)})
+			w := DeriveWorklists([]Record{overlapRecord("a", "b", 0.5, tc.containmentA, tc.containmentB, tc.massA, tc.massB)})
 
 			gray, clear := 0, 0
 			for _, sib := range w.Siblings {

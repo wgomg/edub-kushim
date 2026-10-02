@@ -1377,11 +1377,19 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "sub-national place") {
 		t.Error("prompt missing sub-national-place clause in criterion 3")
 	}
-	// Must contain the four criteria, the abstention and the response format.
-	for _, kw := range []string{"subject_matter", "dimension", "not_person_place_work", "atomic", "defer", "JSON"} {
+	// Must contain the five criteria, the abstention and the response format.
+	for _, kw := range []string{"subject_matter", "dimension", "not_person_place_work", "atomic", "not_form_genre", "defer", "JSON"} {
 		if !strings.Contains(prompt, kw) {
 			t.Errorf("prompt missing keyword %q", kw)
 		}
+	}
+	// The rubric must ask five numbered questions, not four plus the key
+	// appearing only in the JSON example.
+	if !strings.Contains(prompt, "five yes/no questions") {
+		t.Error("prompt missing the five-question count")
+	}
+	if !strings.Contains(prompt, "5. not_form_genre") {
+		t.Error("prompt missing the fifth numbered question")
 	}
 }
 
@@ -1393,8 +1401,8 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 	// Simulate a well-formed LLM response.
 	allTrue := `{"tags":[
-		{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false},
-		{"index":1,"subject_matter":false,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false}
+		{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false},
+		{"index":1,"subject_matter":false,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}
 	]}`
 	results, err := ParseTagQualityResponse(allTrue, len(candidates))
 	if err != nil {
@@ -1403,7 +1411,7 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
-	if !results[0].SubjectMatter || !results[0].Dimension || !results[0].NotPersonPlaceWork || !results[0].Atomic || results[0].Defer {
+	if !results[0].SubjectMatter || !results[0].Dimension || !results[0].NotPersonPlaceWork || !results[0].Atomic || !results[0].NotFormGenre || results[0].Defer {
 		t.Errorf("candidate 0 answers = %+v, want all criteria true and no defer", results[0])
 	}
 	if results[1].SubjectMatter || !results[1].Dimension {
@@ -1419,7 +1427,7 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	// Only 1 of 2 candidates returned — must error.
-	partial := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true}]}`
+	partial := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}]}`
 	results, err := ParseTagQualityResponse(partial, 2)
 	if err == nil {
 		t.Fatal("expected error for missing index, got nil")
@@ -1431,7 +1439,7 @@ func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	if !results[0].SubjectMatter || !results[0].Dimension {
 		t.Errorf("index 0 answers = %+v, want them populated", results[0])
 	}
-	if results[1].SubjectMatter || results[1].Dimension || results[1].NotPersonPlaceWork || results[1].Atomic || results[1].Defer {
+	if results[1].SubjectMatter || results[1].Dimension || results[1].NotPersonPlaceWork || results[1].Atomic || results[1].NotFormGenre || results[1].Defer {
 		t.Errorf("index 1 answers = %+v, want zero-valued (all false)", results[1])
 	}
 }
@@ -1446,7 +1454,7 @@ func TestParseTagQualityResponse_IncompleteVerdict(t *testing.T) {
 }
 
 func TestParseTagQualityResponse_DeferKey(t *testing.T) {
-	abstained := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":true}]}`
+	abstained := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":true}]}`
 	results, err := ParseTagQualityResponse(abstained, 1)
 	if err != nil {
 		t.Fatalf("parse abstained: %v", err)
@@ -1455,7 +1463,7 @@ func TestParseTagQualityResponse_DeferKey(t *testing.T) {
 		t.Error("defer=true must read as the judge's abstention")
 	}
 
-	omitted := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true}]}`
+	omitted := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}]}`
 	results, err = ParseTagQualityResponse(omitted, 1)
 	if err != nil {
 		t.Fatalf("parse omitted defer: %v", err)

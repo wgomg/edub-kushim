@@ -16,11 +16,13 @@ import (
 
 // IdentityRuleSetVersion pins the birth-time identity rules and the
 // judging body's criteria text; bump it when either changes. v1 added the
-// plural rule to the fold-gate criteria; v2 adds the derivational
-// adjective proposal to the mechanical proposal body, the criteria text
-// unchanged. The store reset truncates tag_identity_event, so no cached
-// verdict survives to invalidate.
-const IdentityRuleSetVersion = "v2"
+// plural rule to the fold-gate criteria; v2 added the derivational
+// adjective proposal to the mechanical proposal body; v3 adds the
+// morphographic proposal to the same body and the store-anchored
+// rejection routing to the birth rules, the criteria text unchanged. The
+// store reset truncates tag_identity_event, so no cached verdict survives
+// to invalidate.
+const IdentityRuleSetVersion = "v3"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -408,6 +410,52 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 	return out, nil
 }
 
+// IdentityHeldNames maps each held candidate name to the live store value
+// its refused fold targeted. A name is held when, under the current rule
+// set, the latest fold_gate verdict rejected the fold or the latest
+// base_form verdict leaves the name standing, and the proposal's target is
+// a live tag — either refusal blocks the fold. Unheld names are absent
+// from the result; empty input returns an empty map.
+func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
+	normalized := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		n := textnorm.NormalizeTag(name)
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		normalized = append(normalized, n)
+	}
+	if len(normalized) == 0 {
+		return map[string]string{}, nil
+	}
+
+	rows, err := q.ListIdentityHeldNames(ctx, database.ListIdentityHeldNamesParams{
+		RuleSetVersion: IdentityRuleSetVersion,
+		Candidates:     normalized,
+	})
+	if err != nil {
+		return nil, err
+	}
+	held := make(map[string]string)
+	for _, row := range rows {
+		if row.Anchor == "" {
+			continue
+		}
+		refused := row.Kind == IdentityKindFoldGate && row.Verdict.String == IdentityVerdictRejected ||
+			row.Kind == IdentityKindBaseForm && row.Verdict.String == IdentityVerdictStand
+		if !refused {
+			continue
+		}
+		held[row.Candidate] = row.Anchor
+	}
+	return held, nil
+}
+
 // ProposedFold proposes the lemma-folded form of a name, or "" when the
 // name is already in base form. In-dictionary tokens fold through the
 // lemmatizer; a token the dictionary does not know falls back to a
@@ -519,6 +567,74 @@ var derivationalSuffixes = []struct{ suffix, replacement string }{
 	{"al", "s"},
 }
 
+// morphographicMaxDistance is the edit-distance bound the morphographic
+// proposal allows between a candidate and a single-token store key.
+const morphographicMaxDistance = 2
+
+// ProposedMorphologicalFold proposes a single-token store value reachable
+// from an unrecognized single-token name by at most morphographicMaxDistance
+// edits (mexican→mexico), or "" when none is, when two distinct store
+// values are in reach (ambiguity is not a fold), or when the name is not
+// one lowercase-ASCII token of at least six letters. Store-anchored by
+// construction, exactly like the derivational proposer: a confirmed fold
+// always resolves onto an existing row, and only single-token store keys
+// participate. The judging body's gate decides before anything is applied
+// (docs/tags/atomicity.md §3.1). storeNames maps Key(storeName) to the
+// store's name.
+func ProposedMorphologicalFold(name string, storeNames map[string]string) string {
+	if len(strings.Fields(name)) != 1 || len(name) < 6 || !isLowerASCII(name) {
+		return ""
+	}
+	hit := ""
+	for key := range storeNames {
+		if len(strings.Fields(key)) != 1 || boundedEditDistance(name, key) > morphographicMaxDistance {
+			continue
+		}
+		if hit != "" && storeNames[key] != hit {
+			return ""
+		}
+		hit = storeNames[key]
+	}
+	return hit
+}
+
+// boundedEditDistance returns the Levenshtein distance between a and b,
+// capped at morphographicMaxDistance: any larger distance reads as the
+// bound plus one, which no caller can mistake for a hit. The length and
+// row bounds prune most store candidates before the matrix fills.
+func boundedEditDistance(a, b string) int {
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	if len(a)-len(b) > morphographicMaxDistance {
+		return morphographicMaxDistance + 1
+	}
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		best := cur[0]
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			if cur[j] < best {
+				best = cur[j]
+			}
+		}
+		if best > morphographicMaxDistance {
+			return morphographicMaxDistance + 1
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
 func isLowerASCII(token string) bool {
 	for i := 0; i < len(token); i++ {
 		if token[i] < 'a' || token[i] > 'z' {
@@ -612,6 +728,9 @@ func PlanDeterministic(names []string, view StoreView) Plan {
 		fold := ProposedFold(name)
 		if fold == "" || fold == name {
 			fold = ProposedDerivationalFold(name, byKey)
+		}
+		if fold == "" {
+			fold = ProposedMorphologicalFold(name, byKey)
 		}
 		if fold != "" {
 			flagged = true

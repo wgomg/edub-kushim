@@ -14,6 +14,7 @@
 		{ key: 'dimension', label: 'dimension' },
 		{ key: 'not_person_place_work', label: 'not person/place/work' },
 		{ key: 'atomic', label: 'atomic' },
+		{ key: 'not_form_genre', label: 'not form/genre' },
 		{ key: 'defer', label: 'defer' }
 	];
 
@@ -207,6 +208,14 @@
 							title="This tag is waiting for a same-intent decision; the scheduled sweep resolves it, or trigger the reevaluation"
 						>
 							identity pending
+						</span>
+					{/if}
+					{#if tag.identity_hold}
+						<span
+							class={pillWarn}
+							title="The identity judge refused a fold of this tag onto that store value; promotion waits for review"
+						>
+							identity hold → {tag.identity_hold}
 						</span>
 					{/if}
 				</div>

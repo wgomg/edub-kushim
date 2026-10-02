@@ -108,8 +108,9 @@ type AnalysisResult struct {
   candidate without a complete verdict errors). Used by the tag gate when
   `enricher.tag_adjudicator.enabled` is true.
 - `JudgeTagQuality` — judges novel tags against the dimension rubric
-  (`subject_matter`, `dimension`, `not_person_place_work`, `atomic`, plus the
-  optional `defer` abstention) with a temperature-0 request built from
+  (`subject_matter`, `dimension`, `not_person_place_work`, `atomic`,
+  `not_form_genre`, plus the optional `defer` abstention) with a temperature-0
+  request built from
   `BuildTagQualityPrompt` (reduced document text plus one line per candidate
   with its term, typed category, and a whitelisted-place carve-out note) and
   parsed by `ParseTagQualityResponse` (a missing or partially specified
@@ -577,20 +578,22 @@ for i := range 2 {
     temperature-0 `JudgeTagQuality` call per document) plus the emission's
     deterministic signals (a detail annotated `other`, and a best store
     similarity below the internal `no_anchor_similarity` 0.60 cut). The rubric
-    asks `subject_matter`, `dimension`, `not_person_place_work` and `atomic`,
-    with `defer` as the judge's abstention; the decision defers on abstention,
+    asks `subject_matter`, `dimension`, `not_person_place_work`, `atomic` and
+    `not_form_genre`, with `defer` as the judge's abstention; the decision
+    defers on abstention,
     rejects on two or more failing signals, defers on exactly one (the gray
     band), and admits when nothing fails. Rejections drop the tag for that
     document — the registration and its pending identity evidence never reach
-    the store — and log `tagquality[v1]: reject … (reason=corroborated_failures
+    the store — and log `tagquality[v2]: reject … (reason=corroborated_failures
     source=judge|cache …)`; defers are kept and logged too, and admitted
     candidates journal at DEBUG. A whitelisted
     country/continent is never rejected for being a place. Fresh verdicts
     record the judging model and the recorded outcome, cache-applied ones a
     NULL model; cached rows re-run the decision over the stored rubric with the
     current emission's deterministic signals. A judge failure or timeout
-    retries once and then keeps every novel tag with a defer decision — under
-    the gate those births are **provisional** (no verdict row).
+    retries once and then keeps every novel tag with a defer decision, logged
+    as a WARN naming the kept candidates — under the gate those births are
+    **provisional** (no verdict row).
 13. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
     (`truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
@@ -648,7 +651,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
-| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal v1 constants (`no_anchor_similarity = 0.60`, promotion floor of 10 live documents), not config keys |
+| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal pinned constants (`no_anchor_similarity = 0.60`, promotion floor of 10 live documents), not config keys |
 
 Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three

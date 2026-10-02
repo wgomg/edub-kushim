@@ -135,6 +135,59 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 	}
 }
 
+func TestPlanIdentity_JudgeFailureWarns(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := log.NewLoggerWithWriter(&buf)
+	adj := &mockAdjudicator{
+		identityFn: func(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+			return nil, context.DeadlineExceeded
+		},
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
+	})
+	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: false},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"buildings"},
+		DBNames: map[string]struct{}{},
+	}, "")
+
+	adjAssertEqual(t, len(plan.Registrations), 1, "registration minted")
+	adjAssertEqual(t, plan.Registrations[0].Provisional, true, "a failed judge call leaves the fold provisional")
+	out := buf.String()
+	if !strings.Contains(out, "<4>WARN") {
+		t.Errorf("expected a WARN level line, got:\n%s", out)
+	}
+	if !strings.Contains(out, `judge failed for ["buildings"]`) {
+		t.Errorf("expected the WARN to name the judge's batch, got:\n%s", out)
+	}
+}
+
 func TestPlanIdentity_StoreExactAppliesOntoExistingRow(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -655,7 +708,7 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Fatalf("create test document: %v", err)
 	}
 
-	criteria := json.RawMessage(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false}`)
+	criteria := json.RawMessage(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`)
 
 	n, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
@@ -750,6 +803,7 @@ func TestDecisionFromStored(t *testing.T) {
 			`,"dimension":` + boolJSON(dimension) +
 			`,"not_person_place_work":` + boolJSON(notPersonPlace) +
 			`,"atomic":` + boolJSON(atomic) +
+			`,"not_form_genre":true` +
 			`,"defer":` + boolJSON(deferJudge) + `}`)
 	}
 	legacy := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
@@ -803,6 +857,7 @@ func TestApplyTagQuality(t *testing.T) {
 				Dimension:          true,
 				NotPersonPlaceWork: true,
 				Atomic:             true,
+				NotFormGenre:       true,
 			}
 			if c.Term == "phase conjugation" {
 				results[i].SubjectMatter = false
@@ -887,7 +942,7 @@ func TestApplyTagQuality(t *testing.T) {
 		if _, err := q2.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 			DocumentID:    docID,
 			TagName:       "cached candidate",
-			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":false,"not_person_place_work":true,"atomic":true,"defer":false}`),
+			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":false,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`),
 			Pass:          false,
 			Outcome:       sql.NullString{String: "reject", Valid: true},
 			VerdictModel:  sql.NullString{String: "seed-model", Valid: true},
@@ -928,6 +983,36 @@ func TestApplyTagQuality(t *testing.T) {
 		}
 		adjAssertEqual(t, len(rows), 0, "no verdict row without a verdict")
 	})
+}
+
+func TestApplyTagQuality_JudgeFailureWarns(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	var buf bytes.Buffer
+	a.logger = log.NewLoggerWithWriter(&buf)
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	adj.qualityFn = func(context.Context, string, []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		return nil, context.DeadlineExceeded
+	}
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "quality-warn-doc")
+
+	analysis := &tools.ContentAnalysisResult{
+		Tags:       []string{"resonance tunneling"},
+		TagDetails: []analyzer.TagDetail{{Term: "resonance tunneling", Category: analyzer.TagCategoryTopic}},
+	}
+	kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+
+	adjAssertEqual(t, len(kept), 1, "the tag survives the failed judge call")
+	adjAssertEqual(t, decisions["resonance tunneling"].Outcome, tags.AdmissionDefer, "decision outcome")
+	adjAssertEqual(t, decisions["resonance tunneling"].Reason, reasonJudgeUnavailable, "decision reason")
+	adjAssertEqual(t, adj.qualityCall, 1, "context errors are not retried")
+	out := buf.String()
+	if !strings.Contains(out, "<4>WARN") {
+		t.Errorf("expected a WARN level line, got:\n%s", out)
+	}
+	if !strings.Contains(out, `judge failed for ["resonance tunneling"]`) {
+		t.Errorf("expected the WARN to name the judge's candidates, got:\n%s", out)
+	}
 }
 
 func splitVerdictsAll(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
@@ -1099,6 +1184,29 @@ func TestDecomposeTags_SplitLogCarriesVersion(t *testing.T) {
 	want := "tag split[" + analyzer.TagSplitVersion + "]"
 	if !strings.Contains(buf.String(), want) {
 		t.Errorf("split log = %q, want it to carry %q", buf.String(), want)
+	}
+}
+
+func TestDecomposeTags_NoVerdictWarns(t *testing.T) {
+	var buf bytes.Buffer
+	adj := &mockAdjudicator{splitFn: func(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
+		results := make([]analyzer.TagSplitResult, len(names))
+		return results, nil
+	}}
+	a := newSplitAdjudicator(t, adj, &buf)
+	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+
+	got, rows := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, filter, "")
+
+	adjAssertEqual(t, len(got), 1, "the compound stays whole")
+	adjAssertEqual(t, len(rows), 1, "one composition row")
+	adjAssertEqual(t, rows[0].Reason, tags.CompositionReasonJudgeUnavailable, "keep reason")
+	out := buf.String()
+	if !strings.Contains(out, "<4>WARN") {
+		t.Errorf("expected a WARN level line, got:\n%s", out)
+	}
+	if !strings.Contains(out, `judge returned no verdict for "machine learning"`) {
+		t.Errorf("expected the WARN to name the judge and candidate, got:\n%s", out)
 	}
 }
 

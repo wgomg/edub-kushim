@@ -166,6 +166,9 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 			if proposals[i] == "" {
 				proposals[i] = tags.ProposedDerivationalFold(name, storeNames)
 			}
+			if proposals[i] == "" {
+				proposals[i] = tags.ProposedMorphologicalFold(name, storeNames)
+			}
 			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: name, ProposedFold: proposals[i]}
 		}
 		results, err := r.runner.JudgeTagIdentity(ctx, inputs)

@@ -694,8 +694,15 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	}
 
 	ids := make([]int64, len(candidates))
+	names := make([]string, len(candidates))
 	for i, c := range candidates {
 		ids[i] = c.id
+		names[i] = c.name
+	}
+	held, err := tags.IdentityHeldNames(ctx, q, names)
+	if err != nil {
+		e.logger.Error(reqID, "tag quality promotion identity hold lookup failed: %v", err)
+		return nil
 	}
 	counts, err := tags.NewStore(q).LiveMass(ctx, ids)
 	if err != nil {
@@ -710,11 +717,16 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		if !ok || !tags.DecidePromotion(decision.Outcome, counts[c.id]) {
 			continue
 		}
+		if anchor, ok := held[c.name]; ok {
+			e.logger.Debug(reqID, "tagquality[%s]: identity hold %q (anchor=%q) — left for review",
+				analyzer.TagQualityVersion, c.name, anchor)
+			continue
+		}
 		eligible = append(eligible, c)
 		promoteIDs = append(promoteIDs, c.id)
 	}
-	e.logger.Debug(reqID, "tagquality[%s]: promotion run considered=%d promoted=%d (rule_set=decision-%s floor=%d)",
-		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
+	e.logger.Debug(reqID, "tagquality[%s]: promotion run considered=%d promoted=%d held=%d (rule_set=decision-%s floor=%d)",
+		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), len(held), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 	if len(promoteIDs) == 0 {
 		return nil
 	}

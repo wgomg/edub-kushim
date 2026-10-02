@@ -141,6 +141,61 @@ func (q *Queries) LatestTagIdentityEventsForCandidates(ctx context.Context, arg 
 	return items, nil
 }
 
+const listIdentityHeldNames = `-- name: ListIdentityHeldNames :many
+SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict, (criteria->>'proposed_fold')::text AS anchor
+FROM tag_identity_event e
+WHERE e.rule_set_version = $1
+  AND e.verdict IS NOT NULL
+  AND e.kind IN ('base_form', 'fold_gate')
+  AND e.candidate = ANY($2::text[])
+  AND EXISTS (SELECT 1 FROM tag t WHERE t.name = e.criteria->>'proposed_fold')
+ORDER BY candidate, kind, created_at DESC
+`
+
+type ListIdentityHeldNamesParams struct {
+	RuleSetVersion string
+	Candidates     []string
+}
+
+type ListIdentityHeldNamesRow struct {
+	Candidate string
+	Kind      string
+	Verdict   sql.NullString
+	Anchor    string
+}
+
+// ListIdentityHeldNames compares the anchor by direct equality, not the
+// house-form key: both sides are normalized word forms at their write
+// boundaries, and house form only rewrites ordinals and roman numerals,
+// which this class lacks.
+func (q *Queries) ListIdentityHeldNames(ctx context.Context, arg ListIdentityHeldNamesParams) ([]ListIdentityHeldNamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listIdentityHeldNames, arg.RuleSetVersion, pq.Array(arg.Candidates))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListIdentityHeldNamesRow
+	for rows.Next() {
+		var i ListIdentityHeldNamesRow
+		if err := rows.Scan(
+			&i.Candidate,
+			&i.Kind,
+			&i.Verdict,
+			&i.Anchor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingTagIdentityEvents = `-- name: ListPendingTagIdentityEvents :many
 SELECT id, kind, candidate, partner, criteria, verdict, model, rule_set_version, created_at FROM tag_identity_event
 WHERE verdict IS NULL

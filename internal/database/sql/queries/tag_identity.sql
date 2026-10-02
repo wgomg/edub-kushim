@@ -29,6 +29,20 @@ WHERE rule_set_version = @rule_set_version
   AND candidate = ANY(@candidates::text[])
 ORDER BY kind, candidate, COALESCE(partner, ''), created_at DESC;
 
+-- ListIdentityHeldNames compares the anchor by direct equality, not the
+-- house-form key: both sides are normalized word forms at their write
+-- boundaries, and house form only rewrites ordinals and roman numerals,
+-- which this class lacks.
+-- name: ListIdentityHeldNames :many
+SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict, (criteria->>'proposed_fold')::text AS anchor
+FROM tag_identity_event e
+WHERE e.rule_set_version = @rule_set_version
+  AND e.verdict IS NOT NULL
+  AND e.kind IN ('base_form', 'fold_gate')
+  AND e.candidate = ANY(@candidates::text[])
+  AND EXISTS (SELECT 1 FROM tag t WHERE t.name = e.criteria->>'proposed_fold')
+ORDER BY candidate, kind, created_at DESC;
+
 -- name: ListPendingTagIdentityEvents :many
 SELECT * FROM tag_identity_event
 WHERE verdict IS NULL

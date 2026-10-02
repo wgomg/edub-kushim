@@ -81,25 +81,30 @@ admin and emission registration paths
   parse as roman numerals (`mix`, `mid`) are left alone. The rewrite is a style
   rewrite and is written directly at registration.
 - **M2 — shape signatures and fold proposals** (`ComputeSignature`,
-  `ProposedFold`, `ProposedDerivationalFold`): per-token lemma (golem) and stem
-  (snowball) signatures, the plural/lemma fold proposal, and the store-anchored
-  derivational transforms that reduce relational adjectives onto a noun the
-  store already holds (`chilean` → `chile`, `political` → `politics`). They are
+  `ProposedFold`, `ProposedDerivationalFold`, `ProposedMorphologicalFold`):
+  per-token lemma (golem) and stem (snowball) signatures, the plural/lemma fold
+  proposal, the store-anchored derivational transforms that reduce relational
+  adjectives onto a noun the store already holds (`chilean` → `chile`,
+  `political` → `politics`), and the bounded morphographic proposal that
+  reaches a single-token store value within two edits (`mexican` → `mexico`;
+  two distinct store values in reach make the candidate stand). They are
   evidence only — the stemmer's output is never written, and a proposed fold is
   never applied unconfirmed.
 - **M3 — key equality** (`Key`): the identity key is the house form, so style
   variants collapse without judging.
 - **M4 — tie-break** (`TieBreak`): fixed lexical order decides when the
   direction criteria do not separate two labels.
-- **Version**: `IdentityRuleSetVersion = "v2"` is stamped on every alias row and
-  identity-evidence row; v2 includes the derivational adjective transforms in
-  the fold body.
+- **Version**: `IdentityRuleSetVersion = "v3"` is stamped on every alias row and
+  identity-evidence row; v2 added the derivational adjective transforms to the
+  fold body, and v3 adds the bounded morphographic proposal and the
+  store-anchored rejection hold.
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
   M1 rewrites, alias lookup, key equality, and M2 flagging, including the
-  plural/lemma and derivational fold proposals. It never applies a fold, never
-  adjudicates, and never makes an alias; flagged shape relations and proposed
-  folds register provisionally with pending evidence. `NameIndex` memoizes
-  keys and signatures per name so the flagging loops compare cached values.
+  plural/lemma, derivational, and morphographic fold proposals. It never applies
+  a fold, never adjudicates, and never makes an alias; flagged shape relations
+  and proposed folds register provisionally with pending evidence. `NameIndex`
+  memoizes keys and signatures per name so the flagging loops compare cached
+  values.
 - **`ResolveAliases`** — the single alias resolver: normalizes and dedupes names
   and resolves them to canonical names in one query. It backs registration,
   suggestions, structured search, and the enricher.
@@ -146,12 +151,17 @@ transaction — adjudication stays outside it:
   conventional written form. Proposals come from the lemmatizer, from a
   conservative plural strip for tokens the dictionary does not know (a plural
   whose base form exists folds unless it is the established name of the sense,
-  `data` stands), and from the store-anchored derivational transforms for
-  relational adjectives (`chilean` → `chile`, `political` → `politics`): a
-  transform only proposes when the noun twin already exists in the store, and
-  two distinct store hits make the adjective stand. A fold applies only when
-  all three confirm; a candidate whose criteria have no judge answer stays
-  provisional with the three criteria recorded as pending evidence.
+  `data` stands), from the store-anchored derivational transforms for
+  relational adjectives (`chilean` → `chile`, `political` → `politics`), and
+  from the bounded morphographic proposal for single-token names (`mexican` →
+  `mexico`, at most two edits): a proposal only stands when its target already
+  exists in the store, and two distinct store hits make the candidate stand. A
+  fold applies only when all three confirm; a candidate whose criteria have no
+  judge answer stays provisional with the three criteria recorded as pending
+  evidence. A refused fold whose proposal targeted a live store value is the
+  disjoint-twin risk: the birth is held for review — provisional plus an
+  evidence-derived promotion hold that blocks inline and sweep promotion until
+  an operator resolves it (INFO `fold rejected beside store anchor …`).
 - **Same-intent pairs (J3/J4)** — the pair adjudicator answers `same` /
   `variant` / `related`, plus a direction for `same` (`query`, `target`, or
   `tie`; a tie falls back to M4). `same` yields the alias disposition;
@@ -193,9 +203,9 @@ transaction — adjudication stays outside it:
    pairs go through the pair adjudicator. The result is a `tags.Plan` carrying
    registrations, alias actions, evidence rows, and the composition rows the
    decomposition gate judged, and per-disposition log
-   lines (`identity[v2]: apply|alias|defer|separate …`), with the applied-fold
+   lines (`identity[v3]: apply|alias|defer|separate …`), with the applied-fold
    input→output mapping and the judge-unavailable mint at DEBUG
-   (`identity[v2]: fold applied …`, `identity[v2]: pending evidence minted …`).
+   (`identity[v3]: fold applied …`, `identity[v3]: pending evidence minted …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
@@ -543,8 +553,11 @@ predicts what the next apply would delete.
 **Provisional sweep**: after the orphan sweep, the same run walks provisional
 tags older than `enricher.tag_reconcile.provisional_grace_days` (default 30),
 oldest first. Zero-assignment rows are only counted — the orphan sweep owns
-  their deletion. Rows whose latest verdict at `TagQualityVersion` passes and
-  that hold ≥10 live documents are promoted through `curation.Tag.Promote` (the
+their deletion. Identity-held rows — a refused fold beside a live store value,
+derived from the latest `base_form`/`fold_gate` evidence — are counted as
+skipped and left for review before any verdict check, so the sweep never
+promotes them. Rows whose latest verdict at `TagQualityVersion` passes and
+that hold ≥10 live documents are promoted through `curation.Tag.Promote` (the
 same method behind `POST /api/v1/tags/{id}/promote`, so the log line and the
 store add match the operator path). Verdict-less rows are re-judged under the
 shared `max_rejudge` budget: `FirstDocumentIDForTag` picks the first live
@@ -611,11 +624,11 @@ the reconciler's live counts, and the merge-review evidence all read through
   snapshot instant, the rule-set version, the operator, the operands, the raw
   numbers, an evidence state (`sufficient`/`insufficient` — empty extensions
   and empty intersections support no reading), and caveats.
-- **Rule-set v0** derives the composition-review worklists from the persisted
-  records: `≈` twin candidates (Jaccard ≥ 0.9 with both masses ≥ 2, gray band
+- **Rule-set v1** derives the composition-review worklists from the persisted
+  records: `≈` twin candidates (Jaccard ≥ 0.9 with both masses ≥ 3, gray band
   0.7–0.9), compound split proposals (both leftovers ≤ 0.1, gray to 0.25), and
-  near-contained siblings (containment ≥ 0.8, gray 0.6–0.8). The worklists are
-  evidence for review; nothing acts on them.
+  near-contained siblings (containment ≥ 0.8 with both masses ≥ 3, gray
+  0.6–0.8). The worklists are evidence for review; nothing acts on them.
 - **Running it**: `enricher.tag_measure.{enabled, interval, time}` schedules a
   `tagmeasure` task (disabled by default), and `kushim tagmeasure` runs the
   pass in the foreground under the maintenance lock, while
@@ -693,7 +706,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   `TimeoutStartSec` budget alongside model load and tag-cache build.
 - **Consolidation and identity logs live in the kushim (enrichment) log, not
   `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v2]` dispositions). `hugot.log` only holds the
+  decisions, `identity[v3]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in

@@ -341,7 +341,7 @@ apply the existing label), and then candidate generation — every remaining
 candidate neighbour is kept as a **gate subject** with its similarity and
 runner-up recorded as adjudication evidence. Similarity never replaces or
 keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v2]: apply|alias|defer|separate …`. Fallback results from the legacy
+`identity[v3]: apply|alias|defer|separate …`. Fallback results from the legacy
 daemon (no candidates) pass through `KeptName` verbatim. Style variants and
 aliases never reach the policy: M1 house form, M3 key equality, and the alias
 resolver apply the canonical value before ranking output is used.
@@ -353,16 +353,20 @@ Identity has two LLM paths, both under `enricher.tag_adjudicator.enabled`:
 1. **Folds** — a mechanically proposed lexical fold flags a candidate: the
    lemmatizer and a conservative plural strip for tokens the dictionary does
    not know (a plural whose base form exists folds unless it is the established
-   name of the sense), plus the store-anchored derivational transforms for
-   relational adjectives (`chilean` → `chile`, `political` → `politics`; a
-   transform only proposes when the noun twin already exists in the store, and
-   two distinct twins make the adjective stand). The flagged candidate is
-   judged by one batched identity-judge call
-   (`JudgeTagIdentity`) answering three binary criteria: fold to base form
+   name of the sense), the store-anchored derivational transforms for
+   relational adjectives (`chilean` → `chile`, `political` → `politics`), and
+   the bounded morphographic proposal for single-token names (`mexican` →
+   `mexico`, at most two edits; two distinct store values in reach make the
+   candidate stand). A proposal only stands when its target already exists in
+   the store. The flagged candidate is judged by one batched identity-judge
+   call (`JudgeTagIdentity`) answering three binary criteria: fold to base form
    (J1), fold preserves denotation (J2), conventional written form (J5). The
    fold applies only when all three confirm; a candidate whose criteria lack a
    judge answer stays provisional with the three criteria recorded as pending
-   evidence.
+   evidence. A refused fold whose proposal targeted a live store value holds
+   the birth for review: the registration is provisional and the
+   evidence-derived promotion hold blocks inline and sweep promotion until an
+   operator resolves it.
 2. **Same-intent pairs** — every gate subject is adjudicated:
    - **Pair cache** — the latest `same_intent` row per `(candidate, partner)`
      at `IdentityRuleSetVersion` from `tag_identity_event` resolves the pair
@@ -406,9 +410,9 @@ review queue instead).
 Each candidate's features are resolved by the pinned rule set
 (`tags.DecideAdmission`):
 
-- the judge's four rubric answers — `subject_matter`, `dimension`,
-  `not_person_place_work`, `atomic` — plus its optional `defer` abstention,
-  from the verdict cache or a fresh judge call;
+- the judge's five rubric answers — `subject_matter`, `dimension`,
+  `not_person_place_work`, `atomic`, `not_form_genre` — plus its optional
+  `defer` abstention, from the verdict cache or a fresh judge call;
 - the emission's deterministic signals: a detail annotated `other`, and a best
   store similarity below the internal `no_anchor_similarity` (0.60) cut.
 
@@ -416,7 +420,7 @@ A judge abstention defers; two or more failing signals reject; exactly one
 defers to review (the gray band — no single signal decides); none admits. A
 rejection drops the tag for that document, and `Plan.DropTagNames` removes its
 registration and pending identity evidence before persist, so the name is never
-stored; it logs `tagquality[v1]: reject … (reason=corroborated_failures …)`.
+stored; it logs `tagquality[v2]: reject … (reason=corroborated_failures …)`.
 Defers are kept and logged too. A missing detail or similarity is absence of
 evidence, not a failing signal, so a well-judged string-shaped emission can
 still admit.
@@ -474,10 +478,13 @@ skipped). A name promotes when both hold:
 
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
-via `AddToStore` only after the commit (`tagquality[v1]: promote %q
-(docs=%d reason=%s rule_set=decision-v1 floor=10)`). Deferred and rejected
+via `AddToStore` only after the commit (`tagquality[v2]: promote %q
+(docs=%d reason=%s rule_set=decision-v2 floor=10)`). Deferred and rejected
 provisionals never promote here —
-they wait for review.
+they wait for review — and neither does an identity-held name (a refused fold
+beside a live store value): the hold is derived from the latest
+`base_form`/`fold_gate` evidence and skips the candidate with a DEBUG
+(`identity hold %q (anchor=%q) — left for review`).
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
 `Adjudicator.ApplyTagQuality` never sees it again and no verdict row appears. Two surfaces
@@ -495,8 +502,9 @@ resolve them afterwards:
   retry on failure — with the verdict recorded through the enricher's
   fresh-verdict path (`InsertTagQualityEvent` with `DO NOTHING`, so a
   concurrent fresh verdict is kept) and an admitted name promoted immediately at
-  ≥ 10 live documents. Deferrals, rejections, missing judges, and tags with no
-  live document text stay queued.
+  ≥ 10 live documents. Identity-held names are counted as skipped with an INFO
+  naming the anchor and never promote from the sweep. Deferrals, rejections,
+  missing judges, and tags with no live document text stay queued.
 - The **review queue** (`GET /api/v1/tags/provisional`,
   `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "New
   tags" tab) is the operator path: it lists provisional names with their
@@ -504,8 +512,10 @@ resolve them afterwards:
   labelled from the recorded outcome (`admit`/`defer`/`reject`) with a rubric
   fallback for rows predating the outcome column — and promotes one through
   the same `curation.Tag.Promote` method the sweep
-  uses. A rejection is a normal tag delete, so the `deleted_tag` blocklist
-  keeps the name from being reborn.
+  uses. Rows whose refused fold targeted a live store value carry the anchor
+  as `identity_hold` and render an "identity hold" pill. A rejection is a
+  normal tag delete, so the `deleted_tag` blocklist keeps the name from being
+  reborn.
 
 ---
 

@@ -345,14 +345,14 @@ func TestTag_LatestQualityEventsForNames(t *testing.T) {
 	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
 
 	// Insert a quality event.
-	criteria := []byte(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"defer":false}`)
+	criteria := []byte(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`)
 	_, err := client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quality-events-tag",
 		Criteria:      criteria,
 		Pass:          true,
 		VerdictModel:  sql.NullString{String: "test-model", Valid: true},
-		PolicyVersion: "v1",
+		PolicyVersion: analyzer.TagQualityVersion,
 	})
 	testutil.AssertNoError(t, err, "insert quality event")
 

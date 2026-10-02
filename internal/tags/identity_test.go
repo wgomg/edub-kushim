@@ -1,6 +1,13 @@
 package tags
 
-import "testing"
+import (
+	"context"
+	"database/sql"
+	"os"
+	"testing"
+
+	"github.com/wgomg/edub-kushim/internal/database"
+)
 
 func TestHouseForm(t *testing.T) {
 	cases := []struct {
@@ -163,6 +170,74 @@ func TestProposedDerivationalFold(t *testing.T) {
 	}
 }
 
+func TestProposedMorphologicalFold(t *testing.T) {
+	cases := []struct {
+		name       string
+		input      string
+		storeNames map[string]string
+		want       string
+	}{
+		{
+			name:       "distance one proposes the store value",
+			input:      "spudgers",
+			storeNames: map[string]string{"spudger": "spudger"},
+			want:       "spudger",
+		},
+		{
+			name:       "distance two reaches the store noun",
+			input:      "mexican",
+			storeNames: map[string]string{"mexico": "mexico"},
+			want:       "mexico",
+		},
+		{
+			name:       "distance three is out of reach",
+			input:      "spudging",
+			storeNames: map[string]string{"spudger": "spudger"},
+			want:       "",
+		},
+		{
+			name:  "two store hits are ambiguity, not a fold",
+			input: "spudgers",
+			storeNames: map[string]string{
+				"spudger":  "spudger",
+				"spudgery": "spudgery",
+			},
+			want: "",
+		},
+		{
+			name:       "multi-token names never propose",
+			input:      "mexican food",
+			storeNames: map[string]string{"mexico": "mexico"},
+			want:       "",
+		},
+		{
+			name:       "names under the length guard never propose",
+			input:      "mexic",
+			storeNames: map[string]string{"mexico": "mexico"},
+			want:       "",
+		},
+		{
+			name:       "uppercase names never propose",
+			input:      "Mexican",
+			storeNames: map[string]string{"mexico": "mexico"},
+			want:       "",
+		},
+		{
+			name:       "multi-word store keys never participate",
+			input:      "spudgers",
+			storeNames: map[string]string{"spud ger": "spud ger"},
+			want:       "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProposedMorphologicalFold(tc.input, tc.storeNames); got != tc.want {
+				t.Errorf("ProposedMorphologicalFold(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStoreNames(t *testing.T) {
 	got := StoreNames([]string{"16th century", "sixteenth century", "russia"})
 
@@ -253,10 +328,10 @@ func TestPlanDeterministic(t *testing.T) {
 		},
 		{
 			name:     "shape relation records pending evidence without adjudicating",
-			view:     StoreView{Names: []string{"buildings"}},
-			input:    "building",
+			view:     StoreView{Names: []string{"running"}},
+			input:    "run",
 			wantDisp: DispositionRegister,
-			wantName: "building",
+			wantName: "run",
 			wantKinds: map[string]int{
 				IdentityKindSameIntent: 1,
 			},
@@ -369,5 +444,67 @@ func TestPlan_DropTagNames(t *testing.T) {
 	unchanged := plan.DropTagNames(nil)
 	if len(unchanged.Registrations) != 4 || len(unchanged.Evidence) != 3 {
 		t.Errorf("empty rejected set must keep the plan: registrations=%d evidence=%d", len(unchanged.Registrations), len(unchanged.Evidence))
+	}
+}
+
+func TestIdentityHeldNames(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	q := client.Queries
+
+	database.MustCreateTag(t, q, "zqholdanchor")
+
+	seed := func(kind, candidate, verdict, anchor string) {
+		t.Helper()
+		if _, err := q.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+			Kind:           kind,
+			Candidate:      candidate,
+			Criteria:       []byte(`{"proposed_fold":"` + anchor + `"}`),
+			Verdict:        sql.NullString{String: verdict, Valid: true},
+			RuleSetVersion: IdentityRuleSetVersion,
+		}); err != nil {
+			t.Fatalf("seed %s row for %q: %v", kind, candidate, err)
+		}
+	}
+	// the gate's refusal alone holds the name
+	seed(IdentityKindBaseForm, "political", IdentityVerdictFold, "zqholdanchor")
+	seed(IdentityKindFoldGate, "political", IdentityVerdictRejected, "zqholdanchor")
+	// base_form=stand blocks despite a confirming gate (the mining class)
+	seed(IdentityKindBaseForm, "mining", IdentityVerdictStand, "zqholdanchor")
+	seed(IdentityKindFoldGate, "mining", IdentityVerdictConfirmed, "zqholdanchor")
+	// a refused proposal onto a dead anchor is not a hold
+	seed(IdentityKindFoldGate, "ghosty", IdentityVerdictRejected, "zqghost")
+	// a confirmed fold with a standing base form never held
+	seed(IdentityKindBaseForm, "folded", IdentityVerdictFold, "zqholdanchor")
+	seed(IdentityKindFoldGate, "folded", IdentityVerdictConfirmed, "zqholdanchor")
+	// conventional-form rows are out of scope for the hold
+	seed(IdentityKindConventionalForm, "formatted", IdentityVerdictDefer, "zqholdanchor")
+
+	held, err := IdentityHeldNames(ctx, q, []string{
+		"political", "mining", "ghosty", "folded", "formatted", "unjudged",
+	})
+	if err != nil {
+		t.Fatalf("IdentityHeldNames: %v", err)
+	}
+	if len(held) != 2 {
+		t.Errorf("held = %v, want exactly the two refused names", held)
+	}
+	if held["political"] != "zqholdanchor" {
+		t.Errorf("political anchor = %q, want the live store value", held["political"])
+	}
+	if held["mining"] != "zqholdanchor" {
+		t.Errorf("mining anchor = %q, want base_form=stand to hold despite a confirming gate", held["mining"])
+	}
+
+	empty, err := IdentityHeldNames(ctx, q, nil)
+	if err != nil {
+		t.Fatalf("IdentityHeldNames(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("empty input = %v, want no holds", empty)
 	}
 }

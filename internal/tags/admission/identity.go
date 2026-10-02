@@ -18,12 +18,13 @@ import (
 const identityBatchSize = 40
 
 type identityCandidate struct {
-	input    string
-	name     string
-	fold     string
-	resolved string
-	aliasOf  string
-	gray     bool
+	input      string
+	name       string
+	fold       string
+	resolved   string
+	aliasOf    string
+	gray       bool
+	reviewHold bool
 }
 
 type identityPair struct {
@@ -122,6 +123,9 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		} else if fold := tags.ProposedDerivationalFold(cand.name, byKey); fold != "" {
 			cand.fold = fold
 			flagged[cand.name] = true
+		} else if fold := tags.ProposedMorphologicalFold(cand.name, byKey); fold != "" {
+			cand.fold = fold
+			flagged[cand.name] = true
 		}
 		for existing := range in.DBNames {
 			if !ix.ShapeRelated(cand.name, existing) {
@@ -178,6 +182,14 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			continue
 		}
 		if !answer.FoldToBase || !answer.FoldPreservesDenotation {
+			// a refused fold beside a live store value is the disjoint-twin
+			// class: hold the birth for review instead of letting it
+			// promote on mass
+			if anchor, ok := byKey[tags.Key(cand.fold)]; ok {
+				cand.reviewHold = true
+				a.logger.Info(reqID, "identity[%s]: fold rejected beside store anchor %q -> %q, held for review",
+					tags.IdentityRuleSetVersion, cand.name, anchor)
+			}
 			cand.fold = ""
 			continue
 		}
@@ -311,6 +323,9 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			} else if pendingCandidates[cand.name] {
 				reg.Provisional = true
 			}
+			if cand.reviewHold {
+				reg.Provisional = true
+			}
 			if judgeUnavailable[cand.name] {
 				reg.Provisional = true
 				a.logger.Debug(reqID, "identity[%s]: pending evidence minted for %q (fold verdicts missing, judge unavailable)",
@@ -418,7 +433,11 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
 		}
 		if err != nil {
-			a.logger.Error(reqID, "identity[%s]: judge failed, %d candidates stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
+			names := make([]string, len(batch))
+			for i, cand := range batch {
+				names[i] = cand.name
+			}
+			a.logger.Warn(reqID, "identity[%s]: judge failed for %q, leaving them provisional: %v", tags.IdentityRuleSetVersion, names, err)
 			continue
 		}
 		model := a.config.ResolvedAdjudicatorLlm().Model
@@ -491,7 +510,11 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
 		}
 		if err != nil {
-			a.logger.Error(reqID, "identity[%s]: adjudication failed, %d pairs stay provisional: %v", tags.IdentityRuleSetVersion, len(batch), err)
+			labels := make([]string, len(batch))
+			for i, p := range batch {
+				labels[i] = p.query + " -> " + p.target
+			}
+			a.logger.Warn(reqID, "identity[%s]: adjudication failed for %q, leaving them provisional: %v", tags.IdentityRuleSetVersion, labels, err)
 			continue
 		}
 		model := a.config.ResolvedAdjudicatorLlm().Model

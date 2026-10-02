@@ -218,7 +218,7 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListProvisional serves the paged provisional tag list with quality
-// verdicts and pending identity counts.
+// verdicts, pending identity counts, and identity holds.
 func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
@@ -273,6 +273,11 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, h.logger, reqID, "provisional tag identity evidence", err)
 			return
 		}
+		held, err := h.tag.IdentityHeldNames(ctx, names)
+		if err != nil {
+			writeServiceError(w, h.logger, reqID, "provisional tag identity holds", err)
+			return
+		}
 		for i, t := range rows {
 			responses[i] = ProvisionalTagResponse{
 				ID:            t.ID,
@@ -281,6 +286,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				// the list query coalesces created_at, so the value is always present
 				CreatedAt:       t.CreatedAt.Time,
 				PendingIdentity: pending[t.Name],
+				IdentityHold:    held[t.Name],
 			}
 			if v, ok := verdicts[t.Name]; ok {
 				responses[i].Verdict = &v
@@ -527,6 +533,7 @@ type TagQualityCriteriaView struct {
 	Dimension          *bool `json:"dimension"`
 	NotPersonPlaceWork *bool `json:"not_person_place_work"`
 	Atomic             *bool `json:"atomic"`
+	NotFormGenre       *bool `json:"not_form_genre"`
 	Defer              *bool `json:"defer"`
 }
 
@@ -543,8 +550,8 @@ type TagQualityVerdictInfo struct {
 }
 
 // ProvisionalTagResponse is one provisional tag with its document
-// count, creation time, latest quality verdict, and pending identity
-// events.
+// count, creation time, latest quality verdict, pending identity
+// events, and the store anchor of a refused fold holding it.
 type ProvisionalTagResponse struct {
 	ID              int64                  `json:"id"`
 	Name            string                 `json:"name"`
@@ -552,6 +559,7 @@ type ProvisionalTagResponse struct {
 	CreatedAt       time.Time              `json:"created_at"`
 	Verdict         *TagQualityVerdictInfo `json:"verdict"`
 	PendingIdentity int64                  `json:"pending_identity"`
+	IdentityHold    string                 `json:"identity_hold,omitempty"`
 }
 
 // ProvisionalTagListResponse is one page of provisional tags.

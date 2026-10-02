@@ -326,8 +326,9 @@ approximate it. “No blanket mechanical splitting” remains the rule for the n
 path; the adjudicated path approximates P4 per candidate.
 
 **S5 — admission.** The mechanics are the rubric judge (`subject_matter`,
-`dimension`, `not_person_place_work`, `atomic`, plus the optional `defer`
-abstention), the verdict cache, and the pinned decision over the features:
+`dimension`, `not_person_place_work`, `atomic`, `not_form_genre`, plus the
+optional `defer` abstention), the verdict cache, and the pinned decision over
+the features:
 `tags.DecideAdmission` defers on the judge's abstention, rejects on two or
 more failing signals, defers on exactly one (the gray band), and admits when
 nothing fails; the emission's deterministic signals (a detail annotated

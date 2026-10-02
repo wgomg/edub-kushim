@@ -303,17 +303,17 @@ The enrichment pipeline:
    document, or the cached verdict row) plus the emission's deterministic
    signals (a detail annotated `other`, and a best store similarity below the
    internal `no_anchor_similarity` 0.60 cut). The rubric asks
-   `subject_matter`, `dimension`, `not_person_place_work` and `atomic`, and
-   offers `defer` as an abstention; the decision admits when nothing fails,
-   defers on a lone failing signal (or the judge's abstention), and rejects on
-   two or more — no single signal decides. Verdicts are cached per
-   `(tag_name, policy_version)` in `tag_quality_event` with the recorded
-   outcome, so a re-emitted name resolves without a call; a rejected name
-   drops the tag for that document only — its registration and pending
+   `subject_matter`, `dimension`, `not_person_place_work`, `atomic` and
+   `not_form_genre`, and offers `defer` as an abstention; the decision admits
+   when nothing fails, defers on a lone failing signal (or the judge's
+   abstention), and rejects on two or more — no single signal decides. Verdicts
+   are cached per `(tag_name, policy_version)` in `tag_quality_event` with the
+   recorded outcome, so a re-emitted name resolves without a call; a rejected
+   name drops the tag for that document only — its registration and pending
    identity evidence never reach the store. Judge failures retry once and then
    keep every novel tag with a defer decision; the decision thresholds are
-   internal v1 constants, not config keys. Under the same gate the kept set is
-   quarantined: newborns are attached and searchable from birth but stay
+   internal pinned constants, not config keys. Under the same gate the kept
+   set is quarantined: newborns are attached and searchable from birth but stay
    provisional (`tag.promoted_at` NULL) and out of the embedding store, so
    they never reach suggestions or consolidation targets. A provisional name
    is promoted inline — inside the persist transaction — when the admission
@@ -327,7 +327,10 @@ The enrichment pipeline:
    re-judges the rest, or by an operator through the provisional review queue
    (`GET /api/v1/tags/provisional`, `POST /api/v1/tags/{id}/promote`, and the
    tags page's "New tags" tab); a rejection there is a normal tag delete and
-   lands in the blocklist. With the layer off, births are trusted as before.
+   lands in the blocklist. An identity-held name — a fold the gate refused
+   beside a live store value — is likewise provisional and blocked from inline
+   and sweep promotion until an operator resolves it. With the layer off,
+   births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
    (`tag.CreatePlannedTx` on the transaction handle, with the quality gate as its

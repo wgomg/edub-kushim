@@ -21,6 +21,7 @@ const rubric = {
 	dimension: true,
 	not_person_place_work: true,
 	atomic: true,
+	not_form_genre: true,
 	defer: false
 };
 
@@ -85,5 +86,13 @@ describe('ProvisionalReview verdict labels', () => {
 
 	it('labels an unjudged tag as having no verdict', async () => {
 		await renderLabel(tag(), 'no verdict');
+	});
+
+	it('shows the identity hold with its store anchor', async () => {
+		await renderLabel(tag({ identity_hold: 'politics' }), 'identity hold → politics');
+	});
+
+	it('renders the not form/genre criterion when a verdict is present', async () => {
+		await renderLabel(tag({ verdict: verdict() }), /not form\/genre/);
 	});
 });

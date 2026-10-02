@@ -86,7 +86,7 @@ default 3; the filter applies no count cap):
 | Alias lookup — the name is a `tag_alias` row | apply the canonical value | names that already lost a same-intent decision |
 | Key equality (M3) — house form matches a store tag | apply the store label | style variants (`nineteenth century` / `19th century`) |
 | Exact identity with a store tag | apply the store label | casing, hyphenation, and symbol-form fixes after normalization |
-| Flagged fold — a mechanically proposed reduction (M2) | judged: base form (J1), fold gate (J2), conventional form (J5); the fold applies only when all three confirm | inflections (`buildings` → `building`), relational adjectives, conventional forms (`c plus plus` → `c++`) |
+| Flagged fold — a mechanically proposed reduction (M2) | judged: base form (J1), fold gate (J2), conventional form (J5); the fold applies only when all three confirm | inflections (`buildings` → `building`), relational adjectives, bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
 | Any other candidate neighbour — the same-intent gate | judged (J3) with a direction (J4): `same` aliases the loser onto the winner (a store label that loses becomes the alias), `variant`/`related` register both | the residual band and shape-related pairs |
 | No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
 
@@ -96,7 +96,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v2]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v3]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -184,10 +184,11 @@ decision decides what deserves to be born. With
 survive consolidation — names absent from the vocabulary — are decided before
 they are created:
 
-- **Features**: each candidate carries the judge's four rubric answers —
+- **Features**: each candidate carries the judge's five rubric answers —
   `subject_matter`, `dimension` (a reusable dimension of content, not a
-  per-document detail or container word), `not_person_place_work`, and
-  `atomic` (one dimension, not a combination whose parts each work as tags) —
+  per-document detail or container word), `not_person_place_work`, `atomic`
+  (one dimension, not a combination whose parts each work as tags), and
+  `not_form_genre` (neither a form nor a genre of the document) —
   plus the judge's optional `defer` abstention, and the emission's
   deterministic signals: a typed detail annotated `other`, and a best store
   similarity below the internal no-anchor floor (0.60).
@@ -213,7 +214,7 @@ they are created:
   retries once and then keeps every novel tag with a defer decision — under
   the gate the birth is provisional and carries no verdict, and enrichment
   never blocks or fails on the judge.
-- **Logging**: rejections and defers are logged as `tagquality[v1]:` lines
+- **Logging**: rejections and defers are logged as `tagquality[v2]:` lines
   carrying the outcome and reason, siblings of the `consolidation[v1]` and
   `tags[facet]:` lines.
 
@@ -240,7 +241,9 @@ documents
 (trashed carriers are not evidence, in this check and in the reconciliation
 sweep alike) gets `promoted_at = now()` and enters the store after the commit.
 The `document_tag` primary key makes the count distinct-document, so a single
-document re-enriching itself cannot promote a name.
+document re-enriching itself cannot promote a name. An identity-held name — a
+fold the gate refused beside a live store value — is skipped by both the inline
+check and the sweep until an operator resolves it.
 
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
@@ -428,7 +431,9 @@ quality band constants are internals — see [matcher.md](matcher.md).
   the reconciliation sweep). The store grows faster with near-duplicates — the
   accepted safe direction — and the merge-review surface is the manual valve.
 - **Provisional review**: with the quality judge on, new names stay provisional
-  until promoted and show up in the tags page's "New tags" tab. The
+  until promoted and show up in the tags page's "New tags" tab. Identity-held
+  names (a refused fold beside a live store value) show their store anchor and
+  wait for review — the sweep never promotes them. The
   reconciliation run's provisional sweep promotes or defers them automatically
   once they pass `provisional_grace_days`, so the panel is a manual override
   rather than a required step, and a rejection recorded there is a normal tag

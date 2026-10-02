@@ -113,6 +113,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		row := tags.CompositionRow{Candidate: candidate, CriteriaVersion: analyzer.TagSplitVersion}
 		switch {
 		case !ok || d.verdict == "":
+			a.logger.Warn(reqID, "tag split[%s]: judge returned no verdict for %q", analyzer.TagSplitVersion, candidate)
 			row.Disposition = tags.CompositionKeep
 			row.Reason = tags.CompositionReasonJudgeUnavailable
 		case d.verdict != analyzer.TagSplitSplit:
@@ -123,6 +124,8 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			// a compound has at most MaxCompoundWords content parts, so a
 			// verdict with more surviving components is malformed
 			if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
+				a.logger.Debug(reqID, "tag split[%s]: invalid components for %q proposed=%q",
+					analyzer.TagSplitVersion, candidate, d.components)
 				row.Disposition = tags.CompositionKeep
 				row.Reason = tags.CompositionReasonInvalidComponents
 				row.Model = d.model
@@ -258,11 +261,11 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, re
 
 	results, err := a.runner.AdjudicateTagSplits(ctx, uncached)
 	if err != nil {
-		a.logger.Error(reqID, "tag split adjudication failed, keeping %d joint tags: %v", len(uncached), err)
+		a.logger.Warn(reqID, "tag split[%s]: adjudication failed for %q, keeping them: %v", analyzer.TagSplitVersion, uncached, err)
 		return decisions
 	}
 	if len(results) != len(uncached) {
-		a.logger.Error(reqID, "tag split adjudication returned %d verdicts for %d tags, keeping them", len(results), len(uncached))
+		a.logger.Warn(reqID, "tag split[%s]: adjudication returned %d verdicts for %q, keeping them", analyzer.TagSplitVersion, len(results), uncached)
 		return decisions
 	}
 
@@ -397,6 +400,7 @@ func JudgeFeatures(r analyzer.TagQualityResult, f tags.AdmissionFeatures) tags.A
 	f.Dimension = r.Dimension
 	f.NotPersonPlaceWork = r.NotPersonPlaceWork
 	f.Atomic = r.Atomic
+	f.NotFormGenre = r.NotFormGenre
 	f.JudgeDefer = r.Defer
 	return f
 }
@@ -535,7 +539,12 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
 			}
 			if err != nil {
-				a.logger.Error(reqID, "tagquality[%s]: judge failed, keeping %d novel tags (born provisional): %v", analyzer.TagQualityVersion, len(uncached), err)
+				names := make([]string, len(uncached))
+				for i, n := range uncached {
+					names[i] = n.emitted
+				}
+				a.logger.Warn(reqID, "tagquality[%s]: judge failed for %q, keeping them (born provisional): %v",
+					analyzer.TagQualityVersion, names, err)
 				for _, n := range uncached {
 					decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
 				}

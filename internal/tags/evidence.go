@@ -9,8 +9,9 @@ import (
 )
 
 // RuleSetVersion pins the algebra's rules and the worklist cuts; a bump
-// makes earlier readings stale, not wrong.
-const RuleSetVersion = "v0"
+// makes earlier readings stale, not wrong. v1 raises the twin mass floor
+// and adds the sibling mass floor.
+const RuleSetVersion = "v1"
 
 // The Number* keys name the values a Record's Numbers map carries for each
 // operator; the readings fill them and the worklist cuts read them.

@@ -73,10 +73,11 @@ func TestRunnerRunWritesRecords(t *testing.T) {
 
 	doc1 := database.CreateUniqueDocument(t, client.Queries, "tagmeasure doc 1")
 	doc2 := database.CreateUniqueDocument(t, client.Queries, "tagmeasure doc 2")
+	doc3 := database.CreateUniqueDocument(t, client.Queries, "tagmeasure doc 3")
 	alpha := database.MustCreateTag(t, client.Queries, "zqalpha")
 	beta := database.MustCreateTag(t, client.Queries, "zqbeta")
 	compound := database.MustCreateTag(t, client.Queries, "zqalpha zqbeta")
-	for _, doc := range []int64{doc1, doc2} {
+	for _, doc := range []int64{doc1, doc2, doc3} {
 		database.MustAddDocumentTag(t, client.Queries, doc, alpha)
 		database.MustAddDocumentTag(t, client.Queries, doc, beta)
 	}
@@ -121,8 +122,8 @@ func TestRunnerRunWritesRecords(t *testing.T) {
 	if mass == nil {
 		t.Fatal("no mass record for zqalpha")
 	}
-	if mass.numbers[NumberMass] != float64(2) {
-		t.Errorf("mass = %v, want 2", mass.numbers[NumberMass])
+	if mass.numbers[NumberMass] != float64(3) {
+		t.Errorf("mass = %v, want 3", mass.numbers[NumberMass])
 	}
 	if mass.state != string(StateSufficient) {
 		t.Errorf("mass state = %q, want %q", mass.state, StateSufficient)
@@ -151,8 +152,8 @@ func TestRunnerRunWritesRecords(t *testing.T) {
 	if pair == nil {
 		t.Fatal("no overlap record for the zqalpha/zqbeta pair")
 	}
-	if pair.numbers[NumberIntersection] != float64(2) {
-		t.Errorf("intersection = %v, want 2", pair.numbers[NumberIntersection])
+	if pair.numbers[NumberIntersection] != float64(3) {
+		t.Errorf("intersection = %v, want 3", pair.numbers[NumberIntersection])
 	}
 	if pair.numbers[NumberJaccard] != float64(1) {
 		t.Errorf("jaccard = %v, want 1", pair.numbers[NumberJaccard])
@@ -165,14 +166,14 @@ func TestRunnerRunWritesRecords(t *testing.T) {
 	if reconstruct.numbers[NumberCompoundMass] != float64(1) {
 		t.Errorf("compound mass = %v, want 1", reconstruct.numbers[NumberCompoundMass])
 	}
-	if reconstruct.numbers[NumberPartsIntersection] != float64(2) {
-		t.Errorf("parts intersection = %v, want 2", reconstruct.numbers[NumberPartsIntersection])
+	if reconstruct.numbers[NumberPartsIntersection] != float64(3) {
+		t.Errorf("parts intersection = %v, want 3", reconstruct.numbers[NumberPartsIntersection])
 	}
 	if reconstruct.numbers[NumberBoth] != float64(1) {
 		t.Errorf("both = %v, want 1", reconstruct.numbers[NumberBoth])
 	}
-	if reconstruct.numbers[NumberDeficit] != float64(1) {
-		t.Errorf("deficit = %v, want 1", reconstruct.numbers[NumberDeficit])
+	if reconstruct.numbers[NumberDeficit] != float64(2) {
+		t.Errorf("deficit = %v, want 2", reconstruct.numbers[NumberDeficit])
 	}
 	if reconstruct.numbers[NumberMissingParts] != float64(0) {
 		t.Errorf("missing parts = %v, want 0", reconstruct.numbers[NumberMissingParts])

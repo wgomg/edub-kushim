@@ -3,7 +3,7 @@ package tags
 import "testing"
 
 func TestDecideAdmission(t *testing.T) {
-	admissible := AdmissionFeatures{SubjectMatter: true, Dimension: true, NotPersonPlaceWork: true, Atomic: true}
+	admissible := AdmissionFeatures{SubjectMatter: true, Dimension: true, NotPersonPlaceWork: true, Atomic: true, NotFormGenre: true}
 
 	cases := []struct {
 		name        string
@@ -15,6 +15,11 @@ func TestDecideAdmission(t *testing.T) {
 		{"a lone failing rubric answer defers to review", func() AdmissionFeatures {
 			f := admissible
 			f.Dimension = false
+			return f
+		}(), AdmissionDefer, ReasonSingleSignal},
+		{"not_form_genre failing alone defers to review", func() AdmissionFeatures {
+			f := admissible
+			f.NotFormGenre = false
 			return f
 		}(), AdmissionDefer, ReasonSingleSignal},
 		{"two failing rubric answers reject", func() AdmissionFeatures {

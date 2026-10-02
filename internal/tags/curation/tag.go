@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -178,6 +179,16 @@ func (s *Tag) PendingIdentityCounts(ctx context.Context, names []string) (map[st
 		counts[row.Name] = row.PendingCount
 	}
 	return counts, nil
+}
+
+// IdentityHeldNames returns, per name, the live store anchor its refused
+// fold targeted; names without a hold are absent from the result.
+func (s *Tag) IdentityHeldNames(ctx context.Context, names []string) (map[string]string, error) {
+	held, err := tags.IdentityHeldNames(ctx, s.client.Queries, names)
+	if err != nil {
+		return nil, errs.FromDB(err, "identity held names")
+	}
+	return held, nil
 }
 
 // AddToStore embeds the names into the matcher store, best-effort.

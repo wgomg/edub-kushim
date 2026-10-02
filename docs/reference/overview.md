@@ -217,7 +217,7 @@ internal/
 │   ├── tagmeasure.go       # TagMeasureTaskHandler (forks `kushim tagmeasure --run`) + ForkAndExtractReport/ExtractReport
 │   ├── evidence.go         # Evidence records and JSON encoding (RuleSetVersion, Record, EncodeRows)
 │   ├── identity.go         # Identity planning types (Disposition, AliasAction, Registration, Plan)
-│   ├── worklist.go         # Rule-set v0 worklist cuts (DeriveWorklists, Twin/Sibling/CompoundSplit)
+│   ├── worklist.go         # Rule-set v1 worklist cuts (DeriveWorklists, Twin/Sibling/CompoundSplit)
 │   ├── algebra.go          # Extension algebra readings (Set, NewSet, MassOf, EvidenceState)
 │   ├── extension.go        # Read-only tag-store snapshot (NewSnapshot, Tag, Pair, AliasResolver, SelfAliasResolver)
 │   ├── atomicity.go        # Compound shape classification (ClassifyShape, DeriveParts, MaxCompoundWords)

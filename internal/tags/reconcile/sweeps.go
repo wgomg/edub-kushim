@@ -141,6 +141,11 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		ids[i] = t.ID
 		names[i] = t.Name
 	}
+	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: provisional identity hold lookup: %v", err)
+		return
+	}
 	assigned, err := r.client.CountTagDocumentsByTagIDs(ctx, ids)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: count provisional tag documents: %v", err)
@@ -173,6 +178,11 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		if assignedCounts[t.ID] == 0 {
 			// the orphan sweep in this same run owns zero-assignment rows
 			report.Provisional.ZeroAssign++
+			continue
+		}
+		if anchor, ok := held[t.Name]; ok {
+			report.Provisional.Skipped++
+			r.logger.Info("", "tag reconcile: identity hold %q (anchor=%q) — left for review", t.Name, anchor)
 			continue
 		}
 		docs := liveCounts[t.ID]
@@ -270,12 +280,12 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 			results, err = r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
 		}
 		if err != nil {
-			r.logger.Error("", "tag reconcile: judge provisional tag %q: %v", e.name, err)
+			r.logger.Warn("", "tag reconcile: judge provisional tag %q: %v", e.name, err)
 			report.Provisional.Failed++
 			continue
 		}
 		if len(results) != len(candidates) {
-			r.logger.Error("", "tag reconcile: judge returned %d verdicts for provisional tag %q", len(results), e.name)
+			r.logger.Warn("", "tag reconcile: judge returned %d verdicts for provisional tag %q", len(results), e.name)
 			report.Provisional.Failed++
 			continue
 		}

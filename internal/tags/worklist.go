@@ -1,16 +1,17 @@
 package tags
 
-// The v0 worklist cuts are provisional: calibration replaces the constants
+// The v1 worklist cuts are provisional: calibration replaces the constants
 // and advances RuleSetVersion. The cuts stay consumer-side so
 // recalibration never invalidates raw records.
 const (
 	TwinJaccardCut        = 0.9
 	TwinJaccardGrayFloor  = 0.7
-	TwinMinMass           = 2
+	TwinMinMass           = 3
 	CompoundSplitCut      = 0.1
 	CompoundGrayCut       = 0.25
 	SiblingContainmentCut = 0.8
 	SiblingGrayFloor      = 0.6
+	SiblingMinMass        = 3
 )
 
 // Twin is a pair of tags whose document sets are near-identical: Jaccard
@@ -38,8 +39,9 @@ type CompoundSplit struct {
 }
 
 // Sibling is a containment pair: one tag's document set nearly contains
-// the other's, at or above the sibling gray floor. Gray marks the
-// review-needed band below SiblingContainmentCut.
+// the other's, at or above the sibling gray floor with both masses at or
+// above SiblingMinMass. Gray marks the review-needed band below
+// SiblingContainmentCut.
 type Sibling struct {
 	A, B        string
 	Containment float64
@@ -56,7 +58,7 @@ type Worklists struct {
 }
 
 // DeriveWorklists filters evidence readings into the three review
-// worklists, applying the v0 cuts per operator. Readings that name too
+// worklists, applying the v1 cuts per operator. Readings that name too
 // few operands, miss their needed numbers, or fall below the floors are
 // dropped.
 func DeriveWorklists(records []Record) Worklists {
@@ -97,7 +99,7 @@ func (w *Worklists) addOverlap(r Record) {
 	containmentA, _ := numberFloat64(r.Numbers, NumberContainmentA)
 	containmentB, _ := numberFloat64(r.Numbers, NumberContainmentB)
 	containment := max(containmentA, containmentB)
-	if containment >= SiblingGrayFloor {
+	if containment >= SiblingGrayFloor && massA >= SiblingMinMass && massB >= SiblingMinMass {
 		w.Siblings = append(w.Siblings, Sibling{
 			A:           r.Operands[0],
 			B:           r.Operands[1],
