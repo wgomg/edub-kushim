@@ -59,11 +59,13 @@ func BuildTagSplitPrompt(tags []string) string {
 
 // ParseTagSplitResponse parses n split answers; a split with fewer than
 // two components is discarded, and unanswered entries stay zero-valued.
+// A bare top-level array is accepted as the envelope's value, and an
+// entry without an index is placed by its position in the array.
 func ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error) {
-	content = cleanCodeBlock(strings.TrimSpace(content))
+	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "splits")
 	var parsed struct {
 		Splits []struct {
-			Index      int      `json:"index"`
+			Index      *int     `json:"index"`
 			Verdict    string   `json:"verdict"`
 			Components []string `json:"components"`
 		} `json:"splits"`
@@ -72,13 +74,17 @@ func ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error) {
 		return nil, fmt.Errorf("parse tag split response: %w", err)
 	}
 	results := make([]TagSplitResult, n)
-	for _, s := range parsed.Splits {
-		if s.Index < 0 || s.Index >= n {
+	for pos, s := range parsed.Splits {
+		idx := pos
+		if s.Index != nil {
+			idx = *s.Index
+		}
+		if idx < 0 || idx >= n {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(s.Verdict)) {
 		case string(TagSplitKeep):
-			results[s.Index].Verdict = TagSplitKeep
+			results[idx].Verdict = TagSplitKeep
 		case string(TagSplitSplit):
 			components := make([]string, 0, len(s.Components))
 			for _, c := range s.Components {
@@ -89,8 +95,8 @@ func ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error) {
 			if len(components) < 2 {
 				continue
 			}
-			results[s.Index].Verdict = TagSplitSplit
-			results[s.Index].Components = components
+			results[idx].Verdict = TagSplitSplit
+			results[idx].Components = components
 		}
 	}
 	return results, nil

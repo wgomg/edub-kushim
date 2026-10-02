@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"unicode"
@@ -34,6 +35,25 @@ func cleanCodeBlock(s string) string {
 	s = strings.TrimSuffix(s, "```")
 
 	return strings.TrimSpace(s)
+}
+
+// isBareArray reports whether content is a bare top-level JSON array; the
+// wrapBareArray normalization and the transport bridges' drift log share
+// the test. content must already be cleaned and trimmed.
+func isBareArray(content string) bool {
+	return strings.HasPrefix(content, "[")
+}
+
+// wrapBareArray wraps content under key as {"key": ...} when it is a bare
+// top-level JSON array, so envelope-expecting judged parsers accept models
+// that answer with the array alone. Any other root shape passes through
+// unchanged and fails in the caller's unmarshal as before. content must
+// already be cleaned and trimmed.
+func wrapBareArray(content, key string) string {
+	if isBareArray(content) {
+		return fmt.Sprintf(`{"%s":%s}`, key, content)
+	}
+	return content
 }
 
 // ContainsNonLatin reports whether the string carries script beyond the

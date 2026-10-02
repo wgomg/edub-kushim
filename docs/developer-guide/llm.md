@@ -366,6 +366,19 @@ log. The `AnalyzeDocType` fallback for a response with no `type` key re-parses
 through the same helper, so an object-shaped response still yields its
 `DocType`.
 
+The four judged parsers (`ParseAdjudicationResponse`, `ParseTagSplitResponse`,
+`ParseTagQualityResponse`, `ParseTagIdentityResponse`) run the same
+clean-then-decode steps with two tolerances for replies that drift from the
+prompt's envelope: a bare top-level JSON array is wrapped under the step's
+envelope key (`pairs`, `splits`, `tags`, `terms`) before decoding, and an
+entry that omits `index` is placed at its array position. A present index is
+still range-checked, entries beyond the candidate count are dropped, and the
+quality/identity parsers still error when a candidate lacks a complete
+verdict. Both bridges log a DEBUG drift line naming the model when the reply
+is a bare array, and a parse failure carries the model name and the reply text
+(`<parse error> (model <model>)` followed by a `raw: <reply>` line) — the
+pristine reply on the OpenAI side, the cleaned text on the Anthropic side.
+
 Validation happens *upstream* of parsing, in the enricher (§10): tags are
 filtered/normalized, people canonicalized, doc type checked against the
 known list, language checked. The LLM's word is never persisted raw.
@@ -706,4 +719,4 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 
 ---
 
-*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-02. If code and doc disagree, code wins.*

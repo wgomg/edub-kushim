@@ -349,7 +349,8 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 
 // judgedAnthropic runs one judged step against the Anthropic API: the size
 // gate, the messages request with caching and reasoning, the labeled
-// transport call and the parser.
+// transport call, the bare-array drift log and the parser. A parse failure
+// carries the model name and the cleaned reply.
 func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
 	var zero T
 
@@ -368,7 +369,14 @@ func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt
 	if err != nil {
 		return zero, err
 	}
-	return parse(responseContent, n)
+	if isBareArray(responseContent) {
+		l.logger.Debug("", "%s: model %s replied with a bare top-level array, wrapped", label, l.llmCfg.Model)
+	}
+	results, err := parse(responseContent, n)
+	if err != nil {
+		return zero, fmt.Errorf("%w (model %s)\nraw: %s", err, l.llmCfg.Model, responseContent)
+	}
+	return results, nil
 }
 
 // Adjudicate answers the same-intent pairs through the Anthropic API.

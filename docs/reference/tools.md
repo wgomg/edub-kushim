@@ -60,7 +60,7 @@ type ContentAnalyzer interface {
 
 ### Adapter integration
 
-Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time. The four judged steps share one path per adapter (the generic `judgedOpenAI`/`judgedAnthropic` helper): `checkContentTooLarge` → request (temperature 0) → labeled `doRequest` → empty-content check → the step's parser.
+Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time. The four judged steps share one path per adapter (the generic `judgedOpenAI`/`judgedAnthropic` helper): `checkContentTooLarge` → request (temperature 0) → labeled `doRequest` → empty-content check → bare-array drift log → the step's parser; a parse failure is returned carrying the model name and the reply text (`(model <model>)` plus a `raw:` line).
 
 ---
 
@@ -140,7 +140,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 ### Functions
 
 - `BuildAdjudicationPrompt(pairs []TagPairEvidence) string` — Builds the JSON-verdict prompt: per pair, the two terms, their embedding similarity, the query-side runner-up similarity, and the target's nearest other store tag.
-- `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; unknown verdict strings, out-of-range indices, and short slices leave the affected entries with a zero verdict (ambiguous → caller keeps). Invalid JSON returns an error.
+- `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; a bare top-level array is accepted as the envelope's value, and an entry without `index` is placed by its array position. Unknown verdict strings, out-of-range indices, and short slices leave the affected entries with a zero verdict (ambiguous → caller keeps). Invalid JSON returns an error.
 
 ---
 
@@ -159,7 +159,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 ### Functions
 
 - `BuildTagSplitPrompt(tags []string) string` — Builds the JSON-verdict prompt for compound tags: per tag, its content words are the parts; `split` when every part names a subject that works as a tag on its own and the phrase is just their combination — a modifier before a generic head splits too (`labor movement`, `bike repair`) — `keep` when the phrase names one established subject the parts cannot compose; compounds sharing a head and shape take one reading, store existence is not the criterion, and unsettled readings keep, never force a split. Split components are listed when splitting.
-- `ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error)` — Parses `{"splits":[{"index":0,"verdict":"split","components":[...]},...]}` (code-fenced or plain) into one result per tag; unknown verdicts, out-of-range indices, and splits with fewer than two non-empty components leave the entry ambiguous (caller keeps). Invalid JSON returns an error.
+- `ParseTagSplitResponse(content string, n int) ([]TagSplitResult, error)` — Parses `{"splits":[{"index":0,"verdict":"split","components":[...]},...]}` (code-fenced or plain) into one result per tag; a bare top-level array is accepted as the envelope's value, and an entry without `index` is placed by its array position. Unknown verdicts, out-of-range indices, and splits with fewer than two non-empty components leave the entry ambiguous (caller keeps). Invalid JSON returns an error.
 
 ---
 
@@ -187,7 +187,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
   - Adds the thinking config only when `caps.SupportsReasoning`: provider-specific knobs (`thinking` for deepseek/zhipu, `enable_thinking` for qwen, `reasoning_effort` otherwise), with the disabled forms when `llmCfg.Reasoning` is false
 - Default provider URL from the registry's `ProviderDefaultURL(provider)`
 - Token usage from `usage` field
-- The four judged steps (`Adjudicate`, `AdjudicateTagSplits`, `JudgeTagQuality`, `JudgeTagIdentity`) share `judgedOpenAI`: size gate → temperature-0 request → labeled `doRequest` → empty-response check → the step's parser
+- The four judged steps (`Adjudicate`, `AdjudicateTagSplits`, `JudgeTagQuality`, `JudgeTagIdentity`) share `judgedOpenAI`: size gate → temperature-0 request → labeled `doRequest` → empty-response check → bare-array drift log → the step's parser; a parse failure carries the model name and the raw reply
 
 ---
 
@@ -207,7 +207,7 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 - Token usage from `usage.input_tokens` + `usage.output_tokens`
 - Shared request assembly: `buildRequest(system, messages, maxTokens, temp)` sets the envelope (model, max tokens, system, `stream: false`, ephemeral cache control) and applies the reasoning and temperature gates; `Analyze`, `AnalyzeDocType`, and the judged-step helper all go through it
 - Shared transport: `doRequest(ctx, reqBody, errLabel)` marshals, sends, and decodes one `/messages` call (headers, status/error parsing, text-block extraction)
-- The four judged steps share `judgedAnthropic`: size gate → temperature-0 request → labeled `doRequest` → the step's parser
+- The four judged steps share `judgedAnthropic`: size gate → temperature-0 request → labeled `doRequest` → bare-array drift log → the step's parser; a parse failure carries the model name and the cleaned reply text
 
 ---
 

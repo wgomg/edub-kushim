@@ -317,7 +317,8 @@ func (l *LlmOpenAiCompatible) buildRequestMessages(system, user, assistant strin
 
 // judgedOpenAI runs one judged step against the compatible API: the size
 // gate, the request envelope, the labeled transport call, the empty
-// response check and the parser.
+// response check, the bare-array drift log and the parser. A parse failure
+// carries the model name and the raw reply.
 func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
 	var zero T
 
@@ -336,7 +337,16 @@ func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, pr
 		return zero, fmt.Errorf("empty response from LLM")
 	}
 
-	return parse(chatResp.Choices[0].Message.Content, n)
+	raw := chatResp.Choices[0].Message.Content
+	content := cleanCodeBlock(strings.TrimSpace(raw))
+	if isBareArray(content) {
+		l.logger.Debug("", "%s: model %s replied with a bare top-level array, wrapped", label, l.llmCfg.Model)
+	}
+	results, err := parse(content, n)
+	if err != nil {
+		return zero, fmt.Errorf("%w (model %s)\nraw: %s", err, l.llmCfg.Model, raw)
+	}
+	return results, nil
 }
 
 // Adjudicate answers the same-intent pairs through the compatible API.

@@ -126,12 +126,14 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 // ParseTagQualityResponse errors when any candidate lacks a fully
 // specified verdict: a zero-valued result must never be read as an
 // all-criteria-false rejection, or a truncated response would cache a
-// spurious permanent rejection. An omitted defer reads as false.
+// spurious permanent rejection. An omitted defer reads as false. A bare
+// top-level array is accepted as the envelope's value, and an entry
+// without an index is placed by its position in the array.
 func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
-	content = cleanCodeBlock(strings.TrimSpace(content))
+	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "tags")
 	var parsed struct {
 		Tags []struct {
-			Index int `json:"index"`
+			Index *int `json:"index"`
 			TagQualityCriteria
 		} `json:"tags"`
 	}
@@ -143,12 +145,16 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 	for i := range results {
 		results[i].Index = i
 	}
-	for _, t := range parsed.Tags {
-		if t.Index < 0 || t.Index >= n || !t.Complete() {
+	for pos, t := range parsed.Tags {
+		idx := pos
+		if t.Index != nil {
+			idx = *t.Index
+		}
+		if idx < 0 || idx >= n || !t.Complete() {
 			continue
 		}
-		results[t.Index] = TagQualityResult{
-			Index:              t.Index,
+		results[idx] = TagQualityResult{
+			Index:              idx,
 			SubjectMatter:      *t.SubjectMatter,
 			Dimension:          *t.Dimension,
 			NotPersonPlaceWork: *t.NotPersonPlaceWork,
@@ -156,7 +162,7 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 			NotFormGenre:       *t.NotFormGenre,
 			Defer:              t.Defer != nil && *t.Defer,
 		}
-		present[t.Index] = true
+		present[idx] = true
 	}
 	var missing []int
 	for i, ok := range present {

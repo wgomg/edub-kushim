@@ -16,6 +16,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -58,7 +59,7 @@ func (f *judgedFixture) catalogedCaps(t *testing.T) *llm.ModelCapability {
 
 func (f *judgedFixture) openAI(t *testing.T, caps *llm.ModelCapability) *LlmOpenAiCompatible {
 	t.Helper()
-	a, err := NewLlmOpenAiCompatible(nil, config.ToolConfig{}, &config.LlmConfig{
+	a, err := NewLlmOpenAiCompatible(log.NewDiscardLogger(), config.ToolConfig{}, &config.LlmConfig{
 		Provider: "testprovider",
 		Model:    "test-model",
 	}, caps, "", 0, 0, f.reg)
@@ -70,7 +71,7 @@ func (f *judgedFixture) openAI(t *testing.T, caps *llm.ModelCapability) *LlmOpen
 
 func (f *judgedFixture) anthropic(t *testing.T, caps *llm.ModelCapability) *LlmAnthropic {
 	t.Helper()
-	a, err := NewLlmAnthropic(nil, config.ToolConfig{}, &config.LlmConfig{
+	a, err := NewLlmAnthropic(log.NewDiscardLogger(), config.ToolConfig{}, &config.LlmConfig{
 		Provider: "testprovider",
 		Model:    "test-model",
 	}, caps, "", 0, 0, f.reg)
@@ -384,5 +385,85 @@ func TestJudgedAnthropic_ContentGateBeforeRequest(t *testing.T) {
 	}
 	if n := hits.Load(); n != 0 {
 		t.Errorf("requests sent = %d, want 0", n)
+	}
+}
+
+func TestJudgedOpenAI_BareArrayReply(t *testing.T) {
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": `[{"index":0,"verdict":"same","direction":"query"}]`}}},
+		})
+	})
+
+	results, err := f.openAI(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs())
+	if err != nil {
+		t.Fatalf("Adjudicate() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].Verdict != types.TagVerdicts.Same {
+		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
+	}
+	if results[0].Direction != TagDirectionQuery {
+		t.Errorf("Direction = %q, want %q", results[0].Direction, TagDirectionQuery)
+	}
+}
+
+func TestJudgedOpenAI_ParseErrorCarriesModelAndRaw(t *testing.T) {
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": "not json"}}},
+		})
+	})
+
+	_, err := f.openAI(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, want := range []string{"parse adjudication response", "test-model", "raw: not json"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+}
+
+func TestJudgedAnthropic_BareArrayReply(t *testing.T) {
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": `[{"index":0,"verdict":"same","direction":"query"}]`}},
+		})
+	})
+
+	results, err := f.anthropic(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs())
+	if err != nil {
+		t.Fatalf("Adjudicate() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].Verdict != types.TagVerdicts.Same {
+		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
+	}
+	if results[0].Direction != TagDirectionQuery {
+		t.Errorf("Direction = %q, want %q", results[0].Direction, TagDirectionQuery)
+	}
+}
+
+func TestJudgedAnthropic_ParseErrorCarriesModelAndRaw(t *testing.T) {
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "not json"}},
+		})
+	})
+
+	_, err := f.anthropic(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, want := range []string{"parse adjudication response", "test-model", "raw: not json"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
 	}
 }

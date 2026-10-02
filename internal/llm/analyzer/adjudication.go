@@ -72,12 +72,14 @@ func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 
 // ParseAdjudicationResponse parses n pair verdicts. Unknown or
 // out-of-range indices and unrecognized verdicts leave that pair
-// unanswered rather than inventing one.
+// unanswered rather than inventing one. A bare top-level array is
+// accepted as the envelope's value, and an entry without an index is
+// placed by its position in the array.
 func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error) {
-	content = cleanCodeBlock(strings.TrimSpace(content))
+	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "pairs")
 	var parsed struct {
 		Pairs []struct {
-			Index     int    `json:"index"`
+			Index     *int   `json:"index"`
 			Verdict   string `json:"verdict"`
 			Direction string `json:"direction"`
 		} `json:"pairs"`
@@ -89,18 +91,22 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 	for i := range results {
 		results[i].Index = i
 	}
-	for _, p := range parsed.Pairs {
-		if p.Index < 0 || p.Index >= n {
+	for pos, p := range parsed.Pairs {
+		idx := pos
+		if p.Index != nil {
+			idx = *p.Index
+		}
+		if idx < 0 || idx >= n {
 			continue
 		}
 		v, err := types.ParseTagVerdict(p.Verdict)
 		if err != nil {
 			continue
 		}
-		results[p.Index].Verdict = v
+		results[idx].Verdict = v
 		switch p.Direction {
 		case TagDirectionQuery, TagDirectionTarget, TagDirectionTie:
-			results[p.Index].Direction = p.Direction
+			results[idx].Direction = p.Direction
 		}
 	}
 	return results, nil

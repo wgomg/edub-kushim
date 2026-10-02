@@ -800,6 +800,43 @@ func TestParseAdjudicationResponse(t *testing.T) {
 				{Index: 2, Verdict: ""},
 			},
 		},
+		{
+			name:    "bare top-level array accepted as the envelope",
+			content: `[{"index":0,"verdict":"same"},{"index":1,"verdict":"variant"}]`,
+			n:       2,
+			want: []TagVerdictResult{
+				{Index: 0, Verdict: same},
+				{Index: 1, Verdict: variant},
+			},
+		},
+		{
+			name:    "entries without index placed by position",
+			content: `{"pairs":[{"verdict":"same","direction":"query"},{"verdict":"variant"}]}`,
+			n:       2,
+			want: []TagVerdictResult{
+				{Index: 0, Verdict: same, Direction: TagDirectionQuery},
+				{Index: 1, Verdict: variant},
+			},
+		},
+		{
+			name:    "mixed indexed and unindexed entries",
+			content: `{"pairs":[{"verdict":"same"},{"index":2,"verdict":"variant"}]}`,
+			n:       3,
+			want: []TagVerdictResult{
+				{Index: 0, Verdict: same},
+				{Index: 1, Verdict: ""},
+				{Index: 2, Verdict: variant},
+			},
+		},
+		{
+			name:    "unindexed entries beyond n dropped",
+			content: `{"pairs":[{"verdict":"same"},{"verdict":"variant"},{"verdict":"same"}]}`,
+			n:       2,
+			want: []TagVerdictResult{
+				{Index: 0, Verdict: same},
+				{Index: 1, Verdict: variant},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -917,6 +954,33 @@ func TestParseTagSplitResponse(t *testing.T) {
 			n:       1,
 			want: []TagSplitResult{
 				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
+			},
+		},
+		{
+			name:    "bare top-level array accepted as the envelope",
+			content: `[{"index":0,"verdict":"keep"},{"index":1,"verdict":"split","components":["supply","demand"]}]`,
+			n:       2,
+			want: []TagSplitResult{
+				{Verdict: TagSplitKeep},
+				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
+			},
+		},
+		{
+			name:    "entries without index placed by position",
+			content: `{"splits":[{"verdict":"keep"},{"verdict":"split","components":["supply","demand"]}]}`,
+			n:       2,
+			want: []TagSplitResult{
+				{Verdict: TagSplitKeep},
+				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
+			},
+		},
+		{
+			name:    "unindexed entries beyond n dropped",
+			content: `{"splits":[{"verdict":"keep"},{"verdict":"keep"},{"verdict":"split","components":["a","b"]}]}`,
+			n:       2,
+			want: []TagSplitResult{
+				{Verdict: TagSplitKeep},
+				{Verdict: TagSplitKeep},
 			},
 		},
 	}
@@ -1480,6 +1544,31 @@ func TestParseTagQualityResponse_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
+	bare := `[
+		{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true},
+		{"subject_matter":false,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true},
+		{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}
+	]`
+	results, err := ParseTagQualityResponse(bare, 2)
+	if err != nil {
+		t.Fatalf("parse bare array without indexes: %v", err)
+	}
+	if !results[0].SubjectMatter || !results[0].Dimension {
+		t.Errorf("position 0 answers = %+v, want them populated", results[0])
+	}
+	if results[1].SubjectMatter || !results[1].Dimension {
+		t.Errorf("position 1 answers = %+v, want subject_matter=false", results[1])
+	}
+
+	// a bare array shorter than n must still fail rather than read as an
+	// all-false rejection
+	truncated := `[{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}]`
+	if _, err := ParseTagQualityResponse(truncated, 2); err == nil {
+		t.Fatal("expected incomplete-response error, got nil")
+	}
+}
+
 func TestTagDetail_PresenceSemantics(t *testing.T) {
 	// String-shape tag: no annotation, so no detail entry.
 	stringTag := `{"title":"t","tags":["hello"]}`
@@ -1578,6 +1667,31 @@ func TestParseTagIdentityResponse(t *testing.T) {
 				t.Errorf("results[0] = %+v, want %+v", results[0], *tt.want0)
 			}
 		})
+	}
+}
+
+func TestParseTagIdentityResponse_BareArrayPositional(t *testing.T) {
+	bare := `[
+		{"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true},
+		{"fold_to_base":false,"fold_preserves_denotation":false,"conventional_form":false},
+		{"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true}
+	]`
+	results, err := ParseTagIdentityResponse(bare, 2)
+	if err != nil {
+		t.Fatalf("parse bare array without indexes: %v", err)
+	}
+	if !results[0].FoldToBase || !results[0].FoldPreservesDenotation || !results[0].ConventionalForm {
+		t.Errorf("position 0 answers = %+v, want all true", results[0])
+	}
+	if results[1].FoldToBase || results[1].FoldPreservesDenotation || results[1].ConventionalForm {
+		t.Errorf("position 1 answers = %+v, want all false", results[1])
+	}
+
+	// a bare array shorter than n must still fail rather than read as an
+	// all-false rejection
+	truncated := `[{"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true}]`
+	if _, err := ParseTagIdentityResponse(truncated, 2); err == nil {
+		t.Fatal("expected incomplete-response error, got nil")
 	}
 }
 

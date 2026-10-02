@@ -96,12 +96,13 @@ func BuildTagIdentityPrompt(candidates []TagIdentityCandidate) string {
 
 // ParseTagIdentityResponse errors when any candidate lacks a fully
 // specified verdict, so a truncated answer is never read as an all-false
-// rejection.
+// rejection. A bare top-level array is accepted as the envelope's value,
+// and an entry without an index is placed by its position in the array.
 func ParseTagIdentityResponse(content string, n int) ([]TagIdentityResult, error) {
-	content = cleanCodeBlock(strings.TrimSpace(content))
+	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "terms")
 	var parsed struct {
 		Terms []struct {
-			Index int `json:"index"`
+			Index *int `json:"index"`
 			TagIdentityCriteria
 		} `json:"terms"`
 	}
@@ -113,17 +114,21 @@ func ParseTagIdentityResponse(content string, n int) ([]TagIdentityResult, error
 	for i := range results {
 		results[i].Index = i
 	}
-	for _, t := range parsed.Terms {
-		if t.Index < 0 || t.Index >= n || !t.Complete() {
+	for pos, t := range parsed.Terms {
+		idx := pos
+		if t.Index != nil {
+			idx = *t.Index
+		}
+		if idx < 0 || idx >= n || !t.Complete() {
 			continue
 		}
-		results[t.Index] = TagIdentityResult{
-			Index:                   t.Index,
+		results[idx] = TagIdentityResult{
+			Index:                   idx,
 			FoldToBase:              *t.FoldToBase,
 			FoldPreservesDenotation: *t.FoldPreservesDenotation,
 			ConventionalForm:        *t.ConventionalForm,
 		}
-		present[t.Index] = true
+		present[idx] = true
 	}
 	var missing []int
 	for i, ok := range present {
