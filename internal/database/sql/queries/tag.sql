@@ -97,15 +97,73 @@ SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
         JOIN document d ON d.id = dt.document_id
         WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
 FROM tag t
+LEFT JOIN LATERAL (
+    SELECT e.criteria, e.pass, e.outcome
+    FROM tag_quality_event e
+    WHERE e.tag_name = t.name AND e.policy_version = @policy_version
+    ORDER BY e.verdict_at DESC
+    LIMIT 1
+) qe ON true
 WHERE t.promoted_at IS NULL
   AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-ORDER BY coalesce(t.created_at, now()) DESC
-LIMIT $1 OFFSET $2;
+  AND (@subject_matter_state::text = ''
+       OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
+  AND (@dimension_state::text = ''
+       OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
+  AND (@not_person_place_work_state::text = ''
+       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = @not_person_place_work_state::text)
+  AND (@atomic_state::text = ''
+       OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
+  AND (@not_form_genre_state::text = ''
+       OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = @not_form_genre_state::text)
+  AND (@defer_state::text = ''
+       OR coalesce(qe.criteria ->> 'defer', 'absent') = @defer_state::text)
+  -- legacy rows carry no outcome: derive it the same way the ui's verdict
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  AND (@verdict_state::text = ''
+       OR (@verdict_state::text = 'none' AND qe.pass IS NULL)
+       OR (@verdict_state::text <> 'none'
+           AND qe.pass IS NOT NULL
+           AND coalesce(qe.outcome,
+                        CASE WHEN qe.pass THEN 'admit'
+                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                             ELSE 'reject' END) = @verdict_state::text))
+ORDER BY coalesce(t.created_at, now()) DESC, t.id DESC
+LIMIT @page_limit OFFSET @page_offset;
 
 -- name: CountProvisionalTags :one
 SELECT COUNT(*) FROM tag t
+LEFT JOIN LATERAL (
+    SELECT e.criteria, e.pass, e.outcome
+    FROM tag_quality_event e
+    WHERE e.tag_name = t.name AND e.policy_version = @policy_version
+    ORDER BY e.verdict_at DESC
+    LIMIT 1
+) qe ON true
 WHERE t.promoted_at IS NULL
-  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id);
+  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND (@subject_matter_state::text = ''
+       OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
+  AND (@dimension_state::text = ''
+       OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
+  AND (@not_person_place_work_state::text = ''
+       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = @not_person_place_work_state::text)
+  AND (@atomic_state::text = ''
+       OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
+  AND (@not_form_genre_state::text = ''
+       OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = @not_form_genre_state::text)
+  AND (@defer_state::text = ''
+       OR coalesce(qe.criteria ->> 'defer', 'absent') = @defer_state::text)
+  -- legacy rows carry no outcome: derive it the same way the ui's verdict
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  AND (@verdict_state::text = ''
+       OR (@verdict_state::text = 'none' AND qe.pass IS NULL)
+       OR (@verdict_state::text <> 'none'
+           AND qe.pass IS NOT NULL
+           AND coalesce(qe.outcome,
+                        CASE WHEN qe.pass THEN 'admit'
+                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                             ELSE 'reject' END) = @verdict_state::text));
 
 -- name: ListProvisionalTagsOlderThan :many
 SELECT t.id, t.name, t.created_at FROM tag t

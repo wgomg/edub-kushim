@@ -510,8 +510,9 @@ resolve them afterwards:
   tags" tab) is the operator path: it lists provisional names with their
   live `document_count` and latest verdict — `null` for a name with no row,
   labelled from the recorded outcome (`admit`/`defer`/`reject`) with a rubric
-  fallback for rows predating the outcome column — and promotes one through
-  the same `curation.Tag.Promote` method the sweep
+  fallback for rows predating the outcome column — narrowed by rubric-state
+  and verdict-class filters and paged over the filtered total; it promotes one
+  through the same `curation.Tag.Promote` method the sweep
   uses. Rows whose refused fold targeted a live store value carry the anchor
   as `identity_hold` and render an "identity hold" pill. A rejection is a
   normal tag delete, so the `deleted_tag` blocklist keeps the name from being

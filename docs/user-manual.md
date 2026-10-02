@@ -1540,11 +1540,12 @@ Response `200`:
 ### Provisional Tag Review Queue
 
 Lists tags that are provisional (`promoted_at IS NULL`) and carry at least one
-assignment, newest first, each with its latest rubric verdict. `document_count`
-counts live (non-trashed) documents only. Viewer-readable.
+assignment, newest first (ties broken by id), each with its latest rubric verdict,
+filterable by rubric answer and verdict class and paged over the filtered total.
+`document_count` counts live (non-trashed) documents only. Viewer-readable.
 
 ```
-GET /api/v1/tags/provisional?limit=50&offset=0
+GET /api/v1/tags/provisional?limit=50&offset=0&criteria=atomic:fail&verdict=none
 ```
 
 Response `200`:
@@ -1574,13 +1575,18 @@ Response `200`:
       }
     }
   ],
-  "total": 1
+  "total": 1,
+  "pending_identity_total": 0
 }
 ```
 
-- `total` counts every provisional tag with at least one assignment, independent of the page.
+- `total` counts the provisional tags matching the active filters, independent of the page.
+- `criteria` (query parameter) filters by rubric answer: a comma-separated list of `key:state` pairs, with keys `subject_matter`, `dimension`, `not_person_place_work`, `atomic`, `not_form_genre`, `defer` and states `pass`, `fail`, `absent` (an omitted key, a JSON null, or no verdict row at all). Multiple pairs combine with AND.
+- `verdict` (query parameter) filters by verdict class: `none` (no quality-event row at the current policy version), `admit`, `defer`, or `reject`. Rows predating the `outcome` column are classified the same way the queue labels them (`pass` → `admit`, the `defer` criterion → `defer`, otherwise `reject`); unjudged tags are never `reject`.
+- Unknown criteria keys or states, and unknown verdict values, return `400`.
 - `verdict` is `null` for names with no recorded rubric verdict (judge outage at birth, re-emitted legacy provisionals).
-- `pending_identity` is the number of unresolved canonical-identity claims referencing the tag (as the flagged candidate or as the partner); when it is nonzero the queue shows an "identity pending" badge and a "Reevaluate identity" trigger.
+- `pending_identity` is the number of unresolved canonical-identity claims referencing the tag (as the flagged candidate or as the partner); when it is nonzero the queue shows an "identity pending" badge.
+- `pending_identity_total` is the envelope-level count of unresolved identity claims across the whole queue; the "Reevaluate identity" trigger shows while it is nonzero, so filters and pagination cannot hide it.
 - `identity_hold` is the store value whose fold the identity gate refused for this tag; when present the queue shows an "identity hold → <anchor>" pill and the tag is blocked from inline and sweep promotion until an operator resolves it. It is omitted for names without a hold.
 - `model` is omitted for cache-applied verdicts, which carry a stored decision without a judging model.
 - `outcome` is the recorded disposition (`reject`/`defer`/`admit`); it is omitted on rows predating the outcome column, and the queue then labels the verdict from the rubric.
@@ -1602,7 +1608,10 @@ POST /api/v1/tags/{id}/promote
 
 Rejecting a provisional tag uses the regular delete endpoint
 (`DELETE /api/v1/tags/{id}`), which records the name in the `deleted_tag`
-blocklist; the tags page exposes both actions in its "New tags" tab.
+blocklist; the tags page exposes both actions in its "New tags" tab, together
+with the rubric/verdict filter bar and the pager. The tab keeps its state in
+the URL (`prov_page`, `prov_criteria`, `prov_verdict`), so a filtered view can
+be linked and survives a reload.
 
 ### Reevaluate Pending Tag Identity
 

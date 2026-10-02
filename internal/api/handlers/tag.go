@@ -229,17 +229,28 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filter, err := parseProvisionalFilter(pb)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := max(pb.GetInt64("offset", 0, 0, 100000), 0)
 
-	rows, err := h.tag.ListProvisional(ctx, int32(limit), int32(offset))
+	rows, err := h.tag.ListProvisional(ctx, filter, int32(limit), int32(offset))
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "list provisional tags", err)
 		return
 	}
-	total, err := h.tag.CountProvisional(ctx)
+	total, err := h.tag.CountProvisional(ctx, filter)
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "count provisional tags", err)
+		return
+	}
+	pendingIdentityTotal, err := h.tag.CountPendingIdentity(ctx)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "count pending identity events", err)
 		return
 	}
 
@@ -294,7 +305,47 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, ProvisionalTagListResponse{Results: responses, Total: total})
+	writeJSON(w, http.StatusOK, ProvisionalTagListResponse{
+		Results:              responses,
+		Total:                total,
+		PendingIdentityTotal: pendingIdentityTotal,
+	})
+}
+
+// parseProvisionalFilter reads the criteria and verdict query parameters
+// into the curation filter. Criteria entries are `key:state` pairs with
+// state `pass`, `fail` or `absent`; unknown keys, unknown states and
+// unknown verdict values are rejected instead of silently ignored.
+func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
+	var filter curation.ProvisionalFilter
+	fields := map[string]*string{
+		"subject_matter":        &filter.SubjectMatter,
+		"dimension":             &filter.Dimension,
+		"not_person_place_work": &filter.NotPersonPlaceWork,
+		"atomic":                &filter.Atomic,
+		"not_form_genre":        &filter.NotFormGenre,
+		"defer":                 &filter.Defer,
+	}
+	states := map[string]string{"pass": "true", "fail": "false", "absent": "absent"}
+
+	for _, entry := range pb.GetStrings("criteria") {
+		key, state, ok := strings.Cut(entry, ":")
+		dst, knownKey := fields[key]
+		sqlState, knownState := states[state]
+		if !ok || !knownKey || !knownState {
+			return curation.ProvisionalFilter{}, errors.New("Invalid criteria filter")
+		}
+		*dst = sqlState
+	}
+
+	verdict := pb.Get("verdict", "")
+	switch verdict {
+	case "", "none", "admit", "defer", "reject":
+		filter.Verdict = verdict
+	default:
+		return curation.ProvisionalFilter{}, errors.New("Invalid verdict filter")
+	}
+	return filter, nil
 }
 
 // PromoteTag promotes one provisional tag, recording the reason.
@@ -562,10 +613,13 @@ type ProvisionalTagResponse struct {
 	IdentityHold    string                 `json:"identity_hold,omitempty"`
 }
 
-// ProvisionalTagListResponse is one page of provisional tags.
+// ProvisionalTagListResponse is one page of provisional tags: the
+// filtered total for the queue's pager and the queue-level pending
+// identity count that decides the reevaluation affordance.
 type ProvisionalTagListResponse struct {
-	Results []ProvisionalTagResponse `json:"results"`
-	Total   int64                    `json:"total"`
+	Results              []ProvisionalTagResponse `json:"results"`
+	Total                int64                    `json:"total"`
+	PendingIdentityTotal int64                    `json:"pending_identity_total"`
 }
 
 // CreateTagRequest is the body of POST /api/v1/tags.

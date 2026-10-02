@@ -310,7 +310,7 @@ func TestTag_ListProvisional(t *testing.T) {
 	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
 
 	// ListProvisional must return the provisional tag.
-	rows, err := svc.ListProvisional(ctx, 50, 0)
+	rows, err := svc.ListProvisional(ctx, ProvisionalFilter{}, 50, 0)
 	testutil.AssertNoError(t, err, "list provisional")
 	if len(rows) == 0 {
 		t.Fatal("expected at least one provisional tag")
@@ -329,10 +329,155 @@ func TestTag_ListProvisional(t *testing.T) {
 	}
 
 	// CountProvisional must match.
-	count, err := svc.CountProvisional(ctx)
+	count, err := svc.CountProvisional(ctx, ProvisionalFilter{})
 	testutil.AssertNoError(t, err, "count provisional")
 	if count < 1 {
 		t.Errorf("CountProvisional = %d, want >= 1", count)
+	}
+}
+
+// insertProvisionalVerdict records the judge's rubric answer for a
+// provisional tag under the current policy version; an empty outcome
+// leaves the row without one, matching the legacy rows the verdict
+// filter must still classify.
+func insertProvisionalVerdict(t *testing.T, client *database.Client, docID int64, tagName, criteria string, pass bool, outcome string) {
+	t.Helper()
+	_, err := client.Queries.InsertTagQualityEvent(context.Background(), database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       tagName,
+		Criteria:      json.RawMessage(criteria),
+		Pass:          pass,
+		Outcome:       sql.NullString{String: outcome, Valid: outcome != ""},
+		VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+		PolicyVersion: analyzer.TagQualityVersion,
+	})
+	testutil.AssertNoError(t, err, "insert quality event")
+}
+
+func TestTag_ListProvisionalFilters(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	// All fixtures hang off one document: linking it makes each tag part
+	// of the provisional queue, and an empty criteria skips the verdict
+	// insert so the tag stays unjudged.
+	docID := database.CreateUniqueDocument(t, client.Queries, "prov-filter-doc")
+
+	seed := func(name, criteria string, pass bool, outcome string) int64 {
+		id := database.MustCreateTag(t, client.Queries, name)
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		if criteria != "" {
+			row, err := client.Queries.GetTag(ctx, id)
+			testutil.AssertNoError(t, err, "read fixture tag")
+			insertProvisionalVerdict(t, client, docID, row.Name, criteria, pass, outcome)
+		}
+		return id
+	}
+
+	admitID := seed("prov-filter-admit",
+		`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`,
+		true, "admit")
+	failID := seed("prov-filter-fail", `{"atomic":false}`, false, "")
+	deferredID := seed("prov-filter-deferred", `{"defer":true}`, false, "")
+	rejectID := seed("prov-filter-reject", `{"atomic":false}`, false, "reject")
+	unjudgedID := seed("prov-filter-unjudged", "", false, "")
+
+	// Assertions stay scoped to this test's fixture ids and the limit
+	// keeps the whole filtered set on one page: the package database is
+	// shared with the other tests, so global counts are not stable.
+	cases := []struct {
+		name   string
+		filter ProvisionalFilter
+		want   []int64
+		drop   []int64
+	}{
+		{
+			name:   "unfiltered queue holds every fixture",
+			filter: ProvisionalFilter{},
+			want:   []int64{admitID, failID, deferredID, rejectID, unjudgedID},
+		},
+		{
+			name:   "criterion fail matches only the failing verdict rows",
+			filter: ProvisionalFilter{Atomic: "false"},
+			want:   []int64{failID, rejectID},
+			drop:   []int64{admitID, deferredID, unjudgedID},
+		},
+		{
+			name:   "criterion absent covers missing keys and unjudged tags",
+			filter: ProvisionalFilter{SubjectMatter: "absent"},
+			want:   []int64{failID, deferredID, rejectID, unjudgedID},
+			drop:   []int64{admitID},
+		},
+		{
+			name:   "criterion pass matches the rubric answer",
+			filter: ProvisionalFilter{Defer: "true"},
+			want:   []int64{deferredID},
+			drop:   []int64{admitID, failID, rejectID, unjudgedID},
+		},
+		{
+			name:   "verdict none selects the tags without a verdict row",
+			filter: ProvisionalFilter{Verdict: "none"},
+			want:   []int64{unjudgedID},
+			drop:   []int64{admitID, failID, deferredID, rejectID},
+		},
+		{
+			name:   "verdict admit follows the pass flag",
+			filter: ProvisionalFilter{Verdict: "admit"},
+			want:   []int64{admitID},
+			drop:   []int64{failID, deferredID, rejectID, unjudgedID},
+		},
+		{
+			name:   "verdict defer derives from the rubric on legacy rows",
+			filter: ProvisionalFilter{Verdict: "defer"},
+			want:   []int64{deferredID},
+			drop:   []int64{admitID, failID, rejectID, unjudgedID},
+		},
+		{
+			name:   "verdict reject joins derived and recorded outcomes",
+			filter: ProvisionalFilter{Verdict: "reject"},
+			want:   []int64{failID, rejectID},
+			drop:   []int64{admitID, deferredID, unjudgedID},
+		},
+		{
+			name:   "criteria and verdict combine with AND",
+			filter: ProvisionalFilter{Atomic: "false", Verdict: "reject"},
+			want:   []int64{failID, rejectID},
+			drop:   []int64{admitID, deferredID, unjudgedID},
+		},
+		{
+			name:   "disagreeing criteria and verdict yield nothing",
+			filter: ProvisionalFilter{Atomic: "false", Verdict: "none"},
+			drop:   []int64{admitID, failID, deferredID, rejectID, unjudgedID},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := svc.ListProvisional(ctx, tc.filter, 500, 0)
+			testutil.AssertNoError(t, err, "list provisional")
+			count, err := svc.CountProvisional(ctx, tc.filter)
+			testutil.AssertNoError(t, err, "count provisional")
+			if count != int64(len(rows)) {
+				t.Errorf("filtered count = %d, len(rows) = %d, they must agree", count, len(rows))
+			}
+
+			present := make(map[int64]bool, len(rows))
+			for _, row := range rows {
+				present[row.ID] = true
+			}
+			for _, id := range tc.want {
+				if !present[id] {
+					t.Errorf("filter %+v: fixture %d missing from the list", tc.filter, id)
+				}
+			}
+			for _, id := range tc.drop {
+				if present[id] {
+					t.Errorf("filter %+v: fixture %d must be excluded from the list", tc.filter, id)
+				}
+			}
+		})
 	}
 }
 

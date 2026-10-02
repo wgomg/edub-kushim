@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
@@ -2880,6 +2881,144 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 	if !found {
 		t.Errorf("tag %d not found in provisional list", candidateID)
 	}
+}
+
+// TestListProvisionalFilters pins the queue's filter contract: criteria
+// and verdict narrow both the rows and the reported total, unknown filter
+// values fail loudly at the boundary, and every response carries the
+// queue-level pending identity count.
+func TestListProvisionalFilters(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "prov-filter-doc")
+
+	seedTag := func(name string) int64 {
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+		return id
+	}
+
+	failID := seedTag("prov-filter-fail")
+	tag, err := env.client.Queries.GetTag(ctx, failID)
+	testutil.AssertNoError(t, err, "read fixture tag")
+	_, err = env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       tag.Name,
+		Criteria:      json.RawMessage(`{"atomic":false}`),
+		Pass:          false,
+		VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+		PolicyVersion: analyzer.TagQualityVersion,
+	})
+	testutil.AssertNoError(t, err, "insert quality event")
+
+	unjudgedID := seedTag("prov-filter-unjudged")
+
+	contains := func(results []ProvisionalTagResponse, id int64) bool {
+		for _, r := range results {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("criteria narrows rows and total", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=atomic:fail", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
+		if !contains(resp.Results, failID) {
+			t.Errorf("atomic:fail must include tag %d", failID)
+		}
+		if contains(resp.Results, unjudgedID) {
+			t.Errorf("atomic:fail must exclude the unjudged tag %d", unjudgedID)
+		}
+	})
+
+	t.Run("verdict none keeps unjudged tags", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?verdict=none", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
+		if !contains(resp.Results, unjudgedID) {
+			t.Errorf("verdict=none must include the unjudged tag %d", unjudgedID)
+		}
+		if contains(resp.Results, failID) {
+			t.Errorf("verdict=none must exclude the judged tag %d", failID)
+		}
+	})
+
+	t.Run("criteria and verdict combine", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=atomic:fail&verdict=reject", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
+		if !contains(resp.Results, failID) {
+			t.Errorf("atomic:fail + verdict=reject must include tag %d", failID)
+		}
+	})
+
+	t.Run("unknown criteria key is rejected", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=bogus:fail", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if !strings.Contains(w.Body.String(), "Invalid criteria filter") {
+			t.Errorf("body = %q, want the criteria error", w.Body.String())
+		}
+	})
+
+	t.Run("unknown criteria state is rejected", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=atomic:shiny", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if !strings.Contains(w.Body.String(), "Invalid criteria filter") {
+			t.Errorf("body = %q, want the criteria error", w.Body.String())
+		}
+	})
+
+	t.Run("unknown verdict is rejected", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?verdict=wat", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if !strings.Contains(w.Body.String(), "Invalid verdict filter") {
+			t.Errorf("body = %q, want the verdict error", w.Body.String())
+		}
+	})
+
+	t.Run("response reports the queue-level pending identity total", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		body := w.Body.Bytes()
+		var raw map[string]json.RawMessage
+		testutil.AssertNoError(t, json.Unmarshal(body, &raw), "decode keys")
+		if _, ok := raw["pending_identity_total"]; !ok {
+			t.Error("response must carry pending_identity_total")
+		}
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.Unmarshal(body, &resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(2), "unfiltered total counts only the linked fixtures")
+		wantPending, err := env.client.Queries.CountPendingTagIdentityEvents(ctx)
+		testutil.AssertNoError(t, err, "count pending identity events")
+		if resp.PendingIdentityTotal != wantPending {
+			t.Errorf("pending_identity_total = %d, want %d", resp.PendingIdentityTotal, wantPending)
+		}
+	})
 }
 
 func TestPromoteTag(t *testing.T) {

@@ -73,6 +73,12 @@ async function requestStrict(path, opts = {}) {
 const asList = (data) =>
 	Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
 
+// encodeCriteria serializes filter entries into the `criteria` query
+// parameter value, a CSV of `key:state` pairs.
+export function encodeCriteria(criteria) {
+	return criteria.map((c) => `${c.key}:${c.state}`).join(',');
+}
+
 export const api = {
 	filterLanguages: () => request('/api/v1/filter-languages').then((data) => data ?? []),
 	_supportedMimeTypesCache: null,
@@ -279,8 +285,10 @@ export const api = {
 				body: JSON.stringify({ tag_a: tagA, tag_b: tagB })
 			}),
 		reconcileReport: () => requestRaw('/api/v1/tags/reconciliation/report'),
-		provisionalList: (limit = 50, offset = 0) => {
+		provisionalList: (limit = 50, offset = 0, { criteria = [], verdict = '' } = {}) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+			if (criteria.length) params.set('criteria', encodeCriteria(criteria));
+			if (verdict) params.set('verdict', verdict);
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),

@@ -40,12 +40,61 @@ func (q *Queries) ClearOrphanTagMarksByTagIDs(ctx context.Context, tagIds []int6
 
 const countProvisionalTags = `-- name: CountProvisionalTags :one
 SELECT COUNT(*) FROM tag t
+LEFT JOIN LATERAL (
+    SELECT e.criteria, e.pass, e.outcome
+    FROM tag_quality_event e
+    WHERE e.tag_name = t.name AND e.policy_version = $1
+    ORDER BY e.verdict_at DESC
+    LIMIT 1
+) qe ON true
 WHERE t.promoted_at IS NULL
   AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND ($2::text = ''
+       OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $2::text)
+  AND ($3::text = ''
+       OR coalesce(qe.criteria ->> 'dimension', 'absent') = $3::text)
+  AND ($4::text = ''
+       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = $4::text)
+  AND ($5::text = ''
+       OR coalesce(qe.criteria ->> 'atomic', 'absent') = $5::text)
+  AND ($6::text = ''
+       OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $6::text)
+  AND ($7::text = ''
+       OR coalesce(qe.criteria ->> 'defer', 'absent') = $7::text)
+  -- legacy rows carry no outcome: derive it the same way the ui's verdict
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  AND ($8::text = ''
+       OR ($8::text = 'none' AND qe.pass IS NULL)
+       OR ($8::text <> 'none'
+           AND qe.pass IS NOT NULL
+           AND coalesce(qe.outcome,
+                        CASE WHEN qe.pass THEN 'admit'
+                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                             ELSE 'reject' END) = $8::text))
 `
 
-func (q *Queries) CountProvisionalTags(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countProvisionalTags)
+type CountProvisionalTagsParams struct {
+	PolicyVersion           string
+	SubjectMatterState      string
+	DimensionState          string
+	NotPersonPlaceWorkState string
+	AtomicState             string
+	NotFormGenreState       string
+	DeferState              string
+	VerdictState            string
+}
+
+func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisionalTagsParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProvisionalTags,
+		arg.PolicyVersion,
+		arg.SubjectMatterState,
+		arg.DimensionState,
+		arg.NotPersonPlaceWorkState,
+		arg.AtomicState,
+		arg.NotFormGenreState,
+		arg.DeferState,
+		arg.VerdictState,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -392,15 +441,52 @@ SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
         JOIN document d ON d.id = dt.document_id
         WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
 FROM tag t
+LEFT JOIN LATERAL (
+    SELECT e.criteria, e.pass, e.outcome
+    FROM tag_quality_event e
+    WHERE e.tag_name = t.name AND e.policy_version = $1
+    ORDER BY e.verdict_at DESC
+    LIMIT 1
+) qe ON true
 WHERE t.promoted_at IS NULL
   AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-ORDER BY coalesce(t.created_at, now()) DESC
-LIMIT $1 OFFSET $2
+  AND ($2::text = ''
+       OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $2::text)
+  AND ($3::text = ''
+       OR coalesce(qe.criteria ->> 'dimension', 'absent') = $3::text)
+  AND ($4::text = ''
+       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = $4::text)
+  AND ($5::text = ''
+       OR coalesce(qe.criteria ->> 'atomic', 'absent') = $5::text)
+  AND ($6::text = ''
+       OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $6::text)
+  AND ($7::text = ''
+       OR coalesce(qe.criteria ->> 'defer', 'absent') = $7::text)
+  -- legacy rows carry no outcome: derive it the same way the ui's verdict
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  AND ($8::text = ''
+       OR ($8::text = 'none' AND qe.pass IS NULL)
+       OR ($8::text <> 'none'
+           AND qe.pass IS NOT NULL
+           AND coalesce(qe.outcome,
+                        CASE WHEN qe.pass THEN 'admit'
+                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                             ELSE 'reject' END) = $8::text))
+ORDER BY coalesce(t.created_at, now()) DESC, t.id DESC
+LIMIT $10 OFFSET $9
 `
 
 type ListProvisionalTagsWithDocumentCountParams struct {
-	Limit  int32
-	Offset int32
+	PolicyVersion           string
+	SubjectMatterState      string
+	DimensionState          string
+	NotPersonPlaceWorkState string
+	AtomicState             string
+	NotFormGenreState       string
+	DeferState              string
+	VerdictState            string
+	PageOffset              int32
+	PageLimit               int32
 }
 
 type ListProvisionalTagsWithDocumentCountRow struct {
@@ -411,7 +497,18 @@ type ListProvisionalTagsWithDocumentCountRow struct {
 }
 
 func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg ListProvisionalTagsWithDocumentCountParams) ([]ListProvisionalTagsWithDocumentCountRow, error) {
-	rows, err := q.db.QueryContext(ctx, listProvisionalTagsWithDocumentCount, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listProvisionalTagsWithDocumentCount,
+		arg.PolicyVersion,
+		arg.SubjectMatterState,
+		arg.DimensionState,
+		arg.NotPersonPlaceWorkState,
+		arg.AtomicState,
+		arg.NotFormGenreState,
+		arg.DeferState,
+		arg.VerdictState,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

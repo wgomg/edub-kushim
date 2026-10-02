@@ -1,13 +1,15 @@
 <script>
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
+	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
+	import { api, encodeCriteria } from '$lib/api';
 	import Icon from '$lib/components/Icon.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { documentsForTagHref, documentsLabel, formatNumber } from '$lib/utils/html.js';
 
-	const PROVISIONAL_LIMIT = 50;
+	const PAGE_SIZE = 50;
 
 	const criteria = [
 		{ key: 'subject_matter', label: 'subject matter' },
@@ -16,6 +18,21 @@
 		{ key: 'atomic', label: 'atomic' },
 		{ key: 'not_form_genre', label: 'not form/genre' },
 		{ key: 'defer', label: 'defer' }
+	];
+
+	const FILTER_STATES = [
+		{ value: '', label: 'Any' },
+		{ value: 'pass', label: '✓ pass' },
+		{ value: 'fail', label: '✗ fail' },
+		{ value: 'absent', label: '— absent' }
+	];
+
+	const VERDICT_FILTERS = [
+		{ value: '', label: 'Any verdict' },
+		{ value: 'none', label: 'no verdict' },
+		{ value: 'admit', label: 'awaiting promotion floor' },
+		{ value: 'defer', label: 'deferred to review' },
+		{ value: 'reject', label: 'judge rejected' }
 	];
 
 	const cardClass = 'rounded-lg border border-clay-800 bg-clay-900 p-4';
@@ -31,6 +48,10 @@
 		'rounded-lg px-3 py-1.5 text-xs text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
 	const countLink =
 		'flex items-center gap-1.5 text-xs text-parchment-400 tabular-nums underline-offset-[3px] hover:text-lapis-300 hover:underline hover:decoration-lapis-300/40 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	const selectClass =
+		'rounded-md border border-clay-700 bg-clay-900 px-2 py-1 text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	const pagerButton =
+		'rounded-md border border-clay-700 px-2.5 py-1 text-parchment-400 hover:border-gold-500 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
 
 	let { onchanged = null } = $props();
 
@@ -40,22 +61,111 @@
 	let error = $state('');
 	let acting = $state(null);
 	let identityActing = $state(false);
+	let offset = $state(0);
+	let pendingTotal = $state(0);
+	let filterStates = $state({});
+	let verdictFilter = $state('');
+	let loadSeq = 0;
 
-	onMount(load);
+	let hasFilters = $derived(criteria.some((c) => filterStates[c.key]) || verdictFilter !== '');
 
-	async function load() {
+	onMount(() => {
+		const sp = page.url.searchParams;
+
+		const rawPage = sp.get('prov_page') ?? '';
+		if (/^\d+$/.test(rawPage)) offset = parseInt(rawPage, 10) * PAGE_SIZE;
+
+		const rawCriteria = sp.get('prov_criteria') ?? '';
+		for (const entry of rawCriteria ? rawCriteria.split(',') : []) {
+			const [key, state] = entry.split(':');
+			if (criteria.some((c) => c.key === key) && FILTER_STATES.some((s) => s.value === state)) {
+				filterStates[key] = state;
+			}
+		}
+
+		const rawVerdict = sp.get('prov_verdict') ?? '';
+		if (VERDICT_FILTERS.some((v) => v.value === rawVerdict)) verdictFilter = rawVerdict;
+
+		load();
+	});
+
+	function activeCriteria() {
+		return criteria
+			.filter((c) => filterStates[c.key])
+			.map((c) => ({ key: c.key, state: filterStates[c.key] }));
+	}
+
+	function syncUrl() {
+		// transient helper for replaceState; SvelteURLSearchParams not needed here
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const sp = new URLSearchParams(page.url.searchParams);
+		if (offset > 0) sp.set('prov_page', String(offset / PAGE_SIZE));
+		else sp.delete('prov_page');
+
+		const active = encodeCriteria(activeCriteria());
+		if (active) sp.set('prov_criteria', active);
+		else sp.delete('prov_criteria');
+
+		if (verdictFilter) sp.set('prov_verdict', verdictFilter);
+		else sp.delete('prov_verdict');
+
+		replaceState(resolve(`${page.url.pathname}?${sp.toString()}${page.url.hash}`));
+	}
+
+	async function load(clamp = true) {
+		const seq = ++loadSeq;
 		loading = true;
 		error = '';
-		const result = await api.tags.provisionalList(PROVISIONAL_LIMIT, 0);
-		if (result.ok) {
-			tags = result.data?.results ?? [];
-			total = result.data?.total ?? 0;
-		} else {
+		const result = await api.tags.provisionalList(PAGE_SIZE, offset, {
+			criteria: activeCriteria(),
+			verdict: verdictFilter
+		});
+		if (seq !== loadSeq) return;
+		if (!result.ok) {
 			tags = [];
 			total = 0;
+			pendingTotal = 0;
 			error = 'Failed to load new tags.';
+			loading = false;
+			return;
+		}
+		tags = result.data?.results ?? [];
+		total = result.data?.total ?? 0;
+		pendingTotal = result.data?.pending_identity_total ?? 0;
+		// an emptied page and a deep-link offset the API clamped away both
+		// surface as offset >= total
+		if (clamp && offset > 0 && total <= offset) {
+			offset = Math.max(0, (Math.ceil(total / PAGE_SIZE) - 1) * PAGE_SIZE);
+			syncUrl();
+			return load(false);
 		}
 		loading = false;
+	}
+
+	function onFilterChange() {
+		offset = 0;
+		load();
+		syncUrl();
+	}
+
+	function clearFilters() {
+		for (const c of criteria) filterStates[c.key] = '';
+		verdictFilter = '';
+		onFilterChange();
+	}
+
+	function prevPage() {
+		if (offset === 0) return;
+		offset = Math.max(0, offset - PAGE_SIZE);
+		load();
+		syncUrl();
+	}
+
+	function nextPage() {
+		if (offset + tags.length >= total) return;
+		offset += PAGE_SIZE;
+		load();
+		syncUrl();
 	}
 
 	async function approve(tag) {
@@ -149,11 +259,11 @@
 	<h2 class="text-base font-semibold text-parchment-200">Provisional queue</h2>
 	{#if !loading && !error}
 		<span class="text-[0.8125rem] text-parchment-500">
-			{formatNumber(total)} awaiting review{#if total > tags.length}
-				· showing first {formatNumber(tags.length)}{/if}
+			{formatNumber(total)} awaiting review{#if hasFilters}
+				· filtered{/if}
 		</span>
 	{/if}
-	{#if tags.some((tag) => tag.pending_identity > 0)}
+	{#if pendingTotal > 0}
 		<button
 			onclick={reevaluateIdentity}
 			disabled={identityActing}
@@ -162,6 +272,44 @@
 		>
 			{identityActing ? 'Queueing…' : 'Reevaluate identity'}
 		</button>
+	{/if}
+</div>
+
+<div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+	{#each criteria as c (c.key)}
+		<label class="flex items-center gap-1.5 text-[0.6875rem] text-parchment-500">
+			{c.label}
+			<select
+				value={filterStates[c.key] ?? ''}
+				onchange={(e) => {
+					filterStates[c.key] = e.target.value;
+					onFilterChange();
+				}}
+				class={selectClass}
+			>
+				{#each FILTER_STATES as s (s.value)}
+					<option value={s.value}>{s.label}</option>
+				{/each}
+			</select>
+		</label>
+	{/each}
+	<label class="flex items-center gap-1.5 text-[0.6875rem] text-parchment-500">
+		verdict
+		<select
+			value={verdictFilter}
+			onchange={(e) => {
+				verdictFilter = e.target.value;
+				onFilterChange();
+			}}
+			class={selectClass}
+		>
+			{#each VERDICT_FILTERS as v (v.value)}
+				<option value={v.value}>{v.label}</option>
+			{/each}
+		</select>
+	</label>
+	{#if hasFilters}
+		<button onclick={clearFilters} class={btnGhost}>Clear filters</button>
 	{/if}
 </div>
 
@@ -179,14 +327,26 @@
 	<div
 		class="rounded-lg border border-dashed border-clay-800 px-4 py-12 text-center text-parchment-500"
 	>
-		<p>
-			<span
-				class="mr-1.5 inline-block h-[0.45rem] w-[0.45rem] rounded-full bg-emerald-400"
-				aria-hidden="true"
-			></span>
-			<b class="font-semibold text-parchment-300">Queue is clear.</b>
-			No provisional tags. New tags appear here once enrichment assigns them to a document.
-		</p>
+		{#if hasFilters}
+			<p>
+				No tags match the current filters.
+				<button
+					onclick={clearFilters}
+					class="underline underline-offset-[3px] hover:text-parchment-300"
+				>
+					Clear filters
+				</button>
+			</p>
+		{:else}
+			<p>
+				<span
+					class="mr-1.5 inline-block h-[0.45rem] w-[0.45rem] rounded-full bg-emerald-400"
+					aria-hidden="true"
+				></span>
+				<b class="font-semibold text-parchment-300">Queue is clear.</b>
+				No provisional tags. New tags appear here once enrichment assigns them to a document.
+			</p>
+		{/if}
 	</div>
 {:else}
 	<ul class="flex flex-col gap-3">
@@ -246,4 +406,17 @@
 			</li>
 		{/each}
 	</ul>
+	{#if total > 0}
+		<div class="flex flex-wrap items-center justify-between gap-3 pt-1 text-sm">
+			<p class="text-parchment-500">
+				Showing {offset + 1}–{offset + tags.length} of {total}
+			</p>
+			<div class="flex items-center gap-3">
+				<button disabled={offset === 0} onclick={prevPage} class={pagerButton}>Prev</button>
+				<button disabled={offset + tags.length >= total} onclick={nextPage} class={pagerButton}>
+					Next
+				</button>
+			</div>
+		</div>
+	{/if}
 {/if}
