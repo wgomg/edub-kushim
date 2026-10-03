@@ -107,9 +107,10 @@ type TextReducerResult struct {
 	TargetWordCount int
 }
 
-// TagMatchResult carries the existing tag names matched for a document.
+// TagMatchResult carries the existing tags matched for a document, each
+// with its similarity to the document text.
 type TagMatchResult struct {
-	Tags []string
+	Matches []matcher.Candidate
 }
 
 // ContentAnalysisResult is the LLM analysis of a document: title, type,
@@ -549,13 +550,13 @@ func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchR
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	tags, err := runWithTimeout(ctx, func() ([]string, error) {
+	tags, err := runWithTimeout(ctx, func() ([]matcher.Candidate, error) {
 		return r.tagMatcher.Match(ctx, docId, input)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tag matcher: %w", err)
 	}
-	return &TagMatchResult{Tags: tags}, nil
+	return &TagMatchResult{Matches: tags}, nil
 }
 
 // RankTags ranks candidate tag names against the stored vocabulary,

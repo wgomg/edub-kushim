@@ -31,6 +31,7 @@ enricher:
     timeout: 120            # RPC deadline in seconds; 0 = no artificial deadline
     reduce_target_words: 4000
     chunk_size: 4096        # max tokens per inference chunk; 0 = model max
+    min_suggestion_similarity: 0.55  # injection bar for suggestions; 0 = per-model default
     hugot:
       model: BAAI/bge-m3
       backend: ort          # ort (ONNX Runtime) | go
@@ -41,6 +42,7 @@ enricher:
 | `timeout` | `120` | Deadline for matcher RPC calls (match/rank/consolidate) in seconds, applied as a context deadline on the client and mirrored into the matcher server's `WriteTimeout` at startup. `0` disables the deadline — not recommended for production. |
 | `reduce_target_words` | `4000` | Word target for TextRank reduction applied *before* tag matching. Also drives the RPC request body cap (`reduce_target_words × 24` bytes, clamped to 256 KiB–4 MiB), bounding how much text can reach the matcher. |
 | `chunk_size` | `4096` | Maximum number of tokens per inference window. See [below](#chunk_size--the-memory-lever). |
+| `min_suggestion_similarity` | `0.55` (bge-m3, derived) | Injection bar at the enricher seam: only matched tags at or above it are passed into the emission prompt. When no match clears the bar the suggestion list is empty (no fallback). An explicit `0` reverts to the per-model default; negative values are rejected at load. |
 | `hugot.model` | `BAAI/bge-m3` | Model identifier. Downloaded on first start to `<config_dir>/tagmatcher/hugot/models/<model>` (requires internet). |
 | `hugot.backend` | `ort` | Inference backend: `ort` (ONNX Runtime) or `go` (pure Go). See [Backends](#backends-ort-vs-go). |
 

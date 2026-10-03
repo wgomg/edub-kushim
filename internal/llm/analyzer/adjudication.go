@@ -52,7 +52,7 @@ func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	sb.WriteString("- \"same\": the terms denote one value (morphographic variants, spelling variants, or intent-equivalent derivations)\n")
 	sb.WriteString("- \"variant\": closely related but distinct concepts (one is a narrower or broader form of the other)\n")
 	sb.WriteString("- \"related\": related but different concepts\n")
-	sb.WriteString("Use \"same\" only when faithful replacement holds; when in doubt, answer \"variant\" or \"related\".\n")
+	sb.WriteString("Use \"same\" exactly when faithful replacement holds: spelling and morphographic variants of one term (labour/labor, modelling/modeling) and intent-equivalent derivations are \"same\", not \"variant\". Reserve \"variant\" and \"related\" for genuinely distinct concepts — when the two meanings truly differ, answer \"variant\" (narrower or broader) or \"related\".\n")
 	sb.WriteString("When the verdict is \"same\", also answer which term is the precise one: \"direction\":\"query\" when the query term's standard sense is exactly the dimension, \"direction\":\"target\" when the target term's is, \"direction\":\"tie\" when neither is more precise. A polysemous term loses to the precise one.\n\n")
 	for i, p := range pairs {
 		fmt.Fprintf(&sb, "Pair %d:\n", i)

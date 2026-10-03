@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -136,18 +135,19 @@ func TestMatcherClient_Match(t *testing.T) {
 		}
 		gotDocID, gotInput = req.DocID, req.Input
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"matches":["alpha","beta"]}`)
+		fmt.Fprint(w, `{"matches":[{"tag":"alpha","similarity":0.91},{"tag":"beta","similarity":0.82}]}`)
 	})
 
 	c := NewMatcherClient(sockPath, MaxMatchBodyBytes(4000))
 	defer c.Close()
 
-	tags, err := c.Match(context.Background(), "doc-1", "some text")
+	matches, err := c.Match(context.Background(), "doc-1", "some text")
 	if err != nil {
 		t.Fatalf("Match: %v", err)
 	}
-	if !slices.Equal(tags, []string{"alpha", "beta"}) {
-		t.Errorf("Match returned %v, want [alpha beta]", tags)
+	want := []Candidate{{Tag: "alpha", Similarity: 0.91}, {Tag: "beta", Similarity: 0.82}}
+	if !reflect.DeepEqual(matches, want) {
+		t.Errorf("Match returned %+v, want %+v", matches, want)
 	}
 	if gotDocID != "doc-1" || gotInput != "some text" {
 		t.Errorf("server received doc_id=%q input=%q, want doc_id=%q input=%q", gotDocID, gotInput, "doc-1", "some text")

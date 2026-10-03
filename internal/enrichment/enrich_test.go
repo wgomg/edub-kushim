@@ -1,12 +1,25 @@
 package enrichment
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"unsafe"
 
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -136,4 +149,146 @@ func TestDocumentCountsAdd(t *testing.T) {
 	if left != want {
 		t.Errorf("Add() = %+v, want %+v", left, want)
 	}
+}
+
+// barMatcher answers Match with a fixed candidate list so the test controls
+// every similarity the injection bar sees.
+type barMatcher struct {
+	matches []matcher.Candidate
+}
+
+func (m *barMatcher) Match(context.Context, string, string) ([]matcher.Candidate, error) {
+	return m.matches, nil
+}
+
+func (m *barMatcher) Rank(context.Context, string, []string) ([]matcher.RankResult, error) {
+	return nil, nil
+}
+
+func (m *barMatcher) SimilarPairs(context.Context) ([]matcher.SimilarPair, error) {
+	return nil, nil
+}
+
+func (m *barMatcher) Close() {}
+
+func (m *barMatcher) Name() string { return "bar-matcher" }
+
+// suggestionRecorder stands in for the content analyzer and stops the
+// enricher at the emission seam, recording what the bar let through.
+type suggestionRecorder struct {
+	calls       int
+	suggestions []string
+}
+
+func (r *suggestionRecorder) Analyze(_ context.Context, _ string, _, _ []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+	r.calls++
+	r.suggestions = append([]string(nil), tagSuggestions...)
+	return nil, errors.New("analysis stops at the suggestion seam")
+}
+
+func (r *suggestionRecorder) AnalyzeDocType(context.Context, *analyzer.AnalysisResult, string, []analyzer.TypeRef, analyzer.DocMetadata) (string, error) {
+	return "", nil
+}
+
+func (r *suggestionRecorder) Adjudicate(context.Context, []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+	return nil, nil
+}
+
+func (r *suggestionRecorder) AdjudicateTagSplits(context.Context, []string) ([]analyzer.TagSplitResult, error) {
+	return nil, nil
+}
+
+func (r *suggestionRecorder) JudgeTagQuality(context.Context, string, []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+	return nil, nil
+}
+
+func (r *suggestionRecorder) JudgeTagIdentity(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+	return nil, nil
+}
+
+func (r *suggestionRecorder) Name() string { return "suggestion-recorder" }
+
+// TestEnrich_SuggestionInjectionBar drives one enrichment pass to the
+// analysis seam and asserts what the matcher suggestions the injection bar
+// let through, including the designed empty result when nothing clears it.
+func TestEnrich_SuggestionInjectionBar(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	logger := log.NewDiscardLogger()
+
+	newEnricher := func(t *testing.T, bar float64, matches []matcher.Candidate) (*Enricher, *suggestionRecorder) {
+		t.Helper()
+		client := database.NewTestClient(t)
+		cfg := &config.Config{
+			Enricher: config.EnricherConfig{
+				TagMatcher: config.TagMatcherConfig{MinSuggestionSimilarity: bar},
+			},
+		}
+		recorder := &suggestionRecorder{}
+		e := NewEnricher(cfg, logger, client, curation.NewTag(client, logger, nil), &barMatcher{matches: matches})
+		setUnexportedField(t, e.runner, "contentAnalyzer", recorder)
+		return e, recorder
+	}
+	doc := database.Document{
+		DocumentID:  "suggestion-bar-doc",
+		StoragePath: "suggestion-bar.pdf",
+		TextContent: sql.NullString{String: "short text about spudger repair", Valid: true},
+		WordCount:   6,
+	}
+	run := func(t *testing.T, e *Enricher) error {
+		t.Helper()
+		_, _, err := e.Enrich(context.Background(), doc, task.NoopProgress)
+		return err
+	}
+
+	t.Run("only matches at or above the bar reach the emission seam", func(t *testing.T) {
+		e, recorder := newEnricher(t, 0.55, []matcher.Candidate{
+			{Tag: "bar keep candidate", Similarity: 0.61},
+			{Tag: "bar drop one", Similarity: 0.53},
+			{Tag: "bar drop two", Similarity: 0.44},
+		})
+
+		err := run(t, e)
+
+		if err == nil {
+			t.Error("the recorder's stop error must surface from Enrich")
+		}
+		if recorder.calls == 0 {
+			t.Fatal("the analysis stage was never reached")
+		}
+		if want := []string{"bar keep candidate"}; !slices.Equal(recorder.suggestions, want) {
+			t.Errorf("suggestions = %v, want the above-bar match %v", recorder.suggestions, want)
+		}
+	})
+
+	t.Run("nothing clears the bar and an empty list is injected", func(t *testing.T) {
+		e, recorder := newEnricher(t, 0.55, []matcher.Candidate{
+			{Tag: "bar drop one", Similarity: 0.50},
+			{Tag: "bar drop two", Similarity: 0.44},
+		})
+
+		err := run(t, e)
+
+		if err == nil {
+			t.Error("the recorder's stop error must surface from Enrich")
+		}
+		if recorder.calls == 0 {
+			t.Fatal("the analysis stage was never reached")
+		}
+		if len(recorder.suggestions) != 0 {
+			t.Errorf("suggestions = %v, want none when every match is below the bar", recorder.suggestions)
+		}
+	})
+}
+
+// setUnexportedField injects a runner capability the constructor cannot
+// build in a test: the runner fields live in package tools.
+func setUnexportedField(t *testing.T, target any, fieldName string, value any) {
+	t.Helper()
+	v := reflect.ValueOf(target).Elem().FieldByName(fieldName)
+	if !v.IsValid() {
+		t.Fatalf("field %q not found", fieldName)
+	}
+	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Set(reflect.ValueOf(value))
 }

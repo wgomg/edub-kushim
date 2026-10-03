@@ -100,8 +100,11 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 // DecisionRuleSetVersion pins the admission and promotion rules; the
 // promote log lines carry it so rule changes are traceable. Nothing
 // stores it: both rules are pure and re-run over stored criteria. v2
-// adds not_form_genre to the feature set the pinned rules read.
-const DecisionRuleSetVersion = "v2"
+// adds not_form_genre to the feature set the pinned rules read; v3 rides
+// the criteria-v3 generation — the feature set and the pinned combination
+// rules are unchanged, and the bump keeps the promote log's
+// rule_set=decision-%s stamp traceable to the judging generation.
+const DecisionRuleSetVersion = "v3"
 
 // RecurrenceFloor is the promotion minimum of
 // docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live

@@ -96,7 +96,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v3]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v4]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -140,11 +140,13 @@ it is skipped before judgment and never split.
   degrades to `drop`), the criteria version, and the judge model (`NULL` for
   cached verdicts and the conjunction fallback) — with a matching
   `tag split[...]` log line per candidate.
-- **Validation**: components pass the same rules as emitted tags — normalized,
-  deduplicated, ≤3 words, ≤64 characters, no person/title/doc-type token
-  matches — and a split must yield between 2 and `tags.MaxCompoundWords` (3)
-  valid components; anything else keeps the compound as-is. Emissions are not
-  count-capped.
+- **Validation**: components are first fold-resolved onto live store values
+  through the store-anchored net (derivational and morphographic proposals;
+  lemma folds stay out) and then pass the hard per-document rules — normalized,
+  deduplicated, ≤3 words, ≤64 characters, no person or doc-type token
+  matches; the title-containment echo rule does not apply to parts — and a
+  split must yield between 2 and `tags.MaxCompoundWords` (3) valid components;
+  anything else keeps the compound as-is. Emissions are not count-capped.
 - **Retroactive cleanup**: the scheduled reconciliation task scans the store
   for conjunction joints and splits them with document re-pointing — see
   [Scheduled reconciliation](#scheduled-reconciliation).
@@ -188,7 +190,8 @@ they are created:
   `subject_matter`, `dimension` (a reusable dimension of content, not a
   per-document detail or container word), `not_person_place_work`, `atomic`
   (one dimension, not a combination whose parts each work as tags), and
-  `not_form_genre` (neither a form nor a genre of the document) —
+  `not_form_genre` (not a publishing format of the document — genres and art
+  forms are subject-side and pass) —
   plus the judge's optional `defer` abstention, and the emission's
   deterministic signals: a typed detail annotated `other`, and a best store
   similarity below the internal no-anchor floor (0.60).
@@ -214,7 +217,7 @@ they are created:
   retries once and then keeps every novel tag with a defer decision — under
   the gate the birth is provisional and carries no verdict, and enrichment
   never blocks or fails on the judge.
-- **Logging**: rejections and defers are logged as `tagquality[v2]:` lines
+- **Logging**: rejections and defers are logged as `tagquality[v3]:` lines
   carrying the outcome and reason, siblings of the `consolidation[v1]` and
   `tags[facet]:` lines.
 

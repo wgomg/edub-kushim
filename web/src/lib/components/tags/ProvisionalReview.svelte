@@ -16,7 +16,7 @@
 		{ key: 'dimension', label: 'dimension' },
 		{ key: 'not_person_place_work', label: 'not person/place/work' },
 		{ key: 'atomic', label: 'atomic' },
-		{ key: 'not_form_genre', label: 'not form/genre' },
+		{ key: 'not_form_genre', label: 'not publishing format' },
 		{ key: 'defer', label: 'defer' }
 	];
 

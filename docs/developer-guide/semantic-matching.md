@@ -33,8 +33,9 @@ tags get suggested.
 Semantic matching happens at two points in the enrichment pipeline:
 
 1. **Tag suggestions for the LLM** — before the LLM analyzes a document, the
-   reduced text is embedded and matched against the known tags; the top
-   matches are passed into the prompt as "prefer these tags if relevant"
+   reduced text is embedded and matched against the known tags; the matches at
+   or above the injection bar (`enricher.tagmatcher.min_suggestion_similarity`,
+   §10) are passed into the prompt as "prefer these tags if relevant"
    (`internal/enrichment/enricher.go:132-151`).
 2. **Post-LLM consolidation and identity** — the tags the LLM produced are
    re-embedded and mapped onto the canonical tag names ("concept → existing
@@ -271,9 +272,9 @@ embeddings, err := h.Encode(ctx, docId, []string{input})
 inputEmb := embeddings[0]
 matches := h.rankMatches(inputEmb, entries, h.minSimilarity)
 topN := min(h.topN, len(matches))
-result := make([]string, topN)
+result := make([]Candidate, topN)
 for i := range topN {
-	result[i] = matches[i].tag
+	result[i] = Candidate{Tag: matches[i].tag, Similarity: matches[i].similarity}
 }
 ```
 
@@ -341,7 +342,7 @@ apply the existing label), and then candidate generation — every remaining
 candidate neighbour is kept as a **gate subject** with its similarity and
 runner-up recorded as adjudication evidence. Similarity never replaces or
 keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v3]: apply|alias|defer|separate …`. Fallback results from the legacy
+`identity[v4]: apply|alias|defer|separate …`. Fallback results from the legacy
 daemon (no candidates) pass through `KeptName` verbatim. Style variants and
 aliases never reach the policy: M1 house form, M3 key equality, and the alias
 resolver apply the canonical value before ranking output is used.
@@ -420,7 +421,7 @@ A judge abstention defers; two or more failing signals reject; exactly one
 defers to review (the gray band — no single signal decides); none admits. A
 rejection drops the tag for that document, and `Plan.DropTagNames` removes its
 registration and pending identity evidence before persist, so the name is never
-stored; it logs `tagquality[v2]: reject … (reason=corroborated_failures …)`.
+stored; it logs `tagquality[v3]: reject … (reason=corroborated_failures …)`.
 Defers are kept and logged too. A missing detail or similarity is absence of
 evidence, not a failing signal, so a well-judged string-shaped emission can
 still admit.
@@ -478,8 +479,8 @@ skipped). A name promotes when both hold:
 
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
-via `AddToStore` only after the commit (`tagquality[v2]: promote %q
-(docs=%d reason=%s rule_set=decision-v2 floor=10)`). Deferred and rejected
+via `AddToStore` only after the commit (`tagquality[v3]: promote %q
+(docs=%d reason=%s rule_set=decision-v3 floor=10)`). Deferred and rejected
 provisionals never promote here —
 they wait for review — and neither does an identity-held name (a refused fold
 beside a live store value): the hold is derived from the latest
@@ -526,7 +527,7 @@ The interfaces (`internal/matcher/adapter.go`):
 
 ```go
 type Matcher interface {
-	Match(ctx context.Context, docId, input string) ([]string, error)
+	Match(ctx context.Context, docId, input string) ([]Candidate, error)
 	Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error)
 	Close()
 	Name() string
@@ -599,6 +600,7 @@ All knobs live under `enricher.tagmatcher` in the config
 | `hugot.cpu_mem_arena` / `mem_pattern` | `false` | ORT memory knobs (§2) |
 | `top_n` | `15` (derived) | max suggestions returned |
 | `min_similarity` | model-derived | document→tag threshold |
+| `min_suggestion_similarity` | model-derived (`0.55` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `consolidation_similarity` | model-derived | tag→tag consideration floor (candidates below it never reach the identity pipeline) |
 | `auto_replace_similarity` | model-derived | formerly the tag→tag auto-replace cutoff; still derived but no decision consumes it |
 | `timeout` | `120` (s) | per-call budget |
@@ -653,11 +655,27 @@ func defaultAutoReplaceSimilarity(modelShortName string) float64 {
 		return 0.90
 	}
 }
+
+// defaultMinSuggestionSimilarity ... the bar at or above which a matcher
+// suggestion is injected into the emission prompt; each value is the
+// document-match default + 0.15, and only the bge-m3 value is dump-verified
+func defaultMinSuggestionSimilarity(modelShortName string) float64 {
+	switch modelShortName {
+	case "bge-m3":
+		return 0.55
+	case "all-mpnet-base-v2":
+		return 0.45
+	case "all-MiniLM-L6-v2":
+		return 0.40
+	default:
+		return 0.45
+	}
+}
 ```
 
 Rules of thumb: raise `min_similarity` if false positives appear; keep
 `consolidation_similarity` well above it. If you add a model to the
-catalog/derivation, add it to all three switch
+catalog/derivation, add it to all four switch
 statements.
 
 ---
@@ -673,7 +691,9 @@ statements.
    from the promoted names (`ListPromotedTagNames`), so provisional tags stay
    out across restarts.
 3. **Enrichment** (`internal/enrichment/enricher.go`):
-   - `runner.MatchTags(ctx, docId, reducedText)` → `tagSuggestions`; on error
+   - `runner.MatchTags(ctx, docId, reducedText)` → the matches at or above the
+     injection bar become `tagSuggestions` (below-bar matches are dropped,
+     yielding an empty list rather than a fallback); on error
      or zero matches, falls back to the promoted-name list (the enricher's
      `tagsNames`, composed from the promoted subset of `ListAll`).
    - `runner.RankTags(ctx, docId, analysis.Tags)` after the LLM pass;

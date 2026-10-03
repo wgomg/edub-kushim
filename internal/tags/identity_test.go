@@ -238,6 +238,68 @@ func TestProposedMorphologicalFold(t *testing.T) {
 	}
 }
 
+func TestAnchoredFold(t *testing.T) {
+	cases := []struct {
+		name       string
+		input      string
+		storeNames map[string]string
+		want       string
+	}{
+		{
+			name:       "the derivation leg lands on the store noun",
+			input:      "chilean",
+			storeNames: map[string]string{"chile": "chile"},
+			want:       "chile",
+		},
+		{
+			name:       "the morphological leg reaches the store noun",
+			input:      "mexican",
+			storeNames: map[string]string{"mexico": "mexico"},
+			want:       "mexico",
+		},
+		{
+			name:       "a proposal that equals the lemma fold stays judged",
+			input:      "railways",
+			storeNames: map[string]string{"railway": "railway"},
+			want:       "",
+		},
+		{
+			name:  "two store hits are ambiguity, not a fold",
+			input: "spudgers",
+			storeNames: map[string]string{
+				"spudger":  "spudger",
+				"spudgery": "spudgery",
+			},
+			want: "",
+		},
+		{
+			name:       "a store-exact part resolves onto itself",
+			input:      "revolution",
+			storeNames: map[string]string{"revolution": "revolution"},
+			want:       "revolution",
+		},
+		{
+			name:       "no store anchor resolves nothing",
+			input:      "mexican",
+			storeNames: map[string]string{"spain": "spain"},
+			want:       "",
+		},
+		{
+			name:       "multi-token names never propose",
+			input:      "mexican food",
+			storeNames: map[string]string{"mexico": "mexico"},
+			want:       "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AnchoredFold(tc.input, tc.storeNames); got != tc.want {
+				t.Errorf("AnchoredFold(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStoreNames(t *testing.T) {
 	got := StoreNames([]string{"16th century", "sixteenth century", "russia"})
 

@@ -23,7 +23,7 @@
       - `LlmConfig`: `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool` (yaml:"-", set via model catalog), `ReasoningEffort string` (yaml:"-", set via model catalog), `Temperature float64`
       - `FallbackConfig`: `Enabled bool`, `Llm LlmConfig` — same shape as the primary `llm` block; validated only when `Enabled` (adapter/provider/model required, `RequestDelay` 0–60)
       - `DocTypeRefinementConfig`: `Enabled bool`, `HeadWords int`, `TailWords int`
-   - `TagMatcherConfig`: `Timeout` (0 = disabled), `ReduceTargetWords`, `ChunkSize` (default 4096 tokens to bound matcher memory; 0 = model's `max_position_embeddings` minus 12), `Hugot HugotConfig`, `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
+   - `TagMatcherConfig`: `Timeout` (0 = disabled), `ReduceTargetWords`, `ChunkSize` (default 4096 tokens to bound matcher memory; 0 = model's `max_position_embeddings` minus 12), `Hugot HugotConfig`, `MinSuggestionSimilarity` (user-settable injection bar; an explicit 0 reverts to the per-model default), `TopN`, `MinSimilarity`, `ConsolidationSimilarity`
     - `HugotConfig`: `Model`, `Backend` (`"GO"` or `"ort"`), `ModelPath`, `BackendLibPath`; internal-only (no yaml/json tags): `CpuMemArena bool` (default `false`), `MemPattern bool` (default `false`)
 - `BackupConfig`: `Enabled bool`, `Path string` (fallback output dir), `Schedules []BackupSchedule` (mode/interval/time/path/keep). Deprecated flat `Interval`/`Time`/`Keep` fields are kept for auto-conversion into a single `full` schedule by `finalizeConfig`.
 - `MirrorConfig`: `Enabled bool`, `Path string` (local path or `[user@]host:path` remote target), `Interval float64` (days), `Time string` (HH:MM, default `02:00`). Validated by `finalizeConfig` (path required when enabled, interval > 0, HH:MM parse, `ValidateMirrorDestination` before `MkdirAll`).
@@ -41,6 +41,7 @@
 - `Load(configDir string) (*Config, error)` — Loads YAML over defaults, validates OCR languages required, expands paths, creates dirs
 - `defaultMinSimilarity(modelShortName string) float64` — Per-model thresholds (bge-m3: 0.40)
 - `defaultConsolidationSimilarity(modelShortName string) float64` — Tag-to-tag thresholds (bge-m3: 0.82)
+- `defaultMinSuggestionSimilarity(modelShortName string) float64` — Suggestion-injection bars (bge-m3: 0.55)
 - `finalizeConfig(cfg, configDir) error`
 
 ## Engine Identifier Constants

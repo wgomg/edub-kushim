@@ -19,9 +19,10 @@ const (
 	maxTagLength = 64
 )
 
-// TagFilter carries the token sets FilterTags checks a candidate tag against,
-// so other tag-producing paths (adjudicated split components) can apply the
-// same per-document rules.
+// TagFilter carries the token sets the per-document checks run against:
+// FilterTags applies the full rule set, while SplitComponents applies the
+// hard rules only — adjudicated split components are exempt from the
+// title-echo check.
 type TagFilter struct {
 	nameTokens     map[string]struct{}
 	knownTokenSets []map[string]struct{}
@@ -76,6 +77,13 @@ func NewTagFilter(people []PeopleResult, knownPeopleNormalized []string, title s
 // length and word-count bounds, no person names or known people, no
 // document-type tokens, and not fully contained in the title.
 func (f *TagFilter) Accept(tag string) bool {
+	return f.acceptHardRules(tag) && !f.titleEcho(tag)
+}
+
+// acceptHardRules applies the per-document rules split components must
+// satisfy: length and word-count bounds, no person names or known people,
+// no document-type tokens.
+func (f *TagFilter) acceptHardRules(tag string) bool {
 	tagTokens := strings.Fields(tag)
 	if len(tagTokens) > maxTagWords || len(tagTokens) == 0 || len(tag) > maxTagLength {
 		return false
@@ -107,15 +115,18 @@ func (f *TagFilter) Accept(tag string) bool {
 			return false
 		}
 	}
+	return true
+}
 
-	allInTitle := true
-	for _, tok := range tagTokens {
+// titleEcho reports whether the tag's tokens are all contained in the
+// document title.
+func (f *TagFilter) titleEcho(tag string) bool {
+	for tok := range strings.FieldsSeq(tag) {
 		if _, ok := f.titleTokens[tok]; !ok {
-			allInTitle = false
-			break
+			return false
 		}
 	}
-	return !allInTitle
+	return true
 }
 
 // FilterTags drops the tags the per-document filter rejects; it applies
@@ -132,12 +143,15 @@ func FilterTags(tags []string, filter *TagFilter) []string {
 }
 
 // SplitComponents normalizes adjudicated split components and keeps the
-// ones the per-document filter accepts.
+// ones that pass the per-document hard rules; the title-containment echo
+// rule does not apply, because a judge-validated component carries
+// decomposition authority the whole-emission echo heuristic must not
+// override.
 func SplitComponents(raw []string, filter *TagFilter) []string {
 	normalized := NormalizeTags(raw)
 	result := make([]string, 0, len(normalized))
 	for _, c := range normalized {
-		if !filter.Accept(c) {
+		if !filter.acceptHardRules(c) {
 			continue
 		}
 		result = append(result, c)

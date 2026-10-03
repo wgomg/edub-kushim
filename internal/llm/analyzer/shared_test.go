@@ -83,6 +83,22 @@ func TestBuildPrompt_DefaultTemplate(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptTemplate_PublishingFormatBoundary(t *testing.T) {
+	wants := []string{
+		"what the document is as a publication — its publishing format (a book, article, tutorial, report) — belongs in the document type field",
+		"A genre or art form (poetry, science fiction, autobiography) is subject matter and may be a tag",
+		"form_genre (the document's publishing format)",
+	}
+	for _, want := range wants {
+		if !strings.Contains(defaultPromptTemplate, want) {
+			t.Errorf("default template missing %q", want)
+		}
+	}
+	if strings.Contains(defaultPromptTemplate, "its form or genre") {
+		t.Error("default template still carries the superseded form-or-genre clause")
+	}
+}
+
 func TestBuildPrompt_CustomTemplate(t *testing.T) {
 	custom := "Custom prompt: {{.Text}} and {{.DocTypePrompt}}"
 	result := BuildPrompt("hello world", nil, nil, nil, custom, 3, 5)
@@ -1041,7 +1057,7 @@ func TestSplitComponents_AppliesDocumentFilter(t *testing.T) {
 	people := []PeopleResult{{NormalizedName: "John Smith"}}
 	filter := NewTagFilter(people, nil, "machine learning applications", []string{"research article"})
 	got := SplitComponents([]string{"John Smith", "machine learning", "physics", "research article"}, filter)
-	want := []string{"physics"}
+	want := []string{"machine learning", "physics"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("SplitComponents = %v, want %v", got, want)
 	}
@@ -1454,6 +1470,43 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "5. not_form_genre") {
 		t.Error("prompt missing the fifth numbered question")
+	}
+}
+
+func TestBuildTagQualityPrompt_RestoresGenreAndLanguageBoundary(t *testing.T) {
+	prompt := BuildTagQualityPrompt("A text about poetry", []TagQualityCandidate{{Index: 0, Term: "poetry", Category: "topic"}})
+
+	for _, want := range []string{
+		"5. not_form_genre: is the tag not a publishing format of the document?",
+		"not a publishing format: it passes this criterion and is judged on the questions above",
+		"The document's language is never a subject matter",
+		"never a content dimension (spanish, english)",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("quality prompt missing %q", want)
+		}
+	}
+	for _, gone := range []string{"neither a form nor a genre", "not its form or genre"} {
+		if strings.Contains(prompt, gone) {
+			t.Errorf("superseded wording %q still present in the quality prompt", gone)
+		}
+	}
+}
+
+func TestBuildAdjudicationPrompt_SameReachableForMeaningMatches(t *testing.T) {
+	prompt := BuildAdjudicationPrompt([]TagPairEvidence{{Query: "labour", Target: "labor", Sim: 0.93}})
+
+	for _, want := range []string{
+		`Use "same" exactly when faithful replacement holds`,
+		`spelling and morphographic variants of one term (labour/labor, modelling/modeling)`,
+		`Reserve "variant" and "related" for genuinely distinct concepts`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("adjudication prompt missing %q", want)
+		}
+	}
+	if strings.Contains(prompt, "when in doubt") {
+		t.Error("adjudication prompt still carries the doubt clause that closes the same path")
 	}
 }
 

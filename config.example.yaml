@@ -138,6 +138,9 @@ enricher:
     # (~2-6 GB with BGE-M3); 0 = model's max_position_embeddings (8180 for
     # BGE-M3) and can OOM small hosts. See docs/tags/10-tag-matcher.md.
     chunk_size: 4096
+    # injection bar for matcher suggestions: only suggestions at or above
+    # it reach the emission prompt; 0 = the per-model default (0.55 on BGE-M3).
+    min_suggestion_similarity: 0.55
     hugot:
       model: BAAI/bge-m3
       backend: ort

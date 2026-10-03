@@ -19,8 +19,8 @@ type mockMatcher struct {
 	pairs []matcher.SimilarPair
 }
 
-func (m *mockMatcher) Match(ctx context.Context, docId, input string) ([]string, error) {
-	return []string{input}, nil
+func (m *mockMatcher) Match(ctx context.Context, docId, input string) ([]matcher.Candidate, error) {
+	return []matcher.Candidate{{Tag: input}}, nil
 }
 
 func (m *mockMatcher) Rank(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error) {

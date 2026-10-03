@@ -133,13 +133,13 @@ func (c *MatcherClient) do(ctx context.Context, method, path string, req, resp a
 
 // Match matches a document's reduced text against the daemon's stored tags.
 // Input longer than the body cap is truncated before the request.
-func (c *MatcherClient) Match(ctx context.Context, docId, input string) ([]string, error) {
+func (c *MatcherClient) Match(ctx context.Context, docId, input string) ([]Candidate, error) {
 	target := c.maxMatchBodyBytes - envelopeMargin
 	if len(input) > target {
 		input = truncateUTF8(input, target)
 	}
 	var resp struct {
-		Matches []string `json:"matches"`
+		Matches []Candidate `json:"matches"`
 	}
 	req := struct {
 		DocID string `json:"doc_id"`

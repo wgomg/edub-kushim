@@ -19,10 +19,12 @@ import (
 // plural rule to the fold-gate criteria; v2 added the derivational
 // adjective proposal to the mechanical proposal body; v3 adds the
 // morphographic proposal to the same body and the store-anchored
-// rejection routing to the birth rules, the criteria text unchanged. The
-// store reset truncates tag_identity_event, so no cached verdict survives
-// to invalidate.
-const IdentityRuleSetVersion = "v3"
+// rejection routing to the birth rules, the criteria text unchanged; v4
+// rewords the pair judge's doubt clause so morphographic and derivation
+// pairs can answer same, the mechanical rules unchanged. The store reset
+// truncates tag_identity_event, so no cached verdict survives to
+// invalidate.
+const IdentityRuleSetVersion = "v4"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -517,6 +519,16 @@ func StoreNames(names []string) map[string]string {
 	return byKey
 }
 
+// StoreNamesOf builds the Key(name)-to-name view of a set of names; it is
+// StoreNames for callers that hold the store's names as a set.
+func StoreNamesOf(names map[string]struct{}) map[string]string {
+	list := make([]string, 0, len(names))
+	for name := range names {
+		list = append(list, name)
+	}
+	return StoreNames(list)
+}
+
 // ProposedDerivationalFold proposes the noun base of an adjective through
 // the derivational suffix transforms, or "" when no transform output is a
 // store value. The proposal is store-anchored: a base only exists when the
@@ -596,6 +608,28 @@ func ProposedMorphologicalFold(name string, storeNames map[string]string) string
 		hit = storeNames[key]
 	}
 	return hit
+}
+
+// AnchoredFold resolves a split component through the store-anchored net:
+// it returns the live store value the name's derivational or morphological
+// proposal resolves onto, or "" when neither proposer yields an anchor.
+// Both proposers are store-anchored by construction and ambiguity-safe, so
+// the chain inherits both properties. The lemma fold is consulted only to
+// veto the morphological leg: a proposal that merely reproduces the lemma
+// fold (railways→railway) is not taken, so that class keeps folding through
+// the judged identity machinery instead. Split-component resolution consults
+// it before per-document filtering; births never rename through it — their
+// folds stay judged in the identity path. storeNames maps Key(storeName) to
+// the store's name.
+func AnchoredFold(name string, storeNames map[string]string) string {
+	if anchor := ProposedDerivationalFold(name, storeNames); anchor != "" {
+		return anchor
+	}
+	anchor := ProposedMorphologicalFold(name, storeNames)
+	if anchor == "" || anchor == ProposedFold(name) {
+		return ""
+	}
+	return anchor
 }
 
 // boundedEditDistance returns the Levenshtein distance between a and b,

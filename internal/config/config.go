@@ -417,13 +417,15 @@ type HugotConfig struct {
 }
 
 // TagMatcherConfig is the semantic matching section: timeouts, the reduce
-// target and chunk size, the embedding model, and the similarity
-// thresholds (filled at load from the algebra's pinned values).
+// target and chunk size, the embedding model, the user-settable
+// suggestion-injection bar, and the similarity thresholds (filled at load
+// from the algebra's pinned values).
 type TagMatcherConfig struct {
 	Timeout                 int         `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
 	ChunkSize               int         `mapstructure:"chunk_size" yaml:"chunk_size" json:"chunk_size"`
 	Hugot                   HugotConfig `mapstructure:"hugot" yaml:"hugot" json:"hugot"`
+	MinSuggestionSimilarity float64     `mapstructure:"min_suggestion_similarity" yaml:"min_suggestion_similarity" json:"min_suggestion_similarity"`
 	TopN                    int         `yaml:"-" json:"top_n"`
 	MinSimilarity           float64     `yaml:"-" json:"min_similarity"`
 	ConsolidationSimilarity float64     `yaml:"-" json:"consolidation_similarity"`
@@ -840,6 +842,9 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	if cfg.Enricher.TagMatcher.Timeout < 0 {
 		return fmt.Errorf("enricher.tagmatcher.timeout must be >= 0")
 	}
+	if cfg.Enricher.TagMatcher.MinSuggestionSimilarity < 0 {
+		return fmt.Errorf("enricher.tagmatcher.min_suggestion_similarity must be > 0 (leave unset for the model default)")
+	}
 
 	if cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords < 0 {
 		return fmt.Errorf("enricher.contentanalyzer.doc_type_refinement.head_words must be >= 0")
@@ -926,6 +931,11 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	cfg.Enricher.TagMatcher.MinSimilarity = defaultMinSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.ConsolidationSimilarity = defaultConsolidationSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.AutoReplaceSimilarity = defaultAutoReplaceSimilarity(modelShortName)
+	// zero reads as unset: the model default re-applies, so kushim config
+	// --unset reverts
+	if cfg.Enricher.TagMatcher.MinSuggestionSimilarity == 0 {
+		cfg.Enricher.TagMatcher.MinSuggestionSimilarity = defaultMinSuggestionSimilarity(modelShortName)
+	}
 	cfg.Enricher.TagMatcher.Hugot.BackendLibPath = filepath.Join(configDir, "tagmatcher", "hugot", "libs")
 
 	cfg.Storage.ConsumptionDir = expandPath(cfg.Storage.ConsumptionDir, homeDir)
@@ -1253,5 +1263,22 @@ func defaultAutoReplaceSimilarity(modelShortName string) float64 {
 		return 0.85
 	default:
 		return 0.90
+	}
+}
+
+// defaultMinSuggestionSimilarity returns the bar at or above which a matcher
+// suggestion is injected into the emission prompt. Each value is the model's
+// document-match floor plus a 0.15 band; only the bge-m3 default is
+// dump-verified (repair-corpus core 0.537–0.615, political overlap ≤ 0.544).
+func defaultMinSuggestionSimilarity(modelShortName string) float64 {
+	switch modelShortName {
+	case "bge-m3":
+		return 0.55
+	case "all-mpnet-base-v2":
+		return 0.45
+	case "all-MiniLM-L6-v2":
+		return 0.40
+	default:
+		return 0.45
 	}
 }

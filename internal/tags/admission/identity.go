@@ -69,11 +69,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 	plan := tags.Plan{}
 	aliasMap := a.aliasMapFor(ctx, in.Names, reqID)
 
-	storeTagNames := make([]string, 0, len(in.DBNames))
-	for name := range in.DBNames {
-		storeTagNames = append(storeTagNames, name)
-	}
-	byKey := tags.StoreNames(storeTagNames)
+	byKey := tags.StoreNamesOf(in.DBNames)
 
 	candidates := make([]*identityCandidate, len(in.Names))
 	for i, input := range in.Names {

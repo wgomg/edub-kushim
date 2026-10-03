@@ -194,11 +194,12 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		dbNames[t.Name] = struct{}{}
 	}
+	storeNames := tags.StoreNamesOf(dbNames)
 
 	matchTagsStart := time.Now()
 	report("tag-match", "", 0)
 	matchedTags, err := e.runner.MatchTags(ctx, document.DocumentID, tagsContent.Text)
-	if err != nil || len(matchedTags.Tags) == 0 {
+	if err != nil || len(matchedTags.Matches) == 0 {
 		if err != nil {
 			e.logger.Error(logId, "tag matching failed: %v", err)
 		} else {
@@ -211,8 +212,16 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			e.logger.Info(logId, "no tag suggestions (vocabulary of %d tags exceeds fallback limit)", len(tagsNames))
 		}
 	} else {
-		tagSuggestions = matchedTags.Tags
-		e.logger.Debug(logId, "tag matching: %d tags (%s)", len(tagSuggestions), time.Since(matchTagsStart))
+		// the bar applies before alias collapse: only the matched
+		// candidates carry similarities
+		bar := e.config.Enricher.TagMatcher.MinSuggestionSimilarity
+		for _, c := range matchedTags.Matches {
+			if c.Similarity >= bar {
+				tagSuggestions = append(tagSuggestions, c.Tag)
+			}
+		}
+		e.logger.Debug(logId, "tag matching: %d/%d suggestions above bar %.2f (%s)",
+			len(tagSuggestions), len(matchedTags.Matches), bar, time.Since(matchTagsStart))
 	}
 	tagSuggestions = e.admission.CanonicalSuggestions(ctx, tagSuggestions, logId)
 
@@ -333,7 +342,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
-	decomposed, compositionRows := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, tagFilter, logId)
+	decomposed, compositionRows := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, storeNames, tagFilter, logId)
 	analysis.Tags = e.admission.ApplyDeletedTagPolicy(decomposed, dbNames, blocklist, logId)
 
 	consolidateStart := time.Now()

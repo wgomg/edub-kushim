@@ -161,7 +161,7 @@ of the extraction contract:
 Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: At least {{.MinTags}} tags naming the broad subjects the document is about — the topics a reader would use to find other documents like this one. English only. ... Tags describe subject matter only; what the document is — its form or genre — belongs in the document type field, never in tags. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... When the parts of a phrase each name a subject that would work as a tag on its own, emit the parts as separate tags instead of the phrase — 'russia' and 'history', not 'russian history'; ... A fixed name or set phrase whose words are not subjects on their own stays whole ('cold war', 'machine learning', 'climate change'). ... Each tag is an object with keys: term, category. Category is exactly one of: topic (subject matter), form_genre (what the document is), place, person, work, other. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document), 'newfoundland' (a sub-national place — only countries and continents may be tags).{{.TagsPrompt}}
+- Tags: At least {{.MinTags}} tags naming the broad subjects the document is about — the topics a reader would use to find other documents like this one. English only. ... Tags describe subject matter only; what the document is as a publication — its publishing format (a book, article, tutorial, report) — belongs in the document type field, never in tags. A genre or art form (poetry, science fiction, autobiography) is subject matter and may be a tag. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... When the parts of a phrase each name a subject that would work as a tag on its own, emit the parts as separate tags instead of the phrase — 'russia' and 'history', not 'russian history'; ... A fixed name or set phrase whose words are not subjects on their own stays whole ('cold war', 'machine learning', 'climate change'). ... Each tag is an object with keys: term, category. Category is exactly one of: topic (subject matter), form_genre (the document's publishing format), place, person, work, other. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document), 'newfoundland' (a sub-national place — only countries and continents may be tags).{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language ...), name_romanized (...), and a type from the list below. ...
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn',...). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort ...
 
@@ -198,7 +198,7 @@ Design points:
   instructs compound decomposition — when each part of a phrase would work as
   a tag on its own, the parts are emitted instead of the phrase, while fixed
   names and set phrases stay whole. It also states the facet rule — tags
-  describe subject matter, forms/genres belong in the document type, and a
+  describe subject matter, publishing formats belong in the document type, and a
   place is a tag only for countries and continents — plus one-line negative
   exemplars for each known failure mode (`literary anthology`,
   `racial scapegoating`, `newfoundland`).
@@ -506,8 +506,10 @@ orchestrator. Step by step:
 3. **Load context** (`enricher.go:90-101`): document types, people types, all
    tags (unfiltered; the enricher splits the rows into the promoted trust set
    and the all-rows novel set).
-4. **Tag matching** (`enricher.go:110-123`): `runner.MatchTags`; on error or
-   zero matches, falls back to the promoted tag-name list as suggestions.
+4. **Tag matching** (`enricher.go:110-123`): `runner.MatchTags`; only matches
+   at or above `tagmatcher.min_suggestion_similarity` are kept as suggestions
+   (an empty list when none clear it), and on error or zero matches the
+   fallback is the promoted tag-name list.
 5. **Analyze with a 2-attempt loop** (`enricher.go:125-174`):
 
 ```go
@@ -561,15 +563,20 @@ for i := range 2 {
     `matches_document_type`, `model_self_classification`, `people_facet`,
     `forbidden_category`, `non_whitelisted_place`; `topic`/`other` and
     untyped emissions pass through. `FilterTags` (`tagfilter.go:121-132`) then
-    drops tags that are >3 words, overlap with LLM people names, are
-    multi-token subsets of known normalized names, overlap doc-type names, or
+    drops whole-emission tags that are >3 words, overlap with LLM people names,
+    are multi-token subsets of known normalized names, overlap doc-type names, or
     are contained in the title, with no count cap. `Adjudicator.DecomposeTags`
     (`adjudicator.go`) then replaces compound tags with their parts —
     LLM-adjudicated when the tag adjudicator is enabled, conjunction joints
-    deterministically otherwise. Compounds whose key already exists in the
+    deterministically otherwise. The parts are first fold-resolved through the
+    store-anchored net (derivational and morphographic proposals onto live
+    store values; lemma folds are excluded) and then pass the hard
+    per-document rules — length/word bounds, people, known-name, and doc-type
+    checks — with the title-containment check deliberately not applied to
+    them. Compounds whose key already exists in the
     store (names and aliases) are applications and are skipped before
     judgment, and every judged compound records one `tag_composition_event`
-    verdict row (split with its validated parts, keep, or the reason it could
+    verdict row (split with its resolved parts, keep, or the reason it could
     not be judged) with a matching `tag split[...]` log line.
     `Adjudicator.ApplyDeletedTagPolicy`
     applies the deleted-tag blocklist after it.
@@ -597,7 +604,7 @@ for i := range 2 {
     rejects on two or more failing signals, defers on exactly one (the gray
     band), and admits when nothing fails. Rejections drop the tag for that
     document — the registration and its pending identity evidence never reach
-    the store — and log `tagquality[v2]: reject … (reason=corroborated_failures
+    the store — and log `tagquality[v3]: reject … (reason=corroborated_failures
     source=judge|cache …)`; defers are kept and logged too, and admitted
     candidates journal at DEBUG. A whitelisted
     country/continent is never rejected for being a place. Fresh verdicts
@@ -662,6 +669,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `contentanalyzer.llm.request_delay` | `1` (s) | seconds to sleep after each LLM request; `0` = off, max `60` |
 | `contentanalyzer.fallbacks` | `[]` | ordered list of `{enabled, llm.*}` fallbacks tried on provider errors; each enabled entry requires adapter/provider/model (with `request_delay` 0–60) |
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
+| `tagmatcher.min_suggestion_similarity` | model-derived (`0.55` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
 | `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal pinned constants (`no_anchor_similarity = 0.60`, promotion floor of 10 live documents), not config keys |

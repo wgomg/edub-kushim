@@ -719,7 +719,7 @@ type mockTagMatcher struct {
 	rankFn func(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error)
 }
 
-func (m *mockTagMatcher) Match(ctx context.Context, docId, input string) ([]string, error) {
+func (m *mockTagMatcher) Match(ctx context.Context, docId, input string) ([]matcher.Candidate, error) {
 	return nil, nil
 }
 

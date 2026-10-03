@@ -276,9 +276,10 @@ func (h *Hugot) Close() {
 }
 
 // Match embeds the document text and returns up to the configured top N
-// stored tags above the document-match similarity. An empty store or a zero
-// top N returns no matches with a nil error.
-func (h *Hugot) Match(ctx context.Context, docId, input string) ([]string, error) {
+// stored tags above the document-match similarity, each carrying its
+// similarity. An empty store or a zero top N returns no matches with a nil
+// error.
+func (h *Hugot) Match(ctx context.Context, docId, input string) ([]Candidate, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
 	}
@@ -299,9 +300,9 @@ func (h *Hugot) Match(ctx context.Context, docId, input string) ([]string, error
 	matches := h.rankMatches(inputEmb, entries, h.minSimilarity)
 	topN := min(h.topN, len(matches))
 
-	result := make([]string, topN)
+	result := make([]Candidate, topN)
 	for i := range topN {
-		result[i] = matches[i].tag
+		result[i] = Candidate{Tag: matches[i].tag, Similarity: matches[i].similarity}
 	}
 
 	showN := min(15, len(matches))

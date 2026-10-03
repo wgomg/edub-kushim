@@ -122,8 +122,8 @@ describe('ProvisionalReview verdict labels', () => {
 		await renderLabel(tag({ identity_hold: 'politics' }), 'identity hold → politics');
 	});
 
-	it('renders the not form/genre criterion when a verdict is present', async () => {
-		await renderLabel(tag({ verdict: verdict() }), /not form\/genre/);
+	it('renders the not publishing format criterion when a verdict is present', async () => {
+		await renderLabel(tag({ verdict: verdict() }), /not publishing format/);
 	});
 });
 

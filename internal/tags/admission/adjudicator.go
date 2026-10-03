@@ -75,14 +75,19 @@ type splitDecision struct {
 
 // DecomposeTags asks the LLM adjudicator (or, without one, the plain
 // grammar split for conjunction joints) which compound tags decompose
-// into dimension values, validates the verdict components against the
-// per-document filter and the compound's part-count bound, and returns
-// the tag list with approved decompositions expanded in place plus one
-// composition evidence row per judged candidate. A compound whose key
-// already exists in the store is an application, not a candidate: it is
-// skipped before judgment and produces no row. Compounds that are not
-// split pass through, deduplicated.
-func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow) {
+// into dimension values, resolves the verdict components through the
+// store-anchored fold net, validates them against the per-document hard
+// rules and the compound's part-count bound, and returns the tag list
+// with approved decompositions expanded in place plus one composition
+// evidence row per judged candidate. The ordering is load-bearing:
+// fold-resolve, filter (title-echo exempt), then the remainder enters the
+// judged downstream. A compound whose key already exists in the store is
+// an application, not a candidate: it is skipped before judgment and
+// produces no row. Compounds that are not split pass through,
+// deduplicated. storeKeys is the store's names plus alias keys, which the
+// store-existing skip reads; storeNames is the live tag names' Key→name
+// view the fold resolution anchors on.
+func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, storeNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow) {
 	var candidates []string
 	seenCandidates := make(map[string]bool, len(names))
 	for _, name := range names {
@@ -120,7 +125,16 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			row.Disposition = tags.CompositionKeep
 			row.Reason, row.Model = splitSource(d)
 		default:
-			valid := analyzer.SplitComponents(d.components, filter)
+			parts := analyzer.NormalizeTags(d.components)
+			for i, part := range parts {
+				anchor := tags.AnchoredFold(part, storeNames)
+				if anchor != "" && anchor != part {
+					a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
+						analyzer.TagSplitVersion, part, anchor)
+					parts[i] = anchor
+				}
+			}
+			valid := analyzer.SplitComponents(parts, filter)
 			// a compound has at most MaxCompoundWords content parts, so a
 			// verdict with more surviving components is malformed
 			if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {

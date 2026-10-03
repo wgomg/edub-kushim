@@ -39,8 +39,9 @@ type SimilarPair struct {
 type Matcher interface {
 	// Match returns the stored tags most similar to a document's reduced
 	// text, up to the configured top N and above the document-match
-	// similarity floor. No matches is nil with a nil error.
-	Match(ctx context.Context, docId, input string) ([]string, error)
+	// similarity floor, each carrying its similarity. No matches is nil
+	// with a nil error.
+	Match(ctx context.Context, docId, input string) ([]Candidate, error)
 	// Rank returns, per query, the candidates above the consolidation
 	// similarity, at most two and best first, alongside the name the query
 	// is kept under.
