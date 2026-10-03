@@ -219,7 +219,7 @@ Design points:
 `llm_anthropic.go`. Request shape highlights (`llm_anthropic.go:50-62`): the
 struct has fields for `stop_sequences`, `stream`, `top_k` — **declared but
 never set** (streaming is hardcoded off, no stop sequences, no top-k).
-`buildRequest` (`llm_anthropic.go:173-185`) sets the envelope — model, max
+`buildRequest` (`llm_anthropic.go:167-179`) sets the envelope — model, max
 tokens, messages, system, `stream: false`, `cache_control: {type:
 "ephemeral"}` — then applies the reasoning and temperature gates; every call
 site goes through it:
@@ -229,24 +229,27 @@ reqBody := l.buildRequest(SystemMessage,
   []anthropicMessage{
     {Role: "user", Content: prompt},
   },
-  l.defaultMaxTokens(),
+  clampOutputBudget(l.caps, analysisOutputBudget),
   l.llmCfg.Temperature)
 ```
 
-`doRequest` (`llm_anthropic.go:187-250`) sets the headers (`x-api-key`,
+`doRequest` (`llm_anthropic.go:181-244`) sets the headers (`x-api-key`,
 `anthropic-version: 2023-06-01`, `Content-Type`, `Accept`, plus the
 catalog-declared session header when present) and decodes the response.
 
 Anthropic-specific rules the adapter encodes:
 
-- **`max_tokens` is mandatory** — `defaultMaxTokens()` uses the catalog's
-  `MaxOutputTokens` or 4096 (`llm_anthropic.go:127-132`).
+- **`max_tokens` is mandatory** — every call passes a per-call-type output
+  budget: the analysis family (`Analyze`, `AnalyzeDocType`) 4096, each judged
+  step `512 + 128 × candidates`. `clampOutputBudget` caps the budget at the
+  catalog's `MaxOutputTokens` when set; an uncataloged model keeps the budget
+  as-is, so every call is bounded even without a catalog entry.
 - **`system` is a top-level field**, not a message role.
 - **`anthropic-version: 2023-06-01`** header, `x-api-key` auth (only when a
   token is set).
 - **Prompt caching**: `cache_control: {type: "ephemeral"}` on both calls —
   the system prompt + first user turn are cached across requests.
-- **Thinking modes** (`applyReasoning`, `llm_anthropic.go:134-162`),
+- **Thinking modes** (`applyReasoning`, `llm_anthropic.go:128-156`),
   catalog-gated by `caps.SupportsReasoning` and `ReasoningEffortLevels`:
   - reasoning off → `thinking: disabled`;
   - model without effort levels → `thinking: enabled` with a
@@ -258,16 +261,16 @@ Anthropic-specific rules the adapter encodes:
     `output_config` (`anthropicManualThinkingModels`,
     `llm_anthropic.go:64-66`).
 - **Temperature is catalog-gated**: only sent when
-  `caps.SupportsTemperature` (`applyTemperature`, `llm_anthropic.go:164-168`)
+  `caps.SupportsTemperature` (`applyTemperature`, `llm_anthropic.go:158-162`)
   — newer models don't accept it. The doc-type call passes `temp = 0`.
 
-Response parsing (`llm_anthropic.go:187-250`): content blocks with
+Response parsing (`llm_anthropic.go:181-244`): content blocks with
 `block.Type == "text"` are joined in `doRequest`, then `Analyze`
-(`llm_anthropic.go:252-289`) runs `ParseAnalysisResponse` (§6) over the
+(`llm_anthropic.go:246-283`) runs `ParseAnalysisResponse` (§6) over the
 cleaned text; usage → `Stats`; the full prompt is persisted in `Prompt`;
 `PassContext` serializes `{system, user_prompt}` for the replay.
 
-**`AnalyzeDocType` replays the conversation** (`llm_anthropic.go:292-343`):
+**`AnalyzeDocType` replays the conversation** (`llm_anthropic.go:286-337`):
 
 ```go
 Messages: []anthropicMessage{
@@ -278,29 +281,35 @@ Messages: []anthropicMessage{
 ```
 
 — original user turn, then the previous assistant answer (built from the
-first result), then the new head/tail question. `MaxTokens: 256` since the
-answer is a single `type` field. Parsing tolerates both a bare `{"type": "..."}`
-and a full `AnalysisResult` (`llm_anthropic.go:337-342`).
+first result), then the new head/tail question. The call carries the
+analysis-family budget (`clampOutputBudget(l.caps, analysisOutputBudget)`)
+even though the answer is a single `type` field. Parsing tolerates both a bare
+`{"type": "..."}` and a full `AnalysisResult` (`llm_anthropic.go:331-336`).
 
 ---
 
 ## 5. The OpenAI-compatible adapter
 
 `openai_compatible.go` targets any `/chat/completions` API. Request build
-(`buildRequestBody`, `openai_compatible.go:87-93`, delegating to
-`buildRequest`, `openai_compatible.go:95-113`):
+(`buildRequestBody`, `openai_compatible.go:88`, delegating to
+`buildRequest`, `openai_compatible.go:96`):
 
 ```go
-func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, temp float64) map[string]any {
-  return l.buildRequest(l.buildRequestMessages(system, user, assistant), temp)
+func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, temp float64, maxOutput int) map[string]any {
+  return l.buildRequest(l.buildRequestMessages(system, user, assistant), temp, maxOutput)
 }
 
-func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64) map[string]any {
+func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64, maxOutput int) map[string]any {
   body := map[string]any{
     "model":    l.llmCfg.Model,
     "messages": messages,
     "stream":   false,
   }
+  outputField := "max_tokens"
+  if l.caps != nil && l.caps.UsesMaxCompletionTokens {
+    outputField = "max_completion_tokens"
+  }
+  body[outputField] = maxOutput
   if l.caps != nil && l.caps.SupportsTemperature {
     body["temperature"] = temp
     body["top_p"] = 1
@@ -317,7 +326,11 @@ func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp fl
 - **`response_format: {type: "json_object"}`** only when the catalog says the
   model supports structured output — the API-level enforcement of the
   "return ONLY json" prompt instruction.
-- **Provider-specific reasoning knobs** (`openai_compatible.go:115-155`) — a
+- **The output-bound field is catalog-gated** — every call sends its output
+  budget as `max_tokens`, or as `max_completion_tokens` when the catalog entry
+  sets `uses_max_completion_tokens` (the OpenAI GPT-5 family rejects
+  `max_tokens`).
+- **Provider-specific reasoning knobs** (`openai_compatible.go:122-162`) — a
   switch on `Provider` because every vendor names it differently:
 
 ```go
@@ -360,7 +373,7 @@ Schema:
    fails the whole parse, and a missing/`null` `tags` key yields empty slices.
 
 If the top-level decode fails, the error embeds the raw text:
-`"LLM returned invalid JSON: %w\nraw: %s"` (`llm_anthropic.go:271-274`) — the
+`"LLM returned invalid JSON: %w\nraw: %s"` (`llm_anthropic.go:265-268`) — the
 raw response goes into the error so the failure is debuggable from the task
 log. The `AnalyzeDocType` fallback for a response with no `type` key re-parses
 through the same helper, so an object-shaped response still yields its
@@ -375,9 +388,12 @@ entry that omits `index` is placed at its array position. A present index is
 still range-checked, entries beyond the candidate count are dropped, and the
 quality/identity parsers still error when a candidate lacks a complete
 verdict. Both bridges log a DEBUG drift line naming the model when the reply
-is a bare array, and a parse failure carries the model name and the reply text
-(`<parse error> (model <model>)` followed by a `raw: <reply>` line) — the
-pristine reply on the OpenAI side, the cleaned text on the Anthropic side.
+is a bare array, and every judged call logs one DEBUG line with its step
+label, model, candidate count and duration. Before parsing, the OpenAI side
+turns a reply stopped at the output bound (`finish_reason: "length"`) into an
+`OutputCapError` carrying the model and the effective cap. A parse failure is
+a `ReplyParseError` carrying the step, the model, the raw reply's total length
+and its first 2048 bytes — never the full body.
 
 Validation happens *upstream* of parsing, in the enricher (§10): tags are
 filtered/normalized, people canonicalized, doc type checked against the
@@ -387,8 +403,7 @@ known list, language checked. The LLM's word is never persisted raw.
 
 ## 7. The error taxonomy
 
-Three typed errors in `gates.go:30-61`, each with a distinct recovery path
-in the enricher:
+Five typed errors in `gates.go`, each with a distinct recovery path:
 
 ```go
 type ContentTooLargeError struct {       // pre-flight: estimated tokens > model budget
@@ -400,6 +415,16 @@ type TokenLimitError struct {            // provider rejected: context length ex
   RequestedTokens int
   RawBody         string
 }
+type OutputCapError struct {             // provider stopped at the request's output bound
+  Model string
+  Cap   int
+}
+type ReplyParseError struct {            // judged reply failed to parse
+  Step      string
+  Model     string
+  RawLen    int
+  RawPrefix string
+}
 type InsufficientCreditsError struct {   // 402/429: billing problem
   Provider   string
   HTTPStatus int
@@ -408,10 +433,10 @@ type InsufficientCreditsError struct {   // 402/429: billing problem
 ```
 
 - **`ContentTooLargeError`** — thrown *before* the HTTP call by
-  `checkContentTooLarge` (`gates.go:80-89`): `estimateTokens(prompt) >
+  `checkContentTooLarge` (`gates.go:144`): `estimateTokens(prompt) >
   caps.MaxInputTokens`. Skipped when the catalog lacks a max-input value.
 - **`TokenLimitError`** — parsed from the provider's error body with a regex
-  (`gates.go:91-102`):
+  (`gates.go:140`):
 
 ```go
 var tokenLimitRE = regexp.MustCompile(
@@ -419,13 +444,20 @@ var tokenLimitRE = regexp.MustCompile(
 )
 ```
 
-- **`InsufficientCreditsError`** (`gates.go:53-61`) — **HTTP 402 or 429** is
+- **`InsufficientCreditsError`** (`gates.go:117`) — **HTTP 402 or 429** is
   a credit error for any provider; plus a qwen special case: HTTP 400 with
   `"arrearage"` in the body.
+- **`OutputCapError`** — the provider stopped at the requested output bound
+  (`finish_reason: "length"`); the judged call fails instead of handing the
+  truncated body to the parser. Never retried.
+- **`ReplyParseError`** — a judged reply failed to parse; it carries the
+  step, the model, the raw reply's total length and a bounded 2048-byte
+  prefix, so a degenerate reply cannot flood the log. Never retried.
 
 Both adapters return these typed errors; **there is no retry/backoff inside
-the adapters** — each call is a single HTTP request, and the
-enricher decides what to do (§10). Timeout enforcement comes from
+the adapters** — each call is a single HTTP request. Retry decisions live in
+the callers: the enricher decides for analysis calls (§10), and the admission
+layer for the four judged steps (below). Timeout enforcement comes from
 `runWithTimeout` at the runner level (`internal/tools/runner.go:135-152`); the
 adapters' `http.Client` deliberately has no timeout of its own.
 
@@ -443,6 +475,19 @@ request. If every fallback fails too, the **last** error (e.g. an
 `InsufficientCreditsError` naming the last failing provider) is what the
 enricher sees — so the batch pauses on credit errors only when the primary
 **and all** enabled fallbacks end in a credit error.
+
+**Judged-call retry and credit policy** — the four judged steps bypass the
+provider fallback chain. The admission layer retries a failed judged call
+**once**, and only when `retryableJudgeFailure` classifies the failure as
+transient (transport, generic provider and empty-response failures).
+`ReplyParseError`, `OutputCapError`, credit exhaustion, `TokenLimitError`,
+`ContentTooLargeError` and context errors are never retried. A credit
+exhaustion propagates out of the step so the enricher's `creditPause` turns it
+into the batch pause (governed by `pause_on_credit_error`), and the identity
+and pair loops abort immediately instead of spending more calls on the dead
+account. Every other non-retryable failure degrades per step — the affected
+tags are kept, born provisional or deferred — with a WARN naming the
+candidates.
 
 ---
 
@@ -465,7 +510,9 @@ Catalog entry fields (`registry.go:58-74`): `provider`, `adapter`,
 `model_id`, `display_name`, `official_url`, `session_header`,
 `max_input_tokens`, `max_output_tokens`, `reasoning`, `reasoning_efforts`,
 `supports_structured_output`, `supports_temperature`,
-`supports_prompt_caching`. Eight providers: openai, deepseek, mistral,
+`supports_prompt_caching`, `uses_max_completion_tokens` (the OpenAI GPT-5
+family rejects `max_tokens`; the flag makes the adapters send the output
+budget as `max_completion_tokens`). Eight providers: openai, deepseek, mistral,
 anthropic, qwen, zhipu, opencode, opencode-go — each entry carries its own
 `official_url`, which is how the adapters know the endpoint. Providers that
 declare `session_header` receive the process-stable `llm.SessionID()` in that
@@ -494,23 +541,24 @@ and limits.
 
 ## 10. The enricher pipeline
 
-`Enricher.Enrich` (`internal/enrichment/enricher.go:61-498`) is the
+`Enricher.Enrich` (`internal/enrichment/enricher.go:113-641`) is the
 orchestrator. Step by step:
 
-1. **Reduce for the LLM** (`enricher.go:65-77`): `ReduceContent(text, 150,
+1. **Reduce for the LLM** (`enricher.go:128-137`): `ReduceContent(text, 150,
    targetWordCount)` — chunk size 150, target from config (2000) or a
-   fraction of the document for negative config values (`targetWordCount`,
-   `enricher.go:406-412`, floor 2000). On reduction error, **falls back to
-   raw text** — a broken reducer never blocks analysis.
-2. **Reduce for the tag matcher** (`enricher.go:79-88`): same, target 4000.
-3. **Load context** (`enricher.go:90-101`): document types, people types, all
+   fraction of the document for negative config values
+   (`matcher.TargetWordCount`, `internal/matcher/client.go:64`, floor 2000). On
+   reduction error, **falls back to raw text** — a broken reducer never blocks
+   analysis.
+2. **Reduce for the tag matcher** (`enricher.go:139-147`): same, target 4000.
+3. **Load context** (`enricher.go:150-199`): document types, people types, all
    tags (unfiltered; the enricher splits the rows into the promoted trust set
    and the all-rows novel set).
-4. **Tag matching** (`enricher.go:110-123`): `runner.MatchTags`; only matches
+4. **Tag matching** (`enricher.go:201-229`): `runner.MatchTags`; only matches
    at or above `tagmatcher.min_suggestion_similarity` are kept as suggestions
    (an empty list when none clear it), and on error or zero matches the
    fallback is the promoted tag-name list.
-5. **Analyze with a 2-attempt loop** (`enricher.go:125-174`):
+5. **Analyze with a 2-attempt loop** (`enricher.go:231-272`):
 
 ```go
 for i := range 2 {
@@ -521,11 +569,7 @@ for i := range 2 {
     newTarget := int(float64(llmContent.TargetWordCount) * ratio)
     // re-reduce and retry once
   case errors.As(err, &credErr):
-    return nil, &task.Error{
-      ReqID:      logId,
-      Err:        fmt.Errorf("LLM credit exhausted (%s): %w", provider, credErr),
-      PauseBatch: e.config.Enricher.ContentAnalyzer.PauseOnCreditError,   // default true
-    }
+    return nil, DocumentCounts{}, e.creditPause(logId, err)   // batch pause flag
   }
 }
 ```
@@ -533,28 +577,29 @@ for i := range 2 {
    - Too-large → **shrink the reduced text by the token ratio × 0.9 and
       retry once**; a second failure (or below `minTargetWords` = 100) errors
       with `"document too large for model %s/%s: %d tokens exceeds budget
-      (max_input_tokens=%d)"` (`enricher.go:163-167`).
-   - Credit error → the typed `task.Error` with `PauseBatch` — the task
-      runner pauses the whole batch (§12 of the task-system guide). With a
-      fallback configured, the batch pauses only when **both** primary and
+      (max_input_tokens=%d)"` (`enricher.go:263`).
+   - Credit error → `e.creditPause(logId, err)` builds the typed `task.Error`
+      with `PauseBatch` from `contentanalyzer.pause_on_credit_error` — the
+      task runner pauses the whole batch (§12 of the task-system guide). With
+      a fallback configured, the batch pauses only when **both** primary and
       fallback failed with a credit error (the runner retries through the
       fallback first, §7); the reported provider in the error is the actual
       failing one (`credErr.Provider`, which may be the fallback).
-6. **Empty-result retry** (`enricher.go:176-185`): if the analysis came back
-   with every field empty (`isEmptyAnalysis`, `enricher.go:443-445`), one
+6. **Empty-result retry** (`enricher.go:274-283`): if the analysis came back
+   with every field empty (`isEmptyAnalysis`, `enricher.go:814`), one
    more `AnalyzeContent`; still empty → error.
-7. **Doc-type refinement** (`enricher.go:187-209`): only when enabled and the
+7. **Doc-type refinement** (`enricher.go:285-306`): only when enabled and the
    text was actually reduced; head/tail sampled via
    `ExtractHeadTailWords(text, HeadWords, TailWords)` (600/400) with
    `DocMetadata`; `AnalyzeDocType` failure keeps the first-pass type (logged,
    not fatal).
-8. **Normalize tags** (`enricher.go:211`): `NormalizeTags` — the
+8. **Normalize tags** (`enricher.go:309`): `NormalizeTags` — the
    normalization pipeline from `tagfilter.go:156-167`.
-9. **Canonicalize people** (`enricher.go:213-219`): Latin names as-is;
+9. **Canonicalize people** (`enricher.go:311-318`): Latin names as-is;
    non-Latin names use `NameRomanized` or an **anyascii transliteration**
-   (`canonicalPersonName`, `enricher.go:426-441`); `NormalizedName =
+   (`canonicalPersonName`, `enricher.go:797`); `NormalizedName =
    textnorm.NormalizeForDB(canonical)`.
-10. **Facet separation and tag filtering** (`enricher.go:263-267`):
+10. **Facet separation and tag filtering** (`enricher.go:332-338`):
     `SeparateFacets` gates typed emissions by the model's own `category`:
     `form_genre` tags are dropped (they belong to `document_type`),
     `person` and `work` tags are dropped, and `place` tags survive only when
@@ -577,8 +622,10 @@ for i := range 2 {
     store (names and aliases) are applications and are skipped before
     judgment, and every judged compound records one `tag_composition_event`
     verdict row (split with its resolved parts, keep, or the reason it could
-    not be judged) with a matching `tag split[...]` log line.
-    `Adjudicator.ApplyDeletedTagPolicy`
+    not be judged) with a matching `tag split[...]` log line. Under the shared
+    judged-call policy (§7) a transient split-judge failure is retried once, a
+    credit exhaustion aborts the document so the batch pauses, and every other
+    failure keeps the compound whole. `Adjudicator.ApplyDeletedTagPolicy`
     applies the deleted-tag blocklist after it.
 11. **Identity** (`enricher.go`, `identity.go`): `Runner.RankTags` ranks LLM
     tags against canonical existing tags, then the identity pipeline applies
@@ -589,7 +636,8 @@ for i := range 2 {
     (`Runner.JudgeTagIdentity` / `Runner.AdjudicateTags`: caches → evidence →
     batched LLM calls; `same` aliases the losing name, `variant`/`related`
     register both). Disabled, failing, or ambiguous adjudication leaves the
-    claim pending — the candidate registers provisionally.
+    claim pending — the candidate registers provisionally; a credit-exhaustion
+    failure pauses the batch instead.
 12. **Tag admission decision** (`internal/tags/admission/adjudicator.go`, `Adjudicator.ApplyTagQuality`): only when
     `enricher.tag_quality.enabled` is true. Novel tags — consolidated outputs
     whose normalized names are absent from the vocabulary — are resolved by the
@@ -610,19 +658,22 @@ for i := range 2 {
     country/continent is never rejected for being a place. Fresh verdicts
     record the judging model and the recorded outcome, cache-applied ones a
     NULL model; cached rows re-run the decision over the stored rubric with the
-    current emission's deterministic signals. A judge failure or timeout
-    retries once and then keeps every novel tag with a defer decision, logged
-    as a WARN naming the kept candidates — under the gate those births are
-    **provisional** (no verdict row).
-13. **Persist metadata** (`enricher.go:254-273`): title truncated to 127
+    current emission's deterministic signals. A transient judge failure retries
+    once; parse failures, output-cap hits, credit exhaustion, token-limit,
+    content-too-large and context errors are never retried (§7). Every
+    non-credit failure keeps every novel tag with a defer decision, logged as a
+    WARN naming the kept candidates — under the gate those births are
+    **provisional** (no verdict row); a credit-exhaustion failure aborts the
+    document so the batch pauses.
+13. **Persist metadata** (`enricher.go:456-463`): title truncated to 127
     (`truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
-14. **OCR language auto-detect** (`enricher.go:275`,
-    `ensureOCRLanguage` `enricher.go:447-500`): the detected 3-letter ISO
+14. **OCR language auto-detect** (`enricher.go:465`,
+    `ensureOCRLanguage` `enricher.go:818`): the detected 3-letter ISO
     code is added to `consumer.ocr.languages` and persisted via
     `config.SaveMap` — for the gosseract engine the tessdata download runs
     in a goroutine and config persists only on success.
-15. **Tags to DB** (`enricher.go:331-392`): plan application
+15. **Tags to DB** (`enricher.go:470-553`): plan application
     `Tag.CreatePlannedTx` on the persist
     transaction (`quarantine = enricher.tag_quality.enabled`), tolerating
     conflicts; the plan carries the registrations, alias actions, and identity
@@ -641,7 +692,7 @@ for i := range 2 {
     Verdict-less provisionals are resolved later by the scheduled sweep or the
     review queue (see the
     [semantic matching promotion section](semantic-matching.md#promotion-out-of-quarantine)).
-16. **People to DB** (`enricher.go:307-397`): dedupe by normalized name,
+16. **People to DB** (`enricher.go:555-640`): dedupe by normalized name,
     `CreatePeople` with a race fallback (`sql.ErrNoRows` →
     `GetPeopleByNormalizedName` + `UpdatePeopleNative`), unknown LLM types →
     `"unknown"`, then `ClearDocumentPeople` + `AddDocumentPeople`.
@@ -683,15 +734,20 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 
 ## 12. Gotchas
 
-- **`max_tokens` is mandatory for Anthropic, and the catalog's
-  `MaxOutputTokens` decides it** — a catalog entry without it falls back to
-  4096, which can truncate long analyses.
+- **Output budgets are per call type and catalog-capped** — the analysis
+  family sends 4096, each judged step `512 + 128 × candidates`, both clamped
+  to the catalog's `MaxOutputTokens`; an entry without one keeps the budget.
+  Anthropic requires `max_tokens` on every call; OpenAI's GPT-5 family
+  requires `max_completion_tokens` (the `uses_max_completion_tokens` catalog
+  flag).
 - **Temperature is catalog-gated** — sending `temperature` to a model whose
   entry says `supports_temperature: false` breaks the request. When adding a
   model, set the flag correctly.
-- **The adapters never retry** — the 2-attempt loop, the shrink-and-retry,
-  and the credit pause all live in the enricher. Adding retry inside an
-  adapter would fight that design (and the `runWithTimeout` guard).
+- **The adapters never retry** — the 2-attempt loop and the shrink-and-retry
+  live in the enricher, the judged steps' single classified retry lives in the
+  admission layer, and the credit pause is the enricher's `creditPause`.
+  Adding retry inside an adapter would fight that design (and the
+  `runWithTimeout` guard).
 - **`http.Client` has no timeout** — enforcement is
   `runWithTimeout` + the caller's context. The adapter calls are
   context-cancellable, so a stuck provider eventually surfaces as a timeout
@@ -727,4 +783,4 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 
 ---
 
-*Last verified against the tree: 2026-10-02. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-03. If code and doc disagree, code wins.*

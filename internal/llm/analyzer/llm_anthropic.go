@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/llm"
@@ -122,13 +123,6 @@ type anthropicPassContext struct {
 
 func (l *LlmAnthropic) baseURL() string {
 	return l.reg.ProviderDefaultURL(l.llmCfg.Provider)
-}
-
-func (l *LlmAnthropic) defaultMaxTokens() int {
-	if l.caps != nil && l.caps.MaxOutputTokens > 0 {
-		return l.caps.MaxOutputTokens
-	}
-	return 4096
 }
 
 func (l *LlmAnthropic) applyReasoning(reqBody *anthropicRequest, maxTokens int) {
@@ -260,7 +254,7 @@ func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []Type
 		[]anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
-		l.defaultMaxTokens(),
+		clampOutputBudget(l.caps, analysisOutputBudget),
 		l.llmCfg.Temperature)
 
 	chatResp, responseContent, err := l.doRequest(ctx, reqBody, "API error")
@@ -325,7 +319,7 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 			{Role: "assistant", Content: string(assistantJSON)},
 			{Role: "user", Content: docTypePrompt},
 		},
-		256,
+		clampOutputBudget(l.caps, analysisOutputBudget),
 		0)
 
 	_, responseContent, err := l.doRequest(ctx, reqBody, "doc type refinement")
@@ -348,11 +342,17 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 }
 
 // judgedAnthropic runs one judged step against the Anthropic API: the size
-// gate, the messages request with caching and reasoning, the labeled
-// transport call, the bare-array drift log and the parser. A parse failure
-// carries the model name and the cleaned reply.
+// gate, the messages request under the step's output bound with caching and
+// reasoning, the labeled transport call, the bare-array drift log, the
+// parser, and one debug line per call with label, model, candidate count
+// and duration. A parse failure carries the step, the model and a bounded
+// raw prefix.
 func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
 	var zero T
+	start := time.Now()
+	defer func() {
+		l.logger.Debug("", "%s: model %s n=%d duration %s", label, l.llmCfg.Model, n, time.Since(start))
+	}()
 
 	if err := checkContentTooLarge(l.caps, system+"\n"+prompt); err != nil {
 		return zero, err
@@ -362,7 +362,7 @@ func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt
 		[]anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
-		l.defaultMaxTokens(),
+		clampOutputBudget(l.caps, judgedOutputBudget(n)),
 		0)
 
 	_, responseContent, err := l.doRequest(ctx, reqBody, label)
@@ -374,7 +374,7 @@ func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt
 	}
 	results, err := parse(responseContent, n)
 	if err != nil {
-		return zero, fmt.Errorf("%w (model %s)\nraw: %s", err, l.llmCfg.Model, responseContent)
+		return zero, newReplyParseError(label, l.llmCfg.Model, responseContent)
 	}
 	return results, nil
 }

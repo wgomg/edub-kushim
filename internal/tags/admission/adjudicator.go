@@ -86,8 +86,10 @@ type splitDecision struct {
 // produces no row. Compounds that are not split pass through,
 // deduplicated. storeKeys is the store's names plus alias keys, which the
 // store-existing skip reads; storeNames is the live tag names' Key→name
-// view the fold resolution anchors on.
-func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, storeNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow) {
+// view the fold resolution anchors on. A non-nil error is returned only
+// when the provider account cannot pay; every other failure degrades to
+// keeping the compounds.
+func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, storeNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow, error) {
 	var candidates []string
 	seenCandidates := make(map[string]bool, len(names))
 	for _, name := range names {
@@ -105,10 +107,13 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		candidates = append(candidates, name)
 	}
 	if len(candidates) == 0 {
-		return names, nil
+		return names, nil, nil
 	}
 
-	decisions := a.splitVerdicts(ctx, candidates, reqID)
+	decisions, err := a.splitVerdicts(ctx, candidates, reqID)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	components := make(map[string][]string, len(candidates))
 	rows := make([]tags.CompositionRow, 0, len(candidates))
@@ -158,7 +163,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		rows = append(rows, row)
 	}
 	if len(components) == 0 {
-		return names, rows
+		return names, rows, nil
 	}
 
 	out := make([]string, 0, len(names)+len(components))
@@ -180,7 +185,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			out = append(out, segment)
 		}
 	}
-	return out, rows
+	return out, rows, nil
 }
 
 // splitSource names a split decision's verdict source and the model that
@@ -238,7 +243,36 @@ func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]
 	return out
 }
 
-func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, reqID string) map[string]splitDecision {
+// retryableJudgeFailure classifies a judged call's failure: transport and
+// generic provider errors get one retry, while parse failures, output-cap
+// hits, credit exhaustion, content-too-large, token-limit and context
+// errors never do.
+func retryableJudgeFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var parseErr *analyzer.ReplyParseError
+	var capErr *analyzer.OutputCapError
+	var credErr *analyzer.InsufficientCreditsError
+	var ctle *analyzer.ContentTooLargeError
+	var tokErr *analyzer.TokenLimitError
+	return !errors.As(err, &parseErr) && !errors.As(err, &capErr) &&
+		!errors.As(err, &credErr) && !errors.As(err, &ctle) && !errors.As(err, &tokErr)
+}
+
+// isCreditError reports whether err carries the provider account's
+// credit-exhaustion failure, the one class that pauses the batch.
+func isCreditError(err error) bool {
+	var credErr *analyzer.InsufficientCreditsError
+	return errors.As(err, &credErr)
+}
+
+// splitVerdicts resolves the candidates' decomposition verdicts from the
+// shared cache, the conjunction grammar when no adjudicator is configured,
+// or one judged call over the uncached remainder. A non-nil error is
+// returned only for a credit-exhaustion failure; every other failure
+// keeps the candidates whole.
+func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, reqID string) (map[string]splitDecision, error) {
 	a.splitMu.Lock()
 	if a.splitCache == nil {
 		a.splitCache = make(map[string]splitDecision)
@@ -256,7 +290,7 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, re
 	a.splitMu.Unlock()
 
 	if len(uncached) == 0 {
-		return decisions
+		return decisions, nil
 	}
 
 	if !a.runner.HasTagAdjudicator() {
@@ -270,17 +304,24 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, re
 			}
 			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: segments}
 		}
-		return decisions
+		return decisions, nil
 	}
 
 	results, err := a.runner.AdjudicateTagSplits(ctx, uncached)
+	if err != nil && retryableJudgeFailure(err) {
+		a.logger.Warn(reqID, "tag split adjudication: attempt failed, retrying once: %v", err)
+		results, err = a.runner.AdjudicateTagSplits(ctx, uncached)
+	}
 	if err != nil {
+		if isCreditError(err) {
+			return nil, err
+		}
 		a.logger.Warn(reqID, "tag split[%s]: adjudication failed for %q, keeping them: %v", analyzer.TagSplitVersion, uncached, err)
-		return decisions
+		return decisions, nil
 	}
 	if len(results) != len(uncached) {
 		a.logger.Warn(reqID, "tag split[%s]: adjudication returned %d verdicts for %q, keeping them", analyzer.TagSplitVersion, len(results), uncached)
-		return decisions
+		return decisions, nil
 	}
 
 	a.splitMu.Lock()
@@ -290,7 +331,7 @@ func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, re
 		decisions[uncached[i]] = splitDecision{verdict: r.Verdict, components: r.Components, model: model}
 		a.splitCache[uncached[i]] = splitDecision{verdict: r.Verdict, components: r.Components}
 	}
-	return decisions
+	return decisions, nil
 }
 
 type bandPair struct {
@@ -457,8 +498,10 @@ func (a *Adjudicator) logAdmission(reqID, name, source string, d tags.AdmissionD
 // tags are dropped from the returned list; deferred and admitted tags are
 // both kept, and every kept novel name's decision is returned so the
 // caller can drive promotion. A missing judge, judge failure, or context
-// cancellation keeps the tags, born provisional with a defer decision.
-func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, reqID string) ([]string, map[string]tags.AdmissionDecision) {
+// cancellation keeps the tags, born provisional with a defer decision; a
+// credit-exhaustion failure is the only error returned, so the caller can
+// pause the batch.
+func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, reqID string) ([]string, map[string]tags.AdmissionDecision, error) {
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
 		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
@@ -546,13 +589,17 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 				}
 			}
 			results, err := a.runner.JudgeTagQuality(ctx, reducedText, candidates)
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if err != nil && retryableJudgeFailure(err) {
+				a.logger.Warn(reqID, "tagquality[%s]: judge attempt failed, retrying once: %v", analyzer.TagQualityVersion, err)
 				results, err = a.runner.JudgeTagQuality(ctx, reducedText, candidates)
 			}
 			if err == nil && len(results) != len(candidates) {
 				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
 			}
 			if err != nil {
+				if isCreditError(err) {
+					return nil, nil, err
+				}
 				names := make([]string, len(uncached))
 				for i, n := range uncached {
 					names[i] = n.emitted
@@ -587,7 +634,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 		}
 		out = append(out, tag)
 	}
-	return out, decided
+	return out, decided, nil
 }
 
 // writeTagQualityEvent records a verdict row for this document. A fresh

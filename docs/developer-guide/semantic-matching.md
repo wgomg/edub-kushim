@@ -446,10 +446,13 @@ concurrent workers, and a losing insert re-reads the cached verdict, applies
 it, and writes a cache-applied row with NULL `verdict_model`. Rows predating
 the outcome column carry NULL and fall back to `pass`, and rows predating the
 rubric fall back to their `pass` flag (admit/reject) until the store reset
-retires them. A judge error, timeout, or incomplete response retries once and
-then keeps every novel tag with a defer decision and an error log — under the
+retires them. A transient judge failure retries once; parse failures,
+output-cap hits, credit exhaustion, token-limit, content-too-large and context
+errors are never retried. Every non-credit failure keeps every novel tag with
+a defer decision and an error log — under the
 quality gate those kept names are born **provisional** (no verdict row), so
-they stay out of the vocabulary and await the reconciliation's re-judge.
+they stay out of the vocabulary and await the reconciliation's re-judge; a
+credit-exhaustion failure pauses the batch.
 
 The judge LLM and timeout default to the content analyzer's
 (`ResolvedQualityLlm`/`ResolvedQualityTimeout`, resolved at use time); config

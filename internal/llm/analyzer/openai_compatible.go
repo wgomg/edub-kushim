@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/llm"
@@ -84,20 +85,26 @@ func (l *LlmOpenAiCompatible) baseURL() string {
 	return l.reg.ProviderDefaultURL(l.llmCfg.Provider)
 }
 
-func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, temp float64) map[string]any {
-	return l.buildRequest(l.buildRequestMessages(system, user, assistant), temp)
+func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, temp float64, maxOutput int) map[string]any {
+	return l.buildRequest(l.buildRequestMessages(system, user, assistant), temp, maxOutput)
 }
 
 // buildRequest assembles the body every compatible-API call shares: model,
-// messages, the stream flag, and the capability-gated envelope under the
-// model catalog's caps; any body-level field is set here, never at call
-// sites.
-func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64) map[string]any {
+// messages, the stream flag, the output bound, and the capability-gated
+// envelope under the model catalog's caps; any body-level field is set
+// here, never at call sites.
+func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64, maxOutput int) map[string]any {
 	body := map[string]any{
 		"model":    l.llmCfg.Model,
 		"messages": messages,
 		"stream":   false,
 	}
+
+	outputField := "max_tokens"
+	if l.caps != nil && l.caps.UsesMaxCompletionTokens {
+		outputField = "max_completion_tokens"
+	}
+	body[outputField] = maxOutput
 
 	if l.caps != nil && l.caps.SupportsTemperature {
 		body["temperature"] = temp
@@ -208,7 +215,7 @@ func (l *LlmOpenAiCompatible) Analyze(ctx context.Context, text string, docTypes
 		return nil, err
 	}
 
-	reqBody := l.buildRequestBody(SystemMessage, prompt, "", l.llmCfg.Temperature)
+	reqBody := l.buildRequestBody(SystemMessage, prompt, "", l.llmCfg.Temperature, clampOutputBudget(l.caps, analysisOutputBudget))
 
 	chatResp, err := l.doRequest(ctx, reqBody)
 	if err != nil {
@@ -276,7 +283,7 @@ func (l *LlmOpenAiCompatible) AnalyzeDocType(ctx context.Context, prevResult *An
 	messages := l.buildRequestMessages(passCtx.SystemMessage, passCtx.UserPrompt, string(assistantJSON))
 	messages = append(messages, openaiChatMessage{Role: "user", Content: docTypePrompt})
 
-	reqBody := l.buildRequest(messages, 0)
+	reqBody := l.buildRequest(messages, 0, clampOutputBudget(l.caps, analysisOutputBudget))
 
 	chatResp, err := l.doRequest(ctx, reqBody)
 	if err != nil {
@@ -316,17 +323,25 @@ func (l *LlmOpenAiCompatible) buildRequestMessages(system, user, assistant strin
 }
 
 // judgedOpenAI runs one judged step against the compatible API: the size
-// gate, the request envelope, the labeled transport call, the empty
-// response check, the bare-array drift log and the parser. A parse failure
-// carries the model name and the raw reply.
+// gate, the request envelope under the step's output bound, the labeled
+// transport call, the empty response check, the output-cap check, the
+// bare-array drift log, the parser, and one debug line per call with label,
+// model, candidate count and duration. A reply stopped at the output bound
+// fails as an output-cap error; a parse failure carries the step, the model
+// and a bounded raw prefix.
 func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
 	var zero T
+	start := time.Now()
+	defer func() {
+		l.logger.Debug("", "%s: model %s n=%d duration %s", label, l.llmCfg.Model, n, time.Since(start))
+	}()
 
 	if err := checkContentTooLarge(l.caps, system+"\n"+prompt); err != nil {
 		return zero, err
 	}
 
-	reqBody := l.buildRequestBody(system, prompt, "", 0)
+	maxOutput := clampOutputBudget(l.caps, judgedOutputBudget(n))
+	reqBody := l.buildRequestBody(system, prompt, "", 0, maxOutput)
 
 	chatResp, err := l.doRequest(ctx, reqBody)
 	if err != nil {
@@ -337,6 +352,10 @@ func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, pr
 		return zero, fmt.Errorf("empty response from LLM")
 	}
 
+	if chatResp.Choices[0].FinishReason == "length" {
+		return zero, fmt.Errorf("%s: %w", label, &OutputCapError{Model: l.llmCfg.Model, Cap: maxOutput})
+	}
+
 	raw := chatResp.Choices[0].Message.Content
 	content := cleanCodeBlock(strings.TrimSpace(raw))
 	if isBareArray(content) {
@@ -344,7 +363,7 @@ func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, pr
 	}
 	results, err := parse(content, n)
 	if err != nil {
-		return zero, fmt.Errorf("%w (model %s)\nraw: %s", err, l.llmCfg.Model, raw)
+		return zero, newReplyParseError(label, l.llmCfg.Model, raw)
 	}
 	return results, nil
 }

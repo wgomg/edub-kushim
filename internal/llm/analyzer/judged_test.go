@@ -304,8 +304,8 @@ func TestJudgedAnthropic_EnvelopeAndFencedParse(t *testing.T) {
 	if req.Model != "test-model" {
 		t.Errorf("model = %q, want test-model", req.Model)
 	}
-	if req.MaxTokens != 4096 {
-		t.Errorf("max_tokens = %d, want the cataloged 4096", req.MaxTokens)
+	if req.MaxTokens != 640 {
+		t.Errorf("max_tokens = %d, want the judged budget 640", req.MaxTokens)
 	}
 	if req.System != AdjudicationSystemMessage {
 		t.Errorf("system = %q, want %q", req.System, AdjudicationSystemMessage)
@@ -421,7 +421,7 @@ func TestJudgedOpenAI_ParseErrorCarriesModelAndRaw(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"parse adjudication response", "test-model", "raw: not json"} {
+	for _, want := range []string{"tag adjudication", "test-model", "raw: not json"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
@@ -461,9 +461,212 @@ func TestJudgedAnthropic_ParseErrorCarriesModelAndRaw(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"parse adjudication response", "test-model", "raw: not json"} {
+	for _, want := range []string{"tag adjudication", "test-model", "raw: not json"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want substring %q", err.Error(), want)
 		}
+	}
+}
+
+const analysisWireResponse = `{"title":"sample","type":"article","tags":["tag one"],"people":[],"language":"eng"}`
+
+func TestJudgedOpenAI_OutputBudget(t *testing.T) {
+	tests := []struct {
+		name      string
+		caps      *llm.ModelCapability
+		wantField string
+		wantOther string
+		want      float64
+	}{
+		{"cataloged model sends the judged budget", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 4096}, "max_tokens", "max_completion_tokens", 640},
+		{"budget clamps to the cataloged maximum", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 300}, "max_tokens", "max_completion_tokens", 300},
+		{"catalog entry without an output ceiling keeps the budget", &llm.ModelCapability{MaxInputTokens: 100000}, "max_tokens", "max_completion_tokens", 640},
+		{"uncataloged model keeps the budget", nil, "max_tokens", "max_completion_tokens", 640},
+		{"completion-token capability swaps the field", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 4096, UsesMaxCompletionTokens: true}, "max_completion_tokens", "max_tokens", 640},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotReq := make(chan []byte, 1)
+			f := newJudgedFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				raw, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read request: %v", err)
+				} else {
+					gotReq <- raw
+				}
+				writeTestJSON(w, http.StatusOK, map[string]any{
+					"choices": []any{map[string]any{"message": map[string]any{"content": fencedVerdictResponse}}},
+				})
+			})
+
+			if _, err := f.openAI(t, tt.caps).Adjudicate(context.Background(), testPairs()); err != nil {
+				t.Fatalf("Adjudicate() error = %v", err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(<-gotReq, &body); err != nil {
+				t.Fatal(err)
+			}
+			if body[tt.wantField] != tt.want {
+				t.Errorf("%s = %v, want %v", tt.wantField, body[tt.wantField], tt.want)
+			}
+			if _, present := body[tt.wantOther]; present {
+				t.Errorf("%s sent alongside %s", tt.wantOther, tt.wantField)
+			}
+		})
+	}
+}
+
+func TestOpenAI_AnalyzeOutputBudget(t *testing.T) {
+	tests := []struct {
+		name string
+		caps *llm.ModelCapability
+		want float64
+	}{
+		{"cataloged model gets the analysis budget", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 4096}, 4096},
+		{"analysis budget clamps to the cataloged maximum", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 2048}, 2048},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotReq := make(chan []byte, 1)
+			f := newJudgedFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				raw, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read request: %v", err)
+				} else {
+					gotReq <- raw
+				}
+				writeTestJSON(w, http.StatusOK, map[string]any{
+					"choices": []any{map[string]any{"message": map[string]any{"content": analysisWireResponse}}},
+				})
+			})
+
+			if _, err := f.openAI(t, tt.caps).Analyze(context.Background(), "text", nil, nil, nil); err != nil {
+				t.Fatalf("Analyze() error = %v", err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(<-gotReq, &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["max_tokens"] != tt.want {
+				t.Errorf("max_tokens = %v, want %v", body["max_tokens"], tt.want)
+			}
+		})
+	}
+}
+
+func TestJudgedAnthropic_OutputBudget(t *testing.T) {
+	gotReq := make(chan []byte, 1)
+	f := newJudgedFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+		} else {
+			gotReq <- raw
+		}
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": fencedVerdictResponse}},
+		})
+	})
+
+	// the cataloged 640-token judged budget is asserted by the envelope test;
+	// this covers the clamp against a smaller cataloged maximum
+	a := f.anthropic(t, &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 300})
+	if _, err := a.Adjudicate(context.Background(), testPairs()); err != nil {
+		t.Fatalf("Adjudicate() error = %v", err)
+	}
+	var req anthropicRequest
+	if err := json.Unmarshal(<-gotReq, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != 300 {
+		t.Errorf("max_tokens = %d, want the clamp to 300", req.MaxTokens)
+	}
+}
+
+func TestAnthropic_AnalyzeOutputBudget(t *testing.T) {
+	tests := []struct {
+		name string
+		caps *llm.ModelCapability
+		want int
+	}{
+		{"cataloged model gets the analysis budget", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 4096}, 4096},
+		{"analysis budget clamps to the cataloged maximum", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 2048}, 2048},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotReq := make(chan []byte, 1)
+			f := newJudgedFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				raw, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read request: %v", err)
+				} else {
+					gotReq <- raw
+				}
+				writeTestJSON(w, http.StatusOK, map[string]any{
+					"content": []any{map[string]any{"type": "text", "text": analysisWireResponse}},
+				})
+			})
+
+			if _, err := f.anthropic(t, tt.caps).Analyze(context.Background(), "text", nil, nil, nil); err != nil {
+				t.Fatalf("Analyze() error = %v", err)
+			}
+			var req anthropicRequest
+			if err := json.Unmarshal(<-gotReq, &req); err != nil {
+				t.Fatal(err)
+			}
+			if req.MaxTokens != tt.want {
+				t.Errorf("max_tokens = %d, want %d", req.MaxTokens, tt.want)
+			}
+		})
+	}
+}
+
+func TestJudgedOpenAI_OutputCapError(t *testing.T) {
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"content": `{"pairs":[]}`},
+				"finish_reason": "length",
+			}},
+		})
+	})
+
+	_, err := f.openAI(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs())
+	if err == nil {
+		t.Fatal("expected an output-cap error")
+	}
+	capErr, ok := errors.AsType[*OutputCapError](err)
+	if !ok {
+		t.Fatalf("error type = %T, want *OutputCapError", err)
+	}
+	if capErr.Cap != 640 {
+		t.Errorf("Cap = %d, want the 640-token judged budget", capErr.Cap)
+	}
+	if !strings.HasPrefix(err.Error(), "tag adjudication: ") {
+		t.Errorf("error = %q, want the step label prefix", err.Error())
+	}
+}
+
+func TestJudgedOpenAI_ReplyParseErrorIsBounded(t *testing.T) {
+	longRaw := strings.Repeat("x", 3000) + "ENDMARKER"
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": longRaw}}},
+		})
+	})
+
+	_, err := f.openAI(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs())
+	parseErr, ok := errors.AsType[*ReplyParseError](err)
+	if !ok {
+		t.Fatalf("error type = %T, want *ReplyParseError", err)
+	}
+	if parseErr.RawLen != len(longRaw) {
+		t.Errorf("RawLen = %d, want %d", parseErr.RawLen, len(longRaw))
+	}
+	if len(parseErr.RawPrefix) != replyParsePrefixBytes {
+		t.Errorf("len(RawPrefix) = %d, want %d", len(parseErr.RawPrefix), replyParsePrefixBytes)
+	}
+	if strings.Contains(err.Error(), "ENDMARKER") {
+		t.Error("error carries the tail of a 3000-byte reply")
 	}
 }

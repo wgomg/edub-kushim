@@ -24,6 +24,31 @@ func sleepAfterRequest(ctx context.Context, delaySeconds float64) {
 	}
 }
 
+// Output budgets per call type: the analysis family answers with one record
+// per document, judged steps answer with one small record per candidate.
+// The catalog's max_output_tokens is only a ceiling — the effective bound is
+// min(budget, ceiling) — and a budget applies even with no catalog entry.
+// The constants are loose: observed judge entries run ~40-80 tokens per
+// candidate.
+const (
+	analysisOutputBudget = 4096
+	judgedOutputBase     = 512
+	judgedOutputPerItem  = 128
+)
+
+func judgedOutputBudget(n int) int {
+	return judgedOutputBase + judgedOutputPerItem*n
+}
+
+// clampOutputBudget caps budget at the cataloged model's true maximum; with
+// nil caps or no cataloged maximum the budget passes through unchanged.
+func clampOutputBudget(caps *llm.ModelCapability, budget int) int {
+	if caps != nil && caps.MaxOutputTokens > 0 && budget > caps.MaxOutputTokens {
+		return caps.MaxOutputTokens
+	}
+	return budget
+}
+
 // ContentTooLargeError is raised before a call when the prompt's estimated
 // token count exceeds the model's cataloged input limit. The runner never
 // retries it on a fallback.
@@ -46,6 +71,45 @@ type TokenLimitError struct {
 
 func (e *TokenLimitError) Error() string {
 	return fmt.Sprintf("token limit: requested %d tokens, model max is %d", e.RequestedTokens, e.MaxTokens)
+}
+
+// OutputCapError reports that generation stopped at the request's output
+// bound: the reply is truncated at Cap tokens. Judged calls never retry it.
+type OutputCapError struct {
+	Model string
+	Cap   int
+}
+
+func (e *OutputCapError) Error() string {
+	return fmt.Sprintf("model %s hit the %d-token output cap, reply truncated", e.Model, e.Cap)
+}
+
+// replyParsePrefixBytes bounds the raw text a ReplyParseError carries.
+const replyParsePrefixBytes = 2048
+
+// ReplyParseError reports a judged reply that could not be parsed. It
+// carries the step that failed, the model, the raw reply's total length and
+// a bounded prefix of it, so a degenerate multi-thousand-line reply cannot
+// flood the log.
+type ReplyParseError struct {
+	Step      string
+	Model     string
+	RawLen    int
+	RawPrefix string
+}
+
+func (e *ReplyParseError) Error() string {
+	return fmt.Sprintf("%s: model %s returned unparseable JSON (%d bytes)\nraw: %s", e.Step, e.Model, e.RawLen, e.RawPrefix)
+}
+
+// newReplyParseError captures a judged reply's parse failure with the raw
+// text truncated to the diagnostic prefix.
+func newReplyParseError(step, model, raw string) *ReplyParseError {
+	prefix := raw
+	if len(prefix) > replyParsePrefixBytes {
+		prefix = prefix[:replyParsePrefixBytes]
+	}
+	return &ReplyParseError{Step: step, Model: model, RawLen: len(raw), RawPrefix: prefix}
 }
 
 // InsufficientCreditsError means the provider account cannot pay: HTTP

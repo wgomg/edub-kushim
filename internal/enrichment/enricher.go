@@ -246,12 +246,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			maxTokens = tokErr.MaxTokens
 			actualTokens = tokErr.RequestedTokens
 		case errors.As(err, &credErr):
-			pauseBatch := e.config.Enricher.ContentAnalyzer.PauseOnCreditError
-			return nil, DocumentCounts{}, &task.Error{
-				ReqID:      logId,
-				Err:        fmt.Errorf("LLM credit exhausted (%s): %w", credErr.Provider, credErr),
-				PauseBatch: pauseBatch,
-			}
+			return nil, DocumentCounts{}, e.creditPause(logId, err)
 		default:
 			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to analyze content: %w", err)}
 		}
@@ -342,7 +337,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
-	decomposed, compositionRows := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, storeNames, tagFilter, logId)
+	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, storeNames, tagFilter, logId)
+	if err != nil {
+		if te := e.creditPause(logId, err); te != nil {
+			return nil, DocumentCounts{}, te
+		}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("tag decomposition failed: %w", err)}
+	}
 	analysis.Tags = e.admission.ApplyDeletedTagPolicy(decomposed, dbNames, blocklist, logId)
 
 	consolidateStart := time.Now()
@@ -361,13 +362,19 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 	} else {
 		var consolidated []string
-		consolidated, identityPlan, decisions = e.admission.PlanIdentity(ctx, admission.IdentityPlanInput{
+		consolidated, identityPlan, decisions, err = e.admission.PlanIdentity(ctx, admission.IdentityPlanInput{
 			DocID:      document.ID,
 			DocumentID: document.DocumentID,
 			Names:      analysis.Tags,
 			Ranked:     ranked,
 			DBNames:    dbNames,
 		}, logId)
+		if err != nil {
+			if te := e.creditPause(logId, err); te != nil {
+				return nil, DocumentCounts{}, te
+			}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("identity planning failed: %w", err)}
+		}
 		analysis.Tags = consolidated
 		e.logger.Debug(logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
 	}
@@ -381,7 +388,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	rejected := make(map[string]bool)
 	if e.config.Enricher.TagQuality.Enabled {
 		planned := analysis.Tags
-		analysis.Tags, qualityDecisions = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, logId)
+		analysis.Tags, qualityDecisions, err = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, logId)
+		if err != nil {
+			if te := e.creditPause(logId, err); te != nil {
+				return nil, DocumentCounts{}, te
+			}
+			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("tag quality gate failed: %w", err)}
+		}
 		kept := make(map[string]bool, len(analysis.Tags))
 		for _, name := range analysis.Tags {
 			kept[name] = true
@@ -625,6 +638,21 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		return &emptyStats, counts, nil
 	}
 	return analysis.Stats, counts, nil
+}
+
+// creditPause converts a provider credit-exhaustion failure into the batch
+// pause task error governed by the content analyzer's pause flag; every
+// other error yields nil.
+func (e *Enricher) creditPause(logId string, err error) *task.Error {
+	var credErr *analyzer.InsufficientCreditsError
+	if !errors.As(err, &credErr) {
+		return nil
+	}
+	return &task.Error{
+		ReqID:      logId,
+		Err:        fmt.Errorf("LLM credit exhausted (%s): %w", credErr.Provider, credErr),
+		PauseBatch: e.config.Enricher.ContentAnalyzer.PauseOnCreditError,
+	}
 }
 
 // documentCounts tallies one document's persist results plus the quality

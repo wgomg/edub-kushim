@@ -17,6 +17,7 @@
     "supports_structured_output": true,
     "supports_temperature": false,
     "supports_prompt_caching": true,
+    "uses_max_completion_tokens": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.openai.com/v1"
   },
@@ -38,6 +39,7 @@
     "supports_structured_output": true,
     "supports_temperature": false,
     "supports_prompt_caching": true,
+    "uses_max_completion_tokens": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.openai.com/v1"
   },
@@ -59,6 +61,7 @@
     "supports_structured_output": true,
     "supports_temperature": false,
     "supports_prompt_caching": true,
+    "uses_max_completion_tokens": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.openai.com/v1"
   },
@@ -79,6 +82,7 @@
     "supports_structured_output": true,
     "supports_temperature": false,
     "supports_prompt_caching": true,
+    "uses_max_completion_tokens": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.openai.com/v1"
   },
@@ -99,6 +103,7 @@
     "supports_structured_output": true,
     "supports_temperature": false,
     "supports_prompt_caching": true,
+    "uses_max_completion_tokens": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.openai.com/v1"
   },
@@ -119,6 +124,7 @@
     "supports_structured_output": true,
     "supports_temperature": false,
     "supports_prompt_caching": true,
+    "uses_max_completion_tokens": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.openai.com/v1"
   },
@@ -139,6 +145,7 @@
     "supports_structured_output": true,
     "supports_temperature": false,
     "supports_prompt_caching": true,
+    "uses_max_completion_tokens": true,
     "adapter": "openai-compatible",
     "official_url": "https://api.openai.com/v1"
   },

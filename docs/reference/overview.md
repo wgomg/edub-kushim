@@ -142,7 +142,7 @@ internal/
 ├── llm/                    # LLM capability registry
 │   ├── analyzer/           # LLM classification adapters (capability-based)
 │   │   ├── adapter.go      # ContentAnalyzer interface + TypeRef + factory (adapter-based dispatch)
-│   │   ├── gates.go        # content/token/credit gates, their error types, token-usage stats, request pacing
+│   │   ├── gates.go        # content/token/credit gates, per-call output budgets (analysis and judged), their error types, token-usage stats, request pacing
 │   │   ├── prompt.go       # SystemMessage, BuildPrompt + template, DocMetadata, BuildDocTypePrompt, ExtractHeadTailWords
 │   │   ├── tagfilter.go    # NormalizeTags, FilterTags, TagFilter, SplitComponents
 │   │   ├── places.go       # country/continent whitelist, IsWhitelistedPlace

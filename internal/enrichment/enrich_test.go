@@ -292,3 +292,47 @@ func setUnexportedField(t *testing.T, target any, fieldName string, value any) {
 	}
 	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Set(reflect.ValueOf(value))
 }
+
+func TestCreditPause(t *testing.T) {
+	creditErr := &analyzer.InsufficientCreditsError{Provider: "test", HTTPStatus: 402}
+	tests := []struct {
+		name      string
+		pauseFlag bool
+		err       error
+		wantNil   bool
+		wantPause bool
+	}{
+		{"credit exhaustion pauses the batch when enabled", true, creditErr, false, true},
+		{"credit exhaustion only fails the task when disabled", false, creditErr, false, false},
+		{"other errors never pause", true, errors.New("boom"), true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &Enricher{config: &config.Config{
+				Enricher: config.EnricherConfig{
+					ContentAnalyzer: config.ContentAnalyzerConfig{PauseOnCreditError: tt.pauseFlag},
+				},
+			}}
+
+			te := e.creditPause("req-1", tt.err)
+			if tt.wantNil {
+				if te != nil {
+					t.Fatalf("creditPause() = %+v, want nil for a non-credit error", te)
+				}
+				return
+			}
+			if te == nil {
+				t.Fatal("creditPause() = nil, want the batch pause task error")
+			}
+			if te.ReqID != "req-1" {
+				t.Errorf("ReqID = %q, want req-1", te.ReqID)
+			}
+			if te.PauseBatch != tt.wantPause {
+				t.Errorf("PauseBatch = %t, want %t", te.PauseBatch, tt.wantPause)
+			}
+			if !strings.Contains(te.Err.Error(), "LLM credit exhausted (test)") {
+				t.Errorf("Err = %q, want the provider-tagged credit message", te.Err.Error())
+			}
+		})
+	}
+}

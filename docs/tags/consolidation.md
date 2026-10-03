@@ -172,8 +172,12 @@ proposed folds and candidate neighbours with LLM calls:
 - **Evidence, not just names**: the prompt carries the pair's embedding
   similarity, the query's runner-up similarity, and the target's own nearest
   other store tag.
-- **Failure safety**: any timeout, provider error, or ambiguous response keeps
-  the emitted tag; enrichment never blocks or fails on adjudication. With the
+- **Failure safety**: a transient failure (transport, generic provider error
+  or empty response) retries once; parse failures, output-cap hits, credit
+  exhaustion, token-limit, content-too-large and context errors are never
+  retried. Every non-credit failure keeps the emitted tag — enrichment never
+  blocks on adjudication that way — and a credit-exhaustion failure aborts the
+  document so the batch pauses. With the
   adjudicator disabled, the band behaves as pure keep — the Stage-1 policy.
 
 ---
@@ -213,10 +217,12 @@ they are created:
   or policy change is reflected by bumping the version. Rows predating the
   rubric or the outcome column fall back to their `pass` flag until the store
   reset retires them.
-- **Failure safety**: any timeout, provider error, or incomplete response
-  retries once and then keeps every novel tag with a defer decision — under
-  the gate the birth is provisional and carries no verdict, and enrichment
-  never blocks or fails on the judge.
+- **Failure safety**: a transient failure (transport, generic provider error
+  or empty response) retries once; parse failures, output-cap hits, credit
+  exhaustion, token-limit, content-too-large and context errors are never
+  retried. Every non-credit failure keeps every novel tag with a defer
+  decision — under the gate the birth is provisional and carries no verdict —
+  and a credit-exhaustion failure pauses the batch instead.
 - **Logging**: rejections and defers are logged as `tagquality[v3]:` lines
   carrying the outcome and reason, siblings of the `consolidation[v1]` and
   `tags[facet]:` lines.

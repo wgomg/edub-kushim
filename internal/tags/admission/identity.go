@@ -63,8 +63,10 @@ type IdentityPlanInput struct {
 // settle fold proposals where they exist. It returns the output names for
 // the document, the identity plan whose registrations and evidence rows
 // ride into the enrichment transaction (so adjudication stays outside it),
-// and the policy decisions journaled per pair.
-func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, reqID string) ([]string, tags.Plan, []policy.Decision) {
+// and the policy decisions journaled per pair. A non-nil error is returned
+// only when the provider account cannot pay; every other failure degrades
+// to leaving the affected names provisional.
+func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, reqID string) ([]string, tags.Plan, []policy.Decision, error) {
 	decisions := policy.Evaluate(in.Names, in.Ranked)
 	plan := tags.Plan{}
 	aliasMap := a.aliasMapFor(ctx, in.Names, reqID)
@@ -153,7 +155,10 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		}
 	}
 
-	answers := a.identityAnswers(ctx, flagged, candidates, reqID)
+	answers, err := a.identityAnswers(ctx, flagged, candidates, reqID)
+	if err != nil {
+		return nil, tags.Plan{}, nil, err
+	}
 	for _, cand := range candidates {
 		if cand.resolved != "" {
 			continue
@@ -206,7 +211,10 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		cand.fold = ""
 	}
 
-	a.adjudicateIdentityPairs(ctx, in.DocID, in.DocumentID, pairs, reqID)
+	err = a.adjudicateIdentityPairs(ctx, in.DocID, in.DocumentID, pairs, reqID)
+	if err != nil {
+		return nil, tags.Plan{}, nil, err
+	}
 
 	winnerByLoser := make(map[string]string)
 	for _, p := range pairs {
@@ -354,13 +362,17 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		}
 	}
 
-	return outputs, plan, decisions
+	return outputs, plan, decisions, nil
 }
 
-func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bool, candidates []*identityCandidate, reqID string) map[string]identityAnswer {
+// identityAnswers resolves the flagged candidates' fold answers from the
+// cache or batched judge calls. A non-nil error is returned only when the
+// provider account cannot pay; every other failure leaves the affected
+// candidates provisional.
+func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bool, candidates []*identityCandidate, reqID string) (map[string]identityAnswer, error) {
 	out := make(map[string]identityAnswer)
 	if len(flagged) == 0 {
-		return out
+		return out, nil
 	}
 
 	names := make([]string, 0, len(flagged))
@@ -410,11 +422,11 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 	}
 
 	if len(uncached) == 0 {
-		return out
+		return out, nil
 	}
 	if !a.runner.HasTagIdentityJudge() {
 		a.logger.Info(reqID, "identity[%s]: judge not configured — %d candidates stay provisional", tags.IdentityRuleSetVersion, len(uncached))
-		return out
+		return out, nil
 	}
 
 	for start := 0; start < len(uncached); start += identityBatchSize {
@@ -425,10 +437,17 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: cand.name, ProposedFold: cand.fold}
 		}
 		results, err := a.runner.JudgeTagIdentity(ctx, inputs)
+		if err != nil && retryableJudgeFailure(err) {
+			a.logger.Warn(reqID, "identity[%s]: judge attempt failed, retrying once: %v", tags.IdentityRuleSetVersion, err)
+			results, err = a.runner.JudgeTagIdentity(ctx, inputs)
+		}
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
 		}
 		if err != nil {
+			if isCreditError(err) {
+				return nil, err
+			}
 			names := make([]string, len(batch))
 			for i, cand := range batch {
 				names[i] = cand.name
@@ -450,15 +469,19 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 				tags.IdentityRuleSetVersion, batch[i].name, answer.FoldToBase, answer.FoldPreservesDenotation, answer.ConventionalForm, false)
 		}
 	}
-	return out
+	return out, nil
 }
 
-func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, reqID string) {
+// adjudicateIdentityPairs settles the shape-related pairs the identity
+// judge answers, recording one same-intent event per decided pair. A
+// non-nil error is returned only when the provider account cannot pay;
+// every other failure leaves the batch's unresolved pairs provisional.
+func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, reqID string) error {
 	if len(pairs) == 0 {
-		return
+		return nil
 	}
 	if !a.config.Enricher.TagAdjudicator.Enabled || !a.runner.HasTagAdjudicator() {
-		return
+		return nil
 	}
 
 	queries := make([]string, 0, len(pairs))
@@ -494,7 +517,7 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		p.model = row.Model.String
 	}
 	if len(unresolved) == 0 {
-		return
+		return nil
 	}
 
 	evidence := a.identityPairEvidence(ctx, documentID, unresolved, reqID)
@@ -502,10 +525,17 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		end := min(start+identityBatchSize, len(evidence))
 		batch := unresolved[start:end]
 		results, err := a.runner.AdjudicateTags(ctx, evidence[start:end])
+		if err != nil && retryableJudgeFailure(err) {
+			a.logger.Warn(reqID, "identity[%s]: adjudicator attempt failed, retrying once: %v", tags.IdentityRuleSetVersion, err)
+			results, err = a.runner.AdjudicateTags(ctx, evidence[start:end])
+		}
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
 		}
 		if err != nil {
+			if isCreditError(err) {
+				return err
+			}
 			labels := make([]string, len(batch))
 			for i, p := range batch {
 				labels[i] = p.query + " -> " + p.target
@@ -532,6 +562,7 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		}
 		a.recordIdentityPair(ctx, docID, p, reqID)
 	}
+	return nil
 }
 
 func identityDirection(criteria []byte) string {

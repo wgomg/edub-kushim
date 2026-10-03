@@ -35,8 +35,8 @@ func SessionID() string {
 }
 
 // ModelCapability is what a cataloged model allows: reasoning support and
-// effort levels, temperature, prompt caching, structured output, and the
-// context and output limits.
+// effort levels, temperature, prompt caching, structured output, the output
+// bound's request field, and the context and output limits.
 type ModelCapability struct {
 	SupportsReasoning        bool
 	ReasoningEffortLevels    []string
@@ -45,6 +45,11 @@ type ModelCapability struct {
 	SupportsStructuredOutput bool
 	MaxInputTokens           int
 	MaxOutputTokens          int
+
+	// UsesMaxCompletionTokens selects the Chat Completions output bound's
+	// field: OpenAI's GPT-5 family rejects max_tokens and requires
+	// max_completion_tokens; every other cataloged provider takes max_tokens.
+	UsesMaxCompletionTokens bool
 }
 
 // ProviderModel is one cataloged model of a provider, as exposed to the
@@ -69,6 +74,7 @@ type catalogEntry struct {
 	SupportsStructuredOutput bool     `json:"supports_structured_output"`
 	SupportsTemperature      bool     `json:"supports_temperature"`
 	SupportsPromptCaching    bool     `json:"supports_prompt_caching"`
+	UsesMaxCompletionTokens  bool     `json:"uses_max_completion_tokens,omitempty"`
 }
 
 // Registry is the loaded model catalog, indexed by provider/model with
@@ -191,6 +197,7 @@ func entryToCapability(e *catalogEntry) *ModelCapability {
 		SupportsStructuredOutput: e.SupportsStructuredOutput,
 		MaxInputTokens:           e.MaxInputTokens,
 		MaxOutputTokens:          e.MaxOutputTokens,
+		UsesMaxCompletionTokens:  e.UsesMaxCompletionTokens,
 	}
 }
 

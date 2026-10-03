@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -59,7 +61,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	}
 
 	ranked := []matcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
-	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
 		Names:   []string{"democratic socialism"},
 		Ranked:  ranked,
 		DBNames: map[string]struct{}{"social democracy": {}},
@@ -109,7 +111,7 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 		logger:  logger,
 	}
 
-	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
 		Names:   []string{"buildings"},
 		DBNames: map[string]struct{}{},
 	}, "")
@@ -172,7 +174,7 @@ func TestPlanIdentity_JudgeFailureWarns(t *testing.T) {
 		logger:  logger,
 	}
 
-	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
 		Names:   []string{"buildings"},
 		DBNames: map[string]struct{}{},
 	}, "")
@@ -211,7 +213,7 @@ func TestPlanIdentity_StoreExactAppliesOntoExistingRow(t *testing.T) {
 		logger:  logger,
 	}
 
-	outs, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+	outs, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
 		Names:   []string{"united states"},
 		DBNames: map[string]struct{}{"united states": {}},
 	}, "")
@@ -278,7 +280,7 @@ func TestPlanIdentity_ConfirmedFoldAppliesWithoutPendingRows(t *testing.T) {
 		logger:  logger,
 	}
 
-	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
 		Names:   []string{"railways"},
 		DBNames: map[string]struct{}{},
 	}, "")
@@ -358,7 +360,7 @@ func TestPlanIdentity_DerivationalFoldResolvesOntoStoreNoun(t *testing.T) {
 		logger:  logger,
 	}
 
-	_, plan, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
 		Names:   []string{"political"},
 		DBNames: map[string]struct{}{"politics": {}},
 	}, "")
@@ -892,7 +894,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"wave mechanics"},
 			TagDetails: []analyzer.TagDetail{{Term: "wave mechanics", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
 
 		adjAssertEqual(t, len(kept), 1, "kept tags")
 		adjAssertEqual(t, kept[0], "wave mechanics", "kept name")
@@ -910,7 +912,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"phase conjugation"},
 			TagDetails: []analyzer.TagDetail{{Term: "phase conjugation", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
 
 		adjAssertEqual(t, len(kept), 0, "rejected tag is dropped")
 		if _, ok := decisions["phase conjugation"]; ok {
@@ -927,7 +929,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"spin lattice"},
 			TagDetails: []analyzer.TagDetail{{Term: "spin lattice", Category: analyzer.TagCategoryOther}},
 		}
-		kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
 
 		adjAssertEqual(t, len(kept), 1, "gray-band tag is kept")
 		adjAssertEqual(t, decisions["spin lattice"].Outcome, tags.AdmissionDefer, "decision outcome")
@@ -957,7 +959,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"cached candidate"},
 			TagDetails: []analyzer.TagDetail{{Term: "cached candidate", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
 
 		adjAssertEqual(t, len(kept), 0, "cached rejection is applied")
 		adjAssertEqual(t, len(decisions), 0, "no decision for a dropped name")
@@ -970,7 +972,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"tunneling effect"},
 			TagDetails: []analyzer.TagDetail{{Term: "tunneling effect", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
 
 		adjAssertEqual(t, len(kept), 1, "tag survives a judge outage")
 		adjAssertEqual(t, decisions["tunneling effect"].Outcome, tags.AdmissionDefer, "decision outcome")
@@ -1002,7 +1004,7 @@ func TestApplyTagQuality_JudgeFailureWarns(t *testing.T) {
 		Tags:       []string{"resonance tunneling"},
 		TagDetails: []analyzer.TagDetail{{Term: "resonance tunneling", Category: analyzer.TagCategoryTopic}},
 	}
-	kept, decisions := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+	kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
 
 	adjAssertEqual(t, len(kept), 1, "the tag survives the failed judge call")
 	adjAssertEqual(t, decisions["resonance tunneling"].Outcome, tags.AdmissionDefer, "decision outcome")
@@ -1070,7 +1072,7 @@ func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := a.DecomposeTags(context.Background(), tt.in, nil, nil, filter, "")
+			got, _, _ := a.DecomposeTags(context.Background(), tt.in, nil, nil, filter, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.in, got, tt.want)
 			}
@@ -1153,7 +1155,7 @@ func TestDecomposeTags_SplitVerdicts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: tt.splitFn}, nil)
 			filter := analyzer.NewTagFilter(nil, nil, tt.title, nil)
-			got, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, "")
+			got, _, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.names, got, tt.want)
 			}
@@ -1167,7 +1169,7 @@ func TestDecomposeTags_MemoizesSplitVerdicts(t *testing.T) {
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
 	a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
-	_, cached := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	_, cached, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
 
 	adjAssertEqual(t, adj.splitCall, 1, "split adjudicator call count")
 	adjAssertEqual(t, len(cached), 1, "composition rows on the cache hit")
@@ -1198,7 +1200,7 @@ func TestDecomposeTags_NoVerdictWarns(t *testing.T) {
 	a := newSplitAdjudicator(t, adj, &buf)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	got, rows := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
 
 	adjAssertEqual(t, len(got), 1, "the compound stays whole")
 	adjAssertEqual(t, len(rows), 1, "one composition row")
@@ -1219,7 +1221,7 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
-	got, rows := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, "")
+	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, "")
 
 	adjAssertEqual(t, adj.splitCall, 0, "a store-keyed compound never reaches the judge")
 	if !reflect.DeepEqual(got, []string{"machine learning"}) {
@@ -1328,7 +1330,7 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 			a := newSplitAdjudicator(t, tt.adj, nil)
 			filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-			_, rows := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, "")
+			_, rows, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, "")
 
 			if len(rows) != 1 {
 				t.Fatalf("composition rows = %d, want 1", len(rows))
@@ -1354,7 +1356,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitMexicanRevolution}, nil)
 		filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-		got, rows := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, "")
+		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, "")
 
 		want := []string{"mexico", "revolution"}
 		if !reflect.DeepEqual(got, want) {
@@ -1375,7 +1377,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitMexicanRevolution}, nil)
 		filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-		got, rows := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, nil, filter, "")
+		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, nil, filter, "")
 
 		want := []string{"mexican", "revolution"}
 		if !reflect.DeepEqual(got, want) {
@@ -1393,7 +1395,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitMexicanRevolution}, nil)
 		filter := analyzer.NewTagFilter(nil, nil, "", []string{"mexico"})
 
-		got, rows := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, "")
+		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, "")
 
 		if !reflect.DeepEqual(got, []string{"mexican revolution"}) {
 			t.Errorf("DecomposeTags = %v, want the compound kept whole", got)
@@ -1408,4 +1410,180 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 			t.Errorf("Reason = %s, want invalid_components", rows[0].Reason)
 		}
 	})
+}
+
+func creditExhausted() error {
+	return &analyzer.InsufficientCreditsError{Provider: "test", HTTPStatus: 402}
+}
+
+func TestRetryableJudgeFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"generic provider failure", errors.New("API error: status 500"), true},
+		{"label-wrapped transport failure", fmt.Errorf("tag adjudication: %w", errors.New("send request: connection reset by peer")), true},
+		{"empty response", errors.New("empty response from LLM"), true},
+		{"parse failure", &analyzer.ReplyParseError{Step: "tag adjudication", Model: "test-model", RawLen: 8, RawPrefix: "not json"}, false},
+		{"output cap hit", fmt.Errorf("tag quality judge: %w", &analyzer.OutputCapError{Model: "test-model", Cap: 640}), false},
+		{"credit exhaustion", creditExhausted(), false},
+		{"label-wrapped credit exhaustion", fmt.Errorf("tag adjudication: %w", creditExhausted()), false},
+		{"content too large", &analyzer.ContentTooLargeError{EstimatedTokens: 20, MaxInputTokens: 10}, false},
+		{"token limit", &analyzer.TokenLimitError{MaxTokens: 100, RequestedTokens: 200}, false},
+		{"context canceled", context.Canceled, false},
+		{"context deadline exceeded", context.DeadlineExceeded, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := retryableJudgeFailure(tt.err); got != tt.want {
+				t.Errorf("retryableJudgeFailure(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecomposeTags_CreditErrorEscapes(t *testing.T) {
+	adj := &mockAdjudicator{
+		splitFn: func(context.Context, []string) ([]analyzer.TagSplitResult, error) {
+			return nil, creditExhausted()
+		},
+	}
+	a := newSplitAdjudicator(t, adj, nil)
+	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+
+	got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	if err == nil {
+		t.Fatal("credit exhaustion must escape DecomposeTags")
+	}
+	if _, ok := errors.AsType[*analyzer.InsufficientCreditsError](err); !ok {
+		t.Errorf("error type = %T, want *analyzer.InsufficientCreditsError", err)
+	}
+	if got != nil || rows != nil {
+		t.Errorf("DecomposeTags returned (%v, %v) alongside the error", got, rows)
+	}
+	adjAssertEqual(t, adj.splitCall, 1, "credit errors are not retried")
+}
+
+func TestDecomposeTags_TransientFailureRetriesOnce(t *testing.T) {
+	adj := &mockAdjudicator{}
+	adj.splitFn = func(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
+		if adj.splitCall == 1 {
+			return nil, errors.New("API error: status 500")
+		}
+		return splitVerdictsAll(context.Background(), names)
+	}
+	a := newSplitAdjudicator(t, adj, nil)
+	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+
+	got, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	if err != nil {
+		t.Fatalf("DecomposeTags() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"machine", "learning"}) {
+		t.Errorf("DecomposeTags = %v, want the split after the retry", got)
+	}
+	adjAssertEqual(t, adj.splitCall, 2, "a transient failure is retried once")
+}
+
+func TestApplyTagQuality_CreditErrorEscapes(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	adj.qualityFn = func(context.Context, string, []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		return nil, creditExhausted()
+	}
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "credit-quality-doc")
+
+	analysis := &tools.ContentAnalysisResult{
+		Tags:       []string{"resonance tunneling"},
+		TagDetails: []analyzer.TagDetail{{Term: "resonance tunneling", Category: analyzer.TagCategoryTopic}},
+	}
+	kept, decisions, err := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+	if err == nil {
+		t.Fatal("credit exhaustion must escape ApplyTagQuality")
+	}
+	if _, ok := errors.AsType[*analyzer.InsufficientCreditsError](err); !ok {
+		t.Errorf("error type = %T, want *analyzer.InsufficientCreditsError", err)
+	}
+	if kept != nil || decisions != nil {
+		t.Errorf("ApplyTagQuality returned (%v, %v) alongside the error", kept, decisions)
+	}
+	adjAssertEqual(t, adj.qualityCall, 1, "credit errors are not retried")
+}
+
+func TestPlanIdentity_CreditErrorEscapes(t *testing.T) {
+	a, _, adj := newTestAdjudicator(t)
+	setUnexportedField(t, a.runner, "tagIdentityJudge", adj)
+	adj.identityFn = func(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		return nil, creditExhausted()
+	}
+
+	outs, plan, decisions, err := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"buildings"},
+		DBNames: map[string]struct{}{},
+	}, "")
+	if err == nil {
+		t.Fatal("credit exhaustion must escape PlanIdentity")
+	}
+	if _, ok := errors.AsType[*analyzer.InsufficientCreditsError](err); !ok {
+		t.Errorf("error type = %T, want *analyzer.InsufficientCreditsError", err)
+	}
+	if outs != nil || decisions != nil {
+		t.Errorf("PlanIdentity returned (%v, %v) alongside the error", outs, decisions)
+	}
+	if len(plan.Registrations) != 0 {
+		t.Errorf("registrations = %d, want none from an aborted plan", len(plan.Registrations))
+	}
+	adjAssertEqual(t, adj.identityCall, 1, "credit errors are not retried")
+}
+
+func TestIdentityAnswers_CreditErrorStopsRemainingBatches(t *testing.T) {
+	a, _, adj := newTestAdjudicator(t)
+	setUnexportedField(t, a.runner, "tagIdentityJudge", adj)
+	adj.identityFn = func(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		return nil, creditExhausted()
+	}
+
+	// one candidate past the batch size so a surviving loop would attempt a
+	// second batch after the dead account fails the first
+	const n = identityBatchSize + 1
+	candidates := make([]*identityCandidate, n)
+	flagged := make(map[string]bool, n)
+	for i := range candidates {
+		name := fmt.Sprintf("building %d", i)
+		candidates[i] = &identityCandidate{name: name, fold: name + "s"}
+		flagged[name] = true
+	}
+
+	answers, err := a.identityAnswers(context.Background(), flagged, candidates, "")
+	if err == nil {
+		t.Fatal("credit exhaustion must escape identityAnswers")
+	}
+	if _, ok := errors.AsType[*analyzer.InsufficientCreditsError](err); !ok {
+		t.Errorf("error type = %T, want *analyzer.InsufficientCreditsError", err)
+	}
+	if answers != nil {
+		t.Errorf("answers = %v, want none alongside the error", answers)
+	}
+	adjAssertEqual(t, adj.identityCall, 1, "the dead account stops the batch loop after batch one")
+}
+
+func TestAdjudicateIdentityPairs_CreditErrorEscapes(t *testing.T) {
+	a, _, adj := newTestAdjudicator(t)
+	adj.adjudicateFn = func(context.Context, []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+		return nil, creditExhausted()
+	}
+
+	p := &identityPair{query: "democratic socialism", target: "social democracy"}
+	err := a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
+	if err == nil {
+		t.Fatal("credit exhaustion must escape adjudicateIdentityPairs")
+	}
+	if _, ok := errors.AsType[*analyzer.InsufficientCreditsError](err); !ok {
+		t.Errorf("error type = %T, want *analyzer.InsufficientCreditsError", err)
+	}
+	adjAssertEqual(t, p.decided, false, "the pair stays undecided")
+	adjAssertEqual(t, adj.called, 1, "credit errors are not retried")
 }

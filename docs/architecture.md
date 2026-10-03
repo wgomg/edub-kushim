@@ -270,7 +270,8 @@ The enrichment pipeline:
    adjudicator answers `same`/`variant`/`related` with a direction for `same`
    (`same` aliases the losing name onto the winner, `variant`/`related` keep;
    failures and a disabled adjudicator leave the claim pending as identity
-   evidence, with the candidate born provisional). Verdicts are cached in
+   evidence, with the candidate born provisional; a credit-exhaustion failure
+   pauses the batch). Verdicts are cached in
    `tag_identity_event` at the identity rule-set version; the triggered run
    (`kushim tagidentity`, enqueued by
    `POST /api/v1/tags/identity/reevaluate`) and the scheduled reconciler's
@@ -310,8 +311,11 @@ The enrichment pipeline:
    are cached per `(tag_name, policy_version)` in `tag_quality_event` with the
    recorded outcome, so a re-emitted name resolves without a call; a rejected
    name drops the tag for that document only — its registration and pending
-   identity evidence never reach the store. Judge failures retry once and then
-   keep every novel tag with a defer decision; the decision thresholds are
+   identity evidence never reach the store. A transient judge failure retries
+   once; parse failures, output-cap hits, credit exhaustion, token-limit,
+   content-too-large and context errors are never retried. Every non-credit
+   failure keeps every novel tag with a defer decision, and a credit-exhaustion
+   failure pauses the batch; the decision thresholds are
    internal pinned constants, not config keys. Under the same gate the kept
    set is quarantined: newborns are attached and searchable from birth but stay
    provisional (`tag.promoted_at` NULL) and out of the embedding store, so
