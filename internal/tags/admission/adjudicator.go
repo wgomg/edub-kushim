@@ -85,11 +85,13 @@ type splitDecision struct {
 // an application, not a candidate: it is skipped before judgment and
 // produces no row. Compounds that are not split pass through,
 // deduplicated. storeKeys is the store's names plus alias keys, which the
-// store-existing skip reads; storeNames is the live tag names' Key→name
-// view the fold resolution anchors on. A non-nil error is returned only
-// when the provider account cannot pay; every other failure degrades to
-// keeping the compounds.
-func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, storeNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow, error) {
+// store-existing skip reads; promotedNames is the promoted tag names'
+// Key→name view the fold resolution anchors on — seam fold resolution
+// anchors only on promoted rows, provisional births anchor only through
+// the judged identity path, never the seam. A non-nil error is returned
+// only when the provider account cannot pay; every other failure degrades
+// to keeping the compounds.
+func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow, error) {
 	var candidates []string
 	seenCandidates := make(map[string]bool, len(names))
 	for _, name := range names {
@@ -132,7 +134,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		default:
 			parts := analyzer.NormalizeTags(d.components)
 			for i, part := range parts {
-				anchor := tags.AnchoredFold(part, storeNames)
+				anchor := tags.AnchoredFold(part, promotedNames)
 				if anchor != "" && anchor != part {
 					a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
 						analyzer.TagSplitVersion, part, anchor)
@@ -244,19 +246,21 @@ func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]
 }
 
 // retryableJudgeFailure classifies a judged call's failure: transport and
-// generic provider errors get one retry, while parse failures, output-cap
-// hits, credit exhaustion, content-too-large, token-limit and context
-// errors never do.
+// generic provider errors get one retry, while parse failures, incomplete
+// replies, output-cap hits, credit exhaustion, content-too-large, token-limit
+// and context errors never do. A partial reply's omission is systematic at a
+// fixed output budget, so a retry would re-omit.
 func retryableJudgeFailure(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var parseErr *analyzer.ReplyParseError
+	var incErr *analyzer.IncompleteReplyError
 	var capErr *analyzer.OutputCapError
 	var credErr *analyzer.InsufficientCreditsError
 	var ctle *analyzer.ContentTooLargeError
 	var tokErr *analyzer.TokenLimitError
-	return !errors.As(err, &parseErr) && !errors.As(err, &capErr) &&
+	return !errors.As(err, &parseErr) && !errors.As(err, &incErr) && !errors.As(err, &capErr) &&
 		!errors.As(err, &credErr) && !errors.As(err, &ctle) && !errors.As(err, &tokErr)
 }
 
@@ -491,6 +495,17 @@ func (a *Adjudicator) logAdmission(reqID, name, source string, d tags.AdmissionD
 		analyzer.TagQualityVersion, d.Outcome, name, d.Reason, source, model, tagQualityCriteriaLog(criteria))
 }
 
+// decideQuality writes one freshly judged candidate's verdict row and logs
+// the resulting decision, returning it so the caller can record a rejection
+// or a kept decision.
+func (a *Adjudicator) decideQuality(ctx context.Context, docId int64, n *novelTag, r analyzer.TagQualityResult, model, reqID string) tags.AdmissionDecision {
+	outcome := tags.DecideAdmission(JudgeFeatures(r, n.features()))
+	pass, criteria, finalModel := a.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), outcome.Outcome == tags.AdmissionAdmit, outcome.Outcome.String(), model, reqID)
+	decision := DecisionFromStored(criteria, pass, n.features())
+	a.logAdmission(reqID, n.emitted, "judge", decision, criteria, finalModel)
+	return decision
+}
+
 // ApplyTagQuality filters the analysis's tags through the admission
 // decision: each novel candidate's features — the judge's rubric answers
 // from the verdict cache or a fresh judge call, plus the emission's
@@ -499,8 +514,9 @@ func (a *Adjudicator) logAdmission(reqID, name, source string, d tags.AdmissionD
 // both kept, and every kept novel name's decision is returned so the
 // caller can drive promotion. A missing judge, judge failure, or context
 // cancellation keeps the tags, born provisional with a defer decision; a
-// credit-exhaustion failure is the only error returned, so the caller can
-// pause the batch.
+// partial judge reply salvages its returned entries and defers only the
+// missing indices; a credit-exhaustion failure is the only error returned,
+// so the caller can pause the batch.
 func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, reqID string) ([]string, map[string]tags.AdmissionDecision, error) {
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
@@ -597,26 +613,51 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
 			}
 			if err != nil {
-				if isCreditError(err) {
+				var incomplete *analyzer.IncompleteReplyError
+				switch {
+				case errors.As(err, &incomplete):
+					missing := make(map[int]bool, len(incomplete.Missing))
+					for _, idx := range incomplete.Missing {
+						missing[idx] = true
+					}
+					model := a.config.ResolvedQualityLlm().Model
+					var deferred []string
+					salvaged := 0
+					for i, r := range results {
+						n := uncached[i]
+						if missing[i] {
+							decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
+							deferred = append(deferred, n.emitted)
+							continue
+						}
+						salvaged++
+						decision := a.decideQuality(ctx, docId, n, r, model, reqID)
+						if decision.Outcome == tags.AdmissionReject {
+							rejected[n.emitted] = true
+							continue
+						}
+						decided[n.emitted] = decision
+					}
+					a.logger.Warn(reqID, "tagquality[%s]: partial judge reply, salvaged %d of %d candidates and deferred %q (born provisional): %v",
+						analyzer.TagQualityVersion, salvaged, len(uncached), deferred, err)
+				case isCreditError(err):
 					return nil, nil, err
-				}
-				names := make([]string, len(uncached))
-				for i, n := range uncached {
-					names[i] = n.emitted
-				}
-				a.logger.Warn(reqID, "tagquality[%s]: judge failed for %q, keeping them (born provisional): %v",
-					analyzer.TagQualityVersion, names, err)
-				for _, n := range uncached {
-					decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
+				default:
+					names := make([]string, len(uncached))
+					for i, n := range uncached {
+						names[i] = n.emitted
+					}
+					a.logger.Warn(reqID, "tagquality[%s]: judge failed for %q, keeping them (born provisional): %v",
+						analyzer.TagQualityVersion, names, err)
+					for _, n := range uncached {
+						decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
+					}
 				}
 			} else {
 				model := a.config.ResolvedQualityLlm().Model
 				for i, r := range results {
 					n := uncached[i]
-					outcome := tags.DecideAdmission(JudgeFeatures(r, n.features()))
-					pass, criteria, finalModel := a.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), outcome.Outcome == tags.AdmissionAdmit, outcome.Outcome.String(), model, reqID)
-					decision := DecisionFromStored(criteria, pass, n.features())
-					a.logAdmission(reqID, n.emitted, "judge", decision, criteria, finalModel)
+					decision := a.decideQuality(ctx, docId, n, r, model, reqID)
 					if decision.Outcome == tags.AdmissionReject {
 						rejected[n.emitted] = true
 						continue

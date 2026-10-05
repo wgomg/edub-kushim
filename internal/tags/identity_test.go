@@ -290,6 +290,30 @@ func TestAnchoredFold(t *testing.T) {
 			storeNames: map[string]string{"mexico": "mexico"},
 			want:       "",
 		},
+		{
+			name:       "a prefix-divergent near-spelling never folds",
+			input:      "oppression",
+			storeNames: map[string]string{"repression": "repression"},
+			want:       "",
+		},
+		{
+			name:       "the suffix-local extension still folds",
+			input:      "german",
+			storeNames: map[string]string{"germany": "germany"},
+			want:       "germany",
+		},
+		{
+			name:       "the derivational leg still resolves the adjective",
+			input:      "political",
+			storeNames: map[string]string{"politics": "politics"},
+			want:       "politics",
+		},
+		{
+			name:       "the six-letter floor still excludes the short seed",
+			input:      "roman",
+			storeNames: map[string]string{"romania": "romania"},
+			want:       "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

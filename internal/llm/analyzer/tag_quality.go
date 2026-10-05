@@ -127,12 +127,26 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 	return sb.String()
 }
 
+// IncompleteReplyError reports a quality reply that omitted verdicts for
+// some candidates: Missing holds the candidate indices with no verdict.
+// The parser still returns the entries it did read, so a caller can judge
+// those and defer only the missing indices instead of discarding the whole
+// reply.
+type IncompleteReplyError struct {
+	Missing []int
+}
+
+func (e *IncompleteReplyError) Error() string {
+	return fmt.Sprintf("incomplete tag quality response: no verdict for candidate indices %v", e.Missing)
+}
+
 // ParseTagQualityResponse errors when any candidate lacks a fully
 // specified verdict: a zero-valued result must never be read as an
 // all-criteria-false rejection, or a truncated response would cache a
 // spurious permanent rejection. An omitted defer reads as false. A bare
 // top-level array is accepted as the envelope's value, and an entry
-// without an index is placed by its position in the array.
+// without an index is placed by its position in the array. A truncated
+// reply returns *IncompleteReplyError alongside the populated results.
 func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
 	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "tags")
 	var parsed struct {
@@ -175,7 +189,7 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 		}
 	}
 	if len(missing) > 0 {
-		return results, fmt.Errorf("incomplete tag quality response: no verdict for candidate indices %v", missing)
+		return results, &IncompleteReplyError{Missing: missing}
 	}
 	return results, nil
 }

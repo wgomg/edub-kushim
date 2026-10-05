@@ -194,7 +194,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		dbNames[t.Name] = struct{}{}
 	}
-	storeNames := tags.StoreNamesOf(dbNames)
+	promotedStoreNames := tags.StoreNames(tagsNames)
 
 	matchTagsStart := time.Now()
 	report("tag-match", "", 0)
@@ -337,7 +337,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
-	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, storeNames, tagFilter, logId)
+	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, promotedStoreNames, tagFilter, logId)
 	if err != nil {
 		if te := e.creditPause(logId, err); te != nil {
 			return nil, DocumentCounts{}, te
@@ -424,7 +424,6 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			if rejected[name] {
 				row.Disposition = tags.CompositionDrop
 				row.Reason = tags.CompositionReasonPartRejected
-				row.Parts = nil
 				e.logger.Info(logId, "tag split[%s]: drop %q (reason=part_rejected part=%q)",
 					analyzer.TagSplitVersion, row.Candidate, name)
 				break

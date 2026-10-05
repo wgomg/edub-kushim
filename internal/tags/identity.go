@@ -21,10 +21,12 @@ import (
 // morphographic proposal to the same body and the store-anchored
 // rejection routing to the birth rules, the criteria text unchanged; v4
 // rewords the pair judge's doubt clause so morphographic and derivation
-// pairs can answer same, the mechanical rules unchanged. The store reset
-// truncates tag_identity_event, so no cached verdict survives to
-// invalidate.
-const IdentityRuleSetVersion = "v4"
+// pairs can answer same, the mechanical rules unchanged; v5 hardens the
+// split-seam fold — suffix-local morphological anchors over the promoted
+// store view — while the birth-time rules and the judging body's criteria
+// are unchanged. The store reset truncates tag_identity_event, so no
+// cached verdict survives to invalidate.
+const IdentityRuleSetVersion = "v5"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -610,26 +612,45 @@ func ProposedMorphologicalFold(name string, storeNames map[string]string) string
 	return hit
 }
 
-// AnchoredFold resolves a split component through the store-anchored net:
-// it returns the live store value the name's derivational or morphological
-// proposal resolves onto, or "" when neither proposer yields an anchor.
-// Both proposers are store-anchored by construction and ambiguity-safe, so
-// the chain inherits both properties. The lemma fold is consulted only to
-// veto the morphological leg: a proposal that merely reproduces the lemma
-// fold (railways→railway) is not taken, so that class keeps folding through
-// the judged identity machinery instead. Split-component resolution consults
-// it before per-document filtering; births never rename through it — their
-// folds stay judged in the identity path. storeNames maps Key(storeName) to
-// the store's name.
-func AnchoredFold(name string, storeNames map[string]string) string {
-	if anchor := ProposedDerivationalFold(name, storeNames); anchor != "" {
+// AnchoredFold resolves a split component through the promoted store view:
+// it returns the promoted store value the name's derivational or
+// morphological proposal resolves onto, or "" when neither proposer yields
+// an anchor. Both proposers are store-anchored by construction and
+// ambiguity-safe, so the chain inherits both properties, and the
+// morphological leg is suffix-local only — a ≤2-distance anchor whose edits
+// all fall in the suffix region — so a prefix-divergent near-spelling
+// (oppression beside repression) never folds at the seam. The lemma fold is
+// consulted only to veto the morphological leg: a proposal that merely
+// reproduces the lemma fold (railways→railway) is not taken, so that class
+// keeps folding through the judged identity machinery instead.
+// Split-component resolution consults it before per-document filtering;
+// births never rename through it — their folds stay judged in the identity
+// path. promotedNames maps Key(storeName) to the promoted store's name;
+// provisional births are absent from it and so anchor only through the
+// judged identity path.
+func AnchoredFold(name string, promotedNames map[string]string) string {
+	if anchor := ProposedDerivationalFold(name, promotedNames); anchor != "" {
 		return anchor
 	}
-	anchor := ProposedMorphologicalFold(name, storeNames)
-	if anchor == "" || anchor == ProposedFold(name) {
+	anchor := ProposedMorphologicalFold(name, promotedNames)
+	if anchor == "" || !suffixLocal(name, anchor) || anchor == ProposedFold(name) {
 		return ""
 	}
 	return anchor
+}
+
+// suffixLocal reports whether name and its morphological anchor agree on
+// every character up to the suffix region, allowing only the last three
+// characters of name to differ. The ≤2-distance proposal can still reach a
+// prefix-divergent store value (oppression→repression); this predicate
+// rejects exactly those, matching the pinned derivational table, whose
+// transforms only strip or tail-swap a name's final characters.
+func suffixLocal(name, anchor string) bool {
+	shared := 0
+	for shared < len(name) && shared < len(anchor) && name[shared] == anchor[shared] {
+		shared++
+	}
+	return shared >= len(name)-3
 }
 
 // boundedEditDistance returns the Levenshtein distance between a and b,

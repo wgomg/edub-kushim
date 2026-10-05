@@ -96,7 +96,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v4]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v5]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -137,16 +137,18 @@ it is skipped before judgment and never split.
   (`split`/`keep`/`drop`), `reason`
   (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`, or
   `part_rejected` when an admitted part was rejected downstream and the split
-  degrades to `drop`), the criteria version, and the judge model (`NULL` for
-  cached verdicts and the conjunction fallback) — with a matching
-  `tag split[...]` log line per candidate.
-- **Validation**: components are first fold-resolved onto live store values
-  through the store-anchored net (derivational and morphographic proposals;
-  lemma folds stay out) and then pass the hard per-document rules — normalized,
-  deduplicated, ≤3 words, ≤64 characters, no person or doc-type token
-  matches; the title-containment echo rule does not apply to parts — and a
-  split must yield between 2 and `tags.MaxCompoundWords` (3) valid components;
-  anything else keeps the compound as-is. Emissions are not count-capped.
+  degrades to `drop`, keeping the row's resolved parts), the criteria version,
+  and the judge model (`NULL` for cached verdicts and the conjunction
+  fallback) — with a matching `tag split[...]` log line per candidate.
+- **Validation**: components are first fold-resolved onto **promoted** store
+  values through the store-anchored net (derivational proposals and
+  suffix-local morphographic proposals of at most two edits; lemma folds stay
+  out; provisional births are not seam anchors) and then pass the hard
+  per-document rules — normalized, deduplicated, ≤3 words, ≤64 characters, no
+  person or doc-type token matches; the title-containment echo rule does not
+  apply to parts — and a split must yield between 2 and
+  `tags.MaxCompoundWords` (3) valid components; anything else keeps the
+  compound as-is. Emissions are not count-capped.
 - **Retroactive cleanup**: the scheduled reconciliation task scans the store
   for conjunction joints and splits them with document re-pointing — see
   [Scheduled reconciliation](#scheduled-reconciliation).
@@ -218,11 +220,15 @@ they are created:
   rubric or the outcome column fall back to their `pass` flag until the store
   reset retires them.
 - **Failure safety**: a transient failure (transport, generic provider error
-  or empty response) retries once; parse failures, output-cap hits, credit
-  exhaustion, token-limit, content-too-large and context errors are never
-  retried. Every non-credit failure keeps every novel tag with a defer
-  decision — under the gate the birth is provisional and carries no verdict —
-  and a credit-exhaustion failure pauses the batch instead.
+  or empty response) retries once; parse failures, incomplete replies,
+  output-cap hits, credit exhaustion, token-limit, content-too-large and
+  context errors are never retried. A reply that omits verdicts for some
+  candidates salvages the entries it returned — each is decided and cached
+  under `(tag_name, policy_version)` — and defers only the missing candidates
+  with `judge_unavailable` (no row; re-judged on re-emission); every other
+  non-credit failure keeps every novel tag with a defer decision — under the
+  gate the birth is provisional and carries no verdict — and a
+  credit-exhaustion failure pauses the batch instead.
 - **Logging**: rejections and defers are logged as `tagquality[v3]:` lines
   carrying the outcome and reason, siblings of the `consolidation[v1]` and
   `tags[facet]:` lines.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -346,7 +347,8 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 // reasoning, the labeled transport call, the bare-array drift log, the
 // parser, and one debug line per call with label, model, candidate count
 // and duration. A parse failure carries the step, the model and a bounded
-// raw prefix.
+// raw prefix; a typed-incomplete reply keeps its returned entries and is
+// labeled with the step so the caller can salvage them.
 func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
 	var zero T
 	start := time.Now()
@@ -374,6 +376,9 @@ func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt
 	}
 	results, err := parse(responseContent, n)
 	if err != nil {
+		if _, ok := errors.AsType[*IncompleteReplyError](err); ok {
+			return results, fmt.Errorf("%s: %w", label, err)
+		}
 		return zero, newReplyParseError(label, l.llmCfg.Model, responseContent)
 	}
 	return results, nil

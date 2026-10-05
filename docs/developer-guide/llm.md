@@ -614,15 +614,17 @@ for i := range 2 {
     (`adjudicator.go`) then replaces compound tags with their parts —
     LLM-adjudicated when the tag adjudicator is enabled, conjunction joints
     deterministically otherwise. The parts are first fold-resolved through the
-    store-anchored net (derivational and morphographic proposals onto live
-    store values; lemma folds are excluded) and then pass the hard
-    per-document rules — length/word bounds, people, known-name, and doc-type
-    checks — with the title-containment check deliberately not applied to
-    them. Compounds whose key already exists in the
+    store-anchored net (derivational proposals and suffix-local morphographic
+    proposals of at most two edits, anchored only on **promoted** store values;
+    lemma folds are excluded and provisional births are never seam anchors) and
+    then pass the hard per-document rules — length/word bounds, people,
+    known-name, and doc-type checks — with the title-containment check
+    deliberately not applied to them. Compounds whose key already exists in the
     store (names and aliases) are applications and are skipped before
     judgment, and every judged compound records one `tag_composition_event`
     verdict row (split with its resolved parts, keep, or the reason it could
-    not be judged) with a matching `tag split[...]` log line. Under the shared
+    not be judged — a `part_rejected` drop keeps the parts it resolved) with a
+    matching `tag split[...]` log line. Under the shared
     judged-call policy (§7) a transient split-judge failure is retried once, a
     credit exhaustion aborts the document so the batch pauses, and every other
     failure keeps the compound whole. `Adjudicator.ApplyDeletedTagPolicy`
@@ -659,12 +661,15 @@ for i := range 2 {
     record the judging model and the recorded outcome, cache-applied ones a
     NULL model; cached rows re-run the decision over the stored rubric with the
     current emission's deterministic signals. A transient judge failure retries
-    once; parse failures, output-cap hits, credit exhaustion, token-limit,
-    content-too-large and context errors are never retried (§7). Every
-    non-credit failure keeps every novel tag with a defer decision, logged as a
-    WARN naming the kept candidates — under the gate those births are
-    **provisional** (no verdict row); a credit-exhaustion failure aborts the
-    document so the batch pauses.
+    once; parse failures, incomplete replies, output-cap hits, credit
+    exhaustion, token-limit, content-too-large and context errors are never
+    retried (§7). A reply that omits verdicts for some candidates salvages the
+    entries it returned — each is decided and cached — and defers only the
+    missing candidates with `judge_unavailable` (no verdict row; re-judged on
+    re-emission). Every other non-credit failure keeps every novel tag with a
+    defer decision, logged as a WARN naming the kept candidates — under the gate
+    those births are **provisional** (no verdict row); a credit-exhaustion
+    failure aborts the document so the batch pauses.
 13. **Persist metadata** (`enricher.go:456-463`): title truncated to 127
     (`truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.

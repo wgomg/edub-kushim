@@ -312,11 +312,15 @@ The enrichment pipeline:
    recorded outcome, so a re-emitted name resolves without a call; a rejected
    name drops the tag for that document only — its registration and pending
    identity evidence never reach the store. A transient judge failure retries
-   once; parse failures, output-cap hits, credit exhaustion, token-limit,
-   content-too-large and context errors are never retried. Every non-credit
-   failure keeps every novel tag with a defer decision, and a credit-exhaustion
-   failure pauses the batch; the decision thresholds are
-   internal pinned constants, not config keys. Under the same gate the kept
+   once; parse failures, incomplete replies, output-cap hits, credit
+   exhaustion, token-limit, content-too-large and context errors are never
+   retried. A reply that omits verdicts for some candidates salvages the
+   entries it returned — each is decided and cached — and defers only the
+   missing candidates with `judge_unavailable` (no verdict row; re-judged on
+   re-emission); every other non-credit failure keeps every novel tag with a
+   defer decision, and a credit-exhaustion failure pauses the batch; the
+   decision thresholds are internal pinned constants, not config keys.
+   Under the same gate the kept
    set is quarantined: newborns are attached and searchable from birth but stay
    provisional (`tag.promoted_at` NULL) and out of the embedding store, so
    they never reach suggestions or consolidation targets. A provisional name

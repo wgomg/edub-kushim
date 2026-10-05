@@ -94,11 +94,12 @@ admin and emission registration paths
   variants collapse without judging.
 - **M4 — tie-break** (`TieBreak`): fixed lexical order decides when the
   direction criteria do not separate two labels.
-- **Version**: `IdentityRuleSetVersion = "v4"` is stamped on every alias row and
+- **Version**: `IdentityRuleSetVersion = "v5"` is stamped on every alias row and
   identity-evidence row. It pins the mechanical fold proposals — the
   plural/lemma fold, the store-anchored derivational adjective transforms, and
-  the bounded morphographic proposal — the store-anchored rejection hold, and
-  the pair judge's criteria text.
+  the bounded morphographic proposal — the store-anchored rejection hold, the
+  pair judge's criteria text, and the split-seam fold guards (promoted-only
+  anchors and the suffix-local morphological leg).
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
   M1 rewrites, alias lookup, key equality, and M2 flagging, including the
   plural/lemma, derivational, and morphographic fold proposals. It never applies
@@ -204,9 +205,9 @@ transaction — adjudication stays outside it:
    pairs go through the pair adjudicator. The result is a `tags.Plan` carrying
    registrations, alias actions, evidence rows, and the composition rows the
    decomposition gate judged, and per-disposition log
-   lines (`identity[v4]: apply|alias|defer|separate …`), with the applied-fold
+   lines (`identity[v5]: apply|alias|defer|separate …`), with the applied-fold
    input→output mapping and the judge-unavailable mint at DEBUG
-   (`identity[v4]: fold applied …`, `identity[v4]: pending evidence minted …`).
+   (`identity[v5]: fold applied …`, `identity[v5]: pending evidence minted …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
@@ -707,7 +708,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   `TimeoutStartSec` budget alongside model load and tag-cache build.
 - **Consolidation and identity logs live in the kushim (enrichment) log, not
   `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v4]` dispositions). `hugot.log` only holds the
+  decisions, `identity[v5]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in

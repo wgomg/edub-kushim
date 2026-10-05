@@ -1549,6 +1549,13 @@ func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing index, got nil")
 	}
+	incomplete, ok := errors.AsType[*IncompleteReplyError](err)
+	if !ok {
+		t.Fatalf("error type = %T, want *IncompleteReplyError carrying the missing indices", err)
+	}
+	if len(incomplete.Missing) != 1 || incomplete.Missing[0] != 1 {
+		t.Errorf("Missing = %v, want [1]", incomplete.Missing)
+	}
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results even on error, got %d", len(results))
 	}

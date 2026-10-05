@@ -468,6 +468,67 @@ func TestJudgedAnthropic_ParseErrorCarriesModelAndRaw(t *testing.T) {
 	}
 }
 
+// partialQualityResponse answers the first of two candidates: the reply is
+// valid JSON with a hole, the omission class a capped model produces.
+const partialQualityResponse = `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
+
+func twoQualityCandidates() []TagQualityCandidate {
+	return []TagQualityCandidate{
+		{Index: 0, Term: "wave mechanics", Category: TagCategoryTopic},
+		{Index: 1, Term: "spin lattice", Category: TagCategoryTopic},
+	}
+}
+
+func assertSalvagedQualityReply(t *testing.T, results []TagQualityResult, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("an incomplete reply must still report its missing verdict")
+	}
+	if !strings.HasPrefix(err.Error(), "tag quality judge: ") {
+		t.Errorf("error = %q, want the step label prefix", err.Error())
+	}
+	incomplete, ok := errors.AsType[*IncompleteReplyError](err)
+	if !ok {
+		t.Fatalf("error type = %T, want *IncompleteReplyError", err)
+	}
+	if len(incomplete.Missing) != 1 || incomplete.Missing[0] != 1 {
+		t.Errorf("Missing = %v, want [1]", incomplete.Missing)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want the 2 entries the parser read", len(results))
+	}
+	if !results[0].SubjectMatter || !results[0].NotFormGenre || results[0].Defer {
+		t.Errorf("index 0 answers = %+v, want the parsed verdict kept", results[0])
+	}
+	if results[1].SubjectMatter || results[1].Dimension || results[1].Atomic {
+		t.Errorf("index 1 answers = %+v, want the missing entry zero-valued", results[1])
+	}
+}
+
+func TestJudgedOpenAI_PartialQualityReplyKeepsResults(t *testing.T) {
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": partialQualityResponse}}},
+		})
+	})
+
+	results, err := f.openAI(t, f.catalogedCaps(t)).JudgeTagQuality(context.Background(), "document text", twoQualityCandidates())
+
+	assertSalvagedQualityReply(t, results, err)
+}
+
+func TestJudgedAnthropic_PartialQualityReplyKeepsResults(t *testing.T) {
+	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": partialQualityResponse}},
+		})
+	})
+
+	results, err := f.anthropic(t, f.catalogedCaps(t)).JudgeTagQuality(context.Background(), "document text", twoQualityCandidates())
+
+	assertSalvagedQualityReply(t, results, err)
+}
+
 const analysisWireResponse = `{"title":"sample","type":"article","tags":["tag one"],"people":[],"language":"eng"}`
 
 func TestJudgedOpenAI_OutputBudget(t *testing.T) {

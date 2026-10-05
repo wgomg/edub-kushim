@@ -1019,6 +1019,85 @@ func TestApplyTagQuality_JudgeFailureWarns(t *testing.T) {
 	}
 }
 
+func TestApplyTagQuality_PartialSalvage(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+	var buf bytes.Buffer
+	a.logger = log.NewLoggerWithWriter(&buf)
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		results := make([]analyzer.TagQualityResult, len(candidates))
+		missing := -1
+		for i, c := range candidates {
+			results[i] = analyzer.TagQualityResult{
+				Index:              i,
+				SubjectMatter:      true,
+				Dimension:          true,
+				NotPersonPlaceWork: true,
+				Atomic:             true,
+				NotFormGenre:       true,
+			}
+			switch c.Term {
+			case "salvage reject":
+				results[i].SubjectMatter = false
+				results[i].Dimension = false
+			case "salvage missing":
+				missing = i
+			}
+		}
+		return results, &analyzer.IncompleteReplyError{Missing: []int{missing}}
+	}
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "salvage-doc")
+
+	analysis := &tools.ContentAnalysisResult{
+		Tags: []string{"salvage kept", "salvage reject", "salvage missing"},
+		TagDetails: []analyzer.TagDetail{
+			{Term: "salvage kept", Category: analyzer.TagCategoryTopic},
+			{Term: "salvage reject", Category: analyzer.TagCategoryTopic},
+			{Term: "salvage missing", Category: analyzer.TagCategoryTopic},
+		},
+	}
+	kept, decisions, err := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+
+	if err != nil {
+		t.Fatalf("ApplyTagQuality() error = %v", err)
+	}
+	adjAssertEqual(t, adj.qualityCall, 1, "an incomplete reply is not retried")
+	if want := []string{"salvage kept", "salvage missing"}; !reflect.DeepEqual(kept, want) {
+		t.Errorf("kept = %v, want %v (the rejected entry dropped, the missing one deferred)", kept, want)
+	}
+	adjAssertEqual(t, decisions["salvage kept"].Outcome, tags.AdmissionAdmit, "salvaged entry is decided")
+	if _, ok := decisions["salvage reject"]; ok {
+		t.Errorf("a salvaged rejection drops the name without a decision, got %+v", decisions["salvage reject"])
+	}
+	adjAssertEqual(t, decisions["salvage missing"].Outcome, tags.AdmissionDefer, "missing entry defers")
+	adjAssertEqual(t, decisions["salvage missing"].Reason, reasonJudgeUnavailable, "missing entry defer reason")
+
+	rowsFor := func(name string) []database.LatestTagQualityEventsForNamesRow {
+		t.Helper()
+		rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+			PolicyVersion: analyzer.TagQualityVersion,
+			TagNames:      []string{name},
+		})
+		if err != nil {
+			t.Fatalf("read quality rows for %q: %v", name, err)
+		}
+		return rows
+	}
+	adjAssertEqual(t, len(rowsFor("salvage kept")), 1, "the salvaged verdict row is written and cached")
+	adjAssertEqual(t, len(rowsFor("salvage reject")), 1, "the salvaged rejection is written")
+	adjAssertEqual(t, len(rowsFor("salvage missing")), 0, "the deferred entry carries no row")
+
+	out := buf.String()
+	if !strings.Contains(out, "<4>WARN") {
+		t.Errorf("expected a WARN level line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "partial judge reply") || !strings.Contains(out, "salvage missing") {
+		t.Errorf("expected the WARN to name the partial classes and the deferred entry, got:\n%s", out)
+	}
+}
+
 func splitVerdictsAll(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
 	results := make([]analyzer.TagSplitResult, len(names))
 	for i, name := range names {
@@ -1426,6 +1505,7 @@ func TestRetryableJudgeFailure(t *testing.T) {
 		{"label-wrapped transport failure", fmt.Errorf("tag adjudication: %w", errors.New("send request: connection reset by peer")), true},
 		{"empty response", errors.New("empty response from LLM"), true},
 		{"parse failure", &analyzer.ReplyParseError{Step: "tag adjudication", Model: "test-model", RawLen: 8, RawPrefix: "not json"}, false},
+		{"label-wrapped incomplete reply", fmt.Errorf("tag quality judge: %w", &analyzer.IncompleteReplyError{Missing: []int{1}}), false},
 		{"output cap hit", fmt.Errorf("tag quality judge: %w", &analyzer.OutputCapError{Model: "test-model", Cap: 640}), false},
 		{"credit exhaustion", creditExhausted(), false},
 		{"label-wrapped credit exhaustion", fmt.Errorf("tag adjudication: %w", creditExhausted()), false},

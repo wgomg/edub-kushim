@@ -342,7 +342,7 @@ apply the existing label), and then candidate generation — every remaining
 candidate neighbour is kept as a **gate subject** with its similarity and
 runner-up recorded as adjudication evidence. Similarity never replaces or
 keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v4]: apply|alias|defer|separate …`. Fallback results from the legacy
+`identity[v5]: apply|alias|defer|separate …`. Fallback results from the legacy
 daemon (no candidates) pass through `KeptName` verbatim. Style variants and
 aliases never reach the policy: M1 house form, M3 key equality, and the alias
 resolver apply the canonical value before ranking output is used.
@@ -447,12 +447,15 @@ it, and writes a cache-applied row with NULL `verdict_model`. Rows predating
 the outcome column carry NULL and fall back to `pass`, and rows predating the
 rubric fall back to their `pass` flag (admit/reject) until the store reset
 retires them. A transient judge failure retries once; parse failures,
-output-cap hits, credit exhaustion, token-limit, content-too-large and context
-errors are never retried. Every non-credit failure keeps every novel tag with
-a defer decision and an error log — under the
-quality gate those kept names are born **provisional** (no verdict row), so
-they stay out of the vocabulary and await the reconciliation's re-judge; a
-credit-exhaustion failure pauses the batch.
+incomplete replies, output-cap hits, credit exhaustion, token-limit,
+content-too-large and context errors are never retried. A reply that omits
+verdicts for some candidates salvages the entries it returned — each is decided
+and cached under `(tag_name, policy_version)` — and defers only the missing
+candidates with `judge_unavailable` (no verdict row; re-judged on
+re-emission). Every other non-credit failure keeps every novel tag with a defer
+decision and an error log — under the quality gate those kept names are born
+**provisional** (no verdict row), so they stay out of the vocabulary and await
+the reconciliation's re-judge; a credit-exhaustion failure pauses the batch.
 
 The judge LLM and timeout default to the content analyzer's
 (`ResolvedQualityLlm`/`ResolvedQualityTimeout`, resolved at use time); config
