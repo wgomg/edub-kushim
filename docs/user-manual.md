@@ -1685,14 +1685,15 @@ Response `200`:
 {
   "adapters": {
     "anthropic": ["anthropic"],
-    "openai-compatible": ["deepseek", "mistral", "openai", "qwen", "zhipu"]
+    "openai-compatible": ["deepseek", "mistral", "openai", "opencode", "opencode-go", "qwen", "zhipu"]
   },
   "providers": {
     "openai": [
       {
         "id": "gpt-5.4-nano",
         "capabilities": {
-          "supports_reasoning": true,
+          "disable_reasoning": false,
+          "reasoning_efforts": ["none", "low", "medium", "high", "xhigh"],
           "max_input_tokens": 400000,
           "max_output_tokens": 128000,
           "supports_temperature": false,
@@ -1704,7 +1705,7 @@ Response `200`:
       {
         "id": "deepseek-flash",
         "capabilities": {
-          "supports_reasoning": true,
+          "disable_reasoning": true,
           "reasoning_efforts": ["high", "max"],
           "max_input_tokens": 1000000,
           "max_output_tokens": 384000,

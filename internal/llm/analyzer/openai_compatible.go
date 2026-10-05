@@ -61,6 +61,33 @@ type openaiResponse struct {
 	Usage   openaiUsage    `json:"usage"`
 }
 
+type responsesContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type responsesOutputItem struct {
+	Type    string             `json:"type"`
+	Content []responsesContent `json:"content"`
+}
+
+type responsesUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+type responsesIncomplete struct {
+	Reason string `json:"reason"`
+}
+
+type responsesAPIResponse struct {
+	Status            string                `json:"status"`
+	Output            []responsesOutputItem `json:"output"`
+	Usage             responsesUsage        `json:"usage"`
+	IncompleteDetails *responsesIncomplete  `json:"incomplete_details"`
+}
+
 // NewLlmOpenAiCompatible wires the adapter; caps may be nil, in which
 // case the capability gates are skipped.
 func NewLlmOpenAiCompatible(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmOpenAiCompatible, error) {
@@ -93,8 +120,13 @@ func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, t
 // buildRequest assembles the body every compatible-API call shares: model,
 // messages, the stream flag, the output bound, and the capability-gated
 // envelope under the model catalog's caps; any body-level field is set
-// here, never at call sites.
+// here, never at call sites. Models whose catalog entry sets
+// uses_responses_endpoint take the Responses-API dialect instead.
 func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64, maxOutput int) map[string]any {
+	if l.caps != nil && l.caps.UsesResponsesEndpoint {
+		return l.buildResponsesRequest(messages, temp, maxOutput)
+	}
+
 	body := map[string]any{
 		"model":    l.llmCfg.Model,
 		"messages": messages,
@@ -120,19 +152,65 @@ func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp fl
 	return body
 }
 
+// buildResponsesRequest assembles the Responses-API body: the system message
+// becomes the top-level instructions, the remaining turns become input, the
+// output bound is always max_output_tokens, and store is pinned false because
+// this pipeline is stateless and replays its own context. messages[0] must be
+// the system turn and the slice must hold at least one further turn, as
+// buildRequestMessages constructs it.
+func (l *LlmOpenAiCompatible) buildResponsesRequest(messages []openaiChatMessage, temp float64, maxOutput int) map[string]any {
+	body := map[string]any{
+		"model":             l.llmCfg.Model,
+		"instructions":      messages[0].Content,
+		"input":             messages[1:],
+		"max_output_tokens": maxOutput,
+		"store":             false,
+	}
+
+	if l.caps.SupportsTemperature {
+		body["temperature"] = temp
+		body["top_p"] = 1
+	}
+
+	if l.caps.SupportsStructuredOutput {
+		body["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
+	}
+
+	l.addThinkingConfig(body)
+	return body
+}
+
+// addThinkingConfig applies the catalog's two-state reasoning policy for the
+// chat and responses dialects: a disableable model takes its provider-native
+// disable form while the reasoning toggle is off; the rest run at the lowest
+// cataloged effort, except a model with no cataloged effort levels, which
+// sends no reasoning knob at all.
 func (l *LlmOpenAiCompatible) addThinkingConfig(body map[string]any) {
-	if l.caps == nil || !l.caps.SupportsReasoning {
+	if l.caps == nil {
 		return
 	}
 
-	if !l.llmCfg.Reasoning {
+	if l.llmCfg.Reasoning {
+		if len(l.caps.ReasoningEffortLevels) > 0 {
+			l.enableThinking(body, l.caps.ReasoningEffortLevels[0])
+		}
+		return
+	}
+
+	if l.caps.RunsAtEffortLevel() {
+		l.enableThinking(body, l.caps.ReasoningEffortLevels[0])
+		return
+	}
+
+	if l.caps.CanDisableReasoning {
 		l.disableThinking(body)
-		return
 	}
+}
 
-	effort := l.llmCfg.ReasoningEffort
-	if effort == "" {
-		effort = "high"
+func (l *LlmOpenAiCompatible) enableThinking(body map[string]any, effort string) {
+	if l.caps.UsesResponsesEndpoint {
+		body["reasoning"] = map[string]string{"effort": effort}
+		return
 	}
 
 	switch l.llmCfg.Provider {
@@ -168,7 +246,12 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+"/chat/completions", bytes.NewBuffer(jsonBody))
+	path := "/chat/completions"
+	if l.caps != nil && l.caps.UsesResponsesEndpoint {
+		path = "/responses"
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+path, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -200,12 +283,57 @@ func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]
 		return nil, fmt.Errorf("API error: status %s: %s", resp.Status, string(body))
 	}
 
-	var chatResp openaiResponse
-	if err := json.Unmarshal(body, &chatResp); err != nil {
+	return l.decodeResponse(body)
+}
+
+// decodeResponse normalizes the request's dialect into the chat-completions
+// shape every caller consumes. The Responses-API body is folded into the
+// existing openaiResponse so Analyze, AnalyzeDocType and judgedOpenAI stay
+// dialect-agnostic.
+func (l *LlmOpenAiCompatible) decodeResponse(body []byte) (*openaiResponse, error) {
+	if l.caps == nil || !l.caps.UsesResponsesEndpoint {
+		var chatResp openaiResponse
+		if err := json.Unmarshal(body, &chatResp); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		return &chatResp, nil
+	}
+
+	var resp responsesAPIResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	return &chatResp, nil
+	var content strings.Builder
+	for _, item := range resp.Output {
+		if item.Type != "message" {
+			continue
+		}
+		for _, c := range item.Content {
+			if c.Type == "output_text" {
+				content.WriteString(c.Text)
+			}
+		}
+	}
+
+	// a reply stopped at the output bound reads as finish_reason "length",
+	// which is how judgedOpenAI detects the output-cap case
+	finishReason := ""
+	if resp.Status == "incomplete" && resp.IncompleteDetails != nil && resp.IncompleteDetails.Reason == "max_output_tokens" {
+		finishReason = "length"
+	}
+
+	return &openaiResponse{
+		Choices: []openaiChoice{{
+			FinishReason: finishReason,
+			Message:      openaiChatMessage{Role: "assistant", Content: content.String()},
+		}},
+		Usage: openaiUsage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		},
+	}, nil
 }
 
 // Analyze runs the document analysis call against the compatible API.

@@ -178,14 +178,13 @@ func TestConfigResponseFrom_Fallback(t *testing.T) {
 			{
 				Enabled: true,
 				Llm: config.LlmConfig{
-					Adapter:         "openai-compatible",
-					Provider:        "deepseek",
-					Model:           "deepseek-chat",
-					Token:           "sk-fb-123",
-					Temperature:     0.7,
-					RequestDelay:    2,
-					Reasoning:       true,
-					ReasoningEffort: "high",
+					Adapter:      "openai-compatible",
+					Provider:     "deepseek",
+					Model:        "deepseek-chat",
+					Token:        "sk-fb-123",
+					Temperature:  0.7,
+					RequestDelay: 2,
+					Reasoning:    true,
 				},
 			},
 		}
@@ -219,9 +218,6 @@ func TestConfigResponseFrom_Fallback(t *testing.T) {
 		}
 		if !fb.Llm.Reasoning {
 			t.Error("Llm.Reasoning should be true")
-		}
-		if fb.Llm.ReasoningEffort != "high" {
-			t.Errorf("Llm.ReasoningEffort = %q", fb.Llm.ReasoningEffort)
 		}
 	})
 }

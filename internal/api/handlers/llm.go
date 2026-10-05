@@ -38,7 +38,7 @@ func (h *LlmHandler) buildResponse() *LlmModelsResponse {
 				entry := LlmModelEntry{
 					ID: m.ID,
 				}
-				entry.Capabilities.SupportsReasoning = m.Capabilities.SupportsReasoning
+				entry.Capabilities.CanDisableReasoning = m.Capabilities.CanDisableReasoning
 				entry.Capabilities.ReasoningEfforts = m.Capabilities.ReasoningEffortLevels
 				entry.Capabilities.MaxInputTokens = m.Capabilities.MaxInputTokens
 				entry.Capabilities.MaxOutputTokens = m.Capabilities.MaxOutputTokens

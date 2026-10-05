@@ -26,15 +26,17 @@ type judgedFixture struct {
 	reg *llm.Registry
 }
 
-func newJudgedFixture(t *testing.T, respond http.HandlerFunc) *judgedFixture {
+// newFixtureWithCatalog lets a test choose the cataloged capabilities of the
+// testprovider entry; newJudgedFixture supplies the default shape.
+func newFixtureWithCatalog(t *testing.T, capsJSON string, respond http.HandlerFunc) *judgedFixture {
 	t.Helper()
 
 	srv := httptest.NewServer(respond)
 	t.Cleanup(srv.Close)
 
 	catalog := fmt.Sprintf(
-		`[{"provider":"testprovider","adapter":"openai-compatible","model_id":"test-model","display_name":"Test Model","official_url":%q,"max_input_tokens":100000,"max_output_tokens":4096,"reasoning":false,"supports_structured_output":true,"supports_temperature":true}]`,
-		srv.URL,
+		`[{"provider":"testprovider","adapter":"openai-compatible","model_id":"test-model","display_name":"Test Model","official_url":%q,%s}]`,
+		srv.URL, capsJSON,
 	)
 	path := filepath.Join(t.TempDir(), "catalog.json")
 	if err := os.WriteFile(path, []byte(catalog), 0o600); err != nil {
@@ -46,6 +48,13 @@ func newJudgedFixture(t *testing.T, respond http.HandlerFunc) *judgedFixture {
 		t.Fatal(err)
 	}
 	return &judgedFixture{reg: reg}
+}
+
+func newJudgedFixture(t *testing.T, respond http.HandlerFunc) *judgedFixture {
+	t.Helper()
+	return newFixtureWithCatalog(t,
+		`"max_input_tokens":100000,"max_output_tokens":4096,"disable_reasoning":false,"supports_structured_output":true,"supports_temperature":true`,
+		respond)
 }
 
 func (f *judgedFixture) catalogedCaps(t *testing.T) *llm.ModelCapability {
@@ -544,6 +553,9 @@ func TestJudgedOpenAI_OutputBudget(t *testing.T) {
 		{"catalog entry without an output ceiling keeps the budget", &llm.ModelCapability{MaxInputTokens: 100000}, "max_tokens", "max_completion_tokens", 640},
 		{"uncataloged model keeps the budget", nil, "max_tokens", "max_completion_tokens", 640},
 		{"completion-token capability swaps the field", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 4096, UsesMaxCompletionTokens: true}, "max_completion_tokens", "max_tokens", 640},
+		{"model that cannot disable reasoning doubles the budget", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 4096, ReasoningEffortLevels: []string{"low"}}, "max_tokens", "max_completion_tokens", 1280},
+		{"disableable reasoning model keeps the budget", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 4096, CanDisableReasoning: true, ReasoningEffortLevels: []string{"high"}}, "max_tokens", "max_completion_tokens", 640},
+		{"doubled budget still clamps to the cataloged maximum", &llm.ModelCapability{MaxInputTokens: 100000, MaxOutputTokens: 1000, ReasoningEffortLevels: []string{"low"}}, "max_tokens", "max_completion_tokens", 1000},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

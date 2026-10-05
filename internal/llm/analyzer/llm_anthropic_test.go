@@ -10,7 +10,7 @@ import (
 func TestApplyReasoning_Disabled(t *testing.T) {
 	l := &LlmAnthropic{
 		llmCfg: &config.LlmConfig{Reasoning: false},
-		caps:   &llm.ModelCapability{SupportsReasoning: true, ReasoningEffortLevels: []string{"low", "high"}},
+		caps:   &llm.ModelCapability{CanDisableReasoning: true, ReasoningEffortLevels: []string{"low", "high"}},
 	}
 	reqBody := &anthropicRequest{}
 	l.applyReasoning(reqBody, 64000)
@@ -25,14 +25,14 @@ func TestApplyReasoning_Disabled(t *testing.T) {
 
 func TestApplyReasoning_EffortCapableModel(t *testing.T) {
 	l := &LlmAnthropic{
-		llmCfg: &config.LlmConfig{Model: "claude-opus-4-8", Reasoning: true, ReasoningEffort: "medium"},
-		caps:   &llm.ModelCapability{SupportsReasoning: true, ReasoningEffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+		llmCfg: &config.LlmConfig{Model: "claude-opus-4-8", Reasoning: true},
+		caps:   &llm.ModelCapability{CanDisableReasoning: true, ReasoningEffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
 	}
 	reqBody := &anthropicRequest{}
 	l.applyReasoning(reqBody, 64000)
 
-	if reqBody.OutputConfig == nil || reqBody.OutputConfig.Effort != "medium" {
-		t.Errorf("expected output_config.effort=medium, got %+v", reqBody.OutputConfig)
+	if reqBody.OutputConfig == nil || reqBody.OutputConfig.Effort != "low" {
+		t.Errorf("expected output_config.effort=low (the lowest cataloged level), got %+v", reqBody.OutputConfig)
 	}
 	if reqBody.Thinking == nil || reqBody.Thinking.Type != "adaptive" {
 		t.Errorf("expected adaptive thinking, got %+v", reqBody.Thinking)
@@ -42,29 +42,29 @@ func TestApplyReasoning_EffortCapableModel(t *testing.T) {
 	}
 }
 
-func TestApplyReasoning_EffortDefaultsToHigh(t *testing.T) {
+func TestApplyReasoning_EffortDefaultsToLowest(t *testing.T) {
 	l := &LlmAnthropic{
-		llmCfg: &config.LlmConfig{Model: "claude-sonnet-5", Reasoning: true, ReasoningEffort: ""},
-		caps:   &llm.ModelCapability{SupportsReasoning: true, ReasoningEffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+		llmCfg: &config.LlmConfig{Model: "claude-sonnet-5", Reasoning: true},
+		caps:   &llm.ModelCapability{CanDisableReasoning: true, ReasoningEffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
 	}
 	reqBody := &anthropicRequest{}
 	l.applyReasoning(reqBody, 64000)
 
-	if reqBody.OutputConfig == nil || reqBody.OutputConfig.Effort != "high" {
-		t.Errorf("expected output_config.effort=high default, got %+v", reqBody.OutputConfig)
+	if reqBody.OutputConfig == nil || reqBody.OutputConfig.Effort != "low" {
+		t.Errorf("expected output_config.effort=low default, got %+v", reqBody.OutputConfig)
 	}
 }
 
 func TestApplyReasoning_ManualThinkingModel(t *testing.T) {
 	l := &LlmAnthropic{
-		llmCfg: &config.LlmConfig{Model: "claude-opus-4-5", Reasoning: true, ReasoningEffort: "high"},
-		caps:   &llm.ModelCapability{SupportsReasoning: true, ReasoningEffortLevels: []string{"low", "medium", "high"}},
+		llmCfg: &config.LlmConfig{Model: "claude-opus-4-5", Reasoning: true},
+		caps:   &llm.ModelCapability{CanDisableReasoning: true, ReasoningEffortLevels: []string{"low", "medium", "high"}},
 	}
 	reqBody := &anthropicRequest{}
 	l.applyReasoning(reqBody, 64000)
 
-	if reqBody.OutputConfig == nil || reqBody.OutputConfig.Effort != "high" {
-		t.Errorf("expected output_config.effort=high, got %+v", reqBody.OutputConfig)
+	if reqBody.OutputConfig == nil || reqBody.OutputConfig.Effort != "low" {
+		t.Errorf("expected output_config.effort=low, got %+v", reqBody.OutputConfig)
 	}
 	if reqBody.Thinking == nil || reqBody.Thinking.Type != "enabled" || reqBody.Thinking.BudgetTokens == 0 {
 		t.Errorf("expected manual thinking with a budget, got %+v", reqBody.Thinking)
@@ -74,7 +74,7 @@ func TestApplyReasoning_ManualThinkingModel(t *testing.T) {
 func TestApplyReasoning_BudgetOnlyModel(t *testing.T) {
 	l := &LlmAnthropic{
 		llmCfg: &config.LlmConfig{Model: "claude-sonnet-4-5", Reasoning: true},
-		caps:   &llm.ModelCapability{SupportsReasoning: true, ReasoningEffortLevels: nil},
+		caps:   &llm.ModelCapability{CanDisableReasoning: true, ReasoningEffortLevels: nil},
 	}
 	reqBody := &anthropicRequest{}
 	l.applyReasoning(reqBody, 64000)
@@ -90,7 +90,7 @@ func TestApplyReasoning_BudgetOnlyModel(t *testing.T) {
 func TestApplyReasoning_BudgetOnlyModel_TooFewMaxTokens(t *testing.T) {
 	l := &LlmAnthropic{
 		llmCfg: &config.LlmConfig{Model: "claude-haiku-4-5", Reasoning: true},
-		caps:   &llm.ModelCapability{SupportsReasoning: true, ReasoningEffortLevels: nil},
+		caps:   &llm.ModelCapability{CanDisableReasoning: true, ReasoningEffortLevels: nil},
 	}
 	reqBody := &anthropicRequest{}
 	l.applyReasoning(reqBody, 256)

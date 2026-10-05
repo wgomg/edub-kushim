@@ -127,7 +127,7 @@ func (l *LlmAnthropic) baseURL() string {
 }
 
 func (l *LlmAnthropic) applyReasoning(reqBody *anthropicRequest, maxTokens int) {
-	reasoningOn := l.llmCfg.Reasoning && l.caps != nil && l.caps.SupportsReasoning
+	reasoningOn := l.llmCfg.Reasoning && l.caps != nil && l.caps.CanDisableReasoning
 	if !reasoningOn {
 		reqBody.Thinking = &anthropicThinkingConfig{Type: "disabled"}
 		return
@@ -140,11 +140,7 @@ func (l *LlmAnthropic) applyReasoning(reqBody *anthropicRequest, maxTokens int) 
 		return
 	}
 
-	effort := l.llmCfg.ReasoningEffort
-	if effort == "" {
-		effort = "high"
-	}
-	reqBody.OutputConfig = &anthropicOutputConfig{Effort: effort}
+	reqBody.OutputConfig = &anthropicOutputConfig{Effort: l.caps.ReasoningEffortLevels[0]}
 
 	if anthropicManualThinkingModels[l.llmCfg.Model] {
 		if budget := thinkingBudget(maxTokens); budget > 0 {

@@ -320,8 +320,8 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `TextReducerResponse` — `Engine string`, `Timeout int`, `TargetWords int`
 - `ContentAnalyzerResponse` — `Enabled bool`, `Timeout int`, `MinTags int`, `MaxTags int`, `Llm LlmConfigResponse`, `Fallbacks []FallbackConfigResponse` (omitempty — absent when no fallbacks are configured), `PromptTemplate string`
 - `FallbackConfigResponse` — `Enabled bool`, `Llm LlmConfigResponse`
-- `LlmConfigResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool`, `ReasoningEffort string`, `Temperature float64`
-- `LlmModelEntry` — `ID string`, `Capabilities` (SupportsReasoning, ReasoningEfforts, MaxInputTokens, MaxOutputTokens, SupportsTemperature, SupportsResponseSchema)
+- `LlmConfigResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string`, `Reasoning bool`, `Temperature float64`, `RequestDelay float64`
+- `LlmModelEntry` — `ID string`, `Capabilities` (CanDisableReasoning, ReasoningEfforts, MaxInputTokens, MaxOutputTokens, SupportsTemperature, SupportsResponseSchema)
 - `LlmModelsResponse` — `Adapters map[string][]string`, `Providers map[string][]LlmModelEntry`
 - `DocTypeRefinementResponse` — `Enabled bool`, `HeadWords int`, `TailWords int`
 - `TagMatcherResponse` — `Engine string`, `Timeout int`, `ReduceTargetWords int`, `ChunkSize int`, `Hugot HugotResponse`

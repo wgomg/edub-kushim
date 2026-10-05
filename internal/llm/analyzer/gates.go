@@ -41,8 +41,14 @@ func judgedOutputBudget(n int) int {
 }
 
 // clampOutputBudget caps budget at the cataloged model's true maximum; with
-// nil caps or no cataloged maximum the budget passes through unchanged.
+// nil caps or no cataloged maximum the budget passes through unchanged. A
+// model that cannot disable reasoning runs its default path at an effort
+// level, so its reasoning tokens share the output bound and the budget is
+// doubled first; unused headroom is never billed.
 func clampOutputBudget(caps *llm.ModelCapability, budget int) int {
+	if caps.RunsAtEffortLevel() {
+		budget *= 2
+	}
 	if caps != nil && caps.MaxOutputTokens > 0 && budget > caps.MaxOutputTokens {
 		return caps.MaxOutputTokens
 	}

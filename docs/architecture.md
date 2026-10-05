@@ -224,8 +224,9 @@ The enrichment pipeline:
  3. **LLM Classification (first pass)** — the reduced content, along with available document types
      and tag suggestions, is sent to the configured LLM adapter. The adapter is selected by
      `llm.adapter` (`openai-compatible` or `anthropic`) and the request body
-     is built dynamically from the model's capability flags (reasoning, structured output,
-     temperature, etc.) looked up from the model catalog registry. Returns structured JSON:
+     is built dynamically from the model's capability flags (reasoning control and effort
+     levels, structured output, temperature, etc.) looked up from the model catalog
+     registry. Returns structured JSON:
      title, type, tags, people (with types like author, sender), language.
      Tags are typed objects — `term`, `category` (`topic`, `form_genre`, `place`, `person`,
      `work`, `other`) — so the model self-classifies what each term is;

@@ -34,11 +34,15 @@ func SessionID() string {
 	return sessionID
 }
 
-// ModelCapability is what a cataloged model allows: reasoning support and
+// ModelCapability is what a cataloged model allows: reasoning control and
 // effort levels, temperature, prompt caching, structured output, the output
-// bound's request field, and the context and output limits.
+// bound's request field, the request dialect, and the context and output
+// limits.
 type ModelCapability struct {
-	SupportsReasoning        bool
+	// CanDisableReasoning reports that the provider's request body accepts a
+	// flag to disable thinking/reasoning; when false the adapters send the
+	// lowest cataloged effort instead.
+	CanDisableReasoning      bool
 	ReasoningEffortLevels    []string
 	SupportsTemperature      bool
 	SupportsPromptCaching    bool
@@ -50,6 +54,17 @@ type ModelCapability struct {
 	// field: OpenAI's GPT-5 family rejects max_tokens and requires
 	// max_completion_tokens; every other cataloged provider takes max_tokens.
 	UsesMaxCompletionTokens bool
+
+	// UsesResponsesEndpoint selects the Responses-API dialect (endpoint path,
+	// request body, response shape) inside the OpenAI-compatible adapter.
+	UsesResponsesEndpoint bool
+}
+
+// RunsAtEffortLevel reports that a model with no disable flag falls back to a
+// cataloged effort level: its reasoning tokens then share the output bound, so
+// callers may widen the budget for them.
+func (c *ModelCapability) RunsAtEffortLevel() bool {
+	return c != nil && !c.CanDisableReasoning && len(c.ReasoningEffortLevels) > 0
 }
 
 // ProviderModel is one cataloged model of a provider, as exposed to the
@@ -69,12 +84,13 @@ type catalogEntry struct {
 	SessionHeader            string   `json:"session_header,omitempty"`
 	MaxInputTokens           int      `json:"max_input_tokens"`
 	MaxOutputTokens          int      `json:"max_output_tokens"`
-	Reasoning                bool     `json:"reasoning"`
+	DisableReasoning         bool     `json:"disable_reasoning,omitempty"`
 	ReasoningEfforts         []string `json:"reasoning_efforts,omitempty"`
 	SupportsStructuredOutput bool     `json:"supports_structured_output"`
 	SupportsTemperature      bool     `json:"supports_temperature"`
 	SupportsPromptCaching    bool     `json:"supports_prompt_caching"`
 	UsesMaxCompletionTokens  bool     `json:"uses_max_completion_tokens,omitempty"`
+	UsesResponsesEndpoint    bool     `json:"uses_responses_endpoint,omitempty"`
 }
 
 // Registry is the loaded model catalog, indexed by provider/model with
@@ -190,7 +206,7 @@ func (r *Registry) buildIndex() {
 
 func entryToCapability(e *catalogEntry) *ModelCapability {
 	return &ModelCapability{
-		SupportsReasoning:        e.Reasoning,
+		CanDisableReasoning:      e.DisableReasoning,
 		ReasoningEffortLevels:    e.ReasoningEfforts,
 		SupportsTemperature:      e.SupportsTemperature,
 		SupportsPromptCaching:    e.SupportsPromptCaching,
@@ -198,6 +214,7 @@ func entryToCapability(e *catalogEntry) *ModelCapability {
 		MaxInputTokens:           e.MaxInputTokens,
 		MaxOutputTokens:          e.MaxOutputTokens,
 		UsesMaxCompletionTokens:  e.UsesMaxCompletionTokens,
+		UsesResponsesEndpoint:    e.UsesResponsesEndpoint,
 	}
 }
 

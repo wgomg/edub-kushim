@@ -996,14 +996,13 @@ type FallbackConfigResponse struct {
 
 // LlmConfigResponse is one LLM endpoint's API view, without the token.
 type LlmConfigResponse struct {
-	Adapter         string  `json:"adapter"`
-	Provider        string  `json:"provider"`
-	Model           string  `json:"model"`
-	Token           string  `json:"token,omitempty"`
-	Reasoning       bool    `json:"reasoning"`
-	ReasoningEffort string  `json:"reasoning_effort,omitempty"`
-	Temperature     float64 `json:"temperature"`
-	RequestDelay    float64 `json:"request_delay"`
+	Adapter      string  `json:"adapter"`
+	Provider     string  `json:"provider"`
+	Model        string  `json:"model"`
+	Token        string  `json:"token,omitempty"`
+	Reasoning    bool    `json:"reasoning"`
+	Temperature  float64 `json:"temperature"`
+	RequestDelay float64 `json:"request_delay"`
 }
 
 // TagMatcherResponse is the matcher section's API view.
@@ -1054,7 +1053,7 @@ type LlmModelsResponse struct {
 type LlmModelEntry struct {
 	ID           string `json:"id"`
 	Capabilities struct {
-		SupportsReasoning      bool     `json:"supports_reasoning"`
+		CanDisableReasoning    bool     `json:"disable_reasoning"`
 		ReasoningEfforts       []string `json:"reasoning_efforts,omitempty"`
 		MaxInputTokens         int      `json:"max_input_tokens"`
 		MaxOutputTokens        int      `json:"max_output_tokens"`
@@ -1120,7 +1119,6 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.ContentAnalyzer.Llm.Model = cfg.Enricher.ContentAnalyzer.Llm.Model
 	resp.Enricher.ContentAnalyzer.Llm.Token = cfg.Enricher.ContentAnalyzer.Llm.Token
 	resp.Enricher.ContentAnalyzer.Llm.Reasoning = cfg.Enricher.ContentAnalyzer.Llm.Reasoning
-	resp.Enricher.ContentAnalyzer.Llm.ReasoningEffort = cfg.Enricher.ContentAnalyzer.Llm.ReasoningEffort
 	resp.Enricher.ContentAnalyzer.Llm.Temperature = cfg.Enricher.ContentAnalyzer.Llm.Temperature
 	resp.Enricher.ContentAnalyzer.Llm.RequestDelay = cfg.Enricher.ContentAnalyzer.Llm.RequestDelay
 	for i := range cfg.Enricher.ContentAnalyzer.Fallbacks {
@@ -1128,14 +1126,13 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 		resp.Enricher.ContentAnalyzer.Fallbacks = append(resp.Enricher.ContentAnalyzer.Fallbacks, FallbackConfigResponse{
 			Enabled: fb.Enabled,
 			Llm: LlmConfigResponse{
-				Adapter:         fb.Llm.Adapter,
-				Provider:        fb.Llm.Provider,
-				Model:           fb.Llm.Model,
-				Token:           fb.Llm.Token,
-				Reasoning:       fb.Llm.Reasoning,
-				ReasoningEffort: fb.Llm.ReasoningEffort,
-				Temperature:     fb.Llm.Temperature,
-				RequestDelay:    fb.Llm.RequestDelay,
+				Adapter:      fb.Llm.Adapter,
+				Provider:     fb.Llm.Provider,
+				Model:        fb.Llm.Model,
+				Token:        fb.Llm.Token,
+				Reasoning:    fb.Llm.Reasoning,
+				Temperature:  fb.Llm.Temperature,
+				RequestDelay: fb.Llm.RequestDelay,
 			},
 		})
 	}

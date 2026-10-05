@@ -59,12 +59,12 @@ type ContentAnalyzer interface {
 - `checkContentTooLarge(caps *llm.ModelCapability, fullPrompt string) error` — Estimates tokens via the analyzer's `estimateTokens` and returns a `ContentTooLargeError` if the estimate exceeds `caps.MaxInputTokens`. Returns nil if `caps` is nil or `MaxInputTokens ≤ 0`.
 - `parseTokenLimitError(body []byte) error` — Matches provider error bodies against the regex `maximum context length is (\d+) tokens.*?you requested (?:about )?(\d+) tokens` and returns a `TokenLimitError` with the parsed counts. Returns nil on no match or zero values. Covers OpenAI, DeepSeek, and compatible providers; for Anthropic (different error format) it returns nil and the error propagates as generic API failure.
 - `judgedOutputBudget(n int) int` — The judged steps' output budget: `judgedOutputBase` (512) plus `judgedOutputPerItem` (128) per candidate.
-- `clampOutputBudget(caps *llm.ModelCapability, budget int) int` — Caps a call's output budget at the cataloged model's `MaxOutputTokens` when set; nil caps or no cataloged maximum keep the budget. `analysisOutputBudget` (4096) is the analysis family's budget.
+- `clampOutputBudget(caps *llm.ModelCapability, budget int) int` — Caps a call's output budget at the cataloged model's `MaxOutputTokens` when set; nil caps or no cataloged maximum keep the budget. A model that cannot disable reasoning (`caps.RunsAtEffortLevel()`) doubles the budget first, because its reasoning tokens share the output bound. `analysisOutputBudget` (4096) is the analysis family's budget.
 - `buildTokenUsageStats(prompt, completion, total int) *json.RawMessage` — Creates token usage stats JSON.
 
 ### Adapter integration
 
-Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time. Every call sends its output budget (analysis family 4096, judged steps `512 + 128 × candidates`), clamped to the catalog's `MaxOutputTokens`; the OpenAI-compatible adapter sends it as `max_tokens` or `max_completion_tokens` per the entry's `uses_max_completion_tokens`, Anthropic always as `max_tokens`. The four judged steps share one path per adapter (the generic `judgedOpenAI`/`judgedAnthropic` helper): `checkContentTooLarge` → request (temperature 0) → labeled `doRequest` → empty-content check → output-cap check (OpenAI) → bare-array drift log → the step's parser → one DEBUG line with label, model, candidate count and duration; a stopped reply fails as `OutputCapError` and a parse failure as `ReplyParseError` (step, model, total raw length, 2048-byte prefix).
+Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their constructed prompt before making any HTTP request. If it returns an error, the adapter returns the `ContentTooLargeError` directly — no API call is made, saving time and credits. Both adapter `doRequest()` methods also call `parseTokenLimitError` on non-200 responses, catching provider-side context-length errors at response time. Every call sends its output budget (analysis family 4096, judged steps `512 + 128 × candidates`); a model that cannot disable reasoning doubles it first (reasoning tokens share the output bound), then it is clamped to the catalog's `MaxOutputTokens`. The OpenAI-compatible adapter sends it as `max_tokens` or `max_completion_tokens` per the entry's `uses_max_completion_tokens` — the Responses dialect always sends `max_output_tokens` — and Anthropic always as `max_tokens`. The four judged steps share one path per adapter (the generic `judgedOpenAI`/`judgedAnthropic` helper): `checkContentTooLarge` → request (temperature 0) → labeled `doRequest` → empty-content check → output-cap check (OpenAI) → bare-array drift log → the step's parser → one DEBUG line with label, model, candidate count and duration; a stopped reply fails as `OutputCapError` and a parse failure as `ReplyParseError` (step, model, total raw length, 2048-byte prefix).
 
 ---
 
@@ -180,16 +180,17 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ### Struct
 
-`LlmOpenAiCompatible` — OpenAI-compatible `/chat/completions` API (absorbs former OpenAI, DeepSeek, Mistral, Groq, etc.)
+`LlmOpenAiCompatible` — OpenAI-compatible `/chat/completions` API, plus the Responses API (`/responses`) for entries that set `uses_responses_endpoint` (absorbs former OpenAI, DeepSeek, Mistral, Groq, etc.)
 
 - Messages: system + user (plus the assistant turn on the doc-type refinement call), assembled by `buildRequestMessages`
 - Headers: `Authorization: Bearer {token}`; the catalog-declared session header when the provider has one
-- Shared request assembly: `buildRequestMessages` → `buildRequestBody` → `buildRequest`, which sets `model`/`messages`/`stream`/the output bound and applies the capability envelope
+- Shared request assembly: `buildRequestMessages` → `buildRequestBody` → `buildRequest`, which branches to the Responses dialect (`buildResponsesRequest`) when `caps.UsesResponsesEndpoint`, and otherwise sets `model`/`messages`/`stream`/the output bound and applies the capability envelope
 - Dynamic request building based on `*ModelCapability`:
-  - Sends the output budget as `max_tokens`, or as `max_completion_tokens` when `caps.UsesMaxCompletionTokens` (the OpenAI GPT-5 family rejects `max_tokens`)
+  - Sends the output budget as `max_tokens`, or as `max_completion_tokens` when `caps.UsesMaxCompletionTokens` (the OpenAI GPT-5 family rejects `max_tokens`); the Responses dialect always sends `max_output_tokens`
   - Adds `temperature`/`top_p` only when `caps.SupportsTemperature`
-  - Adds `response_format: {type: "json_object"}` only when `caps.SupportsStructuredOutput`
-  - Adds the thinking config only when `caps.SupportsReasoning`: provider-specific knobs (`thinking` for deepseek/zhipu, `enable_thinking` for qwen, `reasoning_effort` otherwise), with the disabled forms when `llmCfg.Reasoning` is false
+  - Adds `response_format: {type: "json_object"}` only when `caps.SupportsStructuredOutput` (the Responses dialect uses `text.format`)
+  - Applies the two-state reasoning policy: a model that can disable reasoning (`caps.CanDisableReasoning`) takes the provider's disable form when the toggle is off (`thinking` for deepseek/zhipu, `enable_thinking` for qwen, `reasoning_effort` otherwise); a model that cannot sends its lowest cataloged effort (`reasoning_effort`, or `reasoning: {effort}` on the Responses dialect) or no knob when it catalogs no levels
+- The Responses dialect moves the system message to `instructions`, the remaining turns to `input`, and pins `store: false`; `decodeResponse` folds the reply back into the chat-completions shape (joins `output_text` blocks, skips reasoning items, maps usage, and maps `incomplete`/`max_output_tokens` to `finish_reason: "length"`)
 - Default provider URL from the registry's `ProviderDefaultURL(provider)`
 - Token usage from `usage` field
 - The four judged steps (`Adjudicate`, `AdjudicateTagSplits`, `JudgeTagQuality`, `JudgeTagIdentity`) share `judgedOpenAI`: size gate → temperature-0 request under `judgedOutputBudget(n)` → labeled `doRequest` → empty-response check → output-cap check (`finish_reason: "length"` → `OutputCapError`) → bare-array drift log → the step's parser → one DEBUG line per call; a parse failure is a `ReplyParseError` carrying the step, model, raw length and a 2048-byte prefix
@@ -205,9 +206,9 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 - System message via `system` field, user message via `messages`
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`
 - Dynamic request building based on `*ModelCapability`:
-  - `llmCfg.Reasoning == false` → sets `thinking: {type: "disabled"}`
-  - Reasoning enabled without model effort levels → `thinking: {type: "enabled"}` with a computed token budget
-  - Reasoning enabled with effort levels → `output_config: {effort: ...}`; `thinking: {type: "adaptive"}` unless the model is in `anthropicManualThinkingModels`, which gets explicit `thinking: {type: "enabled"}` with budget
+  - reasoning off (the `llmCfg.Reasoning` toggle defaults to off) → sets `thinking: {type: "disabled"}`
+  - reasoning on without model effort levels → `thinking: {type: "enabled"}` with a computed token budget
+  - reasoning on with effort levels → `output_config: {effort}` at the lowest cataloged level; `thinking: {type: "adaptive"}` unless the model is in `anthropicManualThinkingModels`, which gets explicit `thinking: {type: "enabled"}` with budget
   - `max_tokens` carries the per-call output budget: `clampOutputBudget(l.caps, analysisOutputBudget)` (4096) for `Analyze`/`AnalyzeDocType`, `clampOutputBudget(l.caps, judgedOutputBudget(n))` for the judged steps
 - Token usage from `usage.input_tokens` + `usage.output_tokens`
 - Shared request assembly: `buildRequest(system, messages, maxTokens, temp)` sets the envelope (model, max tokens, system, `stream: false`, ephemeral cache control) and applies the reasoning and temperature gates; `Analyze`, `AnalyzeDocType`, and the judged-step helper all go through it
@@ -318,7 +319,7 @@ requires replacing the file and restarting, or rebuilding the binary.
 
 ```go
 type ModelCapability struct {
-    SupportsReasoning        bool
+    CanDisableReasoning      bool
     ReasoningEffortLevels    []string
     SupportsTemperature      bool
     SupportsPromptCaching    bool
@@ -326,10 +327,11 @@ type ModelCapability struct {
     MaxInputTokens           int
     MaxOutputTokens          int
     UsesMaxCompletionTokens  bool
+    UsesResponsesEndpoint    bool
 }
 ```
 
-`UsesMaxCompletionTokens` selects the Chat Completions output-bound field: OpenAI's GPT-5 family rejects `max_tokens` and requires `max_completion_tokens`; every other cataloged provider takes `max_tokens`.
+`CanDisableReasoning` reports that the provider's request body accepts a flag to disable thinking/reasoning; when false the adapters send the lowest cataloged effort instead. `RunsAtEffortLevel()` exposes the derived fact that a model falls back to an effort level (cannot disable, effort levels present), and drives the doubled output budget. `UsesMaxCompletionTokens` selects the Chat Completions output-bound field: OpenAI's GPT-5 family rejects `max_tokens` and requires `max_completion_tokens`; every other cataloged provider takes `max_tokens`. `UsesResponsesEndpoint` selects the Responses-API dialect (endpoint path, request body, response shape).
 
 ### Registry API
 

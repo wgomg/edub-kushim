@@ -249,17 +249,18 @@ Anthropic-specific rules the adapter encodes:
   token is set).
 - **Prompt caching**: `cache_control: {type: "ephemeral"}` on both calls —
   the system prompt + first user turn are cached across requests.
-- **Thinking modes** (`applyReasoning`, `llm_anthropic.go:128-156`),
-  catalog-gated by `caps.SupportsReasoning` and `ReasoningEffortLevels`:
-  - reasoning off → `thinking: disabled`;
-  - model without effort levels → `thinking: enabled` with a
+- **Thinking modes** (`applyReasoning`, `llm_anthropic.go:129-153`),
+  catalog-gated by `caps.CanDisableReasoning` and `ReasoningEffortLevels`:
+  - reasoning off (the programmatic-only toggle defaults to off) →
+    `thinking: disabled`;
+  - reasoning on, model without effort levels → `thinking: enabled` with a
     `budget_tokens` of `min(maxTokens/2, 32000)` (floor 1024,
-    `llm_anthropic.go:73-79`);
-  - model with effort levels → `output_config: {effort}` (default
-    `"high"`), plus `thinking: enabled` **only for
+    `llm_anthropic.go:75-81`);
+  - reasoning on, model with effort levels → `output_config: {effort}` at the
+    **lowest cataloged level**, plus `thinking: enabled` **only for
     `claude-opus-4-5`**, which requires a manual budget alongside
     `output_config` (`anthropicManualThinkingModels`,
-    `llm_anthropic.go:64-66`).
+    `llm_anthropic.go:66-68`).
 - **Temperature is catalog-gated**: only sent when
   `caps.SupportsTemperature` (`applyTemperature`, `llm_anthropic.go:158-162`)
   — newer models don't accept it. The doc-type call passes `temp = 0`.
@@ -290,9 +291,10 @@ even though the answer is a single `type` field. Parsing tolerates both a bare
 
 ## 5. The OpenAI-compatible adapter
 
-`openai_compatible.go` targets any `/chat/completions` API. Request build
-(`buildRequestBody`, `openai_compatible.go:88`, delegating to
-`buildRequest`, `openai_compatible.go:96`):
+`openai_compatible.go` targets any `/chat/completions` API, plus the Responses
+API (`/responses`) for catalog entries that set `uses_responses_endpoint`.
+Request build (`buildRequestBody`, `openai_compatible.go:116`, delegating to
+`buildRequest`, `openai_compatible.go:125`):
 
 ```go
 func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, temp float64, maxOutput int) map[string]any {
@@ -300,6 +302,9 @@ func (l *LlmOpenAiCompatible) buildRequestBody(system, user, assistant string, t
 }
 
 func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp float64, maxOutput int) map[string]any {
+  if l.caps != nil && l.caps.UsesResponsesEndpoint {
+    return l.buildResponsesRequest(messages, temp, maxOutput)
+  }
   body := map[string]any{
     "model":    l.llmCfg.Model,
     "messages": messages,
@@ -322,16 +327,32 @@ func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp fl
 }
 ```
 
-- Auth: `Authorization: Bearer <token>`; endpoint `baseURL() + "/chat/completions"`.
+- Auth: `Authorization: Bearer <token>`; endpoint `baseURL() + "/chat/completions"`,
+  or `baseURL() + "/responses"` for the Responses dialect.
 - **`response_format: {type: "json_object"}`** only when the catalog says the
   model supports structured output — the API-level enforcement of the
-  "return ONLY json" prompt instruction.
-- **The output-bound field is catalog-gated** — every call sends its output
-  budget as `max_tokens`, or as `max_completion_tokens` when the catalog entry
-  sets `uses_max_completion_tokens` (the OpenAI GPT-5 family rejects
-  `max_tokens`).
-- **Provider-specific reasoning knobs** (`openai_compatible.go:122-162`) — a
-  switch on `Provider` because every vendor names it differently:
+  "return ONLY json" prompt instruction. Responses-dialect entries express the
+  same intent as `text.format: {format: {type: "json_object"}}`.
+- **The output-bound field is catalog-gated** — every chat call sends its
+  output budget as `max_tokens`, or as `max_completion_tokens` when the
+  catalog entry sets `uses_max_completion_tokens` (the OpenAI GPT-5 family
+  rejects `max_tokens`). Responses-dialect entries always send
+  `max_output_tokens`.
+- **The Responses dialect** (`buildResponsesRequest`,
+  `openai_compatible.go:161-186`) moves the system message to the top-level
+  `instructions`, turns the remaining messages into `input`, and pins
+  `store: false` (the pipeline is stateless and replays its own context).
+  `decodeResponse` (`openai_compatible.go:293-338`) folds the Responses body
+  back into the chat-completions shape — joining every `output_text` block of
+  the `message` output items, skipping reasoning items, mapping usage, and
+  reading an `incomplete` reply whose `incomplete_details.reason` is
+  `max_output_tokens` as `finish_reason: "length"` so the output-cap check
+  fires — leaving `Analyze`, `AnalyzeDocType` and the judged helper
+  dialect-agnostic.
+- **Reasoning knobs follow a two-state catalog policy** (`addThinkingConfig`,
+  `openai_compatible.go:188-207`; the provider switch lives in
+  `enableThinking`/`disableThinking`, `openai_compatible.go:210-241`) — a switch
+  on `Provider` because every vendor names it differently:
 
 ```go
 switch l.llmCfg.Provider {
@@ -347,8 +368,15 @@ default:
 }
 ```
 
-  (with the corresponding disable forms, default effort `"high"`). Adding a
-  provider with a different knob means extending this switch.
+  A model that can disable reasoning (`disable_reasoning: true`) takes the
+  provider's disable form when the toggle is off (`thinking: {type: disabled}`
+  for deepseek/zhipu, `enable_thinking: false` for qwen, and
+  `reasoning_effort: "none"` otherwise). A model that cannot disable reasoning
+  always runs at its lowest cataloged effort — `reasoning_effort` for the chat
+  dialect, `reasoning: {effort}` for the Responses dialect — or sends no knob
+  when it catalogs no effort levels. The programmatic-only `Reasoning` toggle
+  forces the enable form. Adding a provider with a different knob means
+  extending this switch.
 
 `Analyze` and `AnalyzeDocType` mirror the Anthropic flow: same template,
 same 3-turn replay, `temperature = 0` for refinement, same lenient `Type`
@@ -506,19 +534,19 @@ caveats: `algorithms.md` §12.
 (`<config-dir>/model_catalog.json` if present) or the embedded copy
 (`//go:embed model_catalog.json`, `registry.go:21-22`) — and indexes it.
 
-Catalog entry fields (`registry.go:58-74`): `provider`, `adapter`,
+Catalog entry fields (`registry.go:78-94`): `provider`, `adapter`,
 `model_id`, `display_name`, `official_url`, `session_header`,
-`max_input_tokens`, `max_output_tokens`, `reasoning`, `reasoning_efforts`,
-`supports_structured_output`, `supports_temperature`,
+`max_input_tokens`, `max_output_tokens`, `disable_reasoning`,
+`reasoning_efforts`, `supports_structured_output`, `supports_temperature`,
 `supports_prompt_caching`, `uses_max_completion_tokens` (the OpenAI GPT-5
 family rejects `max_tokens`; the flag makes the adapters send the output
-budget as `max_completion_tokens`). Seven providers: openai, deepseek, mistral,
-anthropic, qwen, zhipu, opencode-go — each entry carries its own
-`official_url`, which is how the adapters know the endpoint. Providers that
+budget as `max_completion_tokens`), and `uses_responses_endpoint` (the entry is
+served only over the Responses API). Eight providers: openai, deepseek,
+mistral, anthropic, qwen, zhipu, opencode-go, opencode — each entry carries its
+own `official_url`, which is how the adapters know the endpoint. Providers that
 declare `session_header` receive the process-stable `llm.SessionID()` in that
-header on every request (both adapters set it; opencode-go asks for
-`x-opencode-session`, which its gateway uses for request routing and prompt
-caching):
+header on every request (both adapters set it; the opencode gateways ask for
+`x-opencode-session`, which they use for request routing and prompt caching):
 
 ```go
 key := provider + "/" + modelID
@@ -527,14 +555,14 @@ i, ok := r.index[key]
 return entryToCapability(entry)
 ```
 
-(`registry.go:185-213`). Lookups feed the API surface
+(`registry.go:223-236`). Lookups feed the API surface
 (`ModelsForProvider`, `ProvidersForAdapter`) and the capability gating in
 both adapters. **Unknown model → nil capabilities** → adapters degrade
-gracefully: no temperature, no reasoning, no structured output, no token
+gracefully: no temperature, no reasoning knob, no structured output, no token
 pre-check.
 
 Note: neither the catalog nor `ModelCapability` models per-token costs —
-`entryToCapability` (`registry.go:185-197`) maps only the capability flags
+`entryToCapability` (`registry.go:207-221`) maps only the capability flags
 and limits.
 
 ---
@@ -732,19 +760,23 @@ Under `enricher` (`internal/config/config.go:164-195`):
 
 Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three
-separate errors, so setup can't silently half-configure. `Reasoning` /
-`ReasoningEffort` are programmatic-only (`yaml:"-"`), set through the API.
+separate errors, so setup can't silently half-configure. `Reasoning` is
+programmatic-only (`yaml:"-"`); the reasoning behavior otherwise comes from the
+catalog's `disable_reasoning` flag and `reasoning_efforts` list.
 
 ---
 
 ## 12. Gotchas
 
-- **Output budgets are per call type and catalog-capped** — the analysis
-  family sends 4096, each judged step `512 + 128 × candidates`, both clamped
-  to the catalog's `MaxOutputTokens`; an entry without one keeps the budget.
-  Anthropic requires `max_tokens` on every call; OpenAI's GPT-5 family
-  requires `max_completion_tokens` (the `uses_max_completion_tokens` catalog
-  flag).
+- **Output budgets are per call type, catalog-capped, and doubled for
+  reasoning-by-default models** — the analysis family sends 4096, each judged
+  step `512 + 128 × candidates`; a model that cannot disable reasoning
+  (`RunsAtEffortLevel`) doubles the budget first because its reasoning tokens
+  share the output bound, then the result is clamped to the catalog's
+  `MaxOutputTokens`; an entry without one keeps the budget. Anthropic requires
+  `max_tokens` on every call; OpenAI's GPT-5 family requires
+  `max_completion_tokens` (the `uses_max_completion_tokens` catalog flag);
+  Responses-dialect entries always send `max_output_tokens`.
 - **Temperature is catalog-gated** — sending `temperature` to a model whose
   entry says `supports_temperature: false` breaks the request. When adding a
   model, set the flag correctly.
@@ -757,8 +789,10 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
   `runWithTimeout` + the caller's context. The adapter calls are
   context-cancellable, so a stuck provider eventually surfaces as a timeout
   error; don't add a client timeout without considering long models.
-- **`response_format: json_object` is catalog-gated** — models without
-  `supports_structured_output` rely on prompt discipline alone.
+- **Structured output is catalog-gated** — models without
+  `supports_structured_output` rely on prompt discipline alone; chat calls send
+  `response_format: json_object` and Responses-dialect entries send
+  `text.format`.
 - **The prompt is the schema** — the "Return ONLY a json string with keys:
   ..." contract is enforced by parsing, not by a schema. Prompt changes are
   breaking changes for stored results; the `Prompt` field persists what was
@@ -788,4 +822,4 @@ separate errors, so setup can't silently half-configure. `Reasoning` /
 
 ---
 
-*Last verified against the tree: 2026-10-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-05. If code and doc disagree, code wins.*

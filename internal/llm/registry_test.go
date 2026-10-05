@@ -56,8 +56,8 @@ func TestLookup_KnownModel(t *testing.T) {
 	if caps.MaxOutputTokens != 8192 {
 		t.Errorf("expected 8192 max output tokens, got %d", caps.MaxOutputTokens)
 	}
-	if !caps.SupportsReasoning {
-		t.Error("expected supports_reasoning")
+	if !caps.CanDisableReasoning {
+		t.Error("expected disable_reasoning")
 	}
 	if !slices.Equal(caps.ReasoningEffortLevels, []string{"high", "max"}) {
 		t.Errorf("expected reasoning efforts [high max], got %v", caps.ReasoningEffortLevels)
@@ -80,7 +80,7 @@ func TestLookup_DeepSeekPro(t *testing.T) {
 	if caps == nil {
 		t.Fatal("expected capabilities for deepseek-v4-pro")
 	}
-	if !caps.SupportsReasoning {
+	if !caps.CanDisableReasoning {
 		t.Error("expected supports_reasoning")
 	}
 	if !slices.Equal(caps.ReasoningEffortLevels, []string{"high", "max"}) {
@@ -125,8 +125,8 @@ func TestLookup_MistralSmall(t *testing.T) {
 	if caps.MaxInputTokens != 128000 {
 		t.Errorf("expected 128000 max input, got %d", caps.MaxInputTokens)
 	}
-	if !caps.SupportsReasoning {
-		t.Error("expected reasoning support")
+	if caps.CanDisableReasoning {
+		t.Error("expected mistral-small to run at an effort level, not a disable flag")
 	}
 }
 
@@ -140,7 +140,7 @@ func TestLookup_AnthropicModel(t *testing.T) {
 	if caps == nil {
 		t.Fatal("expected capabilities for claude-sonnet-5")
 	}
-	if !caps.SupportsReasoning {
+	if !caps.CanDisableReasoning {
 		t.Error("expected reasoning support")
 	}
 	if len(caps.ReasoningEffortLevels) == 0 {
@@ -244,7 +244,7 @@ func TestModelsForProvider_DeepSeek(t *testing.T) {
 	for _, m := range models {
 		if m.ID == "deepseek-v4-flash" {
 			foundFlash = true
-			if !m.Capabilities.SupportsReasoning {
+			if !m.Capabilities.CanDisableReasoning {
 				t.Error("expected deepseek-v4-flash to have reasoning")
 			}
 		}
@@ -387,7 +387,7 @@ func TestReasoningEffortDefaults(t *testing.T) {
 	if caps == nil {
 		t.Fatal("expected capabilities")
 	}
-	if !caps.SupportsReasoning {
+	if !caps.CanDisableReasoning {
 		t.Error("expected reasoning")
 	}
 	if len(caps.ReasoningEffortLevels) == 0 {
@@ -405,7 +405,7 @@ func TestReasoningEffort_EmptyStaysEmpty(t *testing.T) {
 	if caps == nil {
 		t.Fatal("expected capabilities")
 	}
-	if !caps.SupportsReasoning {
+	if !caps.CanDisableReasoning {
 		t.Error("expected reasoning")
 	}
 	if len(caps.ReasoningEffortLevels) != 0 {

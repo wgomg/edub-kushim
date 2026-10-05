@@ -390,14 +390,13 @@ func (c *Config) ResolvedQualityTimeout() int {
 // LlmConfig is one LLM endpoint: adapter, provider, model, token,
 // temperature, and the pacing delay between requests (capped at load).
 type LlmConfig struct {
-	Adapter         string  `mapstructure:"adapter" yaml:"adapter" json:"adapter"`
-	Provider        string  `mapstructure:"provider" yaml:"provider" json:"provider"`
-	Model           string  `mapstructure:"model" yaml:"model" json:"model"`
-	Token           string  `mapstructure:"token" yaml:"token" json:"token,omitempty"`
-	Reasoning       bool    `yaml:"-"`
-	ReasoningEffort string  `yaml:"-"`
-	Temperature     float64 `mapstructure:"temperature" yaml:"temperature" json:"temperature"`
-	RequestDelay    float64 `mapstructure:"request_delay" yaml:"request_delay" json:"request_delay"`
+	Adapter      string  `mapstructure:"adapter" yaml:"adapter" json:"adapter"`
+	Provider     string  `mapstructure:"provider" yaml:"provider" json:"provider"`
+	Model        string  `mapstructure:"model" yaml:"model" json:"model"`
+	Token        string  `mapstructure:"token" yaml:"token" json:"token,omitempty"`
+	Reasoning    bool    `yaml:"-"`
+	Temperature  float64 `mapstructure:"temperature" yaml:"temperature" json:"temperature"`
+	RequestDelay float64 `mapstructure:"request_delay" yaml:"request_delay" json:"request_delay"`
 }
 
 // maxRequestDelaySeconds caps llm.request_delay so a misconfiguration can't
