@@ -530,9 +530,9 @@
     "official_url": "https://api.z.ai/api/paas/v4"
   },
   {
-    "provider": "opencode",
-    "model_id": "deepseek-v4-flash",
-    "display_name": "DeepSeek V4 Flash",
+    "provider": "opencode-go",
+    "model_id": "deepseek-v4.1-flash",
+    "display_name": "DeepSeek V4.1 Flash",
     "max_input_tokens": 1000000,
     "max_output_tokens": 384000,
     "reasoning": true,
@@ -544,13 +544,13 @@
     "supports_temperature": true,
     "supports_prompt_caching": true,
     "adapter": "openai-compatible",
-    "official_url": "https://opencode.ai/zen/v1",
+    "official_url": "https://opencode.ai/zen/go/v1",
     "session_header": "x-opencode-session"
   },
   {
     "provider": "opencode-go",
-    "model_id": "mimo-v2.5",
-    "display_name": "MiMo-V2.5",
+    "model_id": "mimo-V2.6-flash",
+    "display_name": "MiMo V2.6 Flash",
     "max_input_tokens": 1000000,
     "max_output_tokens": 131000,
     "reasoning": true,

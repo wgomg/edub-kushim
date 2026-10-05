@@ -512,12 +512,12 @@ Catalog entry fields (`registry.go:58-74`): `provider`, `adapter`,
 `supports_structured_output`, `supports_temperature`,
 `supports_prompt_caching`, `uses_max_completion_tokens` (the OpenAI GPT-5
 family rejects `max_tokens`; the flag makes the adapters send the output
-budget as `max_completion_tokens`). Eight providers: openai, deepseek, mistral,
-anthropic, qwen, zhipu, opencode, opencode-go — each entry carries its own
+budget as `max_completion_tokens`). Seven providers: openai, deepseek, mistral,
+anthropic, qwen, zhipu, opencode-go — each entry carries its own
 `official_url`, which is how the adapters know the endpoint. Providers that
 declare `session_header` receive the process-stable `llm.SessionID()` in that
-header on every request (both adapters set it; opencode and opencode-go ask for
-`x-opencode-session`, which their gateway uses for request routing and prompt
+header on every request (both adapters set it; opencode-go asks for
+`x-opencode-session`, which its gateway uses for request routing and prompt
 caching):
 
 ```go

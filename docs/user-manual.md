@@ -1702,7 +1702,7 @@ Response `200`:
     ],
     "deepseek": [
       {
-        "id": "deepseek-v4-flash",
+        "id": "deepseek-flash",
         "capabilities": {
           "supports_reasoning": true,
           "reasoning_efforts": ["high", "max"],
