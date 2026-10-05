@@ -549,7 +549,7 @@
   },
   {
     "provider": "opencode-go",
-    "model_id": "mimo-V2.6-flash",
+    "model_id": "mimo-v2.6-flash",
     "display_name": "MiMo V2.6 Flash",
     "max_input_tokens": 1000000,
     "max_output_tokens": 131000,
