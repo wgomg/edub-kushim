@@ -673,6 +673,11 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 	defer tx.Rollback()
 	txQ := client.WithTx(tx)
 
+	// the row carries a parts reading when one exists, and none when it does not, so the nullable column
+	// must distinguish a computed false from an absent reading rather than collapsing both to null
+	reconstructible := true
+	notReconstructible := false
+
 	plan := tags.Plan{Composition: []tags.CompositionRow{
 		{
 			DocumentID:      docID,
@@ -682,6 +687,7 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 			Reason:          tags.CompositionReasonJudge,
 			CriteriaVersion: analyzer.TagSplitVersion,
 			Model:           "judge-model",
+			Reconstructible: &reconstructible,
 		},
 		{
 			DocumentID:      docID,
@@ -696,6 +702,7 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 			Disposition:     tags.CompositionDrop,
 			Reason:          tags.CompositionReasonPartRejected,
 			CriteriaVersion: analyzer.TagSplitVersion,
+			Reconstructible: &notReconstructible,
 		},
 	}}
 	_, _, err = svc.CreatePlannedTx(ctx, txQ, plan, false)
@@ -703,7 +710,7 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 	testutil.AssertNoError(t, tx.Commit(), "commit composition evidence")
 
 	rows, err := client.DB().QueryContext(ctx,
-		`SELECT candidate, parts::text, disposition, reason, criteria_version, model
+		`SELECT candidate, parts::text, disposition, reason, criteria_version, model, reconstructible
 		 FROM tag_composition_event WHERE document_id = $1 ORDER BY id`, docID)
 	testutil.AssertNoError(t, err, "read composition evidence")
 	defer rows.Close()
@@ -711,11 +718,12 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 	type evidence struct {
 		candidate, parts, disposition, reason, criteriaVersion string
 		model                                                  sql.NullString
+		reconstructible                                        sql.NullBool
 	}
 	var got []evidence
 	for rows.Next() {
 		var e evidence
-		testutil.AssertNoError(t, rows.Scan(&e.candidate, &e.parts, &e.disposition, &e.reason, &e.criteriaVersion, &e.model), "scan composition evidence")
+		testutil.AssertNoError(t, rows.Scan(&e.candidate, &e.parts, &e.disposition, &e.reason, &e.criteriaVersion, &e.model, &e.reconstructible), "scan composition evidence")
 		got = append(got, e)
 	}
 	testutil.AssertNoError(t, rows.Err(), "iterate composition evidence")
@@ -740,6 +748,10 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 	testutil.AssertEqual(t, got[2].disposition, tags.CompositionDrop, "part-rejected drop disposition")
 	testutil.AssertEqual(t, got[2].reason, tags.CompositionReasonPartRejected, "drop reason")
 	testutil.AssertEqual(t, got[2].model.Valid, false, "drop without a fresh judge carries no model")
+
+	testutil.AssertEqual(t, got[0].reconstructible.Valid && got[0].reconstructible.Bool, true, "split row carries the reconstructibility signal")
+	testutil.AssertEqual(t, got[1].reconstructible.Valid, false, "a row without a parts reading keeps the column null")
+	testutil.AssertEqual(t, got[2].reconstructible.Valid && got[2].reconstructible.Bool, false, "a computed false stays false rather than becoming null")
 }
 
 func decodeParts(t *testing.T, raw string) []string {

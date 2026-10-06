@@ -390,6 +390,18 @@ type TagCompositionEvent struct {
 	CriteriaVersion string
 	Model           sql.NullString
 	CreatedAt       time.Time
+	Reconstructible sql.NullBool
+}
+
+type TagCompoundStatusEvent struct {
+	ID                   int64
+	DocumentID           int64
+	Candidate            string
+	Status               string
+	Criteria             json.RawMessage
+	VerdictModel         sql.NullString
+	SplitCriteriaVersion string
+	VerdictAt            time.Time
 }
 
 type TagIdentityEvent struct {
@@ -421,6 +433,17 @@ type TagMergeDismissal struct {
 	TagA      string
 	TagB      string
 	CreatedAt time.Time
+}
+
+type TagPartDimensionEvent struct {
+	ID            int64
+	DocumentID    int64
+	Value         string
+	Criteria      json.RawMessage
+	Dimensional   bool
+	VerdictModel  sql.NullString
+	PolicyVersion string
+	VerdictAt     time.Time
 }
 
 type TagQualityEvent struct {

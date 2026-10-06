@@ -9,11 +9,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
+
+	"github.com/lib/pq"
 )
 
 const insertTagCompositionEvent = `-- name: InsertTagCompositionEvent :exec
-INSERT INTO tag_composition_event (document_id, candidate, parts, disposition, reason, criteria_version, model)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO tag_composition_event
+    (document_id, candidate, parts, disposition, reason, criteria_version, model, reconstructible)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertTagCompositionEventParams struct {
@@ -24,6 +28,7 @@ type InsertTagCompositionEventParams struct {
 	Reason          string
 	CriteriaVersion string
 	Model           sql.NullString
+	Reconstructible sql.NullBool
 }
 
 func (q *Queries) InsertTagCompositionEvent(ctx context.Context, arg InsertTagCompositionEventParams) error {
@@ -35,6 +40,99 @@ func (q *Queries) InsertTagCompositionEvent(ctx context.Context, arg InsertTagCo
 		arg.Reason,
 		arg.CriteriaVersion,
 		arg.Model,
+		arg.Reconstructible,
 	)
 	return err
+}
+
+const latestCompositionEventsForNames = `-- name: LatestCompositionEventsForNames :many
+SELECT DISTINCT ON (candidate)
+       candidate, parts, disposition, reason, criteria_version, model, reconstructible, created_at
+FROM tag_composition_event
+WHERE candidate = ANY($1::text[])
+ORDER BY candidate, created_at DESC
+`
+
+type LatestCompositionEventsForNamesRow struct {
+	Candidate       string
+	Parts           json.RawMessage
+	Disposition     string
+	Reason          string
+	CriteriaVersion string
+	Model           sql.NullString
+	Reconstructible sql.NullBool
+	CreatedAt       time.Time
+}
+
+func (q *Queries) LatestCompositionEventsForNames(ctx context.Context, candidates []string) ([]LatestCompositionEventsForNamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, latestCompositionEventsForNames, pq.Array(candidates))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestCompositionEventsForNamesRow
+	for rows.Next() {
+		var i LatestCompositionEventsForNamesRow
+		if err := rows.Scan(
+			&i.Candidate,
+			&i.Parts,
+			&i.Disposition,
+			&i.Reason,
+			&i.CriteriaVersion,
+			&i.Model,
+			&i.Reconstructible,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const latestCompositionReasonsForNames = `-- name: LatestCompositionReasonsForNames :many
+SELECT DISTINCT ON (candidate) candidate, reason
+FROM tag_composition_event
+WHERE criteria_version = $1
+  AND candidate = ANY($2::text[])
+ORDER BY candidate, created_at DESC
+`
+
+type LatestCompositionReasonsForNamesParams struct {
+	CriteriaVersion string
+	Candidates      []string
+}
+
+type LatestCompositionReasonsForNamesRow struct {
+	Candidate string
+	Reason    string
+}
+
+func (q *Queries) LatestCompositionReasonsForNames(ctx context.Context, arg LatestCompositionReasonsForNamesParams) ([]LatestCompositionReasonsForNamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, latestCompositionReasonsForNames, arg.CriteriaVersion, pq.Array(arg.Candidates))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestCompositionReasonsForNamesRow
+	for rows.Next() {
+		var i LatestCompositionReasonsForNamesRow
+		if err := rows.Scan(&i.Candidate, &i.Reason); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

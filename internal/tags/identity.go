@@ -98,42 +98,55 @@ type EvidenceRow struct {
 	Model     string
 }
 
-// The dispositions a composition row can carry: the compound split into
-// its parts, kept whole as a dimension, or dropped because an admitted
-// part was rejected downstream.
+// CompositionDisposition is what the composition machinery decides to do with one compound: split it
+// into its parts, keep it whole as a dimension, or drop it. It is the composition counterpart of the
+// AdmissionOutcome, so the pinned rule set and the persisted rows share a unified typed vocabulary.
+type CompositionDisposition string
+
+// The three composition dispositions. The zero value matches none of them, so an unset disposition is
+// never silently read as keep or drop.
 const (
-	CompositionSplit = "split"
-	CompositionKeep  = "keep"
-	CompositionDrop  = "drop"
+	CompositionSplit CompositionDisposition = "split"
+	CompositionKeep  CompositionDisposition = "keep"
+	CompositionDrop  CompositionDisposition = "drop"
 )
 
-// The reasons a composition row carries: its verdict source — a fresh
-// judge call, a cached verdict, the conjunction grammar fallback, or
-// components that failed validation — the absence of a judge
-// (judge_unavailable), and the degrade reason when a split's part could
-// not survive admission (part_rejected, written by the enricher).
+// The reasons a composition row carries: its verdict source — a fresh judge call, a cached verdict, the
+// conjunction grammar fallback, or components that failed validation — the absence of any judge verdict
+// (judge_unavailable), the degrade reason when a split's part could not survive admission (part_rejected,
+// written by the enricher), and the pinned decision reasons — a named-unit keep, its reconstructible gray
+// class, a no-dimension drop, a deferred split, parts-versus-compound disagreement, and cross-sample
+// disagreement.
 const (
-	CompositionReasonJudge             = "judge"
-	CompositionReasonCached            = "cached"
-	CompositionReasonConjunction       = "conjunction"
-	CompositionReasonInvalidComponents = "invalid_components"
-	CompositionReasonJudgeUnavailable  = "judge_unavailable"
-	CompositionReasonPartRejected      = "part_rejected"
+	CompositionReasonJudge                    = "judge"
+	CompositionReasonCached                   = "cached"
+	CompositionReasonConjunction              = "conjunction"
+	CompositionReasonInvalidComponents        = "invalid_components"
+	CompositionReasonJudgeUnavailable         = "judge_unavailable"
+	CompositionReasonPartRejected             = "part_rejected"
+	CompositionReasonNamedUnit                = "named_unit"
+	CompositionReasonNamedUnitReconstructible = "named_unit_reconstructible"
+	CompositionReasonNoDimension              = "no_dimension"
+	CompositionReasonSplitDefer               = "split_defer"
+	CompositionReasonConflictingEvidence      = "conflicting_evidence"
+	CompositionReasonSampleDisagreement       = "sample_disagreement"
 )
 
-// CompositionRow is one decomposition verdict over a judged compound: the
-// document it belongs to, the candidate, the validated parts for split
-// rows (empty otherwise), the disposition, the verdict source or degrade
-// reason, and the split judge's model for fresh verdicts. CriteriaVersion
-// pins the split criteria the verdict was read under.
+// CompositionRow is one decomposition verdict over a judged compound: the document it belongs to, the
+// candidate, the validated parts for split rows (empty otherwise), the disposition, the verdict source or
+// decision reason, the split criteria version the verdict was read under, and the split judge's model for
+// fresh verdicts. Reconstructible records the store signal the decision read when the parts pass ran (all
+// parts dimensional and every resolved part key holding live mass); it is nil when no parts verdict or
+// store reading exists.
 type CompositionRow struct {
 	DocumentID      int64
 	Candidate       string
 	Parts           []string
-	Disposition     string
+	Disposition     CompositionDisposition
 	Reason          string
 	CriteriaVersion string
 	Model           string
+	Reconstructible *bool
 }
 
 // Plan is the deterministic identity plan for a batch of candidate
@@ -383,9 +396,10 @@ func (ix *NameIndex) ShapeRelated(a, b string) bool {
 	return ix.shape[a].ShapeRelatedTo(ix.shape[b])
 }
 
-// ResolveAliases maps each normalized name to its canonical form through
-// the alias table; names without an alias are absent from the result.
-func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
+// normalizedNames normalizes each name and returns the distinct non-empty results in first-seen order,
+// the shared input boundary of the alias and held-name lookups. An empty or all-empty input yields an
+// empty slice.
+func normalizedNames(names []string) []string {
 	normalized := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
@@ -399,6 +413,13 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 		seen[n] = struct{}{}
 		normalized = append(normalized, n)
 	}
+	return normalized
+}
+
+// ResolveAliases maps each normalized name to its canonical form through
+// the alias table; names without an alias are absent from the result.
+func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
+	normalized := normalizedNames(names)
 	if len(normalized) == 0 {
 		return map[string]string{}, nil
 	}
@@ -421,19 +442,7 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 // a live tag — either refusal blocks the fold. Unheld names are absent
 // from the result; empty input returns an empty map.
 func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
-	normalized := make([]string, 0, len(names))
-	seen := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		n := textnorm.NormalizeTag(name)
-		if n == "" {
-			continue
-		}
-		if _, ok := seen[n]; ok {
-			continue
-		}
-		seen[n] = struct{}{}
-		normalized = append(normalized, n)
-	}
+	normalized := normalizedNames(names)
 	if len(normalized) == 0 {
 		return map[string]string{}, nil
 	}
@@ -456,6 +465,35 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 			continue
 		}
 		held[row.Candidate] = row.Anchor
+	}
+	return held, nil
+}
+
+// CompositionHeldNames maps each held compound candidate to the reason its latest composition verdict
+// withheld promotion: a deferred split, conflicts between the parts and compound passes, cross-sample
+// disagreement, or the reconstructible named-unit gray class (docs/tags/atomicity.md §3.5). Only rows
+// carrying criteriaVersion count, so a criteria-version bump clears stale holds. Unheld candidates are
+// absent from the result; empty input returns an empty map.
+func CompositionHeldNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, error) {
+	normalized := normalizedNames(names)
+	if len(normalized) == 0 {
+		return map[string]string{}, nil
+	}
+
+	rows, err := q.LatestCompositionReasonsForNames(ctx, database.LatestCompositionReasonsForNamesParams{
+		CriteriaVersion: criteriaVersion,
+		Candidates:      normalized,
+	})
+	if err != nil {
+		return nil, err
+	}
+	held := make(map[string]string, len(rows))
+	for _, row := range rows {
+		switch row.Reason {
+		case CompositionReasonSplitDefer, CompositionReasonConflictingEvidence,
+			CompositionReasonSampleDisagreement, CompositionReasonNamedUnitReconstructible:
+			held[row.Candidate] = row.Reason
+		}
 	}
 	return held, nil
 }

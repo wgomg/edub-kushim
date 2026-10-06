@@ -278,10 +278,10 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	return results, newNames, nil
 }
 
-// recordCompositionEvidence writes the plan's decomposition verdicts as
-// evidence rows, normalizing candidate and part names at this write
-// boundary. Empty parts encode as an empty JSON array, never null, and a
-// rejected name's row stays: it documents the gate's verdict.
+// recordCompositionEvidence writes the plan's decomposition verdicts as evidence rows, normalizing
+// candidate and part names at this write boundary and writing the reconstructibility signal only when
+// the caller recorded one. Empty parts encode as an empty JSON array, never null, and a rejected name's
+// row stays: it documents the gate's verdict.
 func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries, rows []tags.CompositionRow) error {
 	for _, row := range rows {
 		candidate := textnorm.NormalizeTag(row.Candidate)
@@ -302,14 +302,19 @@ func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries
 		if row.Model != "" {
 			model = sql.NullString{String: row.Model, Valid: true}
 		}
+		var reconstructible sql.NullBool
+		if row.Reconstructible != nil {
+			reconstructible = sql.NullBool{Bool: *row.Reconstructible, Valid: true}
+		}
 		if err := q.InsertTagCompositionEvent(ctx, database.InsertTagCompositionEventParams{
 			DocumentID:      row.DocumentID,
 			Candidate:       candidate,
 			Parts:           encoded,
-			Disposition:     row.Disposition,
+			Disposition:     string(row.Disposition),
 			Reason:          row.Reason,
 			CriteriaVersion: row.CriteriaVersion,
 			Model:           model,
+			Reconstructible: reconstructible,
 		}); err != nil {
 			return errs.FromDB(err, "insert tag composition event "+candidate)
 		}

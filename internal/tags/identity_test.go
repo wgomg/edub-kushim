@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 )
@@ -589,6 +590,83 @@ func TestIdentityHeldNames(t *testing.T) {
 	empty, err := IdentityHeldNames(ctx, q, nil)
 	if err != nil {
 		t.Fatalf("IdentityHeldNames(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("empty input = %v, want no holds", empty)
+	}
+}
+
+func TestCompositionHeldNames(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	q := client.Queries
+	docID := database.CreateUniqueDocument(t, q, "composition-hold")
+
+	// rows carry an explicit created_at so "latest" is decided by the test rather than by insert timing,
+	// and a criteria version of this test's own keeps them out of every other read
+	const version = "hold-test-v1"
+	const staleVersion = "hold-test-v0"
+	seed := func(candidate, reason, criteria string, at time.Time) {
+		t.Helper()
+		if _, err := client.DB().ExecContext(ctx, `
+			INSERT INTO tag_composition_event
+			    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+			VALUES ($1, $2, '[]'::jsonb, 'keep', $3, $4, $5)`,
+			docID, candidate, reason, criteria, at); err != nil {
+			t.Fatalf("seed composition row for %q: %v", candidate, err)
+		}
+	}
+
+	now := time.Now()
+	// the read takes the latest row under one criteria version, so the seeds cover every reason that can
+	// hold, every reason that cannot, a candidate a newer verdict settles, and a hold written under another
+	// version that must stay invisible to this read
+	seed("heldsplit", CompositionReasonSplitDefer, version, now)
+	seed("heldconflict", CompositionReasonConflictingEvidence, version, now)
+	seed("helddisagree", CompositionReasonSampleDisagreement, version, now)
+	seed("heldgray", CompositionReasonNamedUnitReconstructible, version, now)
+	seed("cleankeep", CompositionReasonNamedUnit, version, now)
+	seed("degraded", CompositionReasonJudgeUnavailable, version, now)
+	seed("dropped", CompositionReasonNoDimension, version, now)
+	seed("settled", CompositionReasonSplitDefer, version, now.Add(-time.Hour))
+	seed("settled", CompositionReasonNamedUnit, version, now)
+	seed("stale", CompositionReasonSplitDefer, staleVersion, now)
+
+	held, err := CompositionHeldNames(ctx, q, []string{
+		"  HeldSplit ", "heldconflict", "helddisagree", "heldgray",
+		"cleankeep", "degraded", "dropped", "settled", "stale", "unjudged",
+	}, version)
+	if err != nil {
+		t.Fatalf("CompositionHeldNames: %v", err)
+	}
+	want := map[string]string{
+		"heldsplit":    CompositionReasonSplitDefer,
+		"heldconflict": CompositionReasonConflictingEvidence,
+		"helddisagree": CompositionReasonSampleDisagreement,
+		"heldgray":     CompositionReasonNamedUnitReconstructible,
+	}
+	if len(held) != len(want) {
+		t.Errorf("held = %v, want exactly %v", held, want)
+	}
+	for name, reason := range want {
+		if held[name] != reason {
+			t.Errorf("held[%q] = %q, want %q", name, held[name], reason)
+		}
+	}
+	if _, ok := held["settled"]; ok {
+		t.Errorf("settled candidate held = %q, a newer non-held verdict must clear the hold", held["settled"])
+	}
+	if _, ok := held["stale"]; ok {
+		t.Errorf("stale candidate held = %q, a hold under another criteria version must not count", held["stale"])
+	}
+
+	empty, err := CompositionHeldNames(ctx, q, nil, version)
+	if err != nil {
+		t.Fatalf("CompositionHeldNames(nil): %v", err)
 	}
 	if len(empty) != 0 {
 		t.Errorf("empty input = %v, want no holds", empty)

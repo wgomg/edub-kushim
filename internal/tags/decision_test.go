@@ -94,3 +94,98 @@ func TestDecidePromotion(t *testing.T) {
 		})
 	}
 }
+
+func TestDecideComposition(t *testing.T) {
+	cases := []struct {
+		name     string
+		features CompositionFeatures
+		want     CompositionDecision
+	}{
+		{
+			"a fresh-sample disagreement defers before any branch is read",
+			CompositionFeatures{
+				SampleDisagreement:  true,
+				JudgeUnavailable:    true,
+				CompoundComposition: true,
+				PartsDimensional:    true,
+			},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSampleDisagreement, Hold: true},
+		},
+		{
+			"an unavailable judge keeps with no hold even when the compound abstained",
+			CompositionFeatures{JudgeUnavailable: true, CompoundDeferred: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonJudgeUnavailable},
+		},
+		{
+			"a compound abstention holds ahead of the split branch",
+			CompositionFeatures{CompoundDeferred: true, CompoundComposition: true, PartsDimensional: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer, Hold: true},
+		},
+		{
+			"a parts abstention holds ahead of the split branch",
+			CompositionFeatures{PartsDeferred: true, CompoundComposition: true, PartsDimensional: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer, Hold: true},
+		},
+		{
+			"a composition contradicting the parts goes to review",
+			CompositionFeatures{CompoundComposition: true, PartsNotDimensional: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonConflictingEvidence, Hold: true},
+		},
+		{
+			"a composition over dimensional parts splits",
+			CompositionFeatures{CompoundComposition: true, PartsDimensional: true},
+			CompositionDecision{Disposition: CompositionSplit},
+		},
+		{
+			"reconstructibility does not divert the composition branch",
+			CompositionFeatures{CompoundComposition: true, PartsDimensional: true, Reconstructible: true},
+			CompositionDecision{Disposition: CompositionSplit},
+		},
+		{
+			"a no_dimension verdict agreeing with the parts drops",
+			CompositionFeatures{CompoundNoDimension: true, PartsNotDimensional: true},
+			CompositionDecision{Disposition: CompositionDrop, Reason: CompositionReasonNoDimension},
+		},
+		{
+			"a no_dimension verdict contradicting the parts goes to review",
+			CompositionFeatures{CompoundNoDimension: true, PartsDimensional: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonConflictingEvidence, Hold: true},
+		},
+		{
+			"a named unit over a non-dimensional part keeps",
+			CompositionFeatures{CompoundNamedUnit: true, PartsNotDimensional: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnit},
+		},
+		{
+			"a reconstructible named unit holds in the gray class",
+			CompositionFeatures{CompoundNamedUnit: true, PartsDimensional: true, Reconstructible: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnitReconstructible, Hold: true},
+		},
+		{
+			"a named unit with no store intersection keeps",
+			CompositionFeatures{CompoundNamedUnit: true, PartsDimensional: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnit},
+		},
+		{
+			"a compound status no part verdict can arbitrate falls to the fail-safe",
+			CompositionFeatures{CompoundNamedUnit: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer, Hold: true},
+		},
+		{
+			"an empty feature set falls to the fail-safe",
+			CompositionFeatures{},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer, Hold: true},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecideComposition(tc.features)
+			if got.Disposition != tc.want.Disposition || got.Reason != tc.want.Reason || got.Hold != tc.want.Hold {
+				t.Errorf("DecideComposition(%+v) = {Disposition:%q Reason:%q Hold:%t}, want {Disposition:%q Reason:%q Hold:%t}",
+					tc.features, got.Disposition, got.Reason, got.Hold,
+					tc.want.Disposition, tc.want.Reason, tc.want.Hold)
+			}
+		})
+	}
+}
