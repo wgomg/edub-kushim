@@ -26,8 +26,8 @@ func TestLoad_MinSuggestionSimilarity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got := cfg.Enricher.TagMatcher.MinSuggestionSimilarity; got != 0.55 {
-			t.Errorf("MinSuggestionSimilarity = %v, want 0.55", got)
+		if got := cfg.Enricher.TagMatcher.MinSuggestionSimilarity; got != 0.52 {
+			t.Errorf("MinSuggestionSimilarity = %v, want 0.52", got)
 		}
 	})
 
@@ -36,8 +36,8 @@ func TestLoad_MinSuggestionSimilarity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got := cfg.Enricher.TagMatcher.MinSuggestionSimilarity; got != 0.55 {
-			t.Errorf("MinSuggestionSimilarity = %v, want the 0.55 default after an explicit zero", got)
+		if got := cfg.Enricher.TagMatcher.MinSuggestionSimilarity; got != 0.52 {
+			t.Errorf("MinSuggestionSimilarity = %v, want the 0.52 default after an explicit zero", got)
 		}
 	})
 

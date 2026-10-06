@@ -753,7 +753,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `contentanalyzer.llm.request_delay` | `1` (s) | seconds to sleep after each LLM request; `0` = off, max `60` |
 | `contentanalyzer.fallbacks` | `[]` | ordered list of `{enabled, llm.*}` fallbacks tried on provider errors; each enabled entry requires adapter/provider/model (with `request_delay` 0–60) |
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
-| `tagmatcher.min_suggestion_similarity` | model-derived (`0.55` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
+| `tagmatcher.min_suggestion_similarity` | model-derived (`0.52` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
 | `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal pinned constants (`no_anchor_similarity = 0.60`, promotion floor of 10 live documents), not config keys |

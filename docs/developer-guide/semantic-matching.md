@@ -606,7 +606,7 @@ All knobs live under `enricher.tagmatcher` in the config
 | `hugot.cpu_mem_arena` / `mem_pattern` | `false` | ORT memory knobs (§2) |
 | `top_n` | `15` (derived) | max suggestions returned |
 | `min_similarity` | model-derived | document→tag threshold |
-| `min_suggestion_similarity` | model-derived (`0.55` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
+| `min_suggestion_similarity` | model-derived (`0.52` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `consolidation_similarity` | model-derived | tag→tag consideration floor (candidates below it never reach the identity pipeline) |
 | `auto_replace_similarity` | model-derived | formerly the tag→tag auto-replace cutoff; still derived but no decision consumes it |
 | `timeout` | `120` (s) | per-call budget |
@@ -663,12 +663,13 @@ func defaultAutoReplaceSimilarity(modelShortName string) float64 {
 }
 
 // defaultMinSuggestionSimilarity ... the bar at or above which a matcher
-// suggestion is injected into the emission prompt; each value is the
-// document-match default + 0.15, and only the bge-m3 value is dump-verified
+// suggestion is injected into the emission prompt; the bge-m3 bar (0.52) is the
+// lowest that admits the observed true positives while holding the corpus-generic
+// band out, and only the bge-m3 value is dump-verified
 func defaultMinSuggestionSimilarity(modelShortName string) float64 {
 	switch modelShortName {
 	case "bge-m3":
-		return 0.55
+		return 0.52
 	case "all-mpnet-base-v2":
 		return 0.45
 	case "all-MiniLM-L6-v2":

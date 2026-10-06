@@ -139,8 +139,8 @@ enricher:
     # BGE-M3) and can OOM small hosts. See docs/tags/10-tag-matcher.md.
     chunk_size: 4096
     # injection bar for matcher suggestions: only suggestions at or above
-    # it reach the emission prompt; 0 = the per-model default (0.55 on BGE-M3).
-    min_suggestion_similarity: 0.55
+    # it reach the emission prompt; 0 = the per-model default (0.52 on BGE-M3).
+    min_suggestion_similarity: 0.52
     hugot:
       model: BAAI/bge-m3
       backend: ort

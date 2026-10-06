@@ -41,7 +41,7 @@
 - `Load(configDir string) (*Config, error)` — Loads YAML over defaults, validates OCR languages required, expands paths, creates dirs
 - `defaultMinSimilarity(modelShortName string) float64` — Per-model thresholds (bge-m3: 0.40)
 - `defaultConsolidationSimilarity(modelShortName string) float64` — Tag-to-tag thresholds (bge-m3: 0.82)
-- `defaultMinSuggestionSimilarity(modelShortName string) float64` — Suggestion-injection bars (bge-m3: 0.55)
+- `defaultMinSuggestionSimilarity(modelShortName string) float64` — Suggestion-injection bars (bge-m3: 0.52)
 - `finalizeConfig(cfg, configDir) error`
 
 ## Engine Identifier Constants

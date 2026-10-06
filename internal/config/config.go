@@ -1265,14 +1265,15 @@ func defaultAutoReplaceSimilarity(modelShortName string) float64 {
 	}
 }
 
-// defaultMinSuggestionSimilarity returns the bar at or above which a matcher
-// suggestion is injected into the emission prompt. Each value is the model's
-// document-match floor plus a 0.15 band; only the bge-m3 default is
-// dump-verified (repair-corpus core 0.537–0.615, political overlap ≤ 0.544).
+// defaultMinSuggestionSimilarity returns the bar at or above which a matcher suggestion is injected
+// into the emission prompt. The bge-m3 bar is 0.52, the lowest that admits the observed true
+// positives (christianity 0.542, archaeology 0.530, computer 0.526) while holding the corpus-generic
+// band 0.474–0.519 out. The remaining values are the model's document-match floor plus a 0.15 band;
+// only bge-m3 is dump-verified.
 func defaultMinSuggestionSimilarity(modelShortName string) float64 {
 	switch modelShortName {
 	case "bge-m3":
-		return 0.55
+		return 0.52
 	case "all-mpnet-base-v2":
 		return 0.45
 	case "all-MiniLM-L6-v2":
