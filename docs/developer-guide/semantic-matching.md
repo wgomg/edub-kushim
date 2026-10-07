@@ -362,9 +362,10 @@ Identity has two LLM paths, both under `enricher.tag_adjudicator.enabled`:
    the store. The flagged candidate is judged by one batched identity-judge
    call (`JudgeTagIdentity`) answering three binary criteria: fold to base form
    (J1), fold preserves denotation (J2), conventional written form (J5). The
-   fold applies only when all three confirm; a candidate whose criteria lack a
-   judge answer stays provisional with the three criteria recorded as pending
-   evidence. A refused fold whose proposal targeted a live store value holds
+   fold applies only when all three confirm; the candidates a truncated reply
+   returned are decided, while one it leaves missing stays provisional with the
+   three criteria recorded as pending evidence. A refused fold whose proposal
+   targeted a live store value holds
    the birth for review: the registration is provisional and the
    evidence-derived promotion hold blocks inline and sweep promotion until an
    operator resolves it.
@@ -382,9 +383,10 @@ Identity has two LLM paths, both under `enricher.tag_adjudicator.enabled`:
      falls back to lexical order). `same` **aliases** the losing name onto the
      winner (a losing store label becomes the alias, its assignments are
      re-pointed, and its own aliases are retargeted); `variant`/`related`
-     register both names. Any error, empty result, or ambiguous entry leaves
-     those pairs pending, with the candidates born provisional and a pending
-     `same_intent` row written.
+      register both names. The pairs a reply returns are decided; a
+      non-retryable error, an empty result, or a pair left missing by a partial
+      reply keeps only those pairs pending, with the candidates born
+      provisional and a pending `same_intent` row written.
 
 Decided pairs write an identity-evidence row (criteria + direction + model) and,
 when the emission carries a document, also an append-only `tag_verdict_event`
@@ -433,8 +435,9 @@ The judge input resolves in two steps:
    Cached verdicts apply with no LLM call; the decision re-runs over the
    stored rubric with the current emission's deterministic signals, so a
    cached row is evidence, not a frozen verdict.
-2. **Verdict** — one temperature-0 `JudgeTagQuality` call per document for
-   the uncached names. The prompt carries the reduced document text (the same
+2. **Verdict** — temperature-0 `JudgeTagQuality` calls over batches of up to
+   40 candidates per document for the uncached names. The prompt carries the
+   reduced document text (the same
    text the generator saw) and one line per candidate with its term, typed
    category, and — for whitelisted countries/continents — an explicit note
    that the tag must not be rejected for being a place.
@@ -721,8 +724,8 @@ statements.
      calls, §7); unresolved claims stay pending as identity evidence.
    - `runner.JudgeTagQuality(ctx, reducedText, candidates)` feeds the
      consolidated novel set when `enricher.tag_quality.enabled` is true
-     (cache → one rubric call per document → the pinned admission decision,
-     §7).
+      (cache → rubric calls over batches of up to 40 candidates → the pinned
+      admission decision, §7).
    - `promoteEligible` runs inside the persist transaction, after the tag
      assignments and before the commit: an admitted decision (the emission's,
      or the cached verdict row for provisionals already in the store) plus

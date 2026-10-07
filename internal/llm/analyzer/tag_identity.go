@@ -94,10 +94,11 @@ func BuildTagIdentityPrompt(candidates []TagIdentityCandidate) string {
 	return sb.String()
 }
 
-// ParseTagIdentityResponse errors when any candidate lacks a fully
-// specified verdict, so a truncated answer is never read as an all-false
-// rejection. A bare top-level array is accepted as the envelope's value,
-// and an entry without an index is placed by its position in the array.
+// ParseTagIdentityResponse treats a candidate lacking a fully specified verdict as missing, so a truncated
+// answer is never read as an all-false rejection. A bare top-level array is accepted as the envelope's
+// value, and an entry without an index is placed by its position in the array. A truncated reply returns
+// *IncompleteReplyError alongside the populated results, so the caller can judge those and defer only the
+// missing indices.
 func ParseTagIdentityResponse(content string, n int) ([]TagIdentityResult, error) {
 	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "terms")
 	var parsed struct {
@@ -137,7 +138,7 @@ func ParseTagIdentityResponse(content string, n int) ([]TagIdentityResult, error
 		}
 	}
 	if len(missing) > 0 {
-		return results, fmt.Errorf("incomplete tag identity response: no verdict for candidate indices %v", missing)
+		return results, &IncompleteReplyError{Missing: missing}
 	}
 	return results, nil
 }

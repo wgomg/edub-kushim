@@ -353,6 +353,7 @@ test-cgo:
 	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/cgo/ \
 		./internal/documents/ocr/ \
+		./internal/llm/analyzer/ \
 		./internal/matcher/ \
 		./internal/tools/ \
 		./internal/ops/cli/ \

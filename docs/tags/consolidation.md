@@ -177,11 +177,13 @@ proposed folds and candidate neighbours with LLM calls:
   similarity, the query's runner-up similarity, and the target's own nearest
   other store tag.
 - **Failure safety**: a transient failure (transport, generic provider error
-  or empty response) retries once; parse failures, output-cap hits, credit
-  exhaustion, token-limit, content-too-large and context errors are never
-  retried. Every non-credit failure keeps the emitted tag — enrichment never
-  blocks on adjudication that way — and a credit-exhaustion failure aborts the
-  document so the batch pauses. With the
+  or empty response) retries once; parse failures, incomplete replies,
+  output-cap hits, credit exhaustion, token-limit, content-too-large and
+  context errors are never retried. A truncated reply salvages the verdicts it
+  returned and leaves only the pairs or candidates it omitted pending. Every
+  non-credit failure keeps the emitted tag — enrichment never blocks on
+  adjudication that way — and a credit-exhaustion failure aborts the document
+  so the batch pauses. With the
   adjudicator disabled, the band behaves as pure keep — the Stage-1 policy.
 
 ---
@@ -210,9 +212,10 @@ they are created:
   stored — their plan registrations and pending identity evidence are removed
   before persist. A missing detail or similarity is absence of evidence, not
   a failing signal.
-- **Judge call**: the uncached candidates are judged in one temperature-0 LLM
-  call per document; whitelisted countries and continents are never rejected
-  for being a place, so the typed facet gate and the judge cannot disagree.
+- **Judge call**: the uncached candidates are judged in temperature-0 LLM
+  calls over batches of up to 40 candidates per document; whitelisted
+  countries and continents are never rejected for being a place, so the typed
+  facet gate and the judge cannot disagree.
 - **Cache**: verdicts are stored in the `tag_quality_event` table keyed by
   `(tag_name, policy_version)` with the recorded outcome
   (`reject`/`defer`/`admit`). A re-emitted name resolves from the cache with

@@ -224,7 +224,8 @@ same name hit M3 or the alias resolver — the self-healing loop.
 When `enricher.tag_quality.enabled` is true, `Adjudicator.ApplyTagQuality`
 (`enricher.go`) filters that kept set once more before persist: novel names
 (absent from the tag table) resolve from the `tag_quality_event` cache or go
-into one rubric call per document, and the pinned admission decision over the
+into rubric calls over batches of up to 40 candidates, and the pinned
+admission decision over the
 rubric answers plus the emission's deterministic signals drops rejected names
 for that document only — their plan registrations and pending evidence never
 reach the store. Survivors are born **provisional**
@@ -257,18 +258,23 @@ and both temperature 0 with structured output where the provider supports it:
   `ContentAnalyzer.JudgeTagIdentity` on both LLM adapters. One call per batch of
   flagged candidates answers the three binary criteria; the prompt is built by
   `BuildTagIdentityPrompt` and the response parsed by
-  `ParseTagIdentityResponse`, which requires a complete verdict per candidate —
-  an omitted criterion errors rather than reading as an all-false rejection.
-  The evidence payload (`CriteriaRecord`) carries the criteria plus the fold the
-  mechanism proposed.
+  `ParseTagIdentityResponse`, which treats a candidate without a complete
+  verdict as missing — an omitted criterion is never read as an all-false
+  rejection, and a truncated reply returns `*IncompleteReplyError` alongside
+  the answers it did read, so the present candidates are decided and only the
+  missing ones stay provisional. The evidence payload (`CriteriaRecord`)
+  carries the criteria plus the fold the mechanism proposed.
 - **Pair adjudication** — `Runner.AdjudicateTags` →
   `ContentAnalyzer.Adjudicate`. The prompt (`BuildAdjudicationPrompt`) carries
   the same-intent test, the pair terms, the pair's embedding similarity, the
   query-side runner-up, and the target's nearest other store tag; for a `same`
   verdict it also asks which term is the precise one (`direction`:
-  `query`/`target`/`tie`). `ParseAdjudicationResponse` maps unknown verdicts,
-  out-of-range indices, and short slices to ambiguous entries and drops unknown
-  direction values. See the [LLM guide](llm.md) for the adapter contract.
+  `query`/`target`/`tie`). `ParseAdjudicationResponse` treats a pair with no
+  parseable verdict — a missing entry, an unknown verdict string, or an
+  out-of-range index — as missing, and a truncated reply returns
+  `*IncompleteReplyError` alongside the pairs it did read, so the present pairs
+  are decided and only the missing ones stay pending. See the [LLM
+  guide](llm.md) for the adapter contract.
 
 Resolution order per document:
 
@@ -281,13 +287,14 @@ Resolution order per document:
    unresolved pairs enter the adjudicator batch.
 3. **Evidence** — one batched target-as-query rank (a rank failure drops the
    evidence, not the pair).
-4. **Verdict** — batched `AdjudicateTags` calls for all unresolved pairs. Any
-   error, empty result, or ambiguous entry leaves those pairs pending: the
-   candidates register provisionally with a pending `same_intent` row, resolved
-   later by the triggered run or the reconciler's identity sweep. A disabled or
-   failed-to-construct adjudicator skips both calls entirely — candidates
-   register provisionally, folds are not applied, and every claim waits as
-   pending evidence.
+4. **Verdict** — batched `AdjudicateTags` calls for all unresolved pairs. The
+   pairs a reply returns are decided; a non-retryable error, an empty result,
+   or a pair left missing by a partial reply keeps only those pairs pending:
+   the candidates register provisionally with a pending `same_intent` row,
+   resolved later by the triggered run or the reconciler's identity sweep. A
+   disabled or failed-to-construct adjudicator skips both calls entirely —
+   candidates register provisionally, folds are not applied, and every claim
+   waits as pending evidence.
 
 Decided pairs are recorded in the identity table (criteria + direction + model)
 and, when the emission carries a document, also as a document-anchored

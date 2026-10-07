@@ -153,6 +153,60 @@ func TestResolvePending_SameIntentPair(t *testing.T) {
 	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
 }
 
+func TestResolvePending_PartialCandidateReply(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+
+	for _, name := range []string{"buildings", "monuments"} {
+		seedPendingIdentityEvent(t, client, tags.IdentityKindBaseForm, name, "")
+		seedPendingIdentityEvent(t, client, tags.IdentityKindFoldGate, name, "")
+		seedPendingIdentityEvent(t, client, tags.IdentityKindConventionalForm, name, "")
+	}
+
+	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		results := make([]analyzer.TagIdentityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagIdentityResult{
+				Index:                   i,
+				FoldPreservesDenotation: true,
+				ConventionalForm:        true,
+			}
+		}
+		return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
+	}
+
+	report, err := resolver.ResolvePending(context.Background(), 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 6, "pending rows read")
+	testutil.AssertEqual(t, report.Resolved, 3, "the returned candidate's rows are resolved")
+	testutil.AssertEqual(t, report.Deferred, 1, "the missing candidate is deferred")
+	testutil.AssertEqual(t, report.Failed, 0, "a partial reply is not a failure")
+	testutil.AssertEqual(t, adj.identityCall, 1, "an incomplete reply is not retried")
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(3), "the missing candidate's rows stay pending")
+}
+
+func TestResolvePending_PartialPairReply(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+
+	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "colonization", "settler colonialism")
+	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "labour", "labor")
+
+	adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+		results := make([]analyzer.TagVerdictResult, len(pairs))
+		results[0] = analyzer.TagVerdictResult{Index: 0, Verdict: types.TagVerdicts.Variant}
+		return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
+	}
+
+	report, err := resolver.ResolvePending(context.Background(), 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 2, "pending pairs read")
+	testutil.AssertEqual(t, report.Resolved, 1, "the returned pair's verdict is recorded")
+	testutil.AssertEqual(t, report.Deferred, 1, "the missing pair is deferred")
+	testutil.AssertEqual(t, report.Aliased, 0, "a variant verdict creates no alias")
+	testutil.AssertEqual(t, report.Failed, 0, "a partial reply is not a failure")
+	testutil.AssertEqual(t, adj.called, 1, "an incomplete reply is not retried")
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(1), "the missing pair stays pending")
+}
+
 func TestResolvePending_AdjudicatorDisabled(t *testing.T) {
 	resolver, client, adj := newIdentityResolver(t, false)
 	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "colonization", "settler colonialism")

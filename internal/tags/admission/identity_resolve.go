@@ -156,6 +156,36 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 	storeNames := tags.StoreNames(storeTagNames)
 
 	model := cfg.ResolvedAdjudicatorLlm().Model
+	resolveCandidate := func(name, proposal string, result analyzer.TagIdentityResult) {
+		entry := candidates[name]
+		criteria := result.CriteriaRecord(proposal)
+		r.resolveRow(ctx, entry, tags.IdentityKindBaseForm,
+			boolVerdict(result.FoldToBase, tags.IdentityVerdictFold, tags.IdentityVerdictStand), criteria, model, report)
+		r.resolveRow(ctx, entry, tags.IdentityKindFoldGate,
+			boolVerdict(result.FoldPreservesDenotation, tags.IdentityVerdictConfirmed, tags.IdentityVerdictRejected), criteria, model, report)
+		r.resolveRow(ctx, entry, tags.IdentityKindConventionalForm,
+			boolVerdict(result.ConventionalForm, tags.IdentityVerdictStands, tags.IdentityVerdictDefer), criteria, model, report)
+
+		if !result.ConventionalForm {
+			report.Deferred++
+			return
+		}
+		if !result.FoldToBase || !result.FoldPreservesDenotation {
+			return
+		}
+		folded := tags.HouseForm(proposal)
+		if folded == "" || folded == name {
+			return
+		}
+		if applied, err := r.applyFold(ctx, name, folded); err != nil {
+			r.logger.Error("", "tag identity: fold %q -> %q failed: %v", name, folded, err)
+			report.Failed++
+			return
+		} else if applied {
+			report.Folded++
+			r.logger.Info("", "tag identity: fold %q -> %q", name, folded)
+		}
+	}
 	for start := 0; start < len(names); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(names))
 		batch := names[start:end]
@@ -176,39 +206,28 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
 		}
 		if err != nil {
-			r.logger.Error("", "tag identity: judge failed for %d candidates: %v", len(batch), err)
-			report.Failed += len(batch)
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				r.logger.Error("", "tag identity: judge failed for %d candidates: %v", len(batch), err)
+				report.Failed += len(batch)
+				continue
+			}
+			missing := incomplete.MissingSet()
+			salvaged, deferred := 0, 0
+			for i := range batch {
+				if missing[i] {
+					deferred++
+					report.Deferred++
+					continue
+				}
+				resolveCandidate(batch[i], proposals[i], results[i])
+				salvaged++
+			}
+			r.logger.Warn("", "tag identity: partial identity reply, salvaged %d of %d candidates and deferred %d", salvaged, len(batch), deferred)
 			continue
 		}
 		for i, result := range results {
-			entry := candidates[batch[i]]
-			criteria := result.CriteriaRecord(proposals[i])
-			r.resolveRow(ctx, entry, tags.IdentityKindBaseForm,
-				boolVerdict(result.FoldToBase, tags.IdentityVerdictFold, tags.IdentityVerdictStand), criteria, model, report)
-			r.resolveRow(ctx, entry, tags.IdentityKindFoldGate,
-				boolVerdict(result.FoldPreservesDenotation, tags.IdentityVerdictConfirmed, tags.IdentityVerdictRejected), criteria, model, report)
-			r.resolveRow(ctx, entry, tags.IdentityKindConventionalForm,
-				boolVerdict(result.ConventionalForm, tags.IdentityVerdictStands, tags.IdentityVerdictDefer), criteria, model, report)
-
-			if !result.ConventionalForm {
-				report.Deferred++
-				continue
-			}
-			if !result.FoldToBase || !result.FoldPreservesDenotation {
-				continue
-			}
-			folded := tags.HouseForm(proposals[i])
-			if folded == "" || folded == entry.name {
-				continue
-			}
-			if applied, err := r.applyFold(ctx, entry.name, folded); err != nil {
-				r.logger.Error("", "tag identity: fold %q -> %q failed: %v", entry.name, folded, err)
-				report.Failed++
-				continue
-			} else if applied {
-				report.Folded++
-				r.logger.Info("", "tag identity: fold %q -> %q", entry.name, folded)
-			}
+			resolveCandidate(batch[i], proposals[i], result)
 		}
 	}
 }
@@ -242,6 +261,27 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 	}
 
 	model := cfg.ResolvedAdjudicatorLlm().Model
+	resolvePair := func(p *identityPair, row database.TagIdentityEvent, result analyzer.TagVerdictResult) {
+		p.verdict = result.Verdict
+		p.direction = result.Direction
+		p.model = model
+		p.decided = true
+		criteria, err := json.Marshal(map[string]string{"direction": p.direction})
+		if err != nil {
+			criteria = []byte("{}")
+		}
+		if _, err := r.client.Queries.ResolveTagIdentityEvent(ctx, database.ResolveTagIdentityEventParams{
+			ID:       row.ID,
+			Verdict:  sql.NullString{String: string(p.verdict), Valid: true},
+			Model:    sql.NullString{String: model, Valid: model != ""},
+			Criteria: criteria,
+		}); err != nil {
+			r.logger.Error("", "tag identity: resolve pair %q -> %q failed: %v", p.query, p.target, err)
+			report.Failed++
+			return
+		}
+		report.Resolved++
+	}
 	for start := 0; start < len(pairs); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(pairs))
 		batch := pairs[start:end]
@@ -250,34 +290,28 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
 		}
 		if err != nil {
-			r.logger.Error("", "tag identity: adjudication failed for %d pairs: %v", len(batch), err)
-			report.Failed += len(batch)
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				r.logger.Error("", "tag identity: adjudication failed for %d pairs: %v", len(batch), err)
+				report.Failed += len(batch)
+				continue
+			}
+			missing := incomplete.MissingSet()
+			salvaged, deferred := 0, 0
+			for i := range batch {
+				if missing[i] {
+					deferred++
+					report.Deferred++
+					continue
+				}
+				resolvePair(batch[i], rows[start+i], results[i])
+				salvaged++
+			}
+			r.logger.Warn("", "tag identity: partial adjudication reply, salvaged %d of %d pairs and deferred %d", salvaged, len(batch), deferred)
 			continue
 		}
 		for i, result := range results {
-			if !result.Verdict.Valid() {
-				continue
-			}
-			p := batch[i]
-			p.verdict = result.Verdict
-			p.direction = result.Direction
-			p.model = model
-			p.decided = true
-			criteria, err := json.Marshal(map[string]string{"direction": p.direction})
-			if err != nil {
-				criteria = []byte("{}")
-			}
-			if _, err := r.client.Queries.ResolveTagIdentityEvent(ctx, database.ResolveTagIdentityEventParams{
-				ID:       rows[start+i].ID,
-				Verdict:  sql.NullString{String: string(p.verdict), Valid: true},
-				Model:    sql.NullString{String: model, Valid: model != ""},
-				Criteria: criteria,
-			}); err != nil {
-				r.logger.Error("", "tag identity: resolve pair %q -> %q failed: %v", p.query, p.target, err)
-				report.Failed++
-				continue
-			}
-			report.Resolved++
+			resolvePair(batch[i], rows[start+i], result)
 		}
 	}
 

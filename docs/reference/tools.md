@@ -140,12 +140,12 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 ### Types
 
 - `TagPairEvidence` — `Query`, `Target`, `Sim`, `RunnerUpSim` (query-side runner-up similarity), `TargetRunnerUpTag`/`TargetRunnerUpSim` (target's nearest other store tag). Fed to `Adjudicate`'s prompt.
-- `TagVerdictResult` — `Index int`, `Verdict types.TagVerdict` (`same`/`variant`/`related`; zero verdict = ambiguous entry, caller keeps), `Direction string` (for `same`: which term is the precise one — `query`/`target`/`tie`; empty when absent).
+- `TagVerdictResult` — `Index int`, `Verdict types.TagVerdict` (`same`/`variant`/`related`; zero verdict = the pair was missing from the reply, caller keeps it pending), `Direction string` (for `same`: which term is the precise one — `query`/`target`/`tie`; empty when absent).
 
 ### Functions
 
 - `BuildAdjudicationPrompt(pairs []TagPairEvidence) string` — Builds the JSON-verdict prompt: per pair, the two terms, their embedding similarity, the query-side runner-up similarity, and the target's nearest other store tag.
-- `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; a bare top-level array is accepted as the envelope's value, and an entry without `index` is placed by its array position. Unknown verdict strings, out-of-range indices, and short slices leave the affected entries with a zero verdict (ambiguous → caller keeps). Invalid JSON returns an error.
+- `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; a bare top-level array is accepted as the envelope's value, and an entry without `index` is placed by its array position. An entry with no parseable verdict — a missing entry, an unknown verdict string, or an out-of-range index — counts as missing, so an unanswered pair is never invented; a present pair whose `direction` is unrecognized keeps an empty direction. A truncated reply returns `*IncompleteReplyError` alongside one result per pair (the returned pairs carry their verdict), so callers act on those and keep only the missing pairs pending. Invalid JSON returns an error.
 
 ---
 

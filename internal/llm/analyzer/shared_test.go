@@ -786,6 +786,7 @@ func TestParseAdjudicationResponse(t *testing.T) {
 		content string
 		n       int
 		want    []TagVerdictResult
+		wantErr bool
 	}{
 		{
 			name:    "clean JSON with all valid verdicts",
@@ -803,22 +804,24 @@ func TestParseAdjudicationResponse(t *testing.T) {
 			want:    []TagVerdictResult{{Index: 0, Verdict: same}},
 		},
 		{
-			name:    "unknown verdict string is dropped",
+			name:    "unknown verdict string counts as missing",
 			content: `{"pairs":[{"index":0,"verdict":"foobar"}]}`,
 			n:       1,
 			want:    []TagVerdictResult{{Index: 0, Verdict: ""}},
+			wantErr: true,
 		},
 		{
-			name:    "out-of-range index is dropped",
+			name:    "out-of-range index leaves its slot missing",
 			content: `{"pairs":[{"index":5,"verdict":"same"}]}`,
 			n:       2,
 			want: []TagVerdictResult{
 				{Index: 0, Verdict: ""},
 				{Index: 1, Verdict: ""},
 			},
+			wantErr: true,
 		},
 		{
-			name:    "short slice leaves trailing entries ambiguous",
+			name:    "short slice leaves trailing entries missing",
 			content: `{"pairs":[{"index":0,"verdict":"same"}]}`,
 			n:       3,
 			want: []TagVerdictResult{
@@ -826,6 +829,7 @@ func TestParseAdjudicationResponse(t *testing.T) {
 				{Index: 1, Verdict: ""},
 				{Index: 2, Verdict: ""},
 			},
+			wantErr: true,
 		},
 		{
 			name:    "bare top-level array accepted as the envelope",
@@ -846,7 +850,7 @@ func TestParseAdjudicationResponse(t *testing.T) {
 			},
 		},
 		{
-			name:    "mixed indexed and unindexed entries",
+			name:    "mixed indexed and unindexed entries, the gap missing",
 			content: `{"pairs":[{"verdict":"same"},{"index":2,"verdict":"variant"}]}`,
 			n:       3,
 			want: []TagVerdictResult{
@@ -854,6 +858,7 @@ func TestParseAdjudicationResponse(t *testing.T) {
 				{Index: 1, Verdict: ""},
 				{Index: 2, Verdict: variant},
 			},
+			wantErr: true,
 		},
 		{
 			name:    "unindexed entries beyond n dropped",
@@ -868,7 +873,11 @@ func TestParseAdjudicationResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseAdjudicationResponse(tt.content, tt.n)
-			if err != nil {
+			if tt.wantErr {
+				if _, ok := errors.AsType[*IncompleteReplyError](err); !ok {
+					t.Fatalf("error = %v, want *IncompleteReplyError", err)
+				}
+			} else if err != nil {
 				t.Fatalf("ParseAdjudicationResponse: unexpected error: %v", err)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
@@ -1752,11 +1761,12 @@ func TestParseTagIdentityResponse(t *testing.T) {
 	missingIndex := `{"terms":[{"index":0,"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true}]}`
 
 	tests := []struct {
-		name    string
-		content string
-		n       int
-		wantErr bool
-		want0   *TagIdentityResult
+		name           string
+		content        string
+		n              int
+		wantErr        bool
+		wantIncomplete bool
+		want0          *TagIdentityResult
 	}{
 		{
 			name:    "complete JSON parses both candidates",
@@ -1777,16 +1787,18 @@ func TestParseTagIdentityResponse(t *testing.T) {
 			},
 		},
 		{
-			name:    "incomplete verdict must error",
-			content: incomplete,
-			n:       1,
-			wantErr: true,
+			name:           "incomplete verdict must error typed with results",
+			content:        incomplete,
+			n:              1,
+			wantErr:        true,
+			wantIncomplete: true,
 		},
 		{
-			name:    "missing index must error",
-			content: missingIndex,
-			n:       2,
-			wantErr: true,
+			name:           "missing index must error typed with results",
+			content:        missingIndex,
+			n:              2,
+			wantErr:        true,
+			wantIncomplete: true,
 		},
 		{
 			name:    "invalid JSON must error",
@@ -1802,6 +1814,14 @@ func TestParseTagIdentityResponse(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
+				}
+				if tt.wantIncomplete {
+					if _, ok := errors.AsType[*IncompleteReplyError](err); !ok {
+						t.Fatalf("error = %v, want *IncompleteReplyError", err)
+					}
+					if len(results) != tt.n {
+						t.Fatalf("results = %d, want %d preserved", len(results), tt.n)
+					}
 				}
 				return
 			}
@@ -1840,6 +1860,8 @@ func TestParseTagIdentityResponse_BareArrayPositional(t *testing.T) {
 	truncated := `[{"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true}]`
 	if _, err := ParseTagIdentityResponse(truncated, 2); err == nil {
 		t.Fatal("expected incomplete-response error, got nil")
+	} else if _, ok := errors.AsType[*IncompleteReplyError](err); !ok {
+		t.Fatalf("error = %v, want *IncompleteReplyError", err)
 	}
 }
 

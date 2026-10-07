@@ -270,9 +270,10 @@ The enrichment pipeline:
    form, fold preservation, and conventional written form; the pair
    adjudicator answers `same`/`variant`/`related` with a direction for `same`
    (`same` aliases the losing name onto the winner, `variant`/`related` keep;
-   failures and a disabled adjudicator leave the claim pending as identity
-   evidence, with the candidate born provisional; a credit-exhaustion failure
-   pauses the batch). Verdicts are cached in
+   a partial reply decides the claims it returned and leaves only the missing
+   ones pending as identity evidence, with the candidate born provisional;
+   other failures and a disabled adjudicator leave the claim pending the same
+   way; a credit-exhaustion failure pauses the batch). Verdicts are cached in
    `tag_identity_event` at the identity rule-set version; the triggered run
    (`kushim tagidentity`, enqueued by
    `POST /api/v1/tags/identity/reevaluate`) and the scheduled reconciler's

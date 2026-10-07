@@ -120,8 +120,9 @@ type AnalysisResult struct {
   flagged candidate (`fold_to_base`, `fold_preserves_denotation`,
   `conventional_form`) with a temperature-0 request built from
   `BuildTagIdentityPrompt` and parsed by `ParseTagIdentityResponse` (a
-  candidate without a complete verdict errors). Used by the tag gate when
-  `enricher.tag_adjudicator.enabled` is true.
+  candidate without a complete verdict is missing, and a truncated reply
+  returns its answers alongside `*IncompleteReplyError`). Used by the tag gate
+  when `enricher.tag_adjudicator.enabled` is true.
 - `JudgeTagQuality` — judges novel tags against the dimension rubric
   (`subject_matter`, `dimension`, `not_person_place_work`, `atomic`,
   `not_form_genre`, plus the optional `defer` abstention) with a temperature-0
@@ -129,8 +130,8 @@ type AnalysisResult struct {
   `BuildTagQualityPrompt` (reduced document text plus one line per candidate
   with its term, typed category, and a whitelisted-place carve-out note) and
   parsed by `ParseTagQualityResponse` (a missing or partially specified
-  verdict for any candidate is an error, never a silent rejection; an omitted
-  `defer` reads as false). Used by the enricher when
+  verdict for any candidate is an incomplete reply, never a silent rejection;
+  an omitted `defer` reads as false). Used by the enricher when
   `enricher.tag_quality.enabled` is true; see the
   [semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags).
 - `TagDetails` — the typed mirror of `Tags`, one `{term, category}` entry per
@@ -428,9 +429,12 @@ run the same clean-then-decode steps with two tolerances for replies that drift
 from the prompt's envelope: a bare top-level JSON array is wrapped under the
 step's envelope key (`pairs`, `values`, `compounds`, `tags`, `terms`) before
 decoding, and an entry that omits `index` is placed at its array position. A
-present index is still range-checked, entries beyond the candidate count are
-dropped, and the judged parsers still error when an entry lacks a complete
-verdict. Both bridges log a DEBUG drift line naming the model when the reply
+present index is still range-checked and entries beyond the candidate count are
+dropped; an entry that lacks a complete verdict counts as missing, and all five
+parsers return one result per entry alongside a shared `*IncompleteReplyError`
+(`Missing` lists the missing indices) whenever any is missing, so callers
+salvage the entries they did read and defer only the rest. Both bridges log a
+DEBUG drift line naming the model when the reply
 is a bare array, and every judged call logs one DEBUG line with its step
 label, model, candidate count and duration. Before parsing, the OpenAI side
 turns a reply stopped at the output bound (`finish_reason: "length"`) into an
@@ -519,18 +523,20 @@ request. If every fallback fails too, the **last** error (e.g. an
 enricher sees — so the batch pauses on credit errors only when the primary
 **and all** enabled fallbacks end in a credit error.
 
-**Judged-call retry and credit policy** — the four judged steps bypass the
+**Judged-call retry and credit policy** — the judged steps bypass the
 provider fallback chain. The admission layer retries a failed judged call
 **once**, and only when `retryableJudgeFailure` classifies the failure as
 transient (transport, generic provider and empty-response failures).
-`ReplyParseError`, `OutputCapError`, credit exhaustion, `TokenLimitError`,
-`ContentTooLargeError` and context errors are never retried. A credit
-exhaustion propagates out of the step so the enricher's `creditPause` turns it
-into the batch pause (governed by `pause_on_credit_error`), and the identity
-and pair loops abort immediately instead of spending more calls on the dead
-account. Every other non-retryable failure degrades per step — the affected
-tags are kept, born provisional or deferred — with a WARN naming the
-candidates.
+`ReplyParseError`, `OutputCapError`, `IncompleteReplyError`, credit exhaustion,
+`TokenLimitError`, `ContentTooLargeError` and context errors are never retried
+(an incomplete reply's omission is systematic, so a retry would re-omit). A
+credit exhaustion propagates out of the step so the enricher's `creditPause`
+turns it into the batch pause (governed by `pause_on_credit_error`), and the
+identity and pair loops abort immediately instead of spending more calls on the
+dead account. Every other non-retryable failure degrades per step — the
+affected tags are kept, born provisional or deferred — with a WARN naming the
+candidates; an `IncompleteReplyError` instead salvages the entries the reply
+did return and defers only the missing ones, with a WARN naming them.
 
 ---
 
@@ -680,15 +686,17 @@ for i := range 2 {
     adjudication** when `enricher.tag_adjudicator.enabled` is true
     (`Runner.JudgeTagIdentity` / `Runner.AdjudicateTags`: caches → evidence →
     batched LLM calls; `same` aliases the losing name, `variant`/`related`
-    register both). Disabled, failing, or ambiguous adjudication leaves the
-    claim pending — the candidate registers provisionally; a credit-exhaustion
-    failure pauses the batch instead.
+    register both). A partial reply decides the claims it returned and leaves
+    only the missing ones pending; a disabled, failing, or ambiguous
+    adjudication leaves the claim pending — the candidate registers
+    provisionally; a credit-exhaustion failure pauses the batch instead.
 12. **Tag admission decision** (`internal/tags/admission/adjudicator.go`, `Adjudicator.ApplyTagQuality`): only when
     `enricher.tag_quality.enabled` is true. Novel tags — consolidated outputs
     whose normalized names are absent from the vocabulary — are resolved by the
     pinned admission decision (`tags.DecideAdmission`) over their features: the
-    rubric judge's answers (from the `tag_quality_event` cache or one
-    temperature-0 `JudgeTagQuality` call per document) plus the emission's
+    rubric judge's answers (from the `tag_quality_event` cache or
+    temperature-0 `JudgeTagQuality` calls over batches of up to 40 candidates
+    per document) plus the emission's
     deterministic signals (a detail annotated `other`, and a best store
     similarity below the internal `no_anchor_similarity` 0.60 cut). The rubric
     asks `subject_matter`, `dimension`, `not_person_place_work`, `atomic` and

@@ -661,6 +661,26 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adjAssertEqual(t, p.decided, false, "pair stays undecided")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 0, "no cached verdict rows")
 	})
+
+	t.Run("partial reply salvages the decided pair", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+			results := make([]analyzer.TagVerdictResult, len(pairs))
+			results[0] = analyzer.TagVerdictResult{Index: 0, Verdict: types.TagVerdicts.Same, Direction: analyzer.TagDirectionQuery}
+			return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
+		}
+
+		decided := &identityPair{query: "democratic socialism", target: "social democracy"}
+		missing := &identityPair{query: "labour movement", target: "labor movement"}
+		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{decided, missing}, "")
+
+		adjAssertEqual(t, adj.called, 1, "an incomplete reply is not retried")
+		adjAssertEqual(t, decided.decided, true, "the returned pair is decided")
+		adjAssertEqual(t, string(decided.verdict), "same", "the salvaged verdict")
+		adjAssertEqual(t, missing.decided, false, "the missing pair stays undecided")
+		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "the salvaged verdict is recorded")
+		adjAssertEqual(t, countIdentityVerdicts(t, q, "labour movement", "labor movement"), 0, "no verdict row for the missing pair")
+	})
 }
 
 func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
@@ -1106,6 +1126,54 @@ func TestApplyTagQuality_PartialSalvage(t *testing.T) {
 	if !strings.Contains(out, "partial judge reply") || !strings.Contains(out, "salvage missing") {
 		t.Errorf("expected the WARN to name the partial classes and the deferred entry, got:\n%s", out)
 	}
+}
+
+func TestApplyTagQuality_BatchesJudgeCalls(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	var batchSizes []int
+	adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		batchSizes = append(batchSizes, len(candidates))
+		results := make([]analyzer.TagQualityResult, len(candidates))
+		for i, c := range candidates {
+			if c.Index != i {
+				t.Errorf("candidate index = %d at position %d, want a batch-local index", c.Index, i)
+			}
+			results[i] = analyzer.TagQualityResult{
+				Index:              i,
+				SubjectMatter:      true,
+				Dimension:          true,
+				NotPersonPlaceWork: true,
+				Atomic:             true,
+				NotFormGenre:       true,
+			}
+		}
+		return results, nil
+	}
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "quality-batch-doc")
+
+	// one candidate past the batch size: a single unbounded judge call
+	// would show up as one oversized batch
+	const n = qualityBatchSize + 1
+	analysis := &tools.ContentAnalysisResult{}
+	for i := range n {
+		name := fmt.Sprintf("batched candidate %d", i)
+		analysis.Tags = append(analysis.Tags, name)
+		analysis.TagDetails = append(analysis.TagDetails, analyzer.TagDetail{Term: name, Category: analyzer.TagCategoryTopic})
+	}
+
+	kept, decisions, err := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+	if err != nil {
+		t.Fatalf("ApplyTagQuality() error = %v", err)
+	}
+	if !reflect.DeepEqual(batchSizes, []int{qualityBatchSize, 1}) {
+		t.Errorf("batch sizes = %v, want [%d 1]", batchSizes, qualityBatchSize)
+	}
+	adjAssertEqual(t, adj.qualityCall, 2, "the candidate list is split across bounded calls")
+	adjAssertEqual(t, len(decisions), n, "every candidate carries a decision")
+	adjAssertEqual(t, len(kept), n, "no candidate is dropped by the batching")
 }
 
 func partsDimensional(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
@@ -1805,6 +1873,63 @@ func TestIdentityAnswers_CreditErrorStopsRemainingBatches(t *testing.T) {
 		t.Errorf("answers = %v, want none alongside the error", answers)
 	}
 	adjAssertEqual(t, adj.identityCall, 1, "the dead account stops the batch loop after batch one")
+}
+
+func TestIdentityAnswers_PartialSalvage(t *testing.T) {
+	a, _, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagAdjudicator.Llm = config.LlmConfig{Provider: "test", Model: "test-model"}
+	setUnexportedField(t, a.runner, "tagIdentityJudge", adj)
+	var buf bytes.Buffer
+	a.logger = log.NewLoggerWithWriter(&buf)
+	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		results := make([]analyzer.TagIdentityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagIdentityResult{
+				Index:                   i,
+				FoldToBase:              true,
+				FoldPreservesDenotation: true,
+				ConventionalForm:        true,
+			}
+		}
+		return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
+	}
+
+	candidates := make([]*identityCandidate, 3)
+	flagged := make(map[string]bool, 3)
+	for i := range candidates {
+		name := fmt.Sprintf("building %d", i)
+		candidates[i] = &identityCandidate{name: name, fold: name + "s"}
+		flagged[name] = true
+	}
+
+	answers, err := a.identityAnswers(context.Background(), flagged, candidates, "")
+	if err != nil {
+		t.Fatalf("identityAnswers() error = %v", err)
+	}
+	adjAssertEqual(t, adj.identityCall, 1, "an incomplete reply is not retried")
+	if len(answers) != 2 {
+		t.Fatalf("answers = %d entries, want the 2 the reply returned", len(answers))
+	}
+	salvaged, ok := answers["building 0"]
+	if !ok {
+		t.Fatal("the first candidate's answer was not salvaged")
+	}
+	adjAssertEqual(t, salvaged.FoldToBase, true, "the salvaged fold answer")
+	adjAssertEqual(t, salvaged.model, "test-model", "the judge model recorded on the salvaged answer")
+	if _, ok := answers["building 1"]; ok {
+		t.Error("the missing candidate must stay unanswered so it remains provisional")
+	}
+	if _, ok := answers["building 2"]; !ok {
+		t.Error("the last candidate's answer was not salvaged")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "<4>WARN") {
+		t.Errorf("expected a WARN for the partial reply, got:\n%s", out)
+	}
+	if !strings.Contains(out, "partial reply") || !strings.Contains(out, "salvaged 2 of 3") {
+		t.Errorf("expected the WARN to name the salvage counts, got:\n%s", out)
+	}
 }
 
 func TestAdjudicateIdentityPairs_CreditErrorEscapes(t *testing.T) {

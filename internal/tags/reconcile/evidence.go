@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
@@ -168,18 +169,34 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		}
 		results, err := r.runner.AdjudicateTags(ctx, evidence)
 		if err != nil {
-			r.logger.Error("", "tag reconcile: adjudication batch failed: %v", err)
-			for _, e := range bandEntries[i:end] {
-				e.skipReason = "adjudication_error"
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				r.logger.Error("", "tag reconcile: adjudication batch failed: %v", err)
+				for _, e := range bandEntries[i:end] {
+					e.skipReason = "adjudication_error"
+				}
+				continue
 			}
+			missing := incomplete.MissingSet()
+			batch := bandEntries[i:end]
+			salvaged, deferred := 0, 0
+			for j := range batch {
+				e := batch[j]
+				if missing[j] {
+					e.skipReason = "ambiguous"
+					deferred++
+					continue
+				}
+				e.freshVerdict = results[j].Verdict
+				e.freshModel = adjudicatorModel
+				e.reason = "adjudicated"
+				salvaged++
+			}
+			r.logger.Warn("", "tag reconcile: partial adjudication reply, salvaged %d of %d pairs and deferred %d", salvaged, len(batch), deferred)
 			continue
 		}
 		for j, res := range results {
 			e := bandEntries[i:end][j]
-			if !res.Verdict.Valid() {
-				e.skipReason = "ambiguous"
-				continue
-			}
 			e.freshVerdict = res.Verdict
 			e.freshModel = adjudicatorModel
 			e.reason = "adjudicated"
@@ -223,18 +240,36 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		}
 		results, err := r.runner.AdjudicateTags(ctx, evidence)
 		if err != nil {
-			r.logger.Error("", "tag reconcile: confirmation batch failed: %v", err)
-			for _, e := range confirm[i:end] {
-				e.skipReason = "confirmation_error"
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				r.logger.Error("", "tag reconcile: confirmation batch failed: %v", err)
+				for _, e := range confirm[i:end] {
+					e.skipReason = "confirmation_error"
+				}
+				continue
 			}
+			missing := incomplete.MissingSet()
+			batch := confirm[i:end]
+			salvaged, deferred := 0, 0
+			for j := range batch {
+				e := batch[j]
+				if missing[j] {
+					e.skipReason = "confirmation_ambiguous"
+					deferred++
+					continue
+				}
+				if results[j].Verdict == e.freshVerdict {
+					e.confirmed = true
+				} else {
+					e.skipReason = "confirmation_disagreement"
+				}
+				salvaged++
+			}
+			r.logger.Warn("", "tag reconcile: partial confirmation reply, salvaged %d of %d pairs and deferred %d", salvaged, len(batch), deferred)
 			continue
 		}
 		for j, res := range results {
 			e := confirm[i:end][j]
-			if !res.Verdict.Valid() {
-				e.skipReason = "confirmation_ambiguous"
-				continue
-			}
 			if res.Verdict == e.freshVerdict {
 				e.confirmed = true
 			} else {

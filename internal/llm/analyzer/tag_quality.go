@@ -120,14 +120,25 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 }
 
 // IncompleteReplyError reports a judged reply that omitted verdicts for some entries: Missing holds the
-// entry indices with no verdict. The parser still returns the entries it did read, so a caller can judge
-// those and defer only the missing indices instead of discarding the whole reply.
+// entry indices with no verdict. It is the judged parsers' shared incompleteness type — quality, part,
+// compound, identity, and adjudication — each of which still returns the entries it did read, so a caller
+// can judge those and defer only the missing indices instead of discarding the whole reply.
 type IncompleteReplyError struct {
 	Missing []int
 }
 
 func (e *IncompleteReplyError) Error() string {
 	return fmt.Sprintf("incomplete judged response: no verdict for entry indices %v", e.Missing)
+}
+
+// MissingSet returns the missing entry indices as a set for membership tests, so a caller salvaging a
+// partial reply does not rebuild the lookup at every call site.
+func (e *IncompleteReplyError) MissingSet() map[int]bool {
+	missing := make(map[int]bool, len(e.Missing))
+	for _, idx := range e.Missing {
+		missing[idx] = true
+	}
+	return missing
 }
 
 // ParseTagQualityResponse errors when any candidate lacks a fully

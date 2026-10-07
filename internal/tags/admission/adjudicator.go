@@ -32,6 +32,9 @@ const (
 	// pre-definition quality gate and deliberately not operator-tunable
 	tagQualityNoAnchorSimilarity = 0.60
 
+	// qualityBatchSize bounds one quality-judge call's candidate list
+	qualityBatchSize = 40
+
 	// reasons the interim paths record: no judge answered the candidate, or
 	// the cached row predates the dimension rubric
 	reasonJudgeUnavailable = "judge_unavailable"
@@ -670,68 +673,68 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 				decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
 			}
 		} else {
-			candidates := make([]analyzer.TagQualityCandidate, len(uncached))
-			for i, n := range uncached {
-				candidates[i] = analyzer.TagQualityCandidate{
-					Index:            i,
-					Term:             n.emitted,
-					Category:         n.promptCategory(),
-					WhitelistedPlace: analyzer.IsWhitelistedPlace(n.emitted),
-				}
-			}
-			results, err := a.runner.JudgeTagQuality(ctx, reducedText, candidates)
-			if err != nil && retryableJudgeFailure(err) {
-				a.logger.Warn(reqID, "tagquality[%s]: judge attempt failed, retrying once: %v", analyzer.TagQualityVersion, err)
-				results, err = a.runner.JudgeTagQuality(ctx, reducedText, candidates)
-			}
-			if err == nil && len(results) != len(candidates) {
-				err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(candidates))
-			}
-			if err != nil {
-				var incomplete *analyzer.IncompleteReplyError
-				switch {
-				case errors.As(err, &incomplete):
-					missing := make(map[int]bool, len(incomplete.Missing))
-					for _, idx := range incomplete.Missing {
-						missing[idx] = true
+			model := a.config.ResolvedQualityLlm().Model
+			for start := 0; start < len(uncached); start += qualityBatchSize {
+				end := min(start+qualityBatchSize, len(uncached))
+				batch := uncached[start:end]
+				candidates := make([]analyzer.TagQualityCandidate, len(batch))
+				for i, n := range batch {
+					candidates[i] = analyzer.TagQualityCandidate{
+						Index:            i,
+						Term:             n.emitted,
+						Category:         n.promptCategory(),
+						WhitelistedPlace: analyzer.IsWhitelistedPlace(n.emitted),
 					}
-					model := a.config.ResolvedQualityLlm().Model
-					var deferred []string
-					salvaged := 0
-					for i, r := range results {
-						n := uncached[i]
-						if missing[i] {
+				}
+				results, err := a.runner.JudgeTagQuality(ctx, reducedText, candidates)
+				if err != nil && retryableJudgeFailure(err) {
+					a.logger.Warn(reqID, "tagquality[%s]: judge attempt failed, retrying once: %v", analyzer.TagQualityVersion, err)
+					results, err = a.runner.JudgeTagQuality(ctx, reducedText, candidates)
+				}
+				if err == nil && len(results) != len(batch) {
+					err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(batch))
+				}
+				if err != nil {
+					var incomplete *analyzer.IncompleteReplyError
+					switch {
+					case errors.As(err, &incomplete):
+						missing := incomplete.MissingSet()
+						var deferred []string
+						salvaged := 0
+						for i := range batch {
+							n := batch[i]
+							if missing[i] {
+								decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
+								deferred = append(deferred, n.emitted)
+								continue
+							}
+							salvaged++
+							decision := a.decideQuality(ctx, docId, n, results[i], model, reqID)
+							if decision.Outcome == tags.AdmissionReject {
+								rejected[n.emitted] = true
+								continue
+							}
+							decided[n.emitted] = decision
+						}
+						a.logger.Warn(reqID, "tagquality[%s]: partial judge reply, salvaged %d of %d candidates and deferred %q (born provisional): %v",
+							analyzer.TagQualityVersion, salvaged, len(batch), deferred, err)
+					case isCreditError(err):
+						return nil, nil, err
+					default:
+						names := make([]string, len(batch))
+						for i, n := range batch {
+							names[i] = n.emitted
+						}
+						a.logger.Warn(reqID, "tagquality[%s]: judge failed for %q, keeping them (born provisional): %v",
+							analyzer.TagQualityVersion, names, err)
+						for _, n := range batch {
 							decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
-							deferred = append(deferred, n.emitted)
-							continue
 						}
-						salvaged++
-						decision := a.decideQuality(ctx, docId, n, r, model, reqID)
-						if decision.Outcome == tags.AdmissionReject {
-							rejected[n.emitted] = true
-							continue
-						}
-						decided[n.emitted] = decision
 					}
-					a.logger.Warn(reqID, "tagquality[%s]: partial judge reply, salvaged %d of %d candidates and deferred %q (born provisional): %v",
-						analyzer.TagQualityVersion, salvaged, len(uncached), deferred, err)
-				case isCreditError(err):
-					return nil, nil, err
-				default:
-					names := make([]string, len(uncached))
-					for i, n := range uncached {
-						names[i] = n.emitted
-					}
-					a.logger.Warn(reqID, "tagquality[%s]: judge failed for %q, keeping them (born provisional): %v",
-						analyzer.TagQualityVersion, names, err)
-					for _, n := range uncached {
-						decided[n.emitted] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonJudgeUnavailable}
-					}
+					continue
 				}
-			} else {
-				model := a.config.ResolvedQualityLlm().Model
 				for i, r := range results {
-					n := uncached[i]
+					n := batch[i]
 					decision := a.decideQuality(ctx, docId, n, r, model, reqID)
 					if decision.Outcome == tags.AdmissionReject {
 						rejected[n.emitted] = true

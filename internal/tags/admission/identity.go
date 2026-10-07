@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -365,10 +366,10 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 	return outputs, plan, decisions, nil
 }
 
-// identityAnswers resolves the flagged candidates' fold answers from the
-// cache or batched judge calls. A non-nil error is returned only when the
-// provider account cannot pay; every other failure leaves the affected
-// candidates provisional.
+// identityAnswers resolves the flagged candidates' fold answers from the cache or batched judge calls. A
+// partial reply salvages the answers it returned and leaves only the missing candidates provisional; every
+// other failure leaves the whole batch's candidates provisional. A non-nil error is returned only when the
+// provider account cannot pay.
 func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bool, candidates []*identityCandidate, reqID string) (map[string]identityAnswer, error) {
 	out := make(map[string]identityAnswer)
 	if len(flagged) == 0 {
@@ -429,6 +430,20 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 		return out, nil
 	}
 
+	model := a.config.ResolvedAdjudicatorLlm().Model
+	recordAnswer := func(cand *identityCandidate, r analyzer.TagIdentityResult) {
+		answer := identityAnswer{
+			FoldToBase:              r.FoldToBase,
+			FoldPreservesDenotation: r.FoldPreservesDenotation,
+			ConventionalForm:        r.ConventionalForm,
+			criteria:                r.CriteriaRecord(cand.fold),
+			model:                   model,
+		}
+		out[cand.name] = answer
+		a.logger.Debug(reqID, "identity[%s]: %q fold_to_base=%t fold_preserves_denotation=%t conventional_form=%t cached=%t",
+			tags.IdentityRuleSetVersion, cand.name, answer.FoldToBase, answer.FoldPreservesDenotation, answer.ConventionalForm, false)
+	}
+
 	for start := 0; start < len(uncached); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(uncached))
 		batch := uncached[start:end]
@@ -448,34 +463,40 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 			if isCreditError(err) {
 				return nil, err
 			}
-			names := make([]string, len(batch))
-			for i, cand := range batch {
-				names[i] = cand.name
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				names := make([]string, len(batch))
+				for i, cand := range batch {
+					names[i] = cand.name
+				}
+				a.logger.Warn(reqID, "identity[%s]: judge failed for %q, leaving them provisional: %v", tags.IdentityRuleSetVersion, names, err)
+				continue
 			}
-			a.logger.Warn(reqID, "identity[%s]: judge failed for %q, leaving them provisional: %v", tags.IdentityRuleSetVersion, names, err)
+			missing := incomplete.MissingSet()
+			salvaged, deferred := 0, 0
+			for i := range batch {
+				if missing[i] {
+					deferred++
+					continue
+				}
+				recordAnswer(batch[i], results[i])
+				salvaged++
+			}
+			a.logger.Warn(reqID, "identity[%s]: partial reply, salvaged %d of %d candidates and deferred %d (left provisional): %v",
+				tags.IdentityRuleSetVersion, salvaged, len(batch), deferred, err)
 			continue
 		}
-		model := a.config.ResolvedAdjudicatorLlm().Model
 		for i, r := range results {
-			answer := identityAnswer{
-				FoldToBase:              r.FoldToBase,
-				FoldPreservesDenotation: r.FoldPreservesDenotation,
-				ConventionalForm:        r.ConventionalForm,
-				criteria:                r.CriteriaRecord(batch[i].fold),
-				model:                   model,
-			}
-			out[batch[i].name] = answer
-			a.logger.Debug(reqID, "identity[%s]: %q fold_to_base=%t fold_preserves_denotation=%t conventional_form=%t cached=%t",
-				tags.IdentityRuleSetVersion, batch[i].name, answer.FoldToBase, answer.FoldPreservesDenotation, answer.ConventionalForm, false)
+			recordAnswer(batch[i], r)
 		}
 	}
 	return out, nil
 }
 
-// adjudicateIdentityPairs settles the shape-related pairs the identity
-// judge answers, recording one same-intent event per decided pair. A
-// non-nil error is returned only when the provider account cannot pay;
-// every other failure leaves the batch's unresolved pairs provisional.
+// adjudicateIdentityPairs settles the shape-related pairs the identity judge answers, recording one
+// same-intent event per decided pair. A partial reply decides the pairs it returned and leaves only the
+// missing ones provisional; every other failure leaves the batch's unresolved pairs provisional. A non-nil
+// error is returned only when the provider account cannot pay.
 func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, reqID string) error {
 	if len(pairs) == 0 {
 		return nil
@@ -521,6 +542,13 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 	}
 
 	evidence := a.identityPairEvidence(ctx, documentID, unresolved, reqID)
+	model := a.config.ResolvedAdjudicatorLlm().Model
+	applyVerdict := func(p *identityPair, r analyzer.TagVerdictResult) {
+		p.verdict = r.Verdict
+		p.direction = r.Direction
+		p.model = model
+		p.decided = true
+	}
 	for start := 0; start < len(evidence); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(evidence))
 		batch := unresolved[start:end]
@@ -536,23 +564,31 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 			if isCreditError(err) {
 				return err
 			}
-			labels := make([]string, len(batch))
-			for i, p := range batch {
-				labels[i] = p.query + " -> " + p.target
-			}
-			a.logger.Warn(reqID, "identity[%s]: adjudication failed for %q, leaving them provisional: %v", tags.IdentityRuleSetVersion, labels, err)
-			continue
-		}
-		model := a.config.ResolvedAdjudicatorLlm().Model
-		for i, r := range results {
-			if !r.Verdict.Valid() {
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				labels := make([]string, len(batch))
+				for i, p := range batch {
+					labels[i] = p.query + " -> " + p.target
+				}
+				a.logger.Warn(reqID, "identity[%s]: adjudication failed for %q, leaving them provisional: %v", tags.IdentityRuleSetVersion, labels, err)
 				continue
 			}
-			p := batch[i]
-			p.verdict = r.Verdict
-			p.direction = r.Direction
-			p.model = model
-			p.decided = true
+			missing := incomplete.MissingSet()
+			salvaged, deferred := 0, 0
+			for i := range batch {
+				if missing[i] {
+					deferred++
+					continue
+				}
+				applyVerdict(batch[i], results[i])
+				salvaged++
+			}
+			a.logger.Warn(reqID, "identity[%s]: partial adjudication reply, salvaged %d of %d pairs and deferred %d (left provisional): %v",
+				tags.IdentityRuleSetVersion, salvaged, len(batch), deferred, err)
+			continue
+		}
+		for i, r := range results {
+			applyVerdict(batch[i], r)
 		}
 	}
 

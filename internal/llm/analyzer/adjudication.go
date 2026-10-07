@@ -70,11 +70,12 @@ func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	return sb.String()
 }
 
-// ParseAdjudicationResponse parses n pair verdicts. Unknown or
-// out-of-range indices and unrecognized verdicts leave that pair
-// unanswered rather than inventing one. A bare top-level array is
-// accepted as the envelope's value, and an entry without an index is
-// placed by its position in the array.
+// ParseAdjudicationResponse parses n pair verdicts. A pair with no parseable verdict — a missing entry,
+// an unrecognized verdict string, or an out-of-range index — counts as missing, so an unanswered pair
+// is never invented. An entry with a valid verdict but an unrecognized direction stays present with an
+// empty direction rather than counting as missing. A bare top-level array is accepted as the envelope's
+// value, and an entry without an index is placed by its position in the array. A truncated reply returns
+// *IncompleteReplyError alongside the populated results.
 func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error) {
 	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "pairs")
 	var parsed struct {
@@ -88,6 +89,7 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 		return nil, fmt.Errorf("parse adjudication response: %w", err)
 	}
 	results := make([]TagVerdictResult, n)
+	present := make([]bool, n)
 	for i := range results {
 		results[i].Index = i
 	}
@@ -104,10 +106,20 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 			continue
 		}
 		results[idx].Verdict = v
+		present[idx] = true
 		switch p.Direction {
 		case TagDirectionQuery, TagDirectionTarget, TagDirectionTie:
 			results[idx].Direction = p.Direction
 		}
+	}
+	var missing []int
+	for i, ok := range present {
+		if !ok {
+			missing = append(missing, i)
+		}
+	}
+	if len(missing) > 0 {
+		return results, &IncompleteReplyError{Missing: missing}
 	}
 	return results, nil
 }
