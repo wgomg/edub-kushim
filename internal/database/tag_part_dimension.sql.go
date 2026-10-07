@@ -22,7 +22,7 @@ ON CONFLICT (value, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING
 `
 
 type InsertTagPartDimensionEventParams struct {
-	DocumentID    int64
+	DocumentID    sql.NullInt64
 	Value         string
 	Criteria      json.RawMessage
 	Dimensional   bool

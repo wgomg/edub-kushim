@@ -194,7 +194,11 @@ func (r *suggestionRecorder) Adjudicate(context.Context, []analyzer.TagPairEvide
 	return nil, nil
 }
 
-func (r *suggestionRecorder) AdjudicateTagSplits(context.Context, []string) ([]analyzer.TagSplitResult, error) {
+func (r *suggestionRecorder) JudgeTagParts(context.Context, []string) ([]analyzer.TagPartResult, error) {
+	return nil, nil
+}
+
+func (r *suggestionRecorder) JudgeTagCompounds(context.Context, []string) ([]analyzer.TagCompoundResult, error) {
 	return nil, nil
 }
 

@@ -49,8 +49,12 @@ type ContentAnalyzer interface {
 	// Adjudicate answers the same-intent tag pairs: one verdict per pair,
 	// with the direction when the verdict is same.
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
-	// AdjudicateTagSplits decides which joint tags split into components.
-	AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
+	// JudgeTagParts decides whether each value, on its own, names a subject a searcher would filter by: the
+	// context-free dimensional question the split gate's parts pass asks.
+	JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error)
+	// JudgeTagCompounds decides what each compound phrase denotes: the context-free named_unit/composition/no_dimension trichotomy the split
+	// gate's compound pass asks.
+	JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
 	// JudgeTagQuality scores candidate tags against the document text on
 	// the dimension rubric: the five criteria and the judge's abstention.
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)

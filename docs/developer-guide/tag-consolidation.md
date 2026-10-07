@@ -700,9 +700,10 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   invalidates every cached verdict at once (old rows stay in the table for
   analysis; they are simply never read for the new version). Until the
   reconciler runs, every band pair is re-judged fresh — the caps are the bound.
-  Identity evidence carries an independent pin, `IdentityRuleSetVersion`, and
-  quality verdicts another, `TagQualityVersion`; bumping either retires its
-  cached rows at once.
+  Identity evidence carries an independent pin, `IdentityRuleSetVersion`,
+  quality verdicts another, `TagQualityVersion`, and the split verdicts two
+  more, `TagPartDimensionVersion` (parts) and `TagSplitVersion` (compounds);
+  bumping any of them retires its cached rows at once.
 - **The pair cache rebuild is N²/2 at daemon boot** — sub-second to a few
   seconds at hundreds-to-low-thousands of tags, but it is part of the
   `TimeoutStartSec` budget alongside model load and tag-cache build.

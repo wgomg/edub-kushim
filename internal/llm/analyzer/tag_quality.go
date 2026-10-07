@@ -86,16 +86,8 @@ func (c TagQualityCriteria) String() string {
 		c.Defer != nil && *c.Defer)
 }
 
-// TagQualityVersion pins the quality measurement generation: the criteria
-// text, the prompt, and the policy version of the cached verdict rows. v2
-// rewords subject_matter and dimension corpus-relatively and adds the
-// not_form_genre criterion; v3 restores the B2 genre/format boundary —
-// criterion 5 targets the publishing formats the document_type facet holds
-// and genres and art-forms are subject-side, judged on dimension alone —
-// and adds the language carve-out to criteria 1–2 (a language name is form,
-// never subject matter or a content dimension). Older verdicts never apply:
-// the cache lookup is version-filtered and stored v2 rows stay for the
-// Stage E sweep. Later criteria or prompt changes bump it so an older
+// TagQualityVersion pins the quality judge's criteria: the five-criterion dimension rubric, the prompt, and
+// the policy version of its cached verdict rows. A criteria or prompt change bumps it so an older
 // generation's verdicts never apply.
 const TagQualityVersion = "v3"
 
@@ -127,17 +119,15 @@ func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string
 	return sb.String()
 }
 
-// IncompleteReplyError reports a quality reply that omitted verdicts for
-// some candidates: Missing holds the candidate indices with no verdict.
-// The parser still returns the entries it did read, so a caller can judge
-// those and defer only the missing indices instead of discarding the whole
-// reply.
+// IncompleteReplyError reports a judged reply that omitted verdicts for some entries: Missing holds the
+// entry indices with no verdict. The parser still returns the entries it did read, so a caller can judge
+// those and defer only the missing indices instead of discarding the whole reply.
 type IncompleteReplyError struct {
 	Missing []int
 }
 
 func (e *IncompleteReplyError) Error() string {
-	return fmt.Sprintf("incomplete tag quality response: no verdict for candidate indices %v", e.Missing)
+	return fmt.Sprintf("incomplete judged response: no verdict for entry indices %v", e.Missing)
 }
 
 // ParseTagQualityResponse errors when any candidate lacks a fully

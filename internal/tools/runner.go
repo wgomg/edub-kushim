@@ -586,6 +586,17 @@ func (r *Runner) HasTagAdjudicator() bool {
 	return r.tagAdjudicator != nil
 }
 
+// runJudged applies a judge timeout to one judged call and bounds it with runWithTimeout.
+func runJudged[T any](ctx context.Context, timeoutSeconds int, call func(context.Context) ([]T, error)) ([]T, error) {
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	return runWithTimeout(ctx, func() ([]T, error) { return call(ctx) })
+}
+
 // AdjudicateTags asks the LLM adjudicator to decide a set of tag pairs
 // (which of two similar tags to keep). Returns an error when no adjudicator
 // was configured.
@@ -593,31 +604,30 @@ func (r *Runner) AdjudicateTags(ctx context.Context, pairs []analyzer.TagPairEvi
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	timeout := time.Duration(r.config.ResolvedAdjudicatorTimeout()) * time.Second
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	return runWithTimeout(ctx, func() ([]analyzer.TagVerdictResult, error) {
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagVerdictResult, error) {
 		return r.tagAdjudicator.Adjudicate(ctx, pairs)
 	})
 }
 
-// AdjudicateTagSplits asks the LLM adjudicator whether a compound tag
-// should be split. Returns an error when no adjudicator was configured.
-func (r *Runner) AdjudicateTagSplits(ctx context.Context, tags []string) ([]analyzer.TagSplitResult, error) {
+// JudgeTagParts asks the LLM adjudicator whether each value, on its own, names a subject a searcher would
+// filter by. Returns an error when no adjudicator was configured.
+func (r *Runner) JudgeTagParts(ctx context.Context, values []string) ([]analyzer.TagPartResult, error) {
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	timeout := time.Duration(r.config.ResolvedAdjudicatorTimeout()) * time.Second
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagPartResult, error) {
+		return r.tagAdjudicator.JudgeTagParts(ctx, values)
+	})
+}
+
+// JudgeTagCompounds asks the LLM adjudicator what each compound phrase denotes. Returns an error when no
+// adjudicator was configured.
+func (r *Runner) JudgeTagCompounds(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	return runWithTimeout(ctx, func() ([]analyzer.TagSplitResult, error) {
-		return r.tagAdjudicator.AdjudicateTagSplits(ctx, tags)
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagCompoundResult, error) {
+		return r.tagAdjudicator.JudgeTagCompounds(ctx, candidates)
 	})
 }
 
@@ -632,13 +642,7 @@ func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []
 	if r.tagQualityJudge == nil {
 		return nil, fmt.Errorf("tag quality judge not configured")
 	}
-	timeout := time.Duration(r.config.ResolvedQualityTimeout()) * time.Second
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	return runWithTimeout(ctx, func() ([]analyzer.TagQualityResult, error) {
+	return runJudged(ctx, r.config.ResolvedQualityTimeout(), func(ctx context.Context) ([]analyzer.TagQualityResult, error) {
 		return r.tagQualityJudge.JudgeTagQuality(ctx, text, candidates)
 	})
 }
@@ -655,13 +659,7 @@ func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []analyzer.Tag
 	if r.tagIdentityJudge == nil {
 		return nil, fmt.Errorf("tag identity judge not configured")
 	}
-	timeout := time.Duration(r.config.ResolvedAdjudicatorTimeout()) * time.Second
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	return runWithTimeout(ctx, func() ([]analyzer.TagIdentityResult, error) {
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagIdentityResult, error) {
 		return r.tagIdentityJudge.JudgeTagIdentity(ctx, candidates)
 	})
 }

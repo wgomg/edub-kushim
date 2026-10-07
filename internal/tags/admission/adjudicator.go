@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -40,17 +39,14 @@ const (
 	reasonLegacyReject     = "legacy_reject"
 )
 
-// Adjudicator is the document-level admission machinery: it decomposes
-// compound tags, journals pair verdicts, and judges the quality of novel
-// tags. The enricher holds one and delegates the corresponding flow
-// steps; the split cache is shared across documents.
+// Adjudicator is the document-level admission machinery: it decomposes compound tags, journals pair
+// verdicts, and judges the quality of novel tags. The enricher holds one and delegates the corresponding
+// flow steps.
 type Adjudicator struct {
-	config     *config.Config
-	logger     *log.Logger
-	queries    *database.Queries
-	runner     *tools.Runner
-	splitMu    sync.Mutex
-	splitCache map[string]splitDecision
+	config  *config.Config
+	logger  *log.Logger
+	queries *database.Queries
+	runner  *tools.Runner
 }
 
 // NewAdjudicator wires the machinery. When the LLM adjudicator or quality
@@ -66,32 +62,47 @@ func NewAdjudicator(cfg *config.Config, logger *log.Logger, queries *database.Qu
 	}
 }
 
-type splitDecision struct {
-	verdict    analyzer.TagSplitVerdict
-	components []string
-	model      string
-	cached     bool
+// PartVerdict is one resolved part value's verdict from the persisted cache or a fresh judge call: the
+// dimensional answer, whether the judge abstained, and whether a concurrent writer's stored row disagreed
+// with this sample. Exported so the stored-joint sweep folds the same persisted rows through
+// CompositionFeatures instead of re-implementing the fold.
+type PartVerdict struct {
+	Dimensional  bool
+	Deferred     bool
+	Disagreement bool
 }
 
-// DecomposeTags asks the LLM adjudicator (or, without one, the plain
-// grammar split for conjunction joints) which compound tags decompose
-// into dimension values, resolves the verdict components through the
-// store-anchored fold net, validates them against the per-document hard
-// rules and the compound's part-count bound, and returns the tag list
-// with approved decompositions expanded in place plus one composition
-// evidence row per judged candidate. The ordering is load-bearing:
-// fold-resolve, filter (title-echo exempt), then the remainder enters the
-// judged downstream. A compound whose key already exists in the store is
-// an application, not a candidate: it is skipped before judgment and
-// produces no row. Compounds that are not split pass through,
-// deduplicated. storeKeys is the store's names plus alias keys, which the
-// store-existing skip reads; promotedNames is the promoted tag names'
-// Key→name view the fold resolution anchors on — seam fold resolution
-// anchors only on promoted rows, provisional births anchor only through
-// the judged identity path, never the seam. A non-nil error is returned
-// only when the provider account cannot pay; every other failure degrades
-// to keeping the compounds.
-func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow, error) {
+// CompoundVerdict is one compound candidate's verdict from the persisted cache or a fresh judge call: the
+// status, whether the judge abstained, the model behind a fresh call, whether it came from the cache, and
+// whether a concurrent writer's stored row disagreed with this sample. Exported so the stored-joint sweep
+// folds the same persisted rows through CompositionFeatures instead of re-implementing the fold.
+type CompoundVerdict struct {
+	Status       analyzer.TagCompoundStatus
+	Deferred     bool
+	Model        string
+	Cached       bool
+	Disagreement bool
+}
+
+// DecomposeTags runs the split gate over the compound candidates: the context-free parts pass judges each
+// candidate's content words (fold-resolved through the promoted store view) once, and the context-free
+// compound pass reads what each phrase denotes. Both verdicts persist in their own append-only tables, keyed
+// by value and candidate, so a re-run reads them back instead of re-rolling; the two answer sets fold
+// into a tags.CompositionFeatures and dispose through tags.DecideComposition — the split branch expands the
+// compound into its resolved parts, the keep branches leave it whole, and the drop branch removes it. The
+// returned tag list is the input with approved decompositions expanded in place and dropped compounds
+// removed, plus one composition evidence row per judged candidate. The ordering is load-bearing:
+// fold-resolve, filter (title-echo exempt), then the remainder enters the judged downstream. A compound
+// whose key already exists in the store is an application, not a candidate: it is skipped before judgment
+// and produces no row. storeKeys is the store's names plus alias keys, which the store-existing skip reads;
+// promotedNames is the promoted tag names' Key→name view the fold resolution and the reconstructibility
+// signal read — seam fold resolution anchors only on promoted rows, and a resolved part is reconstructible
+// only when it is one. docId is the emitting document, stamped on fresh part and compound verdict rows (0
+// stores NULL provenance, as the stored-joint sweep does). A non-nil error is returned only when the
+// provider account cannot pay; every other failure degrades to keeping the compounds. Without a configured
+// adjudicator the conjunction grammar fallback stands: explicit coordination splits mechanically and every
+// other compound keeps whole under judge_unavailable.
+func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]string, []tags.CompositionRow, error) {
 	var candidates []string
 	seenCandidates := make(map[string]bool, len(names))
 	for _, name := range names {
@@ -112,65 +123,193 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		return names, nil, nil
 	}
 
-	decisions, err := a.splitVerdicts(ctx, candidates, reqID)
+	if !a.runner.HasTagAdjudicator() {
+		return a.conjunctionSplits(names, candidates, promotedNames, filter, reqID)
+	}
+
+	resolved := make(map[string][]string, len(candidates))
+	seenValues := make(map[string]bool)
+	var values []string
+	for _, candidate := range candidates {
+		parts := tags.DeriveParts(candidate)
+		rparts := make([]string, 0, len(parts))
+		for _, part := range parts {
+			resolvedPart := part
+			if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
+				a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
+					analyzer.TagSplitVersion, part, anchor)
+				resolvedPart = anchor
+			}
+			rparts = append(rparts, resolvedPart)
+			if !seenValues[resolvedPart] {
+				seenValues[resolvedPart] = true
+				values = append(values, resolvedPart)
+			}
+		}
+		resolved[candidate] = rparts
+	}
+
+	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model)
+	partVerdicts, err := store.Parts(ctx, values, docId, reqID)
+	if err != nil {
+		return nil, nil, err
+	}
+	compoundVerdicts, err := store.Compounds(ctx, candidates, docId, reqID)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	components := make(map[string][]string, len(candidates))
+	dropped := make(map[string]bool, len(candidates))
 	rows := make([]tags.CompositionRow, 0, len(candidates))
 	for _, candidate := range candidates {
-		d, ok := decisions[candidate]
-		cached := ok && d.cached
-		row := tags.CompositionRow{Candidate: candidate, CriteriaVersion: analyzer.TagSplitVersion}
-		switch {
-		case !ok || d.verdict == "":
-			a.logger.Warn(reqID, "tag split[%s]: judge returned no verdict for %q", analyzer.TagSplitVersion, candidate)
-			row.Disposition = tags.CompositionKeep
-			row.Reason = tags.CompositionReasonJudgeUnavailable
-		case d.verdict != analyzer.TagSplitSplit:
-			row.Disposition = tags.CompositionKeep
-			row.Reason, row.Model = splitSource(d)
-		default:
-			parts := analyzer.NormalizeTags(d.components)
-			for i, part := range parts {
-				anchor := tags.AnchoredFold(part, promotedNames)
-				if anchor != "" && anchor != part {
-					a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
-						analyzer.TagSplitVersion, part, anchor)
-					parts[i] = anchor
-				}
-			}
-			valid := analyzer.SplitComponents(parts, filter)
-			// a compound has at most MaxCompoundWords content parts, so a
-			// verdict with more surviving components is malformed
+		cv := compoundVerdicts[candidate]
+		features := CompositionFeatures(resolved[candidate], partVerdicts, cv, promotedNames)
+		decision := tags.DecideComposition(features)
+		reconstructible := features.Reconstructible
+		row := tags.CompositionRow{
+			Candidate:       candidate,
+			CriteriaVersion: analyzer.TagSplitVersion,
+			Reconstructible: &reconstructible,
+		}
+		switch decision.Disposition {
+		case tags.CompositionSplit:
+			valid := analyzer.SplitComponents(resolved[candidate], filter)
+			// a compound has at most MaxCompoundWords content parts, so a verdict with more surviving components is malformed
 			if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
 				a.logger.Debug(reqID, "tag split[%s]: invalid components for %q proposed=%q",
-					analyzer.TagSplitVersion, candidate, d.components)
+					analyzer.TagSplitVersion, candidate, resolved[candidate])
 				row.Disposition = tags.CompositionKeep
 				row.Reason = tags.CompositionReasonInvalidComponents
-				row.Model = d.model
+				row.Model = freshModel(cv)
 				break
 			}
 			components[candidate] = valid
 			row.Disposition = tags.CompositionSplit
 			row.Parts = valid
-			row.Reason, row.Model = splitSource(d)
-		}
-		if row.Disposition == tags.CompositionSplit {
-			a.logger.Info(reqID, "tag split[%s]: split %q → %q", analyzer.TagSplitVersion, candidate, row.Parts)
-		} else {
-			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=%t)", analyzer.TagSplitVersion, candidate, row.Reason, cached)
+			row.Reason, row.Model = splitSource(cv)
+			a.logger.Info(reqID, "tag split[%s]: split %q → %q", analyzer.TagSplitVersion, candidate, valid)
+		case tags.CompositionDrop:
+			dropped[candidate] = true
+			row.Disposition = tags.CompositionDrop
+			row.Reason = decision.Reason
+			row.Model = freshModel(cv)
+			a.logger.Info(reqID, "tag split[%s]: drop %q (reason=%s)", analyzer.TagSplitVersion, candidate, row.Reason)
+		default:
+			row.Disposition = tags.CompositionKeep
+			row.Reason = decision.Reason
+			row.Model = freshModel(cv)
+			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=%t)", analyzer.TagSplitVersion, candidate, row.Reason, cv.Cached)
 		}
 		rows = append(rows, row)
 	}
-	if len(components) == 0 {
-		return names, rows, nil
+	return expandCandidates(names, components, dropped), rows, nil
+}
+
+// conjunctionSplits is the no-adjudicator fallback: explicit coordination splits mechanically through the
+// joint-tag grammar (fold-resolved and validated like a judged split), every other compound keeps whole
+// under judge_unavailable. It persists nothing and writes only composition rows.
+func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow, error) {
+	components := make(map[string][]string, len(candidates))
+	dropped := make(map[string]bool, len(candidates))
+	rows := make([]tags.CompositionRow, 0, len(candidates))
+	for _, candidate := range candidates {
+		row := tags.CompositionRow{Candidate: candidate, CriteriaVersion: analyzer.TagSplitVersion}
+		segments := textnorm.SplitJointTag(candidate)
+		if segments == nil {
+			row.Disposition = tags.CompositionKeep
+			row.Reason = tags.CompositionReasonJudgeUnavailable
+			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=false)", analyzer.TagSplitVersion, candidate, row.Reason)
+			rows = append(rows, row)
+			continue
+		}
+		parts := analyzer.NormalizeTags(segments)
+		for i, part := range parts {
+			if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
+				parts[i] = anchor
+			}
+		}
+		valid := analyzer.SplitComponents(parts, filter)
+		if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
+			row.Disposition = tags.CompositionKeep
+			row.Reason = tags.CompositionReasonInvalidComponents
+			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=false)", analyzer.TagSplitVersion, candidate, row.Reason)
+			rows = append(rows, row)
+			continue
+		}
+		components[candidate] = valid
+		row.Disposition = tags.CompositionSplit
+		row.Parts = valid
+		row.Reason = tags.CompositionReasonConjunction
+		a.logger.Info(reqID, "tag split[%s]: split %q → %q", analyzer.TagSplitVersion, candidate, valid)
+		rows = append(rows, row)
+	}
+	return expandCandidates(names, components, dropped), rows, nil
+}
+
+// CompositionFeatures folds the two passes' verdicts into the decision's feature set: the compound status
+// (or the abstention), the parts' dimensional reading, the judge-outage flag a missing verdict sets, the
+// cross-sample disagreement either pass observed, and the reconstructibility signal — all parts dimensional
+// and every resolved part a promoted store label (the established-value proxy the fold anchor already
+// receives). Shared by the emission gate and the stored-joint sweep so both dispose the same persisted rows
+// identically.
+func CompositionFeatures(parts []string, verdicts map[string]PartVerdict, cv CompoundVerdict, promotedNames map[string]string) tags.CompositionFeatures {
+	var f tags.CompositionFeatures
+	switch {
+	case cv.Deferred:
+		f.CompoundDeferred = true
+	case cv.Status == "":
+		f.JudgeUnavailable = true
+	case cv.Status == analyzer.TagCompoundNamedUnit:
+		f.CompoundNamedUnit = true
+	case cv.Status == analyzer.TagCompoundComposition:
+		f.CompoundComposition = true
+	case cv.Status == analyzer.TagCompoundNoDimension:
+		f.CompoundNoDimension = true
+	}
+	if cv.Disagreement {
+		f.SampleDisagreement = true
 	}
 
+	allDimensional := len(parts) > 0
+	for _, part := range parts {
+		v, ok := verdicts[part]
+		if !ok {
+			f.JudgeUnavailable = true
+			allDimensional = false
+			continue
+		}
+		if v.Disagreement {
+			f.SampleDisagreement = true
+		}
+		switch {
+		case v.Deferred:
+			f.PartsDeferred = true
+			allDimensional = false
+		case !v.Dimensional:
+			f.PartsNotDimensional = true
+			allDimensional = false
+		}
+	}
+	if allDimensional {
+		f.PartsDimensional = true
+		f.Reconstructible = tags.AllPartsPromoted(parts, promotedNames)
+	}
+	return f
+}
+
+// expandCandidates applies the split expansions and drops to the tag list in place, deduplicating; split
+// components replace their compound, dropped compounds leave, and every other name passes through.
+func expandCandidates(names []string, components map[string][]string, dropped map[string]bool) []string {
+	if len(components) == 0 && len(dropped) == 0 {
+		return names
+	}
 	out := make([]string, 0, len(names)+len(components))
 	seen := make(map[string]bool, len(names))
 	for _, t := range names {
+		if dropped[t] {
+			continue
+		}
 		segments, ok := components[t]
 		if !ok {
 			if !seen[t] {
@@ -187,22 +326,25 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			out = append(out, segment)
 		}
 	}
-	return out, rows, nil
+	return out
 }
 
-// splitSource names a split decision's verdict source and the model that
-// judged it: a cache hit has no fresh call behind it and no model; an
-// empty model without a cache hit is the conjunction grammar fallback;
-// a fresh judge call carries its model.
-func splitSource(d splitDecision) (reason, model string) {
-	switch {
-	case d.cached:
+// splitSource names a split decision's verdict source and the model that judged it: a cached compound
+// verdict has no fresh call behind it and no model; a fresh judge call carries its model.
+func splitSource(cv CompoundVerdict) (reason, model string) {
+	if cv.Cached {
 		return tags.CompositionReasonCached, ""
-	case d.model == "":
-		return tags.CompositionReasonConjunction, ""
-	default:
-		return tags.CompositionReasonJudge, d.model
 	}
+	return tags.CompositionReasonJudge, cv.Model
+}
+
+// freshModel is the model a composition row records: the judge's model for a fresh verdict, empty for a
+// cached one.
+func freshModel(cv CompoundVerdict) string {
+	if cv.Cached {
+		return ""
+	}
+	return cv.Model
 }
 
 // ApplyDeletedTagPolicy rewrites a tag list through the deleted-tag
@@ -269,73 +411,6 @@ func retryableJudgeFailure(err error) bool {
 func isCreditError(err error) bool {
 	var credErr *analyzer.InsufficientCreditsError
 	return errors.As(err, &credErr)
-}
-
-// splitVerdicts resolves the candidates' decomposition verdicts from the
-// shared cache, the conjunction grammar when no adjudicator is configured,
-// or one judged call over the uncached remainder. A non-nil error is
-// returned only for a credit-exhaustion failure; every other failure
-// keeps the candidates whole.
-func (a *Adjudicator) splitVerdicts(ctx context.Context, candidates []string, reqID string) (map[string]splitDecision, error) {
-	a.splitMu.Lock()
-	if a.splitCache == nil {
-		a.splitCache = make(map[string]splitDecision)
-	}
-	decisions := make(map[string]splitDecision, len(candidates))
-	var uncached []string
-	for _, name := range candidates {
-		if d, ok := a.splitCache[name]; ok {
-			d.cached = true
-			decisions[name] = d
-			continue
-		}
-		uncached = append(uncached, name)
-	}
-	a.splitMu.Unlock()
-
-	if len(uncached) == 0 {
-		return decisions, nil
-	}
-
-	if !a.runner.HasTagAdjudicator() {
-		// without an adjudicator only conjunction joints split: the
-		// grammar split reads their explicit coordination, and blanket
-		// mechanical splitting of other compounds is not allowed
-		for _, name := range uncached {
-			segments := textnorm.SplitJointTag(name)
-			if segments == nil {
-				continue
-			}
-			decisions[name] = splitDecision{verdict: analyzer.TagSplitSplit, components: segments}
-		}
-		return decisions, nil
-	}
-
-	results, err := a.runner.AdjudicateTagSplits(ctx, uncached)
-	if err != nil && retryableJudgeFailure(err) {
-		a.logger.Warn(reqID, "tag split adjudication: attempt failed, retrying once: %v", err)
-		results, err = a.runner.AdjudicateTagSplits(ctx, uncached)
-	}
-	if err != nil {
-		if isCreditError(err) {
-			return nil, err
-		}
-		a.logger.Warn(reqID, "tag split[%s]: adjudication failed for %q, keeping them: %v", analyzer.TagSplitVersion, uncached, err)
-		return decisions, nil
-	}
-	if len(results) != len(uncached) {
-		a.logger.Warn(reqID, "tag split[%s]: adjudication returned %d verdicts for %q, keeping them", analyzer.TagSplitVersion, len(results), uncached)
-		return decisions, nil
-	}
-
-	a.splitMu.Lock()
-	defer a.splitMu.Unlock()
-	model := a.config.ResolvedAdjudicatorLlm().Model
-	for i, r := range results {
-		decisions[uncached[i]] = splitDecision{verdict: r.Verdict, components: r.Components, model: model}
-		a.splitCache[uncached[i]] = splitDecision{verdict: r.Verdict, components: r.Components}
-	}
-	return decisions, nil
 }
 
 type bandPair struct {

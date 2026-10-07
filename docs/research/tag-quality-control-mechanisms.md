@@ -442,10 +442,11 @@ topical strings [23].
 ### 7.3 Blanket splitting is the wrong version of a right instinct
 
 The codebase already contains the nuanced version of "split multi-word tags":
-`BuildTagSplitPrompt` / `ParseTagSplitResponse` / `SplitComponents` — an
-LLM-adjudicated keep/split that explicitly protects "established proper names and
-set phrases", wired into the enricher and the reconciler. Blanket splitting of
-every multi-word tag into single words would:
+the split gate's two judged passes (`BuildTagPartPrompt` /
+`ParseTagPartResponse` / `BuildTagCompoundPrompt` / `ParseTagCompoundResponse`)
+and `SplitComponents` — an LLM-judged decision that explicitly protects
+"established proper names and set phrases", wired into the enricher and the
+reconciler. Blanket splitting of every multi-word tag into single words would:
 
 - destroy set phrases (`machine learning` → `machine` + `learning`) — the
   normalization design (single-token `c++`) and the direction guard exist precisely

@@ -395,11 +395,13 @@ func mkRanked(kept, candTag string, sim float64) matcher.RankResult {
 type mockAdjudicator struct {
 	adjudicateFn func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
 	identityFn   func(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)
-	splitFn      func(ctx context.Context, tags []string) ([]analyzer.TagSplitResult, error)
+	partFn       func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
+	compoundFn   func(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error)
 	qualityFn    func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)
 	called       int
 	identityCall int
-	splitCall    int
+	partCall     int
+	compoundCall int
 	qualityCall  int
 }
 
@@ -419,10 +421,18 @@ func (m *mockAdjudicator) Adjudicate(ctx context.Context, pairs []analyzer.TagPa
 	return nil, nil
 }
 
-func (m *mockAdjudicator) AdjudicateTagSplits(ctx context.Context, tags []string) ([]analyzer.TagSplitResult, error) {
-	m.splitCall++
-	if m.splitFn != nil {
-		return m.splitFn(ctx, tags)
+func (m *mockAdjudicator) JudgeTagParts(ctx context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	m.partCall++
+	if m.partFn != nil {
+		return m.partFn(ctx, values)
+	}
+	return nil, nil
+}
+
+func (m *mockAdjudicator) JudgeTagCompounds(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
+	m.compoundCall++
+	if m.compoundFn != nil {
+		return m.compoundFn(ctx, candidates)
 	}
 	return nil, nil
 }
@@ -1098,18 +1108,49 @@ func TestApplyTagQuality_PartialSalvage(t *testing.T) {
 	}
 }
 
-func splitVerdictsAll(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
-	results := make([]analyzer.TagSplitResult, len(names))
-	for i, name := range names {
-		results[i] = analyzer.TagSplitResult{
-			Verdict:    analyzer.TagSplitSplit,
-			Components: strings.Fields(name),
-		}
+func partsDimensional(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	results := make([]analyzer.TagPartResult, len(values))
+	for i := range values {
+		results[i] = analyzer.TagPartResult{Index: i, Dimensional: true}
 	}
 	return results, nil
 }
 
-func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) *Adjudicator {
+func partsContainer(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	results := make([]analyzer.TagPartResult, len(values))
+	for i := range values {
+		results[i] = analyzer.TagPartResult{Index: i}
+	}
+	return results, nil
+}
+
+func partsDeferred(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	results := make([]analyzer.TagPartResult, len(values))
+	for i := range values {
+		results[i] = analyzer.TagPartResult{Index: i, Dimensional: true, Defer: true}
+	}
+	return results, nil
+}
+
+func compoundsStatus(status analyzer.TagCompoundStatus) func(context.Context, []string) ([]analyzer.TagCompoundResult, error) {
+	return func(_ context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
+		results := make([]analyzer.TagCompoundResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagCompoundResult{Index: i, Status: status}
+		}
+		return results, nil
+	}
+}
+
+func compoundsDeferred(_ context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
+	results := make([]analyzer.TagCompoundResult, len(candidates))
+	for i := range candidates {
+		results[i] = analyzer.TagCompoundResult{Index: i, Status: analyzer.TagCompoundComposition, Defer: true}
+	}
+	return results, nil
+}
+
+func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) (*Adjudicator, int64) {
 	t.Helper()
 	logger := log.NewDiscardLogger()
 	if buf != nil {
@@ -1126,14 +1167,26 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 	runner := &tools.Runner{}
 	setUnexportedField(t, runner, "logger", logger)
 	setUnexportedField(t, runner, "config", cfg)
-	if adj != nil {
-		setUnexportedField(t, runner, "tagAdjudicator", adj)
+	if adj == nil {
+		return &Adjudicator{config: cfg, logger: logger, runner: runner}, 0
 	}
-	return &Adjudicator{config: cfg, logger: logger, runner: runner}
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event"} {
+		if _, err := db.ExecContext(context.Background(), "DELETE FROM "+table); err != nil {
+			t.Fatalf("reset %s: %v", table, err)
+		}
+	}
+	docID := database.CreateUniqueDocument(t, q, "decompose-split")
+	return &Adjudicator{config: cfg, queries: q, logger: logger, runner: runner}, docID
 }
 
 func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
-	a := newSplitAdjudicator(t, nil, nil)
+	a, _ := newSplitAdjudicator(t, nil, nil)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
 	tests := []struct {
@@ -1151,7 +1204,7 @@ func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _, _ := a.DecomposeTags(context.Background(), tt.in, nil, nil, filter, "")
+			got, _, _ := a.DecomposeTags(context.Background(), tt.in, nil, nil, filter, 0, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.in, got, tt.want)
 			}
@@ -1159,82 +1212,80 @@ func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
 	}
 }
 
-func TestDecomposeTags_SplitVerdicts(t *testing.T) {
-	keepAll := func(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
-		results := make([]analyzer.TagSplitResult, len(names))
-		for i := range names {
-			results[i] = analyzer.TagSplitResult{Verdict: analyzer.TagSplitKeep}
-		}
-		return results, nil
-	}
-
+func TestDecomposeTags_TwoPassDecision(t *testing.T) {
 	tests := []struct {
-		name    string
-		names   []string
-		title   string
-		splitFn func(context.Context, []string) ([]analyzer.TagSplitResult, error)
-		want    []string
+		name       string
+		names      []string
+		title      string
+		partFn     func(context.Context, []string) ([]analyzer.TagPartResult, error)
+		compoundFn func(context.Context, []string) ([]analyzer.TagCompoundResult, error)
+		want       []string
 	}{
 		{
-			name:    "split verdict replaces the compound with its parts",
-			names:   []string{"machine learning"},
-			splitFn: splitVerdictsAll,
-			want:    []string{"machine", "learning"},
+			name:       "composition with dimensional parts splits",
+			names:      []string{"machine learning"},
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+			want:       []string{"machine", "learning"},
 		},
 		{
-			name:    "keep verdict leaves the compound whole",
-			names:   []string{"machine learning"},
-			splitFn: keepAll,
-			want:    []string{"machine learning"},
+			name:       "named unit with non-dimensional parts keeps",
+			names:      []string{"machine learning"},
+			partFn:     partsContainer,
+			compoundFn: compoundsStatus(analyzer.TagCompoundNamedUnit),
+			want:       []string{"machine learning"},
 		},
 		{
-			name:  "fewer than two survivors keeps the compound",
+			name:       "composition against a non-dimensional part keeps",
+			names:      []string{"machine learning"},
+			partFn:     partsContainer,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+			want:       []string{"machine learning"},
+		},
+		{
+			name:       "no dimension with non-dimensional parts drops",
+			names:      []string{"machine learning"},
+			partFn:     partsContainer,
+			compoundFn: compoundsStatus(analyzer.TagCompoundNoDimension),
+			want:       []string{},
+		},
+		{
+			name:       "no dimension against dimensional parts keeps",
+			names:      []string{"machine learning"},
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundNoDimension),
+			want:       []string{"machine learning"},
+		},
+		{
+			name:       "deferred compound keeps",
+			names:      []string{"machine learning"},
+			partFn:     partsDimensional,
+			compoundFn: compoundsDeferred,
+			want:       []string{"machine learning"},
+		},
+		{
+			name:       "deferred part keeps",
+			names:      []string{"machine learning"},
+			partFn:     partsDeferred,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+			want:       []string{"machine learning"},
+		},
+		{
+			name:  "judge failure keeps",
 			names: []string{"machine learning"},
-			splitFn: func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
-				return []analyzer.TagSplitResult{{
-					Verdict:    analyzer.TagSplitSplit,
-					Components: []string{"machine"},
-				}}, nil
-			},
-			want: []string{"machine learning"},
-		},
-		{
-			name:  "verdict above the part-count bound is rejected",
-			names: []string{"machine learning"},
-			splitFn: func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
-				return []analyzer.TagSplitResult{{
-					Verdict:    analyzer.TagSplitSplit,
-					Components: []string{"a", "b", "c", "d"},
-				}}, nil
-			},
-			want: []string{"machine learning"},
-		},
-		{
-			name:  "title-contained parts are exempt from the echo rule and split",
-			names: []string{"machine learning"},
-			title: "machine learning applications",
-			splitFn: func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
-				return []analyzer.TagSplitResult{{
-					Verdict:    analyzer.TagSplitSplit,
-					Components: []string{"machine learning", "physics"},
-				}}, nil
-			},
-			want: []string{"machine learning", "physics"},
-		},
-		{
-			name:  "judge failure keeps the compound",
-			names: []string{"machine learning"},
-			splitFn: func(context.Context, []string) ([]analyzer.TagSplitResult, error) {
+			partFn: func(context.Context, []string) ([]analyzer.TagPartResult, error) {
 				return nil, context.DeadlineExceeded
 			},
-			want: []string{"machine learning"},
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+			want:       []string{"machine learning"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: tt.splitFn}, nil)
+			adj := &mockAdjudicator{partFn: tt.partFn, compoundFn: tt.compoundFn}
+			a, docID := newSplitAdjudicator(t, adj, nil)
 			filter := analyzer.NewTagFilter(nil, nil, tt.title, nil)
-			got, _, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, "")
+			got, _, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, docID, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.names, got, tt.want)
 			}
@@ -1242,15 +1293,19 @@ func TestDecomposeTags_SplitVerdicts(t *testing.T) {
 	}
 }
 
-func TestDecomposeTags_MemoizesSplitVerdicts(t *testing.T) {
-	adj := &mockAdjudicator{splitFn: splitVerdictsAll}
-	a := newSplitAdjudicator(t, adj, nil)
+func TestDecomposeTags_CachedVerdictSkipsJudge(t *testing.T) {
+	adj := &mockAdjudicator{
+		partFn:     partsDimensional,
+		compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+	}
+	a, docID := newSplitAdjudicator(t, adj, nil)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
-	_, cached, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+	_, cached, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 
-	adjAssertEqual(t, adj.splitCall, 1, "split adjudicator call count")
+	adjAssertEqual(t, adj.partCall, 1, "part judge calls after the persisted cache hit")
+	adjAssertEqual(t, adj.compoundCall, 1, "compound judge calls after the persisted cache hit")
 	adjAssertEqual(t, len(cached), 1, "composition rows on the cache hit")
 	adjAssertEqual(t, cached[0].Disposition, tags.CompositionSplit, "cached verdict keeps its split")
 	adjAssertEqual(t, cached[0].Reason, tags.CompositionReasonCached, "cached verdict's reason")
@@ -1259,10 +1314,14 @@ func TestDecomposeTags_MemoizesSplitVerdicts(t *testing.T) {
 
 func TestDecomposeTags_SplitLogCarriesVersion(t *testing.T) {
 	var buf bytes.Buffer
-	a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitVerdictsAll}, &buf)
+	adj := &mockAdjudicator{
+		partFn:     partsDimensional,
+		compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+	}
+	a, docID := newSplitAdjudicator(t, adj, &buf)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	a.DecomposeTags(context.Background(), []string{"russian history"}, nil, nil, filter, "")
+	a.DecomposeTags(context.Background(), []string{"russian history"}, nil, nil, filter, docID, "")
 
 	want := "tag split[" + analyzer.TagSplitVersion + "]"
 	if !strings.Contains(buf.String(), want) {
@@ -1272,14 +1331,14 @@ func TestDecomposeTags_SplitLogCarriesVersion(t *testing.T) {
 
 func TestDecomposeTags_NoVerdictWarns(t *testing.T) {
 	var buf bytes.Buffer
-	adj := &mockAdjudicator{splitFn: func(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
-		results := make([]analyzer.TagSplitResult, len(names))
-		return results, nil
-	}}
-	a := newSplitAdjudicator(t, adj, &buf)
+	adj := &mockAdjudicator{
+		partFn:     partsDimensional,
+		compoundFn: compoundsStatus(""),
+	}
+	a, docID := newSplitAdjudicator(t, adj, &buf)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 
 	adjAssertEqual(t, len(got), 1, "the compound stays whole")
 	adjAssertEqual(t, len(rows), 1, "one composition row")
@@ -1288,21 +1347,25 @@ func TestDecomposeTags_NoVerdictWarns(t *testing.T) {
 	if !strings.Contains(out, "<4>WARN") {
 		t.Errorf("expected a WARN level line, got:\n%s", out)
 	}
-	if !strings.Contains(out, `judge returned no verdict for "machine learning"`) {
+	if !strings.Contains(out, `compound judge returned no status for "machine learning"`) {
 		t.Errorf("expected the WARN to name the judge and candidate, got:\n%s", out)
 	}
 }
 
 func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 	var buf bytes.Buffer
-	adj := &mockAdjudicator{splitFn: splitVerdictsAll}
-	a := newSplitAdjudicator(t, adj, &buf)
+	adj := &mockAdjudicator{
+		partFn:     partsDimensional,
+		compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+	}
+	a, _ := newSplitAdjudicator(t, adj, &buf)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
-	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, "")
+	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, 0, "")
 
-	adjAssertEqual(t, adj.splitCall, 0, "a store-keyed compound never reaches the judge")
+	adjAssertEqual(t, adj.partCall, 0, "a store-keyed compound never reaches the part judge")
+	adjAssertEqual(t, adj.compoundCall, 0, "a store-keyed compound never reaches the compound judge")
 	if !reflect.DeepEqual(got, []string{"machine learning"}) {
 		t.Errorf("DecomposeTags = %v, want the compound whole", got)
 	}
@@ -1313,28 +1376,20 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 }
 
 func TestDecomposeTags_CompositionRows(t *testing.T) {
-	keepAll := func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
-		return []analyzer.TagSplitResult{{Verdict: analyzer.TagSplitKeep}}, nil
-	}
-	onePart := func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
-		return []analyzer.TagSplitResult{{
-			Verdict:    analyzer.TagSplitSplit,
-			Components: []string{"machine"},
-		}}, nil
-	}
-	failJudge := func(context.Context, []string) ([]analyzer.TagSplitResult, error) {
-		return nil, context.DeadlineExceeded
-	}
-
 	tests := []struct {
-		name  string
-		adj   *mockAdjudicator // nil runs without an adjudicator
-		names []string
-		want  tags.CompositionRow
+		name     string
+		adj      *mockAdjudicator // nil runs without an adjudicator
+		names    []string
+		docTypes []string
+		promoted []string // names counted as promoted store labels by the reconstructibility signal
+		want     tags.CompositionRow
 	}{
 		{
-			name:  "fresh split verdict carries parts, judge, and model",
-			adj:   &mockAdjudicator{splitFn: splitVerdictsAll},
+			name: "fresh composition split carries parts, judge, and model",
+			adj: &mockAdjudicator{
+				partFn:     partsDimensional,
+				compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+			},
 			names: []string{"machine learning"},
 			want: tags.CompositionRow{
 				Candidate:       "machine learning",
@@ -1343,41 +1398,57 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 				Reason:          tags.CompositionReasonJudge,
 				CriteriaVersion: analyzer.TagSplitVersion,
 				Model:           "test-model",
+				Reconstructible: new(false),
 			},
 		},
 		{
-			name:  "keep verdict records the judge's keep with no parts",
-			adj:   &mockAdjudicator{splitFn: keepAll},
+			name: "named unit keeps with the decision reason",
+			adj: &mockAdjudicator{
+				partFn:     partsContainer,
+				compoundFn: compoundsStatus(analyzer.TagCompoundNamedUnit),
+			},
 			names: []string{"machine learning"},
 			want: tags.CompositionRow{
 				Candidate:       "machine learning",
 				Disposition:     tags.CompositionKeep,
-				Reason:          tags.CompositionReasonJudge,
+				Reason:          tags.CompositionReasonNamedUnit,
 				CriteriaVersion: analyzer.TagSplitVersion,
 				Model:           "test-model",
+				Reconstructible: new(false),
 			},
 		},
 		{
-			name:  "components failing validation keep with their own reason",
-			adj:   &mockAdjudicator{splitFn: onePart},
-			names: []string{"machine learning"},
+			name: "components failing validation keep with their own reason",
+			adj: &mockAdjudicator{
+				partFn:     partsDimensional,
+				compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+			},
+			names:    []string{"machine learning"},
+			docTypes: []string{"machine"},
 			want: tags.CompositionRow{
 				Candidate:       "machine learning",
 				Disposition:     tags.CompositionKeep,
 				Reason:          tags.CompositionReasonInvalidComponents,
 				CriteriaVersion: analyzer.TagSplitVersion,
 				Model:           "test-model",
+				Reconstructible: new(false),
 			},
 		},
 		{
-			name:  "a failed judge keeps with judge_unavailable and no model",
-			adj:   &mockAdjudicator{splitFn: failJudge},
+			name: "a failed judge keeps with judge_unavailable and no model",
+			adj: &mockAdjudicator{
+				partFn: partsDimensional,
+				compoundFn: func(context.Context, []string) ([]analyzer.TagCompoundResult, error) {
+					return nil, context.DeadlineExceeded
+				},
+			},
 			names: []string{"machine learning"},
 			want: tags.CompositionRow{
 				Candidate:       "machine learning",
 				Disposition:     tags.CompositionKeep,
 				Reason:          tags.CompositionReasonJudgeUnavailable,
 				CriteriaVersion: analyzer.TagSplitVersion,
+				Reconstructible: new(false),
 			},
 		},
 		{
@@ -1403,39 +1474,98 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 				CriteriaVersion: analyzer.TagSplitVersion,
 			},
 		},
+		{
+			name: "a named unit whose parts are established holds reconstructible",
+			adj: &mockAdjudicator{
+				partFn:     partsDimensional,
+				compoundFn: compoundsStatus(analyzer.TagCompoundNamedUnit),
+			},
+			names:    []string{"machine learning"},
+			promoted: []string{"machine", "learning"},
+			want: tags.CompositionRow{
+				Candidate:       "machine learning",
+				Disposition:     tags.CompositionKeep,
+				Reason:          tags.CompositionReasonNamedUnitReconstructible,
+				CriteriaVersion: analyzer.TagSplitVersion,
+				Model:           "test-model",
+				Reconstructible: new(true),
+			},
+		},
+		{
+			name: "the same named unit without an established store view stays a plain named unit",
+			adj: &mockAdjudicator{
+				partFn:     partsDimensional,
+				compoundFn: compoundsStatus(analyzer.TagCompoundNamedUnit),
+			},
+			names: []string{"machine learning"},
+			want: tags.CompositionRow{
+				Candidate:       "machine learning",
+				Disposition:     tags.CompositionKeep,
+				Reason:          tags.CompositionReasonNamedUnit,
+				CriteriaVersion: analyzer.TagSplitVersion,
+				Model:           "test-model",
+				Reconstructible: new(false),
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := newSplitAdjudicator(t, tt.adj, nil)
-			filter := analyzer.NewTagFilter(nil, nil, "", nil)
+			a, docID := newSplitAdjudicator(t, tt.adj, nil)
+			filter := analyzer.NewTagFilter(nil, nil, "", tt.docTypes)
 
-			_, rows, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, "")
+			_, rows, _ := a.DecomposeTags(context.Background(), tt.names, nil, tags.StoreNames(tt.promoted), filter, docID, "")
 
 			if len(rows) != 1 {
 				t.Fatalf("composition rows = %d, want 1", len(rows))
 			}
-			if !reflect.DeepEqual(rows[0], tt.want) {
-				t.Errorf("row = %+v, want %+v", rows[0], tt.want)
-			}
+			assertCompositionRow(t, rows[0], tt.want)
 		})
 	}
 }
 
-func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
-	splitMexicanRevolution := func(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
-		return []analyzer.TagSplitResult{{
-			Verdict:    analyzer.TagSplitSplit,
-			Components: []string{"mexican", "revolution"},
-		}}, nil
+func assertCompositionRow(t *testing.T, got, want tags.CompositionRow) {
+	t.Helper()
+	if got.Candidate != want.Candidate {
+		t.Errorf("Candidate = %q, want %q", got.Candidate, want.Candidate)
 	}
+	if got.Disposition != want.Disposition {
+		t.Errorf("Disposition = %s, want %s", got.Disposition, want.Disposition)
+	}
+	if got.Reason != want.Reason {
+		t.Errorf("Reason = %s, want %s", got.Reason, want.Reason)
+	}
+	if !reflect.DeepEqual(got.Parts, want.Parts) {
+		t.Errorf("Parts = %v, want %v", got.Parts, want.Parts)
+	}
+	if got.CriteriaVersion != want.CriteriaVersion {
+		t.Errorf("CriteriaVersion = %s, want %s", got.CriteriaVersion, want.CriteriaVersion)
+	}
+	if got.Model != want.Model {
+		t.Errorf("Model = %s, want %s", got.Model, want.Model)
+	}
+	switch {
+	case (got.Reconstructible == nil) != (want.Reconstructible == nil):
+		t.Errorf("Reconstructible = %v, want %v", got.Reconstructible, want.Reconstructible)
+	case got.Reconstructible != nil && *got.Reconstructible != *want.Reconstructible:
+		t.Errorf("Reconstructible = %v, want %v", *got.Reconstructible, *want.Reconstructible)
+	}
+}
+
+func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 	ctx := context.Background()
-	storeView := map[string]string{"mexico": "mexico", "revolution": "revolution"}
+	storeView := tags.StoreNames([]string{"mexico", "revolution"})
+	splitCompounds := func() *mockAdjudicator {
+		return &mockAdjudicator{
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+		}
+	}
 
 	t.Run("parts land on their store anchors", func(t *testing.T) {
-		a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitMexicanRevolution}, nil)
+		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
 		filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, "")
+		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 
 		want := []string{"mexico", "revolution"}
 		if !reflect.DeepEqual(got, want) {
@@ -1452,11 +1582,37 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		}
 	})
 
-	t.Run("without a store view the parts pass through", func(t *testing.T) {
-		a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitMexicanRevolution}, nil)
+	t.Run("the parts pass judges the resolved value", func(t *testing.T) {
+		var judged []string
+		adj := &mockAdjudicator{
+			partFn: func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+				judged = append(judged, values...)
+				return partsDimensional(context.Background(), values)
+			},
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+		}
+		a, docID := newSplitAdjudicator(t, adj, nil)
 		filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, nil, filter, "")
+		got, _, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
+		if !reflect.DeepEqual(got, []string{"mexico", "revolution"}) {
+			t.Errorf("DecomposeTags = %v, want the fold-resolved parts", got)
+		}
+		for _, v := range judged {
+			if v != "mexico" && v != "revolution" {
+				t.Errorf("parts pass judged %q, want the resolved values only", v)
+			}
+		}
+		if len(judged) != 2 {
+			t.Errorf("parts pass judged %v, want the two resolved values", judged)
+		}
+	})
+
+	t.Run("without a store view the parts pass through", func(t *testing.T) {
+		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
+		filter := analyzer.NewTagFilter(nil, nil, "", nil)
+
+		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, nil, filter, docID, "")
 
 		want := []string{"mexican", "revolution"}
 		if !reflect.DeepEqual(got, want) {
@@ -1471,10 +1627,10 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		// "mexico" is a document-type token: the rule must see the part
 		// after the fold, so only one survivor remains and the compound
 		// stays whole
-		a := newSplitAdjudicator(t, &mockAdjudicator{splitFn: splitMexicanRevolution}, nil)
+		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
 		filter := analyzer.NewTagFilter(nil, nil, "", []string{"mexico"})
 
-		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, "")
+		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 
 		if !reflect.DeepEqual(got, []string{"mexican revolution"}) {
 			t.Errorf("DecomposeTags = %v, want the compound kept whole", got)
@@ -1525,14 +1681,14 @@ func TestRetryableJudgeFailure(t *testing.T) {
 
 func TestDecomposeTags_CreditErrorEscapes(t *testing.T) {
 	adj := &mockAdjudicator{
-		splitFn: func(context.Context, []string) ([]analyzer.TagSplitResult, error) {
+		partFn: func(context.Context, []string) ([]analyzer.TagPartResult, error) {
 			return nil, creditExhausted()
 		},
 	}
-	a := newSplitAdjudicator(t, adj, nil)
+	a, docID := newSplitAdjudicator(t, adj, nil)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 	if err == nil {
 		t.Fatal("credit exhaustion must escape DecomposeTags")
 	}
@@ -1542,28 +1698,29 @@ func TestDecomposeTags_CreditErrorEscapes(t *testing.T) {
 	if got != nil || rows != nil {
 		t.Errorf("DecomposeTags returned (%v, %v) alongside the error", got, rows)
 	}
-	adjAssertEqual(t, adj.splitCall, 1, "credit errors are not retried")
+	adjAssertEqual(t, adj.partCall, 1, "credit errors are not retried")
+	adjAssertEqual(t, adj.compoundCall, 0, "a credit failure in the parts pass never reaches the compound pass")
 }
 
 func TestDecomposeTags_TransientFailureRetriesOnce(t *testing.T) {
-	adj := &mockAdjudicator{}
-	adj.splitFn = func(_ context.Context, names []string) ([]analyzer.TagSplitResult, error) {
-		if adj.splitCall == 1 {
+	adj := &mockAdjudicator{compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
+	adj.partFn = func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+		if adj.partCall == 1 {
 			return nil, errors.New("API error: status 500")
 		}
-		return splitVerdictsAll(context.Background(), names)
+		return partsDimensional(context.Background(), values)
 	}
-	a := newSplitAdjudicator(t, adj, nil)
+	a, docID := newSplitAdjudicator(t, adj, nil)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 
-	got, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, "")
+	got, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 	if err != nil {
 		t.Fatalf("DecomposeTags() error = %v", err)
 	}
 	if !reflect.DeepEqual(got, []string{"machine", "learning"}) {
 		t.Errorf("DecomposeTags = %v, want the split after the retry", got)
 	}
-	adjAssertEqual(t, adj.splitCall, 2, "a transient failure is retried once")
+	adjAssertEqual(t, adj.partCall, 2, "a transient failure is retried once")
 }
 
 func TestApplyTagQuality_CreditErrorEscapes(t *testing.T) {

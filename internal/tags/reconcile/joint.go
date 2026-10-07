@@ -10,6 +10,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -42,7 +44,15 @@ func (r *Reconciler) buildJointWorklist(allTags []database.Tag, tagCounts map[st
 	return entries
 }
 
-func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, entries []*jointEntry) {
+// decideJointSplits disposes of the stored joint tags. The retrospective arm of the emission gate's
+// decision: it judges each joint name's compound status and its fold-resolved content parts through the same
+// persisted caches, folds both into tags.CompositionFeatures, and disposes through tags.DecideComposition. A
+// CompositionSplit runs the existing component validation and feeds planJointSplits/applyJointSplits; every
+// other disposition records the decision reason as its skip reason and leaves the stored tag in place — the
+// sweep never deletes a tag. Without an adjudicator the deterministic conjunction split stands unchanged.
+// promotedNames is the promoted tag names' Key→name view the parts fold and the reconstructibility signal
+// read.
+func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, entries []*jointEntry, promotedNames map[string]string) {
 	componentFilter := analyzer.NewTagFilter(nil, nil, "", nil)
 	validate := func(components []string) []string {
 		valid := analyzer.SplitComponents(components, componentFilter)
@@ -66,44 +76,55 @@ func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, 
 		return
 	}
 
-	for i := 0; i < len(entries); i += adjudicateBatchSize {
-		end := min(i+adjudicateBatchSize, len(entries))
-		tags := make([]string, 0, end-i)
-		for _, e := range entries[i:end] {
-			tags = append(tags, e.name)
-		}
-		results, err := r.runner.AdjudicateTagSplits(ctx, tags)
-		if err != nil {
-			r.logger.Error("", "tag reconcile: tag split adjudication batch failed: %v", err)
-			for _, e := range entries[i:end] {
-				e.skipReason = "split_adjudication_error"
+	resolved := make(map[*jointEntry][]string, len(entries))
+	seenValues := make(map[string]bool)
+	var values []string
+	for _, e := range entries {
+		parts := tags.DeriveParts(e.name)
+		rparts := make([]string, 0, len(parts))
+		for _, part := range parts {
+			resolvedPart := part
+			if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
+				resolvedPart = anchor
 			}
+			rparts = append(rparts, resolvedPart)
+			if !seenValues[resolvedPart] {
+				seenValues[resolvedPart] = true
+				values = append(values, resolvedPart)
+			}
+		}
+		resolved[e] = rparts
+	}
+
+	store := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model)
+	partVerdicts, err := store.Parts(ctx, values, 0, "")
+	if err != nil {
+		r.logger.Error("", "tag reconcile: part verdicts: %v", err)
+	}
+	candidates := make([]string, 0, len(entries))
+	for _, e := range entries {
+		candidates = append(candidates, e.name)
+	}
+	compoundVerdicts, err := store.Compounds(ctx, candidates, 0, "")
+	if err != nil {
+		r.logger.Error("", "tag reconcile: compound verdicts: %v", err)
+	}
+
+	for _, e := range entries {
+		features := admission.CompositionFeatures(resolved[e], partVerdicts, compoundVerdicts[e.name], promotedNames)
+		decision := tags.DecideComposition(features)
+		if decision.Disposition != tags.CompositionSplit {
+			e.skipReason = decision.Reason
 			continue
 		}
-		if len(results) != len(tags) {
-			for _, e := range entries[i:end] {
-				e.skipReason = "split_adjudication_error"
-			}
+		components := validate(resolved[e])
+		if components == nil {
+			e.skipReason = "split_ambiguous"
 			continue
 		}
-		for j, res := range results {
-			e := entries[i:end][j]
-			switch res.Verdict {
-			case analyzer.TagSplitSplit:
-				components := validate(res.Components)
-				if components == nil {
-					e.skipReason = "split_ambiguous"
-					continue
-				}
-				e.split = true
-				e.components = components
-				e.reason = "adjudicated"
-			case analyzer.TagSplitKeep:
-				e.skipReason = "split_kept"
-			default:
-				e.skipReason = "split_ambiguous"
-			}
-		}
+		e.split = true
+		e.components = components
+		e.reason = "adjudicated"
 	}
 }
 

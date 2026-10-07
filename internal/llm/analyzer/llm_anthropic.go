@@ -385,9 +385,14 @@ func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) 
 	return judgedAnthropic(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), ParseAdjudicationResponse)
 }
 
-// AdjudicateTagSplits decides splits through the Anthropic API.
-func (l *LlmAnthropic) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
-	return judgedAnthropic(ctx, l, TagSplitSystemMessage, BuildTagSplitPrompt(tags), "tag split adjudication", len(tags), ParseTagSplitResponse)
+// JudgeTagParts scores values through the Anthropic API.
+func (l *LlmAnthropic) JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error) {
+	return judgedAnthropic(ctx, l, TagPartSystemMessage, BuildTagPartPrompt(values), "tag part judge", len(values), ParseTagPartResponse)
+}
+
+// JudgeTagCompounds classifies compounds through the Anthropic API.
+func (l *LlmAnthropic) JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error) {
+	return judgedAnthropic(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), ParseTagCompoundResponse)
 }
 
 // JudgeTagQuality scores candidates through the Anthropic API.

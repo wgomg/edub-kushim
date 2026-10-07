@@ -216,8 +216,12 @@ func TestJudgedOpenAI_StepErrorLabels(t *testing.T) {
 			_, err := a.Adjudicate(context.Background(), testPairs())
 			return err
 		}},
-		{"adjudicate tag splits", "tag split adjudication", func(a *LlmOpenAiCompatible) error {
-			_, err := a.AdjudicateTagSplits(context.Background(), []string{"climate change"})
+		{"judge tag parts", "tag part judge", func(a *LlmOpenAiCompatible) error {
+			_, err := a.JudgeTagParts(context.Background(), []string{"russia"})
+			return err
+		}},
+		{"judge tag compounds", "tag compound judge", func(a *LlmOpenAiCompatible) error {
+			_, err := a.JudgeTagCompounds(context.Background(), []string{"climate change"})
 			return err
 		}},
 		{"judge tag quality", "tag quality judge", func(a *LlmOpenAiCompatible) error {
@@ -351,8 +355,12 @@ func TestJudgedAnthropic_StepErrorLabels(t *testing.T) {
 			_, err := a.Adjudicate(context.Background(), testPairs())
 			return err
 		}},
-		{"adjudicate tag splits", "tag split adjudication", func(a *LlmAnthropic) error {
-			_, err := a.AdjudicateTagSplits(context.Background(), []string{"climate change"})
+		{"judge tag parts", "tag part judge", func(a *LlmAnthropic) error {
+			_, err := a.JudgeTagParts(context.Background(), []string{"russia"})
+			return err
+		}},
+		{"judge tag compounds", "tag compound judge", func(a *LlmAnthropic) error {
+			_, err := a.JudgeTagCompounds(context.Background(), []string{"climate change"})
 			return err
 		}},
 		{"judge tag quality", "tag quality judge", func(a *LlmAnthropic) error {

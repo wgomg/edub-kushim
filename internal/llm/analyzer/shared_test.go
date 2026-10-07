@@ -874,155 +874,217 @@ func TestParseAdjudicationResponse_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestBuildTagSplitPrompt(t *testing.T) {
-	result := BuildTagSplitPrompt([]string{"supply and demand", "physics"})
-	if !strings.Contains(result, `"supply and demand"`) {
-		t.Error("prompt should contain first tag")
+func TestBuildTagPartPrompt(t *testing.T) {
+	result := BuildTagPartPrompt([]string{"russia", "thought"})
+	if !strings.Contains(result, `"russia"`) || !strings.Contains(result, `"thought"`) {
+		t.Error("prompt should contain the values")
 	}
-	if !strings.Contains(result, `"physics"`) {
-		t.Error("prompt should contain second tag")
+	if !strings.Contains(result, "Value 0") || !strings.Contains(result, "Value 1") {
+		t.Error("prompt should contain indexed value entries")
 	}
-	if !strings.Contains(result, "Tag 0") || !strings.Contains(result, "Tag 1") {
-		t.Error("prompt should contain indexed tag entries")
+	if !strings.Contains(result, "dimensional") || !strings.Contains(result, "defer") {
+		t.Error("prompt should mention the dimensional answer and the abstention")
 	}
-	if !strings.Contains(result, "split") || !strings.Contains(result, "keep") {
-		t.Error("prompt should mention both verdict options")
-	}
-	if !strings.Contains(result, "never force a split") {
-		t.Error("split criteria must keep unsettled readings instead of forcing a split")
+	if !strings.Contains(result, "never guess") {
+		t.Error("parts criteria must defer rather than guess")
 	}
 }
 
-func TestParseTagSplitResponse(t *testing.T) {
+func TestBuildTagCompoundPrompt(t *testing.T) {
+	result := BuildTagCompoundPrompt([]string{"cold war", "russian history"})
+	if !strings.Contains(result, `"cold war"`) || !strings.Contains(result, `"russian history"`) {
+		t.Error("prompt should contain the compounds")
+	}
+	if !strings.Contains(result, "Compound 0") || !strings.Contains(result, "Compound 1") {
+		t.Error("prompt should contain indexed compound entries")
+	}
+	for _, status := range []string{"named_unit", "composition", "no_dimension"} {
+		if !strings.Contains(result, status) {
+			t.Errorf("prompt should mention the %q status", status)
+		}
+	}
+	if !strings.Contains(result, "never force one") {
+		t.Error("compound criteria must defer rather than force a reading")
+	}
+}
+
+func TestParseTagPartResponse(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
 		n       int
-		want    []TagSplitResult
+		want    []TagPartResult
+		wantErr bool
 	}{
 		{
-			name:    "keep and split",
-			content: `{"splits":[{"index":0,"verdict":"keep"},{"index":1,"verdict":"split","components":["supply","demand"]}]}`,
+			name:    "dimensional and container",
+			content: `{"values":[{"index":0,"dimensional":true,"defer":false},{"index":1,"dimensional":false,"defer":false}]}`,
 			n:       2,
-			want: []TagSplitResult{
-				{Verdict: TagSplitKeep},
-				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
+			want: []TagPartResult{
+				{Index: 0, Dimensional: true},
+				{Index: 1},
 			},
 		},
 		{
-			name:    "all keep",
-			content: `{"splits":[{"index":0,"verdict":"keep"},{"index":1,"verdict":"keep"}]}`,
+			name:    "abstention carried",
+			content: `{"values":[{"index":0,"dimensional":true,"defer":true}]}`,
+			n:       1,
+			want:    []TagPartResult{{Index: 0, Dimensional: true, Defer: true}},
+		},
+		{
+			name:    "missing dimensional answer is incomplete",
+			content: `{"values":[{"index":0,"defer":true}]}`,
+			n:       1,
+			want:    []TagPartResult{{Index: 0}},
+			wantErr: true,
+		},
+		{
+			name:    "out of range index ignored and its slot missing",
+			content: `{"values":[{"index":5,"dimensional":true}]}`,
 			n:       2,
-			want: []TagSplitResult{
-				{Verdict: TagSplitKeep},
-				{Verdict: TagSplitKeep},
-			},
-		},
-		{
-			name:    "out of range index ignored",
-			content: `{"splits":[{"index":5,"verdict":"split","components":["a","b"]}]}`,
-			n:       2,
-			want:    []TagSplitResult{{}, {}},
-		},
-		{
-			name:    "single component treated as ambiguous",
-			content: `{"splits":[{"index":0,"verdict":"split","components":["only one"]}]}`,
-			n:       1,
-			want:    []TagSplitResult{{}},
-		},
-		{
-			name:    "empty components treated as ambiguous",
-			content: `{"splits":[{"index":0,"verdict":"split","components":[]}]}`,
-			n:       1,
-			want:    []TagSplitResult{{}},
-		},
-		{
-			name:    "unknown verdict treated as ambiguous",
-			content: `{"splits":[{"index":0,"verdict":"maybe"}]}`,
-			n:       1,
-			want:    []TagSplitResult{{}},
-		},
-		{
-			name:    "empty splits returns all defaults",
-			content: `{"splits":[]}`,
-			n:       2,
-			want:    []TagSplitResult{{}, {}},
-		},
-		{
-			name:    "code block stripped",
-			content: "```json\n{\"splits\":[{\"index\":0,\"verdict\":\"keep\"}]}\n```",
-			n:       1,
-			want: []TagSplitResult{
-				{Verdict: TagSplitKeep},
-			},
-		},
-		{
-			name:    "components trimmed of whitespace",
-			content: `{"splits":[{"index":0,"verdict":"split","components":["  supply  ","  demand  "]}]}`,
-			n:       1,
-			want: []TagSplitResult{
-				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
-			},
-		},
-		{
-			name:    "empty components filtered",
-			content: `{"splits":[{"index":0,"verdict":"split","components":["supply","","demand"]}]}`,
-			n:       1,
-			want: []TagSplitResult{
-				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
-			},
+			want:    []TagPartResult{{Index: 0}, {Index: 1}},
+			wantErr: true,
 		},
 		{
 			name:    "bare top-level array accepted as the envelope",
-			content: `[{"index":0,"verdict":"keep"},{"index":1,"verdict":"split","components":["supply","demand"]}]`,
-			n:       2,
-			want: []TagSplitResult{
-				{Verdict: TagSplitKeep},
-				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
-			},
+			content: `[{"index":0,"dimensional":true}]`,
+			n:       1,
+			want:    []TagPartResult{{Index: 0, Dimensional: true}},
+		},
+		{
+			name:    "code block stripped",
+			content: "```json\n{\"values\":[{\"index\":0,\"dimensional\":false}]}\n```",
+			n:       1,
+			want:    []TagPartResult{{Index: 0}},
 		},
 		{
 			name:    "entries without index placed by position",
-			content: `{"splits":[{"verdict":"keep"},{"verdict":"split","components":["supply","demand"]}]}`,
+			content: `{"values":[{"dimensional":true},{"dimensional":false}]}`,
 			n:       2,
-			want: []TagSplitResult{
-				{Verdict: TagSplitKeep},
-				{Verdict: TagSplitSplit, Components: []string{"supply", "demand"}},
-			},
+			want:    []TagPartResult{{Index: 0, Dimensional: true}, {Index: 1}},
 		},
 		{
-			name:    "unindexed entries beyond n dropped",
-			content: `{"splits":[{"verdict":"keep"},{"verdict":"keep"},{"verdict":"split","components":["a","b"]}]}`,
+			name:    "empty values returns all missing",
+			content: `{"values":[]}`,
 			n:       2,
-			want: []TagSplitResult{
-				{Verdict: TagSplitKeep},
-				{Verdict: TagSplitKeep},
-			},
+			want:    []TagPartResult{{Index: 0}, {Index: 1}},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseTagSplitResponse(tt.content, tt.n)
-			if err != nil {
+			got, err := ParseTagPartResponse(tt.content, tt.n)
+			if tt.wantErr {
+				if _, ok := errors.AsType[*IncompleteReplyError](err); !ok {
+					t.Fatalf("error = %v, want *IncompleteReplyError", err)
+				}
+			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if len(got) != len(tt.want) {
-				t.Fatalf("len = %d, want %d", len(got), len(tt.want))
-			}
-			for i := range got {
-				if got[i].Verdict != tt.want[i].Verdict {
-					t.Errorf("[%d].Verdict = %q, want %q", i, got[i].Verdict, tt.want[i].Verdict)
-				}
-				if !reflect.DeepEqual(got[i].Components, tt.want[i].Components) {
-					t.Errorf("[%d].Components = %v, want %v", i, got[i].Components, tt.want[i].Components)
-				}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseTagPartResponse = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestParseTagSplitResponse_InvalidJSON(t *testing.T) {
-	_, err := ParseTagSplitResponse("not json", 1)
+func TestParseTagPartResponse_InvalidJSON(t *testing.T) {
+	_, err := ParseTagPartResponse("not json", 1)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestParseTagCompoundResponse(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		n       int
+		want    []TagCompoundResult
+		wantErr bool
+	}{
+		{
+			name:    "all three statuses",
+			content: `{"compounds":[{"index":0,"status":"named_unit"},{"index":1,"status":"composition"},{"index":2,"status":"no_dimension"}]}`,
+			n:       3,
+			want: []TagCompoundResult{
+				{Index: 0, Status: TagCompoundNamedUnit},
+				{Index: 1, Status: TagCompoundComposition},
+				{Index: 2, Status: TagCompoundNoDimension},
+			},
+		},
+		{
+			name:    "abstention carried",
+			content: `{"compounds":[{"index":0,"status":"composition","defer":true}]}`,
+			n:       1,
+			want:    []TagCompoundResult{{Index: 0, Status: TagCompoundComposition, Defer: true}},
+		},
+		{
+			name:    "unknown status is incomplete",
+			content: `{"compounds":[{"index":0,"status":"maybe"}]}`,
+			n:       1,
+			want:    []TagCompoundResult{{Index: 0}},
+			wantErr: true,
+		},
+		{
+			name:    "missing status is incomplete",
+			content: `{"compounds":[{"index":0,"defer":true}]}`,
+			n:       1,
+			want:    []TagCompoundResult{{Index: 0}},
+			wantErr: true,
+		},
+		{
+			name:    "out of range index ignored and its slot missing",
+			content: `{"compounds":[{"index":5,"status":"composition"}]}`,
+			n:       2,
+			want:    []TagCompoundResult{{Index: 0}, {Index: 1}},
+			wantErr: true,
+		},
+		{
+			name:    "bare top-level array accepted as the envelope",
+			content: `[{"index":0,"status":"named_unit"}]`,
+			n:       1,
+			want:    []TagCompoundResult{{Index: 0, Status: TagCompoundNamedUnit}},
+		},
+		{
+			name:    "code block stripped",
+			content: "```json\n{\"compounds\":[{\"index\":0,\"status\":\"no_dimension\"}]}\n```",
+			n:       1,
+			want:    []TagCompoundResult{{Index: 0, Status: TagCompoundNoDimension}},
+		},
+		{
+			name:    "entries without index placed by position",
+			content: `{"compounds":[{"status":"composition"},{"status":"named_unit"}]}`,
+			n:       2,
+			want:    []TagCompoundResult{{Index: 0, Status: TagCompoundComposition}, {Index: 1, Status: TagCompoundNamedUnit}},
+		},
+		{
+			name:    "empty compounds returns all missing",
+			content: `{"compounds":[]}`,
+			n:       2,
+			want:    []TagCompoundResult{{Index: 0}, {Index: 1}},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseTagCompoundResponse(tt.content, tt.n)
+			if tt.wantErr {
+				if _, ok := errors.AsType[*IncompleteReplyError](err); !ok {
+					t.Fatalf("error = %v, want *IncompleteReplyError", err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseTagCompoundResponse = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseTagCompoundResponse_InvalidJSON(t *testing.T) {
+	_, err := ParseTagCompoundResponse("not json", 1)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}

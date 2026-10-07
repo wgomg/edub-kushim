@@ -55,7 +55,7 @@ the whole batch pauses (§10).
 
 ## 2. The ContentAnalyzer interface
 
-`internal/llm/analyzer/adapter.go:33-78`:
+`internal/llm/analyzer/adapter.go:33-82`:
 
 ```go
 type TypeRef struct {
@@ -67,7 +67,8 @@ type ContentAnalyzer interface {
   Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error)
   AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
   Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
-  AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error)
+  JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error)
+  JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
   JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
   JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
   Name() string
@@ -101,6 +102,20 @@ type AnalysisResult struct {
   provider supports it). Used by the tag adjudicator when
   `enricher.tag_adjudicator.enabled` is true; see the
   [semantic matching guide](semantic-matching.md#identity-adjudication).
+- `JudgeTagParts` — the split gate's parts pass: decides whether each value, on
+  its own, names a subject a searcher would filter by, with a temperature-0
+  request built from `BuildTagPartPrompt` and parsed by
+  `ParseTagPartResponse` (an entry without a complete dimensional answer is
+  missing; a truncated reply carries its entries alongside
+  `*IncompleteReplyError`). Used by the enricher's decomposition step when
+  `enricher.tag_adjudicator.enabled` is true.
+- `JudgeTagCompounds` — the split gate's compound pass: reads what each
+  compound phrase denotes (`named_unit` / `composition` / `no_dimension`, plus
+  an abstention) with a temperature-0 request built from
+  `BuildTagCompoundPrompt` and parsed by `ParseTagCompoundResponse` (an entry
+  outside the trichotomy is missing; a truncated reply carries its entries
+  alongside `*IncompleteReplyError`). Used by the enricher's decomposition step
+  and the reconciliation joint sweep under the same toggle.
 - `JudgeTagIdentity` — answers the three binary canonical-form criteria for a
   flagged candidate (`fold_to_base`, `fold_preserves_denotation`,
   `conventional_form`) with a temperature-0 request built from
@@ -134,7 +149,7 @@ type AnalysisResult struct {
   per-document admission tallies (assignments, births, promotions, rejects,
   defers, composition dispositions) the batch settle bookend aggregates.
 
-The factory (`adapter.go:84-96`) requires the model registry, looks up the
+The factory (`adapter.go:84-100`) requires the model registry, looks up the
 configured provider/model capabilities, and switches on `Llm.Adapter`:
 `"anthropic"` → the Anthropic adapter, anything else → the
 OpenAI-compatible adapter (the default branch — unknown adapter names
@@ -161,7 +176,7 @@ of the extraction contract:
 Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}
-- Tags: At least {{.MinTags}} tags naming the broad subjects the document is about — the topics a reader would use to find other documents like this one. English only. ... Tags describe subject matter only; what the document is as a publication — its publishing format (a book, article, tutorial, report) — belongs in the document type field, never in tags. A genre or art form (poetry, science fiction, autobiography) is subject matter and may be a tag. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... When the parts of a phrase each name a subject that would work as a tag on its own, emit the parts as separate tags instead of the phrase — 'russia' and 'history', not 'russian history'; ... A fixed name or set phrase whose words are not subjects on their own stays whole ('cold war', 'machine learning', 'climate change'). ... Each tag is an object with keys: term, category. Category is exactly one of: topic (subject matter), form_genre (the document's publishing format), place, person, work, other. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document), 'newfoundland' (a sub-national place — only countries and continents may be tags).{{.TagsPrompt}}
+- Tags: At least {{.MinTags}} tags naming the broad subjects the document is about — the topics a reader would use to find other documents like this one. English only. ... Tags describe subject matter only; what the document is as a publication — its publishing format (a book, article, tutorial, report) — belongs in the document type field, never in tags. A genre or art form (poetry, science fiction, autobiography) is subject matter and may be a tag. Tags are never specific people or works. A place may be a tag only when it denotes a country or a continent — including contested or partially recognized states such as 'palestine' or 'taiwan' — never a city, province, region, or other sub-national place. ... When the parts of a phrase each name a subject that would work as a tag on its own, emit the parts as separate tags instead of the phrase — 'russia' and 'history', not 'russian history'; ... A fixed name or set phrase whose words are not subjects on their own stays whole ('cold war', 'internet of things', 'black bloc'). ... Each tag is an object with keys: term, category. Category is exactly one of: topic (subject matter), form_genre (the document's publishing format), place, person, work, other. Do not emit tags like these: 'literary anthology' (a form — it belongs in the document type), 'racial scapegoating' (an argument specific to this document), 'newfoundland' (a sub-national place — only countries and continents may be tags).{{.TagsPrompt}}
 - People: People associated with the document. For each person provide: name (the person's name in their own native script/language ...), name_romanized (...), and a type from the list below. ...
 {{.PeoplePrompt}}- Language: 3-letter ISO 639-2 code (e.g. 'eng','spa','jpn',...). Detect the primary language even from noisy or mixed text. Only use 'und' as a last resort ...
 
@@ -407,14 +422,14 @@ log. The `AnalyzeDocType` fallback for a response with no `type` key re-parses
 through the same helper, so an object-shaped response still yields its
 `DocType`.
 
-The four judged parsers (`ParseAdjudicationResponse`, `ParseTagSplitResponse`,
-`ParseTagQualityResponse`, `ParseTagIdentityResponse`) run the same
-clean-then-decode steps with two tolerances for replies that drift from the
-prompt's envelope: a bare top-level JSON array is wrapped under the step's
-envelope key (`pairs`, `splits`, `tags`, `terms`) before decoding, and an
-entry that omits `index` is placed at its array position. A present index is
-still range-checked, entries beyond the candidate count are dropped, and the
-quality/identity parsers still error when a candidate lacks a complete
+The five judged parsers (`ParseAdjudicationResponse`, `ParseTagPartResponse`,
+`ParseTagCompoundResponse`, `ParseTagQualityResponse`, `ParseTagIdentityResponse`)
+run the same clean-then-decode steps with two tolerances for replies that drift
+from the prompt's envelope: a bare top-level JSON array is wrapped under the
+step's envelope key (`pairs`, `values`, `compounds`, `tags`, `terms`) before
+decoding, and an entry that omits `index` is placed at its array position. A
+present index is still range-checked, entries beyond the candidate count are
+dropped, and the judged parsers still error when an entry lacks a complete
 verdict. Both bridges log a DEBUG drift line naming the model when the reply
 is a bare array, and every judged call logs one DEBUG line with its step
 label, model, candidate count and duration. Before parsing, the OpenAI side

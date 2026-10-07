@@ -395,7 +395,7 @@ type TagCompositionEvent struct {
 
 type TagCompoundStatusEvent struct {
 	ID                   int64
-	DocumentID           int64
+	DocumentID           sql.NullInt64
 	Candidate            string
 	Status               string
 	Criteria             json.RawMessage
@@ -437,7 +437,7 @@ type TagMergeDismissal struct {
 
 type TagPartDimensionEvent struct {
 	ID            int64
-	DocumentID    int64
+	DocumentID    sql.NullInt64
 	Value         string
 	Criteria      json.RawMessage
 	Dimensional   bool

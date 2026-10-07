@@ -25,9 +25,10 @@ other languages or longer than three words (separate plan).
   assumed by §3.1.
 - **Existing machinery** — the emission-time decomposition pass and the LLM adjudicator
   with its cached, versioned verdicts are the precedent this spec extends: the pass
-  covers every compound candidate (adjudicated; conjunction joints split mechanically
-  without a judge), and the reconciler re-uses the conjunction detector for stored
-  tags. This spec supplies the measurement and the decision over those candidates.
+  covers every compound candidate (two judged passes when the adjudicator is on;
+  conjunction joints split mechanically without a judge) and disposes them through
+  `tags.DecideComposition`, and the reconciler re-uses the conjunction detector for
+  stored tags. This spec supplies the measurement and the decision over those candidates.
 - **Free text** — tags are search shortcuts for dimensions; named specifics belong to
   free-text search, which composes with tag filters. A phrase being a fixed name is
   never by itself a reason to admit it. The unit branch exists for phrases whose parts

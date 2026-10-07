@@ -313,8 +313,8 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `tag_verdict_event` — Append-only tag-adjudication verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `query`, `target`, `sim`, `verdict` (`same`/`variant`/`related`), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(query, target, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
 - `tag_quality_event` — Append-only tag-quality rubric verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `tag_name` (canonical form), `criteria` (JSONB — the five rubric answers `subject_matter`, `dimension`, `not_person_place_work`, `atomic`, `not_form_genre`, plus the optional `defer` abstention), `pass` (whether the decision admitted the name), `outcome` (nullable — `reject`/`defer`/`admit`, the recorded disposition; NULL on rows predating the column and on cache-applied copies of those), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(tag_name, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers; the newest row per name is the cache, so a re-emitted name resolves without an LLM call.
 - `tag_composition_event` — Append-only decomposition verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `candidate` (canonical form), `parts` JSONB (`[]` for keep rows; the validated components for split rows and for `part_rejected` drops, which keep the parts they resolved), `disposition` (`split`/`keep`/`drop`, CHECK constrained), `reason` (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`, or `part_rejected` when an admitted part was rejected downstream and the split degrades to `drop`), `criteria_version` (the split criteria the verdict was read under), `model` (nullable — the split judge's model for fresh verdicts), `reconstructible` (nullable — the store reconstructibility signal recorded when the parts pass ran; NULL on rows with no parts reading), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. One row per judged compound per document, serving the composition review as evidence only.
-- `tag_part_dimension_event` — Append-only part-dimension verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `value` (canonical form), `criteria` (JSONB — the dimension reading; `defer` lives in the payload, never as a column), `dimensional` (whether the part names a retrievable dimension), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(value, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
-- `tag_compound_status_event` — Append-only compound-status verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `candidate` (canonical form), `status` (`named_unit`/`composition`/`no_dimension`/`defer`, CHECK constrained), `criteria` (JSONB), `verdict_model` (nullable — NULL for cache-applied rows), `split_criteria_version`, `verdict_at`. A partial unique index on `(candidate, split_criteria_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
+- `tag_part_dimension_event` — Append-only part-dimension verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE; nullable — NULL on a row written with no emitting document, such as one the stored-joint sweep produces), `value` (canonical form), `criteria` (JSONB — the dimension reading; `defer` lives in the payload, never as a column), `dimensional` (whether the part names a retrievable dimension), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(value, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
+- `tag_compound_status_event` — Append-only compound-status verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE; nullable — NULL on a row written with no emitting document, such as one the stored-joint sweep produces), `candidate` (canonical form), `status` (`named_unit`/`composition`/`no_dimension`/`defer`, CHECK constrained), `criteria` (JSONB), `verdict_model` (nullable — NULL for cache-applied rows), `split_criteria_version`, `verdict_at`. A partial unique index on `(candidate, split_criteria_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
 
 ## Junction Tables
 
@@ -412,12 +412,15 @@ table — one decomposition verdict per judged compound with `parts` JSONB, a
 `split`/`keep`/`drop` CHECK, `reason`, `criteria_version`, nullable `model` —
 with `idx_tag_composition_event_candidate` and
 `idx_tag_composition_event_document`, the latter serving the document-delete
-cascade), and `00032_tag_split_verdicts.sql` (creates the append-only
+cascade), `00032_tag_split_verdicts.sql` (creates the append-only
 `tag_part_dimension_event` part-dimension verdict table and the append-only
 `tag_compound_status_event` compound-status verdict table, each with a partial
 unique fresh-row index mirroring the quality gate, and adds the nullable
 `tag_composition_event.reconstructible` column recording the store
-reconstructibility signal). Goose tracks
+reconstructibility signal), and `00033_tag_split_verdict_provenance.sql`
+(drops `NOT NULL` from `tag_part_dimension_event.document_id` and
+`tag_compound_status_event.document_id`, so a verdict row written with no
+emitting document — a sweep-originated row — is storable). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

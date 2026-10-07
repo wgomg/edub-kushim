@@ -109,7 +109,7 @@ A compound tag whose parts each name a subject — `russian history`,
 its parts before consolidation, so `russian history` becomes `russia` +
 `history` instead of a single tag that the matcher can never match cleanly.
 Fixed names and set phrases whose words are not subjects on their own
-(`cold war`, `machine learning`, `urban planning`) stay whole, and a compound
+(`cold war`, `internet of things`, `black bloc`) stay whole, and a compound
 whose key already exists in the store (names and aliases) is an application:
 it is skipped before judgment and never split.
 
@@ -117,17 +117,19 @@ it is skipped before judgment and never split.
   with at least one content part is a candidate (`tags.ClassifyShape` =
   `ShapeCompound`); single-word, non-Latin, and function-word-only names never
   reach the pass.
-- **Decision**: with the tag adjudicator enabled, the split decision is
-  LLM-adjudicated (`AdjudicateTagSplits`, same adjudicator as tag pairs,
-  criteria pinned by `analyzer.TagSplitVersion`) — the parts are the tag's
-  content words, and the gate splits when each part names a subject a searcher
-  would filter by on its own and the phrase is just their combination,
+- **Decision**: with the tag adjudicator enabled, the split decision runs two
+  context-free judged passes (same adjudicator as tag pairs) — a **parts
+  pass** (`analyzer.TagPartDimensionVersion`) judges each fold-resolved content
+  word on its own, and a **compound pass** (`analyzer.TagSplitVersion`) reads
+  the phrase as a named unit, a plain composition, or a phrase with no
+  retrievable dimension — and the two answer sets fold into one decision
+  (`tags.DecideComposition`). The gate splits when every part names a subject a
+  searcher would filter by on its own and the phrase is just their combination,
   including a modifier before a generic head (`labor movement`, `bike
   repair`); it keeps the tag when the phrase names one established subject the
-  parts cannot compose (`urban planning`). Compounds sharing a head and shape
-  take one reading, and unsettled readings keep. Verdicts are memoized per tag
-  name within the enricher
-  process, so a compound seen across documents is adjudicated once. With the
+  parts cannot compose (`urban planning`), and drops a phrase that names no
+  retrievable dimension. Both verdicts are cached per value and per compound,
+  so a value or compound seen across documents is judged once. With the
   adjudicator disabled, only conjunction joints (`and`, `or`, `vs`, `vs.`,
   `versus` — detected by `textnorm.SplitJointTag`; after normalization `&` is
   stripped, so "rock & roll" is not joint) split deterministically; every
@@ -237,6 +239,22 @@ The decision thresholds are pinned v1 constants, not configuration keys; the
 judge LLM and timeout inherit the content analyzer's unless the `llm` block
 overrides them, and a warning is logged when the resolved judge equals the
 generator.
+
+---
+
+## Judge criteria versions
+
+Every LLM judge pins its criteria with a version constant, and a cached verdict
+applies only under the version that produced it — a criteria or prompt change
+bumps the constant so older rows never apply. The current constants:
+
+- `analyzer.TagQualityVersion` (`v3`) — the tag-quality judge's dimension
+  rubric and prompt.
+- `analyzer.TagPartDimensionVersion` (`v1`) — the split gate's parts pass: one
+  context-free dimensional question per value, judged alone.
+- `analyzer.TagSplitVersion` (`v2`) — the split gate's compound pass: the
+  context-free `named_unit`/`composition`/`no_dimension` trichotomy plus an
+  abstention, and the `criteria_version` every composition row carries.
 
 ---
 

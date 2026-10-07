@@ -337,7 +337,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
-	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, promotedStoreNames, tagFilter, logId)
+	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, promotedStoreNames, tagFilter, document.ID, logId)
 	if err != nil {
 		if te := e.creditPause(logId, err); te != nil {
 			return nil, DocumentCounts{}, te

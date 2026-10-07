@@ -22,7 +22,7 @@ ON CONFLICT (candidate, split_criteria_version) WHERE verdict_model IS NOT NULL 
 `
 
 type InsertTagCompoundStatusEventParams struct {
-	DocumentID           int64
+	DocumentID           sql.NullInt64
 	Candidate            string
 	Status               string
 	Criteria             json.RawMessage

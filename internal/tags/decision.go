@@ -130,7 +130,7 @@ type CompositionDecision struct {
 // DecideComposition disposes of one compound candidate from its features under the pinned rule set of
 // docs/tags/definition-and-faceted-retrieval.md §6.6/§8.10 and docs/tags/atomicity.md §3.3–§3.5. No single
 // signal decides, and evaluation order is load-bearing: a fresh-sample disagreement defers first; an
-// unavailable judge keeps the compound with D18 semantics (no hold, re-judged on any re-emission); an
+// unavailable judge keeps the compound with no hold, and the compound is re-judged on any re-emission; an
 // abstention defers under split_defer; a compound verdict contradicting the parts status routes to review;
 // composition splits; no_dimension drops only when the parts agree it is no dimension; and a named unit keeps
 // whole, with the reconstructible gray class held while mass accrues. An unrecognized combination falls to

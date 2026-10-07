@@ -18,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -185,9 +186,14 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		return report, fmt.Errorf("list tags: %w", err)
 	}
 	storeTags := make(map[string]database.Tag, len(allTags))
+	promotedNames := make([]string, 0, len(allTags))
 	for _, t := range allTags {
 		storeTags[t.Name] = t
+		if t.PromotedAt.Valid {
+			promotedNames = append(promotedNames, t.Name)
+		}
 	}
+	promotedView := tags.StoreNames(promotedNames)
 	deletedTags, err := r.client.ListAllDeletedTags(ctx)
 	if err != nil {
 		return report, fmt.Errorf("list deleted tags: %w", err)
@@ -220,7 +226,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		report.AdjudicatorDisabled = true
-		r.decideJointSplits(ctx, cfg, jointWorklist)
+		r.decideJointSplits(ctx, cfg, jointWorklist, promotedView)
 		r.planJointSplits(jointWorklist, &report)
 		r.logger.Info("", "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d joint tags detected (would split %d deterministically)",
 			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.Worklist.Joint, len(report.PlannedJointSplits))
@@ -240,7 +246,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	r.evidencePass(ctx, cfg, worklist)
 
 	progress("splits", "adjudicating joint tags", 0)
-	r.decideJointSplits(ctx, cfg, jointWorklist)
+	r.decideJointSplits(ctx, cfg, jointWorklist, promotedView)
 
 	progress("apply", "applying flips", 0)
 	r.applyPass(ctx, cfg, worklist, &report, tagCounts, blocklist)

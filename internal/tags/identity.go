@@ -677,6 +677,19 @@ func AnchoredFold(name string, promotedNames map[string]string) string {
 	return anchor
 }
 
+// AllPartsPromoted reports whether every part names a promoted store label: the established-value proxy the composition decision's
+// reconstructibility signal reads. Promotion implies a live extension, so a promoted label is already past the recurrence floor, while a
+// provisional part below it is not treated as a store intersection. promotedNames maps Key(storeName) to the promoted store's name; an empty
+// part list reports true.
+func AllPartsPromoted(parts []string, promotedNames map[string]string) bool {
+	for _, part := range parts {
+		if _, ok := promotedNames[Key(part)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // suffixLocal reports whether name and its morphological anchor agree on
 // every character up to the suffix region, allowing only the last three
 // characters of name to differ. The ≤2-distance proposal can still reach a

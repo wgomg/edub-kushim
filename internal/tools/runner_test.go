@@ -111,6 +111,7 @@ type mockContentAnalyzer struct {
 	analyzeFn        func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error)
 	analyzeDocTypeFn func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error)
 	adjudicateFn     func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
+	judgeTagPartsFn  func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
 }
 
 func (m *mockContentAnalyzer) Analyze(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
@@ -134,7 +135,14 @@ func (m *mockContentAnalyzer) Adjudicate(ctx context.Context, pairs []analyzer.T
 	return nil, nil
 }
 
-func (m *mockContentAnalyzer) AdjudicateTagSplits(_ context.Context, _ []string) ([]analyzer.TagSplitResult, error) {
+func (m *mockContentAnalyzer) JudgeTagParts(ctx context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	if m.judgeTagPartsFn != nil {
+		return m.judgeTagPartsFn(ctx, values)
+	}
+	return nil, nil
+}
+
+func (m *mockContentAnalyzer) JudgeTagCompounds(_ context.Context, _ []string) ([]analyzer.TagCompoundResult, error) {
 	return nil, nil
 }
 
@@ -214,6 +222,43 @@ func TestAnalyzeDocType_TimeoutAppliesDeadline(t *testing.T) {
 	if _, ok := receivedCtx.Deadline(); !ok {
 		t.Error("context should have a deadline when timeout>0")
 	}
+}
+
+// TestJudgeTagParts_TimeoutAndMissingAdapter covers the judged-call path the split gate's two passes share:
+// the configured adjudicator timeout must reach the judge's context, and a runner without an adjudicator
+// fails fast instead of returning an empty batch that would read as a judge outage.
+func TestJudgeTagParts_TimeoutAndMissingAdapter(t *testing.T) {
+	t.Run("the adjudicator timeout reaches the judge", func(t *testing.T) {
+		var receivedCtx context.Context
+		mock := &mockContentAnalyzer{
+			judgeTagPartsFn: func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error) {
+				receivedCtx = ctx
+				return []analyzer.TagPartResult{}, nil
+			},
+		}
+		r := &Runner{
+			logger:         log.NewDiscardLogger(),
+			config:         &config.Config{Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 90}}},
+			tagAdjudicator: mock,
+		}
+
+		if _, err := r.JudgeTagParts(context.Background(), []string{"russia"}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := receivedCtx.Deadline(); !ok {
+			t.Error("context should have a deadline when timeout>0")
+		}
+	})
+
+	t.Run("no adjudicator is a not-configured failure", func(t *testing.T) {
+		r := &Runner{
+			logger: log.NewDiscardLogger(),
+			config: &config.Config{},
+		}
+		if _, err := r.JudgeTagParts(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "not configured") {
+			t.Errorf("error = %v, want a not-configured failure", err)
+		}
+	})
 }
 
 func TestOptimizePdf_FileNotFound(t *testing.T) {

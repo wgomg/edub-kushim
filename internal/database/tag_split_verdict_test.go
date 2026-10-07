@@ -21,7 +21,7 @@ func TestSplitVerdictQueries(t *testing.T) {
 	now := time.Now()
 
 	part := InsertTagPartDimensionEventParams{
-		DocumentID:    docID,
+		DocumentID:    sql.NullInt64{Int64: docID, Valid: true},
 		Value:         "russia",
 		Criteria:      []byte(`{"dimensional":true}`),
 		Dimensional:   true,
@@ -99,7 +99,7 @@ func TestSplitVerdictQueries(t *testing.T) {
 	}
 
 	compound := InsertTagCompoundStatusEventParams{
-		DocumentID:           docID,
+		DocumentID:           sql.NullInt64{Int64: docID, Valid: true},
 		Candidate:            "russian history",
 		Status:               "composition",
 		Criteria:             []byte(`{"status":"composition"}`),
@@ -218,5 +218,66 @@ func TestSplitVerdictQueries(t *testing.T) {
 	}
 	if reasons[0].Candidate != "russian history" || reasons[0].Reason != "named_unit" {
 		t.Errorf("latest composition reason = %q/%q, want the newer row under split-v2", reasons[0].Candidate, reasons[0].Reason)
+	}
+}
+
+// TestSplitVerdictQueries_NullDocumentID pins migration 00033's half of the provenance contract: both verdict
+// tables accept a NULL document_id — which is how a row written with no emitting document, such as one the
+// stored-joint sweep produces, is stored — and the reads the split gate works from still return those rows.
+func TestSplitVerdictQueries_NullDocumentID(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+	// resetDB clears nothing that carries no document, so the document-less rows of a previous run would
+	// still collide with this test's fixed keys
+	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event"} {
+		if _, err := db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			t.Fatalf("reset %s: %v", table, err)
+		}
+	}
+
+	part := InsertTagPartDimensionEventParams{
+		DocumentID:    sql.NullInt64{},
+		Value:         "sweep-only value",
+		Criteria:      []byte(`{"dimensional":true,"defer":false}`),
+		Dimensional:   true,
+		VerdictModel:  sql.NullString{String: "judge-m", Valid: true},
+		PolicyVersion: "part-v1",
+	}
+	if n, err := q.InsertTagPartDimensionEvent(ctx, part); err != nil || n != 1 {
+		t.Fatalf("NULL-document part verdict: rows=%d err=%v, want the column to accept it", n, err)
+	}
+	parts, err := q.LatestTagPartVerdictsForValues(ctx, LatestTagPartVerdictsForValuesParams{
+		PolicyVersion: "part-v1",
+		PartValues:    []string{"sweep-only value"},
+	})
+	if err != nil || len(parts) != 1 {
+		t.Fatalf("part verdicts = %v (err=%v), want the document-less row read back", parts, err)
+	}
+	if !parts[0].VerdictModel.Valid {
+		t.Error("the document-less part verdict lost its model")
+	}
+
+	compound := InsertTagCompoundStatusEventParams{
+		DocumentID:           sql.NullInt64{},
+		Candidate:            "sweep-only candidate",
+		Status:               "composition",
+		Criteria:             []byte(`{"status":"composition","defer":false}`),
+		VerdictModel:         sql.NullString{String: "judge-m", Valid: true},
+		SplitCriteriaVersion: "split-v2",
+	}
+	if n, err := q.InsertTagCompoundStatusEvent(ctx, compound); err != nil || n != 1 {
+		t.Fatalf("NULL-document compound verdict: rows=%d err=%v, want the column to accept it", n, err)
+	}
+	compounds, err := q.LatestTagCompoundStatusForCandidates(ctx, LatestTagCompoundStatusForCandidatesParams{
+		SplitCriteriaVersion: "split-v2",
+		Candidates:           []string{"sweep-only candidate"},
+	})
+	if err != nil || len(compounds) != 1 {
+		t.Fatalf("compound verdicts = %v (err=%v), want the document-less row read back", compounds, err)
+	}
+	if compounds[0].Status != "composition" {
+		t.Errorf("document-less compound status = %q, want composition", compounds[0].Status)
 	}
 }

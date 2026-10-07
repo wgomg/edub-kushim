@@ -506,9 +506,14 @@ func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvi
 	return judgedOpenAI(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), ParseAdjudicationResponse)
 }
 
-// AdjudicateTagSplits decides splits through the compatible API.
-func (l *LlmOpenAiCompatible) AdjudicateTagSplits(ctx context.Context, tags []string) ([]TagSplitResult, error) {
-	return judgedOpenAI(ctx, l, TagSplitSystemMessage, BuildTagSplitPrompt(tags), "tag split adjudication", len(tags), ParseTagSplitResponse)
+// JudgeTagParts scores values through the compatible API.
+func (l *LlmOpenAiCompatible) JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error) {
+	return judgedOpenAI(ctx, l, TagPartSystemMessage, BuildTagPartPrompt(values), "tag part judge", len(values), ParseTagPartResponse)
+}
+
+// JudgeTagCompounds classifies compounds through the compatible API.
+func (l *LlmOpenAiCompatible) JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error) {
+	return judgedOpenAI(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), ParseTagCompoundResponse)
 }
 
 // JudgeTagQuality scores candidates through the compatible API.

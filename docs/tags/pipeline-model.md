@@ -314,10 +314,13 @@ disposition for a same-intent label is alias/merge.
 **S4 — atomicity.** At emission, every compound candidate (2–3 words, Latin script,
 content parts) whose key is not already in the store goes to the split gate
 (store-keyed compounds are applications and skip judgment, with no verdict row):
-the adjudicator decides keep/split per tag when
-enabled, and without one only conjunction joints (`and`, `or`, `vs`, `versus` —
-`textnorm.SplitJointTag`) split mechanically while other compounds pass whole. The
-reconciler re-uses the conjunction detector for stored tags. P4 is wider than
+with the adjudicator enabled the decision runs two context-free judged passes — a
+parts pass over each fold-resolved content word and a compound pass reading the
+phrase as a named unit, a composition, or a phrase with no retrievable dimension —
+folded into `tags.DecideComposition`; without one only conjunction joints (`and`,
+`or`, `vs`, `versus` — `textnorm.SplitJointTag`) split mechanically while other
+compounds pass whole. The reconciler re-uses the conjunction detector for stored
+tags and disposes them through the same decision. P4 is wider than
 conjunctions and is a set test, not a surface one. One asymmetry matters for any plan:
 at emission time a novel compound has no extension and its parts may not exist as
 values, so the true test is not available prospectively — the report's
