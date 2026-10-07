@@ -122,6 +122,28 @@ describe('ProvisionalReview verdict labels', () => {
 		await renderLabel(tag({ identity_hold: 'politics' }), 'identity hold → politics');
 	});
 
+	it('shows the split hold with its reason', async () => {
+		await renderLabel(tag({ composition_hold: 'split_defer' }), 'split hold → split_defer');
+	});
+
+	it('shows the degraded composition reason without a hold', async () => {
+		await renderLabel(
+			tag({ composition_reason: 'judge_unavailable' }),
+			'composition → judge_unavailable'
+		);
+	});
+
+	it('hides the degraded composition pill for any other reason', async () => {
+		provisionalList.mockResolvedValue({
+			ok: true,
+			data: { results: [tag({ composition_reason: 'named_unit' })], total: 1 }
+		});
+		render(ProvisionalReview);
+		await screen.findByText('sample tag');
+
+		expect(screen.queryByText(/composition →/)).toBeNull();
+	});
+
 	it('renders the not publishing format criterion when a verdict is present', async () => {
 		await renderLabel(tag({ verdict: verdict() }), /not publishing format/);
 	});

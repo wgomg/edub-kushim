@@ -146,6 +146,11 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		r.logger.Error("", "tag reconcile: provisional identity hold lookup: %v", err)
 		return
 	}
+	compositionHeld, err := tags.CompositionHeldNames(ctx, r.client.Queries, names, analyzer.TagSplitVersion)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: provisional composition hold lookup: %v", err)
+		return
+	}
 	assigned, err := r.client.CountTagDocumentsByTagIDs(ctx, ids)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: count provisional tag documents: %v", err)
@@ -183,6 +188,11 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		if anchor, ok := held[t.Name]; ok {
 			report.Provisional.Skipped++
 			r.logger.Info("", "tag reconcile: identity hold %q (anchor=%q) — left for review", t.Name, anchor)
+			continue
+		}
+		if reason, ok := compositionHeld[t.Name]; ok {
+			report.Provisional.Skipped++
+			r.logger.Info("", "tag reconcile: composition hold %q (reason=%s) — left for review", t.Name, reason)
 			continue
 		}
 		docs := liveCounts[t.ID]

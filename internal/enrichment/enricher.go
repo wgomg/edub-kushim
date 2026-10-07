@@ -740,6 +740,11 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		e.logger.Error(reqID, "tag quality promotion identity hold lookup failed: %v", err)
 		return nil
 	}
+	compositionHeld, err := tags.CompositionHeldNames(ctx, q, names, analyzer.TagSplitVersion)
+	if err != nil {
+		e.logger.Error(reqID, "tag quality promotion composition hold lookup failed: %v", err)
+		return nil
+	}
 	counts, err := tags.NewStore(q).LiveMass(ctx, ids)
 	if err != nil {
 		e.logger.Error(reqID, "tag quality promotion document count failed: %v", err)
@@ -748,6 +753,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 
 	var eligible []candidate
 	var promoteIDs []int64
+	heldSkips := 0
 	for _, c := range candidates {
 		decision, ok := decisionByName[c.name]
 		if !ok || !tags.DecidePromotion(decision.Outcome, counts[c.id]) {
@@ -756,13 +762,20 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		if anchor, ok := held[c.name]; ok {
 			e.logger.Debug(reqID, "tagquality[%s]: identity hold %q (anchor=%q) — left for review",
 				analyzer.TagQualityVersion, c.name, anchor)
+			heldSkips++
+			continue
+		}
+		if reason, ok := compositionHeld[c.name]; ok {
+			e.logger.Debug(reqID, "tagquality[%s]: composition hold %q (reason=%s) — left for review",
+				analyzer.TagQualityVersion, c.name, reason)
+			heldSkips++
 			continue
 		}
 		eligible = append(eligible, c)
 		promoteIDs = append(promoteIDs, c.id)
 	}
 	e.logger.Debug(reqID, "tagquality[%s]: promotion run considered=%d promoted=%d held=%d (rule_set=decision-%s floor=%d)",
-		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), len(held), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
+		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), heldSkips, tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 	if len(promoteIDs) == 0 {
 		return nil
 	}

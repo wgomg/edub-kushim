@@ -556,8 +556,10 @@ predicts what the next apply would delete.
 tags older than `enricher.tag_reconcile.provisional_grace_days` (default 30),
 oldest first. Zero-assignment rows are only counted — the orphan sweep owns
 their deletion. Identity-held rows — a refused fold beside a live store value,
-derived from the latest `base_form`/`fold_gate` evidence — are counted as
-skipped and left for review before any verdict check, so the sweep never
+derived from the latest `base_form`/`fold_gate` evidence — and composition-held
+rows — the latest composition verdict at the current split criteria version
+defers, conflicts, disagrees, or is a reconstructible named unit — are counted
+as skipped and left for review before any verdict check, so the sweep never
 promotes them. Rows whose latest verdict at `TagQualityVersion` passes and
 that hold ≥10 live documents are promoted through `curation.Tag.Promote` (the
 same method behind `POST /api/v1/tags/{id}/promote`, so the log line and the

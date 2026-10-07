@@ -2883,6 +2883,76 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 	}
 }
 
+// TestListProvisionalComposition pins the review surface's composition contract: a held compound
+// carries the reason that withholds promotion, and a degraded keep carries its latest composition
+// reason with no hold. The held event is written as the emitted "World War II" through the
+// production write boundary while the tag is stored as "world war 2", so the API surfaces the hold
+// only when the journal's house-form key matches the store-name lookup.
+func TestListProvisionalComposition(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+
+	heldID := database.MustCreateTag(t, env.client.Queries, "world war 2")
+	degradedID := database.MustCreateTag(t, env.client.Queries, "degraded split compound")
+	for _, id := range []int64{heldID, degradedID} {
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+	}
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "composition-review-doc")
+	database.MustAddDocumentTag(t, env.client.Queries, docID, heldID)
+	database.MustAddDocumentTag(t, env.client.Queries, docID, degradedID)
+
+	tx, err := env.client.BeginTx(ctx, nil)
+	testutil.AssertNoError(t, err, "begin tx")
+	plan := tags.Plan{Composition: []tags.CompositionRow{
+		{
+			DocumentID:      docID,
+			Candidate:       "World War II",
+			Disposition:     tags.CompositionKeep,
+			Reason:          tags.CompositionReasonSplitDefer,
+			CriteriaVersion: analyzer.TagSplitVersion,
+		},
+		{
+			DocumentID:      docID,
+			Candidate:       "degraded split compound",
+			Disposition:     tags.CompositionKeep,
+			Reason:          tags.CompositionReasonJudgeUnavailable,
+			CriteriaVersion: analyzer.TagSplitVersion,
+		},
+	}}
+	_, _, err = env.tagSvc.CreatePlannedTx(ctx, env.client.WithTx(tx), plan, false)
+	testutil.AssertNoError(t, err, "write composition events")
+	testutil.AssertNoError(t, tx.Commit(), "commit composition events")
+
+	w := rec()
+	r := req(t, "GET", "/api/v1/tags/provisional", nil)
+	h.ListProvisional(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var resp ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+
+	byID := make(map[int64]ProvisionalTagResponse, len(resp.Results))
+	for _, result := range resp.Results {
+		byID[result.ID] = result
+	}
+
+	held, ok := byID[heldID]
+	if !ok {
+		t.Fatalf("held tag %d not found in the provisional list", heldID)
+	}
+	testutil.AssertEqual(t, held.CompositionHold, tags.CompositionReasonSplitDefer, "hold reason")
+	testutil.AssertEqual(t, held.CompositionReason, tags.CompositionReasonSplitDefer, "latest event reason")
+
+	degraded, ok := byID[degradedID]
+	if !ok {
+		t.Fatalf("degraded tag %d not found in the provisional list", degradedID)
+	}
+	testutil.AssertEqual(t, degraded.CompositionHold, "", "a degraded keep holds nothing")
+	testutil.AssertEqual(t, degraded.CompositionReason, tags.CompositionReasonJudgeUnavailable, "degraded reason")
+}
+
 // TestListProvisionalFilters pins the queue's filter contract: criteria
 // and verdict narrow both the rows and the reported total, unknown filter
 // values fail loudly at the boundary, and every response carries the

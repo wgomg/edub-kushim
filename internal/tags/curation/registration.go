@@ -278,19 +278,19 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	return results, newNames, nil
 }
 
-// recordCompositionEvidence writes the plan's decomposition verdicts as evidence rows, normalizing
-// candidate and part names at this write boundary and writing the reconstructibility signal only when
-// the caller recorded one. Empty parts encode as an empty JSON array, never null, and a rejected name's
-// row stays: it documents the gate's verdict.
+// recordCompositionEvidence writes the plan's decomposition verdicts as evidence rows, keying candidate
+// and part names by the stored name so the promotion hold and the review surface, which look a compound
+// up by its store tag name, can match it. The reconstructibility signal is written only when the caller
+// recorded one; empty parts encode as an empty JSON array, never null, and a rejected name's row stays.
 func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries, rows []tags.CompositionRow) error {
 	for _, row := range rows {
-		candidate := textnorm.NormalizeTag(row.Candidate)
+		candidate := tags.StoredName(row.Candidate)
 		if candidate == "" {
 			continue
 		}
 		parts := make([]string, 0, len(row.Parts))
 		for _, part := range row.Parts {
-			if p := textnorm.NormalizeTag(part); p != "" {
+			if p := tags.StoredName(part); p != "" {
 				parts = append(parts, p)
 			}
 		}

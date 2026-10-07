@@ -378,6 +378,22 @@
 							identity hold → {tag.identity_hold}
 						</span>
 					{/if}
+					{#if tag.composition_hold}
+						<span
+							class={pillWarn}
+							title="The split decision could not settle this compound; promotion waits for review"
+						>
+							split hold → {tag.composition_hold}
+						</span>
+					{/if}
+					{#if tag.composition_reason === 'judge_unavailable'}
+						<span
+							class={pillPlain}
+							title="No split judge was available; the compound was kept whole and is re-judged when emitted again"
+						>
+							composition → judge_unavailable
+						</span>
+					{/if}
 				</div>
 				{#if tag.verdict}
 					<div class="mt-2.5 flex flex-wrap items-center gap-1.5">

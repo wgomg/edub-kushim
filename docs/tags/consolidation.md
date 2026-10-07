@@ -276,8 +276,10 @@ documents
 sweep alike) gets `promoted_at = now()` and enters the store after the commit.
 The `document_tag` primary key makes the count distinct-document, so a single
 document re-enriching itself cannot promote a name. An identity-held name — a
-fold the gate refused beside a live store value — is skipped by both the inline
-check and the sweep until an operator resolves it.
+fold the gate refused beside a live store value — and a composition-held name —
+the latest composition verdict at the current split criteria version defers,
+conflicts, disagrees, or is a reconstructible named unit — are skipped by both
+the inline check and the sweep until an operator resolves them.
 
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so

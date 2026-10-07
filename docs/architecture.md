@@ -337,9 +337,12 @@ The enrichment pipeline:
    (`GET /api/v1/tags/provisional`, `POST /api/v1/tags/{id}/promote`, and the
    tags page's "New tags" tab); a rejection there is a normal tag delete and
    lands in the blocklist. An identity-held name — a fold the gate refused
-   beside a live store value — is likewise provisional and blocked from inline
-   and sweep promotion until an operator resolves it. With the layer off,
-   births are trusted as before.
+   beside a live store value — and a composition-held name — its latest
+   composition verdict under the current split criteria version defers,
+   conflicts, disagrees, or is a reconstructible named unit — are likewise
+   provisional and blocked from inline and sweep promotion until an operator
+   resolves them; a `judge_unavailable` keep carries no hold and is re-judged
+   when emitted again. With the layer off, births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
    (`tag.CreatePlannedTx` on the transaction handle, with the quality gate as its

@@ -488,10 +488,13 @@ concurrent promotions are idempotent, and the promoted names enter the store
 via `AddToStore` only after the commit (`tagquality[v3]: promote %q
 (docs=%d reason=%s rule_set=decision-v3 floor=10)`). Deferred and rejected
 provisionals never promote here —
-they wait for review — and neither does an identity-held name (a refused fold
-beside a live store value): the hold is derived from the latest
-`base_form`/`fold_gate` evidence and skips the candidate with a DEBUG
-(`identity hold %q (anchor=%q) — left for review`).
+they wait for review — and neither do held names: an identity-held name (a
+refused fold beside a live store value, derived from the latest
+`base_form`/`fold_gate` evidence) or a composition-held name (the latest
+composition verdict at the current split criteria version defers, conflicts,
+disagrees, or is a reconstructible named unit). Each skips the candidate with a
+DEBUG (`identity hold %q (anchor=%q) — left for review` / `composition hold %q
+(reason=%s) — left for review`).
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so
 `Adjudicator.ApplyTagQuality` never sees it again and no verdict row appears. Two surfaces
@@ -509,8 +512,8 @@ resolve them afterwards:
   retry on failure — with the verdict recorded through the enricher's
   fresh-verdict path (`InsertTagQualityEvent` with `DO NOTHING`, so a
   concurrent fresh verdict is kept) and an admitted name promoted immediately at
-  ≥ 10 live documents. Identity-held names are counted as skipped with an INFO
-  naming the anchor and never promote from the sweep. Deferrals, rejections,
+   ≥ 10 live documents. Identity-held and composition-held names are counted as skipped with an INFO
+   naming the anchor or the reason and never promote from the sweep. Deferrals, rejections,
   missing judges, and tags with no live document text stay queued.
 - The **review queue** (`GET /api/v1/tags/provisional`,
   `POST /api/v1/tags/{id}/promote`, and the tags page's editor-only "New
@@ -521,7 +524,10 @@ resolve them afterwards:
   and verdict-class filters and paged over the filtered total; it promotes one
   through the same `curation.Tag.Promote` method the sweep
   uses. Rows whose refused fold targeted a live store value carry the anchor
-  as `identity_hold` and render an "identity hold" pill. A rejection is a
+  as `identity_hold` and render an "identity hold" pill; rows whose latest
+  composition verdict withholds promotion carry its reason as `composition_hold`
+  and render a "split hold → <reason>" pill, while a `judge_unavailable` keep
+  surfaces its reason as `composition_reason` with no hold. A rejection is a
   normal tag delete, so the `deleted_tag` blocklist keeps the name from being
   reborn.
 

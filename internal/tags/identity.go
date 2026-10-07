@@ -325,6 +325,13 @@ func Key(name string) string {
 	return HouseForm(name)
 }
 
+// StoredName returns the name the store persists for a raw candidate: the house form over the normalized
+// name. It is the single recipe for the store's name namespace, so the identity plan, the tag table,
+// and the composition journal key a name identically.
+func StoredName(raw string) string {
+	return HouseForm(textnorm.NormalizeTag(raw))
+}
+
 // Signature is a name's lemma and stem signatures
 // (docs/tags/canonical-form-and-identity.md §3.2 M2). They are evidence
 // only; the stemmer's output is never written to the store.
@@ -791,7 +798,7 @@ func PlanDeterministic(names []string, view StoreView) Plan {
 	ix := NewNameIndex(view.Names)
 	plan := Plan{}
 	for _, raw := range names {
-		name := HouseForm(textnorm.NormalizeTag(raw))
+		name := StoredName(raw)
 		reg := Registration{Input: raw, Name: name, Disposition: DispositionRegister}
 		if name == "" {
 			reg.Disposition = DispositionInvalid

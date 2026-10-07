@@ -340,3 +340,63 @@ func TestCreditPause(t *testing.T) {
 		})
 	}
 }
+
+// TestPromoteEligible_CompositionHold pins D24 on the enrichment promotion path: a compound whose
+// composition verdict withholds promotion stays provisional in the same run where an otherwise
+// identical candidate promotes — both are admitted and at the recurrence floor, so the hold alone
+// decides between them.
+func TestPromoteEligible_CompositionHold(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	logger := log.NewDiscardLogger()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	e := NewEnricher(&config.Config{}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
+
+	admit := tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: tags.ReasonAdmitted}
+	seedCandidate := func(name string) types.CreateResult[database.Tag] {
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		for range tags.RecurrenceFloor {
+			database.MustAddDocumentTag(t, client.Queries, database.CreateUniqueDocument(t, client.Queries, name), id)
+		}
+		return types.CreateResult[database.Tag]{Entity: database.Tag{ID: id, Name: name}, Status: types.Created}
+	}
+	held := seedCandidate("held split compound")
+	free := seedCandidate("free split compound")
+
+	eventDoc := database.CreateUniqueDocument(t, client.Queries, "composition-hold-event")
+	if _, err := client.DB().ExecContext(ctx, `
+		INSERT INTO tag_composition_event
+		    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+		VALUES ($1, $2, '[]'::jsonb, 'keep', $3, $4, now())`,
+		eventDoc, held.Entity.Name, tags.CompositionReasonSplitDefer, analyzer.TagSplitVersion); err != nil {
+		t.Fatalf("seed composition event: %v", err)
+	}
+
+	promoted := e.promoteEligible(ctx, client.Queries,
+		[]types.CreateResult[database.Tag]{held, free},
+		map[string]tags.AdmissionDecision{held.Entity.Name: admit, free.Entity.Name: admit},
+		"composition-hold-test")
+
+	if want := []string{free.Entity.Name}; !slices.Equal(promoted, want) {
+		t.Fatalf("promoted = %v, want %v (the composition hold alone must decide)", promoted, want)
+	}
+	assertPromoted := func(label string, id int64, want bool) {
+		t.Helper()
+		var got bool
+		if err := client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&got); err != nil {
+			t.Fatalf("%s: read promoted state: %v", label, err)
+		}
+		if got != want {
+			t.Errorf("%s: promoted = %v, want %v", label, got, want)
+		}
+	}
+	assertPromoted("held compound", held.Entity.ID, false)
+	assertPromoted("free compound", free.Entity.ID, true)
+}

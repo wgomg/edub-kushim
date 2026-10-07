@@ -754,6 +754,44 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 	testutil.AssertEqual(t, got[2].reconstructible.Valid && got[2].reconstructible.Bool, false, "a computed false stays false rather than becoming null")
 }
 
+// TestTag_CreatePlannedTx_HousesCompositionCandidate pins the store-name namespace for the
+// composition journal: an emitted compound whose house form differs from its normalized form
+// (roman numerals, ordinal words) must be persisted under the house form, so the promotion hold
+// and the review surface — which look a compound up by its store tag name — can match it.
+func TestTag_CreatePlannedTx_HousesCompositionCandidate(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+	docID := database.CreateUniqueDocument(t, client.Queries, "composition-house")
+
+	tx, err := client.BeginTx(ctx, nil)
+	testutil.AssertNoError(t, err, "begin tx")
+	defer tx.Rollback()
+	txQ := client.WithTx(tx)
+
+	plan := tags.Plan{Composition: []tags.CompositionRow{{
+		DocumentID:      docID,
+		Candidate:       "World War II",
+		Disposition:     tags.CompositionKeep,
+		Reason:          tags.CompositionReasonNamedUnitReconstructible,
+		CriteriaVersion: analyzer.TagSplitVersion,
+	}}}
+	_, _, err = svc.CreatePlannedTx(ctx, txQ, plan, false)
+	testutil.AssertNoError(t, err, "create planned tx")
+	testutil.AssertNoError(t, tx.Commit(), "commit composition evidence")
+
+	var candidate string
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			`SELECT candidate FROM tag_composition_event WHERE document_id = $1`, docID).Scan(&candidate),
+		"read composition candidate")
+	testutil.AssertEqual(t, candidate, "world war 2", "candidate keyed by the store house form")
+
+	held, err := tags.CompositionHeldNames(ctx, client.Queries, []string{"world war 2"}, analyzer.TagSplitVersion)
+	testutil.AssertNoError(t, err, "composition held names")
+	testutil.AssertEqual(t, held["world war 2"], tags.CompositionReasonNamedUnitReconstructible,
+		"the promotion hold matches the compound by its store tag name")
+}
+
 func decodeParts(t *testing.T, raw string) []string {
 	t.Helper()
 	var parts []string

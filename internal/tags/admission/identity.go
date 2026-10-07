@@ -75,7 +75,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 
 	candidates := make([]*identityCandidate, len(in.Names))
 	for i, input := range in.Names {
-		cand := &identityCandidate{input: input, name: tags.HouseForm(textnorm.NormalizeTag(input))}
+		cand := &identityCandidate{input: input, name: tags.StoredName(input)}
 		candidates[i] = cand
 		if canonical, ok := aliasMap[cand.name]; ok {
 			cand.name = canonical

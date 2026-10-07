@@ -233,6 +233,26 @@ func (s *Tag) IdentityHeldNames(ctx context.Context, names []string) (map[string
 	return held, nil
 }
 
+// CompositionHeldNames returns, per name, the reason its latest composition verdict under the current
+// split criteria version withholds promotion; names without a hold are absent from the result.
+func (s *Tag) CompositionHeldNames(ctx context.Context, names []string) (map[string]string, error) {
+	held, err := tags.CompositionHeldNames(ctx, s.client.Queries, names, analyzer.TagSplitVersion)
+	if err != nil {
+		return nil, errs.FromDB(err, "composition held names")
+	}
+	return held, nil
+}
+
+// LatestCompositionEventsForNames returns the most recent decomposition event per candidate name, whatever
+// its criteria version — the review surface reads it, not the hold.
+func (s *Tag) LatestCompositionEventsForNames(ctx context.Context, names []string) ([]database.LatestCompositionEventsForNamesRow, error) {
+	rows, err := s.client.Queries.LatestCompositionEventsForNames(ctx, names)
+	if err != nil {
+		return nil, errs.FromDB(err, "latest composition events")
+	}
+	return rows, nil
+}
+
 // AddToStore embeds the names into the matcher store, best-effort.
 func (s *Tag) AddToStore(ctx context.Context, names []string) {
 	if len(names) == 0 {

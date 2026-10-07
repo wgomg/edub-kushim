@@ -320,7 +320,9 @@ test-cgo-db:
 		./internal/ops/consume/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
+		./internal/tags/ \
 		./internal/tags/admission/ \
+		./internal/tags/curation/ \
 		./internal/tags/reconcile/ \
 		./internal/api/handlers/
 
@@ -357,6 +359,7 @@ test-cgo:
 		./internal/ops/consume/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
+		./internal/tags/ \
 		./internal/tags/admission/ \
 		./internal/tags/reconcile/
 

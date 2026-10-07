@@ -7,7 +7,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
@@ -553,4 +555,58 @@ func TestProvisionalOutcome(t *testing.T) {
 			testutil.AssertEqual(t, deferred, tc.wantDeferred, "deferred")
 		})
 	}
+}
+
+// TestSweepProvisionalTags_CompositionHold pins the sweep's half of D24: a held compound past the
+// grace cutoff is counted as skipped before the verdict lookup, so it neither promotes nor enters
+// the re-judge budget — which this run could not serve anyway without a configured quality judge.
+func TestSweepProvisionalTags_CompositionHold(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	tagID := database.MustCreateTag(t, client.Queries, "held sweep compound")
+	if _, err := client.DB().ExecContext(ctx,
+		`UPDATE tag SET promoted_at = NULL, created_at = now() - interval '90 days' WHERE id = $1`, tagID); err != nil {
+		t.Fatalf("backdate provisional tag: %v", err)
+	}
+	docID := database.CreateUniqueDocument(t, client.Queries, "held sweep compound")
+	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
+	if _, err := client.DB().ExecContext(ctx, `
+		INSERT INTO tag_composition_event
+		    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+		VALUES ($1, $2, '[]'::jsonb, 'keep', $3, $4, now())`,
+		docID, "held sweep compound", tags.CompositionReasonSplitDefer, analyzer.TagSplitVersion); err != nil {
+		t.Fatalf("seed composition event: %v", err)
+	}
+
+	cfg := &config.Config{
+		Enricher: config.EnricherConfig{
+			TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30},
+		},
+	}
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		logger: logger,
+	}
+	report := &Report{}
+	r.sweepProvisionalTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Provisional.Worklist, 1, "worklist")
+	testutil.AssertEqual(t, report.Provisional.Skipped, 1, "held skip")
+	testutil.AssertEqual(t, report.Provisional.Promoted, 0, "no promotion")
+
+	var isPromoted bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", tagID).Scan(&isPromoted),
+		"read promoted state")
+	testutil.AssertEqual(t, isPromoted, false, "the held compound stays provisional")
 }

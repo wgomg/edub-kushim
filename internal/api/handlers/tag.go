@@ -289,15 +289,31 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, h.logger, reqID, "provisional tag identity holds", err)
 			return
 		}
+		compositionHeld, err := h.tag.CompositionHeldNames(ctx, names)
+		if err != nil {
+			writeServiceError(w, h.logger, reqID, "provisional tag composition holds", err)
+			return
+		}
+		compositionEvents, err := h.tag.LatestCompositionEventsForNames(ctx, names)
+		if err != nil {
+			writeServiceError(w, h.logger, reqID, "provisional tag composition events", err)
+			return
+		}
+		compositionReasons := make(map[string]string, len(compositionEvents))
+		for _, e := range compositionEvents {
+			compositionReasons[e.Candidate] = e.Reason
+		}
 		for i, t := range rows {
 			responses[i] = ProvisionalTagResponse{
 				ID:            t.ID,
 				Name:          t.Name,
 				DocumentCount: t.DocumentCount,
 				// the list query coalesces created_at, so the value is always present
-				CreatedAt:       t.CreatedAt.Time,
-				PendingIdentity: pending[t.Name],
-				IdentityHold:    held[t.Name],
+				CreatedAt:         t.CreatedAt.Time,
+				PendingIdentity:   pending[t.Name],
+				IdentityHold:      held[t.Name],
+				CompositionHold:   compositionHeld[t.Name],
+				CompositionReason: compositionReasons[t.Name],
 			}
 			if v, ok := verdicts[t.Name]; ok {
 				responses[i].Verdict = &v
@@ -600,17 +616,19 @@ type TagQualityVerdictInfo struct {
 	VerdictAt time.Time               `json:"verdict_at"`
 }
 
-// ProvisionalTagResponse is one provisional tag with its document
-// count, creation time, latest quality verdict, pending identity
-// events, and the store anchor of a refused fold holding it.
+// ProvisionalTagResponse is one provisional tag with its document count, creation time, latest quality
+// verdict, pending identity count, identity and composition promotion holds, and the latest composition
+// reason for a degraded keep.
 type ProvisionalTagResponse struct {
-	ID              int64                  `json:"id"`
-	Name            string                 `json:"name"`
-	DocumentCount   int64                  `json:"document_count"`
-	CreatedAt       time.Time              `json:"created_at"`
-	Verdict         *TagQualityVerdictInfo `json:"verdict"`
-	PendingIdentity int64                  `json:"pending_identity"`
-	IdentityHold    string                 `json:"identity_hold,omitempty"`
+	ID                int64                  `json:"id"`
+	Name              string                 `json:"name"`
+	DocumentCount     int64                  `json:"document_count"`
+	CreatedAt         time.Time              `json:"created_at"`
+	Verdict           *TagQualityVerdictInfo `json:"verdict"`
+	PendingIdentity   int64                  `json:"pending_identity"`
+	IdentityHold      string                 `json:"identity_hold,omitempty"`
+	CompositionHold   string                 `json:"composition_hold,omitempty"`
+	CompositionReason string                 `json:"composition_reason,omitempty"`
 }
 
 // ProvisionalTagListResponse is one page of provisional tags: the
