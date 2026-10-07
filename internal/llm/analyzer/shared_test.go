@@ -99,6 +99,17 @@ func TestDefaultPromptTemplate_PublishingFormatBoundary(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptTemplate_StaysWholeClause(t *testing.T) {
+	const staysWhole = "A phrase that names one subject its parts cannot compose stays whole " +
+		"('cold war', 'internet of things', 'black bloc', '19th century', 'air fryer')."
+	if !strings.Contains(defaultPromptTemplate, staysWhole) {
+		t.Errorf("default template missing the compose test and its named-unit examples: %q", staysWhole)
+	}
+	if strings.Contains(defaultPromptTemplate, "whose words are not subjects on their own") {
+		t.Error("default template still carries the superseded all-words framing of the stays-whole clause")
+	}
+}
+
 func TestBuildPrompt_CustomTemplate(t *testing.T) {
 	custom := "Custom prompt: {{.Text}} and {{.DocTypePrompt}}"
 	result := BuildPrompt("hello world", nil, nil, nil, custom, 3, 5)
@@ -888,6 +899,15 @@ func TestBuildTagPartPrompt(t *testing.T) {
 	if !strings.Contains(result, "never guess") {
 		t.Error("parts criteria must defer rather than guess")
 	}
+	if !strings.Contains(result, "cannot stand as a subject on its own") {
+		t.Error("parts criteria must give the judge a concrete fragment test")
+	}
+	if !strings.Contains(result, "do not infer a sense it might take from a phrase") {
+		t.Error("parts criteria must anchor the value to its ordinary standalone sense")
+	}
+	if strings.Contains(result, "no phrase or document context") || strings.Contains(result, "any document collection") {
+		t.Error("parts criteria must not name context the call never receives")
+	}
 }
 
 func TestBuildTagCompoundPrompt(t *testing.T) {
@@ -905,6 +925,12 @@ func TestBuildTagCompoundPrompt(t *testing.T) {
 	}
 	if !strings.Contains(result, "never force one") {
 		t.Error("compound criteria must defer rather than force a reading")
+	}
+	if !strings.Contains(result, "Judge each phrase independently") {
+		t.Error("compound criteria must keep the anti-family rule in positive form")
+	}
+	if strings.Contains(result, "independent of sibling compounds and of any document") {
+		t.Error("compound criteria must not name context the call never receives")
 	}
 }
 

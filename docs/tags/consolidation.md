@@ -108,7 +108,7 @@ A compound tag whose parts each name a subject — `russian history`,
 `philosophy of mind`, `air fryer repair`, `supply and demand` — is replaced by
 its parts before consolidation, so `russian history` becomes `russia` +
 `history` instead of a single tag that the matcher can never match cleanly.
-Fixed names and set phrases whose words are not subjects on their own
+Fixed names and set phrases that name one subject their parts cannot compose
 (`cold war`, `internet of things`, `black bloc`) stay whole, and a compound
 whose key already exists in the store (names and aliases) is an application:
 it is skipped before judgment and never split.
@@ -250,9 +250,10 @@ bumps the constant so older rows never apply. The current constants:
 
 - `analyzer.TagQualityVersion` (`v3`) — the tag-quality judge's dimension
   rubric and prompt.
-- `analyzer.TagPartDimensionVersion` (`v1`) — the split gate's parts pass: one
-  context-free dimensional question per value, judged alone.
-- `analyzer.TagSplitVersion` (`v2`) — the split gate's compound pass: the
+- `analyzer.TagPartDimensionVersion` (`v2`) — the split gate's parts pass: one
+  context-free dimensional question per value, judged in its ordinary
+  standalone sense.
+- `analyzer.TagSplitVersion` (`v3`) — the split gate's compound pass: the
   context-free `named_unit`/`composition`/`no_dimension` trichotomy plus an
   abstention, and the `criteria_version` every composition row carries.
 

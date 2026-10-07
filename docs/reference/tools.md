@@ -155,9 +155,9 @@ The split gate's two context-free judged contracts: the **parts pass** asks whet
 
 ### Constants
 
-- `TagPartDimensionVersion` (exported) — `"v1"`; pins the parts pass's criteria and the policy version of its cached rows (`tag_part_dimension_event`). A criteria or prompt change bumps it so an older generation's verdicts never apply.
+- `TagPartDimensionVersion` (exported) — `"v2"`; pins the parts pass's criteria and the policy version of its cached rows (`tag_part_dimension_event`). A criteria or prompt change bumps it so an older generation's verdicts never apply.
 - `TagPartSystemMessage` (exported) — `"You are a tag-dimension classifier. Decide whether each value, on its own, is a subject a searcher would filter by."`
-- `TagSplitVersion` (exported) — `"v2"`; pins the compound pass's criteria, the policy version of the compound rows (`tag_compound_status_event`), and every `tag_composition_event` row's `criteria_version`. A criteria or prompt change bumps it so an older generation's verdicts never apply.
+- `TagSplitVersion` (exported) — `"v3"`; pins the compound pass's criteria, the policy version of the compound rows (`tag_compound_status_event`), and every `tag_composition_event` row's `criteria_version`. A criteria or prompt change bumps it so an older generation's verdicts never apply.
 - `TagCompoundSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide what a compound phrase denotes."`
 
 ### Types
@@ -170,9 +170,9 @@ The split gate's two context-free judged contracts: the **parts pass** asks whet
 
 ### Functions
 
-- `BuildTagPartPrompt(values []string) string` — the parts pass's context-free dimensional question: each value is judged alone, a broad reusable dimension counts, a generic container does not, a whitelisted country or continent counts, and an unsettled value defers rather than guesses.
+- `BuildTagPartPrompt(values []string) string` — the parts pass's context-free dimensional question: each value is judged in its ordinary standalone sense, a broad reusable dimension counts, a generic container or a form that cannot stand as a subject on its own does not, a whitelisted country or continent counts, and an unsettled value defers rather than guesses.
 - `ParseTagPartResponse(content string, n int) ([]TagPartResult, error)` — parses `{"values":[{"index":0,"dimensional":true,"defer":false},...]}` (code-fenced or plain) into one result per value; a bare top-level array is accepted as the envelope's value, and an entry without `index` is placed by its array position. An entry with no complete dimensional answer is missing. A truncated reply returns `*IncompleteReplyError` alongside the entries it did read.
-- `BuildTagCompoundPrompt(candidates []string) string` — the compound pass's context-free trichotomy question: `named_unit` for a phrase its parts cannot compose, `composition` for the plain combination of its content words, `no_dimension` for a phrase a searcher would not filter by; an unsettled reading defers rather than forcing one.
+- `BuildTagCompoundPrompt(candidates []string) string` — the compound pass's context-free trichotomy question: `named_unit` for a phrase its parts cannot compose, `composition` for the plain combination of its content words, `no_dimension` for a phrase a searcher would not filter by; each phrase is judged independently of its siblings, and an unsettled reading defers rather than forcing one.
 - `ParseTagCompoundResponse(content string, n int) ([]TagCompoundResult, error)` — parses `{"compounds":[{"index":0,"status":"composition","defer":false},...]}` with the same envelope tolerances as the parts parser. An entry with no recognized status is missing, and a truncated reply returns `*IncompleteReplyError` alongside the entries it did read.
 
 ---

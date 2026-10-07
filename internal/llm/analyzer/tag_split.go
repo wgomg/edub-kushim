@@ -8,7 +8,7 @@ import (
 
 // TagPartDimensionVersion pins the parts pass's criteria: the context-free dimensional question asked of a value on its own, and the policy version
 // of its cached verdict rows. A criteria or prompt change bumps it so an older generation's verdicts never apply.
-const TagPartDimensionVersion = "v1"
+const TagPartDimensionVersion = "v2"
 
 // TagPartSystemMessage is the system prompt of the parts pass.
 const TagPartSystemMessage = "You are a tag-dimension classifier. Decide whether each value, on its own, is a subject a searcher would filter by."
@@ -53,16 +53,16 @@ func (c TagPartCriteria) String() string {
 		c.Defer != nil && *c.Defer)
 }
 
-// BuildTagPartPrompt renders the parts pass's context-free dimensional question over the values: each value
-// is judged alone, with no phrase, document, or store context, and a country or continent value is a
-// legitimate tag like any other.
+// BuildTagPartPrompt renders the parts pass's context-free dimensional question over the values: each
+// value is judged in its ordinary standalone sense, never a sense inferred from a phrase; a form that
+// cannot stand as a subject on its own is not a dimension, and a country or continent value counts.
 func BuildTagPartPrompt(values []string) string {
 	var sb strings.Builder
-	sb.WriteString("For each value below, judge it on its own as a potential search filter over any document collection: does it name a subject a searcher would filter by?\n")
-	sb.WriteString("- A broad, stable, reusable dimension of content counts (repair, movement, networking).\n")
-	sb.WriteString("- A generic container with no retrieval function does not (air, thought, irony).\n")
-	sb.WriteString("- A value that is a legitimate tag on any facet, a whitelisted country or continent included (russia), counts.\n")
-	sb.WriteString("Judge the value alone: no phrase or document context. Set defer true when you cannot decide; never guess.\n")
+	sb.WriteString("For each value below, judge whether it names a subject a searcher would filter by in a document store: a broad, stable, reusable dimension of content.\n")
+	sb.WriteString("- A value that stands on its own as a subject counts, however rare it is in general text (repair, networking, philosophy, russia).\n")
+	sb.WriteString("- A value with no retrieval function does not: a generic container (use, thought, knowledge, irony), or a form that cannot stand as a subject on its own (an adjective, a verb form, a bare modifier).\n")
+	sb.WriteString("- Judge the value in its ordinary standalone sense; do not infer a sense it might take from a phrase.\n")
+	sb.WriteString("Set defer true when you cannot decide; never guess.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"values\":[{\"index\":0,\"dimensional\":true,\"defer\":false},...]}, one entry per value, no explanations.\n\n")
 	for i, value := range values {
 		fmt.Fprintf(&sb, "Value %d: %q\n", i, value)
@@ -143,7 +143,7 @@ func (s TagCompoundStatus) Valid() bool {
 // TagSplitVersion pins the compound pass's criteria: the context-free named_unit/composition/no_dimension
 // trichotomy asked of every compound, and the criteria version every composition row records. A criteria or
 // prompt change bumps it so an older generation's verdicts never apply.
-const TagSplitVersion = "v2"
+const TagSplitVersion = "v3"
 
 // TagCompoundSystemMessage is the system prompt of the compound pass.
 const TagCompoundSystemMessage = "You are a tag-taxonomy classifier. Decide what a compound phrase denotes."
@@ -195,14 +195,15 @@ func (c TagCompoundCriteria) String() string {
 	return fmt.Sprintf("status=%s defer=%t", status, c.Defer != nil && *c.Defer)
 }
 
-// BuildTagCompoundPrompt renders the compound pass's context-free trichotomy question over the phrases: each
-// phrase is judged alone, independent of sibling compounds and of any document.
+// BuildTagCompoundPrompt renders the compound pass's context-free trichotomy question over the phrases:
+// each phrase is judged independently — a shared head or shape with another phrase does not decide it.
 func BuildTagCompoundPrompt(candidates []string) string {
 	var sb strings.Builder
-	sb.WriteString("For each compound below, judge the phrase on its own, independent of sibling compounds and of any document.\n")
+	sb.WriteString("For each phrase below, decide what it denotes.\n")
 	sb.WriteString("- \"named_unit\": the phrase names one subject its parts cannot compose ('internet of things', 'black bloc', 'cold war').\n")
 	sb.WriteString("- \"composition\": the phrase is just the combination of its content words, each of which works as a tag on its own ('russian history', 'labor movement', 'computer networking').\n")
 	sb.WriteString("- \"no_dimension\": the phrase names no subject a searcher would filter by (a thesis or a compression artifact).\n")
+	sb.WriteString("Judge each phrase independently: a shared head or shape with another phrase does not decide it.\n")
 	sb.WriteString("Set defer true when the reading is unsettled; never force one.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"compounds\":[{\"index\":0,\"status\":\"composition\",\"defer\":false},...]}, one entry per compound, no explanations.\n\n")
 	for i, candidate := range candidates {
