@@ -162,14 +162,14 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 	}
 }
 
-// DecisionRuleSetVersion pins the admission and promotion rules; the
-// promote log lines carry it so rule changes are traceable. Nothing
-// stores it: both rules are pure and re-run over stored criteria. v2
-// adds not_form_genre to the feature set the pinned rules read; v3 rides
-// the criteria-v3 generation — the feature set and the pinned combination
-// rules are unchanged, and the bump keeps the promote log's
-// rule_set=decision-%s stamp traceable to the judging generation.
-const DecisionRuleSetVersion = "v3"
+// DecisionRuleSetVersion pins the admission and promotion rules; the promote log lines carry it so rule
+// changes are traceable. Nothing stores it: both rules are pure and re-run over stored criteria. v2 adds
+// not_form_genre to the feature set the pinned rules read; v3 rides the criteria-v3 generation — the
+// feature set and the pinned combination rules are unchanged, and the bump keeps the promote log's stamp
+// rule_set=decision-%s traceable to the judging generation. v4 rides the criteria-v4 generation the same
+// way: the feature set and the pinned combination rules are unchanged, and the stamp keeps promote lines
+// traceable to the judging generation.
+const DecisionRuleSetVersion = "v4"
 
 // RecurrenceFloor is the promotion minimum of
 // docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live

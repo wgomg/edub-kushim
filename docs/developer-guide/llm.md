@@ -127,7 +127,8 @@ type AnalysisResult struct {
   (`subject_matter`, `dimension`, `not_person_place_work`, `atomic`,
   `not_form_genre`, plus the optional `defer` abstention) with a temperature-0
   request built from
-  `BuildTagQualityPrompt` (reduced document text plus one line per candidate
+  `BuildTagQualityPrompt` (the reduced document text scoped to the
+  `subject_matter` question, plus one line per candidate
   with its term, typed category, and a whitelisted-place carve-out note) and
   parsed by `ParseTagQualityResponse` (a missing or partially specified
   verdict for any candidate is an incomplete reply, never a silent rejection;
@@ -705,7 +706,7 @@ for i := range 2 {
     rejects on two or more failing signals, defers on exactly one (the gray
     band), and admits when nothing fails. Rejections drop the tag for that
     document — the registration and its pending identity evidence never reach
-    the store — and log `tagquality[v3]: reject … (reason=corroborated_failures
+    the store — and log `tagquality[v4]: reject … (reason=corroborated_failures
     source=judge|cache …)`; defers are kept and logged too, and admitted
     candidates journal at DEBUG. A whitelisted
     country/continent is never rejected for being a place. Fresh verdicts

@@ -86,27 +86,31 @@ func (c TagQualityCriteria) String() string {
 		c.Defer != nil && *c.Defer)
 }
 
-// TagQualityVersion pins the quality judge's criteria: the five-criterion dimension rubric, the prompt, and
-// the policy version of its cached verdict rows. A criteria or prompt change bumps it so an older
-// generation's verdicts never apply.
-const TagQualityVersion = "v3"
+// TagQualityVersion pins the quality judge's criteria: the five-criterion dimension rubric, the prompt,
+// and the policy version of its cached verdict rows. A criteria or prompt change bumps it so an older
+// generation's verdicts never apply. v4 narrows the document snippet to the subject-matter criterion:
+// the snippet serves question 1, criteria 2–5 are judged on the tag as a store-global dimension, and
+// the text stays in the single call — the withholding is by prompt framing. Cache lookup is version-
+// filtered, so v3 verdicts never apply and stored v3 rows stay for the Stage E sweep.
+const TagQualityVersion = "v4"
 
 // TagQualitySystemMessage is the system prompt of the quality judge.
 const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether each candidate tag is a reusable dimension for a shared document vocabulary."
 
-// BuildTagQualityPrompt renders the dimension rubric over the document
-// text and the candidate tags.
+// BuildTagQualityPrompt renders the dimension rubric over the document snippet and the candidate tags.
+// The snippet serves the subject-matter question (question 1) alone; criteria 2–5 are answered on the
+// tag as a store-global dimension, and their answers do not vary with the presenting document.
 func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string {
 	var sb strings.Builder
-	sb.WriteString("For each candidate tag below, answer five yes/no questions about its fitness as a reusable dimension of the document.\n")
-	sb.WriteString("1. subject_matter: is the tag a subject matter of the document — something this document is about? A specialized document's technical subject counts even when the word is rare or corpus-specific (a repair guide about spudgers is about spudgers); a generic theme word the text merely mentions or embodies is not (air, love, nature). The document's language is never a subject matter: a language name (spanish, english) is form, not aboutness.\n")
-	sb.WriteString("2. dimension: is the tag a reusable dimension of content — a value a searcher would filter by on its own, expecting other documents like this one to share it — judged relative to the corpus the document belongs to? A value on a tool, part, or operation dimension of a specialized corpus is a dimension (spudger, jack stands, nut driver); a dictionary-generic container word with no retrieval function is not (air, love, nature, life, self). Not a per-document detail, a thesis, or a container word, and not the document's language — a language name is a value of the language facet, never a content dimension (spanish, english).\n")
+	sb.WriteString("For each candidate tag below, answer five yes/no questions. Question 1 asks whether the tag is a subject matter of the document; questions 2-5 ask about the tag on its own, and their answers do not depend on the document.\n")
+	sb.WriteString("1. subject_matter: is the tag a subject matter of the document — something this document is about? A specialized document's technical subject counts even when the word is rare or field-specific (a repair guide about spudgers is about spudgers); a generic theme word the text merely mentions or embodies is not (air, love, nature). The document's language is never a subject matter: a language name (spanish, english) is form, not aboutness.\n")
+	sb.WriteString("2. dimension: is the tag a subject a searcher would filter by in a document store — a broad, stable, reusable dimension of content? A value that stands on its own as a subject counts, however rare it is in general text (spudger, jack stands, nut driver); a value with no retrieval function does not (a generic container such as use, thought, knowledge, irony). Not a per-document detail or a thesis, and never a language name: a language name is never a content dimension (spanish, english).\n")
 	sb.WriteString("3. not_person_place_work: is the tag neither a person, nor a work, nor a place other than a whitelisted country or continent? A whitelisted country or continent is a legitimate place tag and passes this criterion; only a person, a work, or a sub-national place (a city, province, region, or other non-sovereign territory) fails it.\n")
 	sb.WriteString("4. atomic: is the tag one dimension, not a combination whose parts each work as tags on their own? A compound that survives decomposition as a named unit answers true.\n")
-	sb.WriteString("5. not_form_genre: is the tag not a publishing format of the document? Publishing formats and containers (book, article, tutorial, manual, report, anthology, collected letters) describe what the document is as a publication, not what it is about — they belong to the document-type facet and fail this criterion. A genre or art form (poetry, drama, science fiction, horror, autobiography, memoir) is a subject-side content dimension, not a publishing format: it passes this criterion and is judged on the questions above.\n")
+	sb.WriteString("5. not_form_genre: is the tag not a publishing format? Publishing formats and containers (book, article, tutorial, manual, report, anthology, collected letters) describe what a document is as a publication, not what it is about — they fail this criterion. A genre or art form (poetry, drama, science fiction, horror, autobiography, memoir) is a subject-side content dimension, not a publishing format: it passes this criterion and is judged on the questions above.\n")
 	sb.WriteString("Also answer defer: set it true when you cannot decide whether the tag is a reusable dimension. Uncertainty defers to review; it never forces a label.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"dimension\":true,\"not_person_place_work\":true,\"atomic\":true,\"not_form_genre\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
-	sb.WriteString("Document text:\n")
+	sb.WriteString("Document for question 1:\n")
 	sb.WriteString(text)
 	sb.WriteString("\n\nCandidate tags:\n")
 	for _, c := range candidates {

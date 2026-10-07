@@ -1574,7 +1574,7 @@ func TestBuildTagQualityPrompt_RestoresGenreAndLanguageBoundary(t *testing.T) {
 	prompt := BuildTagQualityPrompt("A text about poetry", []TagQualityCandidate{{Index: 0, Term: "poetry", Category: "topic"}})
 
 	for _, want := range []string{
-		"5. not_form_genre: is the tag not a publishing format of the document?",
+		"5. not_form_genre: is the tag not a publishing format?",
 		"not a publishing format: it passes this criterion and is judged on the questions above",
 		"The document's language is never a subject matter",
 		"never a content dimension (spanish, english)",
@@ -1586,6 +1586,61 @@ func TestBuildTagQualityPrompt_RestoresGenreAndLanguageBoundary(t *testing.T) {
 	for _, gone := range []string{"neither a form nor a genre", "not its form or genre"} {
 		if strings.Contains(prompt, gone) {
 			t.Errorf("superseded wording %q still present in the quality prompt", gone)
+		}
+	}
+}
+
+func TestBuildTagQualityPrompt_NarrowsTheDocumentToOneQuestion(t *testing.T) {
+	prompt := BuildTagQualityPrompt("A repair guide about spudgers", []TagQualityCandidate{
+		{Index: 0, Term: "spudger", Category: "topic"},
+	})
+
+	for _, want := range []string{
+		"Question 1 asks whether the tag is a subject matter of the document",
+		"questions 2-5 ask about the tag on its own",
+		"do not depend on the document",
+		"Document for question 1:",
+		"1. subject_matter: is the tag a subject matter of the document",
+		"something this document is about",
+		"is the tag a subject a searcher would filter by in a document store",
+		"a generic container such as use, thought, knowledge, irony",
+		"3. not_person_place_work: is the tag neither a person, nor a work, nor a place",
+		"4. atomic: is the tag one dimension, not a combination",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("quality prompt missing v4 scope wording %q", want)
+		}
+	}
+
+	for _, gone := range []string{
+		"Document text:",
+		"a reusable dimension of the document",
+		"language facet",
+		"document-type facet",
+		"corpus",
+		"like this one",
+		"store-global",
+		"the store",
+		"the same way for any document collection",
+	} {
+		if strings.Contains(prompt, gone) {
+			t.Errorf("quality prompt reintroduces wording v4 removed (%q): the model is never shown a store, a corpus, or a collection", gone)
+		}
+	}
+
+	for line := range strings.SplitSeq(prompt, "\n") {
+		if strings.HasPrefix(line, "1. ") {
+			if !strings.Contains(line, "of the document") {
+				t.Errorf("question 1 lost the document-relative framing only it carries: %q", line)
+			}
+			continue
+		}
+		if len(line) > 2 && line[1] == '.' && line[0] >= '2' && line[0] <= '5' {
+			for _, indexical := range []string{"the document", "this document", "the corpus"} {
+				if strings.Contains(line, indexical) {
+					t.Errorf("criterion %s judges on the presented document (%q); criteria 2-5 answer on the value alone: %q", line[:1], indexical, line)
+				}
+			}
 		}
 	}
 }

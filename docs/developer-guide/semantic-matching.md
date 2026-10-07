@@ -430,7 +430,7 @@ A judge abstention defers; two or more failing signals reject; exactly one
 defers to review (the gray band — no single signal decides); none admits. A
 rejection drops the tag for that document, and `Plan.DropTagNames` removes its
 registration and pending identity evidence before persist, so the name is never
-stored; it logs `tagquality[v3]: reject … (reason=corroborated_failures …)`.
+stored; it logs `tagquality[v4]: reject … (reason=corroborated_failures …)`.
 Defers are kept and logged too. A missing detail or similarity is absence of
 evidence, not a failing signal, so a well-judged string-shaped emission can
 still admit.
@@ -443,11 +443,12 @@ The judge input resolves in two steps:
    stored rubric with the current emission's deterministic signals, so a
    cached row is evidence, not a frozen verdict.
 2. **Verdict** — temperature-0 `JudgeTagQuality` calls over batches of up to
-   40 candidates per document for the uncached names. The prompt carries the
+   40 candidates per document for the uncached names. The prompt scopes the
    reduced document text (the same
-   text the generator saw) and one line per candidate with its term, typed
-   category, and — for whitelisted countries/continents — an explicit note
-   that the tag must not be rejected for being a place.
+   text the generator saw) to the `subject_matter` question; the remaining
+   criteria are answered on the candidate alone, one line per candidate with
+   its term, typed category, and — for whitelisted countries/continents — an
+   explicit note that the tag must not be rejected for being a place.
 
 Fresh verdicts write a row with the judging model in `verdict_model` and the
 recorded outcome (`reject`/`defer`/`admit`); the partial unique index on
@@ -495,8 +496,8 @@ skipped). A name promotes when both hold:
 
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
-via `AddToStore` only after the commit (`tagquality[v3]: promote %q
-(docs=%d reason=%s rule_set=decision-v3 floor=10)`). Deferred and rejected
+via `AddToStore` only after the commit (`tagquality[v4]: promote %q
+(docs=%d reason=%s rule_set=decision-v4 floor=10)`). Deferred and rejected
 provisionals never promote here —
 they wait for review — and neither do held names: an identity-held name (a
 refused fold beside a live store value, derived from the latest

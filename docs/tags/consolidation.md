@@ -201,7 +201,7 @@ they are created:
   `subject_matter`, `dimension` (a reusable dimension of content, not a
   per-document detail or container word), `not_person_place_work`, `atomic`
   (one dimension, not a combination whose parts each work as tags), and
-  `not_form_genre` (not a publishing format of the document — genres and art
+  `not_form_genre` (not a publishing format — genres and art
   forms are subject-side and pass) —
   plus the judge's optional `defer` abstention, and the emission's
   deterministic signals: a typed detail annotated `other`, and a best store
@@ -214,7 +214,9 @@ they are created:
   before persist. A missing detail or similarity is absence of evidence, not
   a failing signal.
 - **Judge call**: the uncached candidates are judged in temperature-0 LLM
-  calls over batches of up to 40 candidates per document; whitelisted
+  calls over batches of up to 40 candidates per document; the reduced document
+  text serves the `subject_matter` question alone, the remaining criteria
+  answering on the candidate; whitelisted
   countries and continents are never rejected for being a place, so the typed
   facet gate and the judge cannot disagree.
 - **Cache**: verdicts are stored in the `tag_quality_event` table keyed by
@@ -235,7 +237,7 @@ they are created:
   non-credit failure keeps every novel tag with a defer decision — under the
   gate the birth is provisional and carries no verdict — and a
   credit-exhaustion failure pauses the batch instead.
-- **Logging**: rejections and defers are logged as `tagquality[v3]:` lines
+- **Logging**: rejections and defers are logged as `tagquality[v4]:` lines
   carrying the outcome and reason, siblings of the `consolidation[v1]` and
   `tags[facet]:` lines.
 
@@ -252,7 +254,7 @@ Every LLM judge pins its criteria with a version constant, and a cached verdict
 applies only under the version that produced it — a criteria or prompt change
 bumps the constant so older rows never apply. The current constants:
 
-- `analyzer.TagQualityVersion` (`v3`) — the tag-quality judge's dimension
+- `analyzer.TagQualityVersion` (`v4`) — the tag-quality judge's dimension
   rubric and prompt.
 - `analyzer.TagPartDimensionVersion` (`v2`) — the split gate's parts pass: one
   context-free dimensional question per value, judged in its ordinary

@@ -55,8 +55,8 @@ type ContentAnalyzer interface {
 	// JudgeTagCompounds decides what each compound phrase denotes: the context-free named_unit/composition/no_dimension trichotomy the split
 	// gate's compound pass asks.
 	JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
-	// JudgeTagQuality scores candidate tags against the document text on
-	// the dimension rubric: the five criteria and the judge's abstention.
+	// JudgeTagQuality considers the document text for the subject-matter criterion and the tag alone for the
+	// dimensional criteria, answering the five-criterion rubric and the judge's abstention.
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
 	// JudgeTagIdentity decides the canonical written form of candidate
 	// tags: folds, denotation preservation, conventional form.
