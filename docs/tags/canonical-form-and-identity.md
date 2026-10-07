@@ -62,7 +62,8 @@ specialize, or merge sibling concepts; where it would, the unreduced form stands
 Everything in this body runs with code and pinned configuration, with no semantic
 judgment; package dependencies are allowed. The target of the shape rules is the lemma
 (singular countable nouns, uninflected verbs); the mechanical body detects shape
-relations and proposes folds, and the judging body confirms them (§3.4).
+relations, proposes folds, and resolves the pinned variant classes (M8), and the
+judging body confirms everything else (§3.4).
 
 **M1 — Number and ordinal forms.** Word↔digit ordinals and roman numerals (`nineteenth
 century` ↔ `19th century`, `world war ii` ↔ `world war 2`) via a rule-based converter.
@@ -96,6 +97,14 @@ assumption).
 
 **M7 — Plumbing.** Idempotence checks; the rule-set version is stamped on every
 registration.
+
+**M8 — Deterministic variant classes.** Two names are one value without judging when
+they are pinned orthographic spelling variants (`-isation`/`-ization`,
+`-yse`/`-yze`, `-ogue`/`-og`, applied per token) or literal token permutations (the
+same tokens in a different order). The pair resolves as same-intent with no
+direction, so M4 picks the canonical label. Plural and other inflections,
+mixed-language spellings, and morphological or function-word inversions stay with
+the judging body (J3), as does any pair the pinned table does not reach.
 
 ### 3.3 Judging body (LLM-adjudicated)
 
@@ -142,10 +151,11 @@ map exists in the mechanism (an operator override, if any, is configuration).
 
 ### 3.4 The seam
 
-- **Code detects, the judging body concludes.** M2 computes shape signatures; M3
-  resolves identity on equal keys; every semantic fold and every shape-related pair
-  goes to the judging body (J2, J3). A proposed semantic fold is never written
-  unconfirmed.
+- **Code decides the mechanical cases; the judging body concludes the semantic
+  ones.** M2 computes shape signatures; M3 resolves identity on equal keys; M8
+  resolves the pinned variant classes mechanically; every other semantic fold and
+  shape-related pair goes to the judging body (J2, J3). A proposed semantic fold is
+  never written unconfirmed.
 - **Emission-first.** House form is primarily produced at emission: the typed contract
   asks the generator for labels already in house form, so J1/J5 decisions happen where
   the document is read. The mechanical body converts and validates what arrives; the
@@ -175,8 +185,9 @@ blocklisted.
 ### 3.6 Evidence record
 
 Per candidate or pair: the key; the proposed fold and its gate result; the J3 verdict
-with criteria and model versions; the J4 direction and reason; any alias made; the
-rule-set version; the review outcome when deferred. Consumers are D1's canonicalization
+with criteria and model versions (the M8 class, with no model, for a mechanically
+resolved pair); the J4 direction and reason; any alias made; the rule-set version;
+the review outcome when deferred. Consumers are D1's canonicalization
 work, the review surfaces, and later calibration — it is evidence, not a verdict
 machine.
 
@@ -206,7 +217,8 @@ Behavior references for annotation; the gray rows are where review lands.
 | `arms` | stands (≠ `arm`) | J1 distinct sense |
 | `nineteenth century` | `19th century`; variant kept | M1, numeric house style |
 | `c plus plus` | `c++` | J5 |
-| `decolonisation` / `decolonization` | one intent; deterministic tie-break picks the label, the other aliases | J3 + M4 + M5 |
+| `decolonisation` / `decolonization` | one intent; the label the deterministic tie-break picks wins, the other aliases | M8 + M4 + M5 |
+| `military history` / `history military` | one intent; the label the deterministic tie-break picks wins, the other aliases | M8 + M4 + M5 |
 | `colonization` / `colonialism` | one intent; `colonialism` canonical, `colonization` aliases | J3 + J4(a) + M5 |
 | any pair with split criterion answers | keep as written; review | §3.5 defer |
 

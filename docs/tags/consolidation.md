@@ -87,6 +87,7 @@ default 3; the filter applies no count cap):
 | Key equality (M3) — house form matches a store tag | apply the store label | style variants (`nineteenth century` / `19th century`) |
 | Exact identity with a store tag | apply the store label | casing, hyphenation, and symbol-form fixes after normalization |
 | Flagged fold — a mechanically proposed reduction (M2) | judged: base form (J1), fold gate (J2), conventional form (J5); the fold applies only when all three confirm | inflections (`buildings` → `building`), relational adjectives, bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
+| Pinned variant class — a pinned orthographic spelling variant or a literal token permutation | mechanical `same`, no judge call: the deterministic tie-break (M4) picks the winner, the other name aliases | `decolonisation`/`decolonization`, `military history`/`history military` |
 | Any other candidate neighbour — the same-intent gate | judged (J3) with a direction (J4): `same` aliases the loser onto the winner (a store label that loses becomes the alias), `variant`/`related` register both | the residual band and shape-related pairs |
 | No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
 
@@ -96,7 +97,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v5]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v6]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 

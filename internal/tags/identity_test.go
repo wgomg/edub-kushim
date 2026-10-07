@@ -41,6 +41,40 @@ func TestTieBreak(t *testing.T) {
 	}
 }
 
+func TestVariantClass(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want string
+	}{
+		{"pinned -isation/-ization", "decolonisation", "decolonization", "orthographic"},
+		{"pinned -yse/-yze", "analyse", "analyze", "orthographic"},
+		{"pinned -ogue/-og", "catalogue", "catalog", "orthographic"},
+		{"per-token spelling inside a phrase", "history organisation", "history organization", "orthographic"},
+		{"literal token permutation", "military history", "history military", "inverted"},
+		{"repeated tokens compare as a multiset", "war war history", "history war war", "inverted"},
+		{"token counts are not a set", "war war history", "war history history", ""},
+		{"equal names are not a variant", "railway", "railway", ""},
+		{"plural is not a spelling variant", "railway", "railways", ""},
+		{"morphological and function-word inversion stays judged", "history of anarchism", "anarchist history", ""},
+		{"inflected spelling form stays judged", "organisations", "organizations", ""},
+		{"the pinned table does not cover -our/-or", "labour", "labor", ""},
+		{"spelling plus permutation stays judged", "organisation history", "history organization", ""},
+		{"translation is not a spelling variant", "guerra", "war", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := VariantClass(tc.a, tc.b); got != tc.want {
+				t.Errorf("VariantClass(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
+			}
+			if got := VariantClass(tc.b, tc.a); got != tc.want {
+				t.Errorf("reversed VariantClass(%q, %q) = %q, want %q", tc.b, tc.a, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPluralStrip(t *testing.T) {
 	cases := []struct {
 		name string

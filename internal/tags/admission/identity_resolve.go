@@ -3,7 +3,6 @@ package admission
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -66,12 +65,11 @@ type pendingCandidate struct {
 	rows map[string]database.TagIdentityEvent
 }
 
-// ResolvePending settles up to budget pending identity events: it folds
-// base-form proposals the judge approves, aliases shape-related pairs, and
-// defers everything the judging body cannot answer yet. The per-pair
-// verdict cache converges the triggered run and the scheduled sweep on
-// whichever runs first. Disabling the adjudicator leaves the events
-// pending and only counts them.
+// ResolvePending settles up to budget pending identity events: it folds base-form proposals the judge
+// approves, aliases shape-related pairs, settles pinned variant classes mechanically without the judge,
+// and defers everything the judging body cannot answer yet. The per-pair verdict cache converges the
+// triggered run and the scheduled sweep on whichever runs first. Disabling the adjudicator leaves the
+// events pending and only counts them.
 func (r *IdentityResolver) ResolvePending(ctx context.Context, budget int) (*IdentityReport, error) {
 	report := &IdentityReport{}
 	if budget <= 0 {
@@ -255,8 +253,25 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 	if len(pairs) == 0 {
 		return
 	}
-	evidence := make([]analyzer.TagPairEvidence, len(pairs))
+	judged := make([]*identityPair, 0, len(pairs))
+	judgedRows := make([]database.TagIdentityEvent, 0, len(rows))
 	for i, p := range pairs {
+		class := tags.VariantClass(p.query, p.target)
+		if class == "" {
+			judged = append(judged, p)
+			judgedRows = append(judgedRows, rows[i])
+			continue
+		}
+		p.verdict = types.TagVerdicts.Same
+		p.direction = ""
+		p.model = ""
+		p.decided = true
+		r.resolveDeterministicPair(ctx, rows[i], class, report)
+		r.logger.Info("", "tag identity: deterministic %s variant %q ~ %q resolved same", class, p.query, p.target)
+	}
+
+	evidence := make([]analyzer.TagPairEvidence, len(judged))
+	for i, p := range judged {
 		evidence[i] = analyzer.TagPairEvidence{Query: p.query, Target: p.target}
 	}
 
@@ -266,15 +281,11 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 		p.direction = result.Direction
 		p.model = model
 		p.decided = true
-		criteria, err := json.Marshal(map[string]string{"direction": p.direction})
-		if err != nil {
-			criteria = []byte("{}")
-		}
 		if _, err := r.client.Queries.ResolveTagIdentityEvent(ctx, database.ResolveTagIdentityEventParams{
 			ID:       row.ID,
 			Verdict:  sql.NullString{String: string(p.verdict), Valid: true},
 			Model:    sql.NullString{String: model, Valid: model != ""},
-			Criteria: criteria,
+			Criteria: sameIntentCriteria(p.direction, ""),
 		}); err != nil {
 			r.logger.Error("", "tag identity: resolve pair %q -> %q failed: %v", p.query, p.target, err)
 			report.Failed++
@@ -282,9 +293,9 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 		}
 		report.Resolved++
 	}
-	for start := 0; start < len(pairs); start += identityBatchSize {
-		end := min(start+identityBatchSize, len(pairs))
-		batch := pairs[start:end]
+	for start := 0; start < len(judged); start += identityBatchSize {
+		end := min(start+identityBatchSize, len(judged))
+		batch := judged[start:end]
 		results, err := r.runner.AdjudicateTags(ctx, evidence[start:end])
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
@@ -304,14 +315,14 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 					report.Deferred++
 					continue
 				}
-				resolvePair(batch[i], rows[start+i], results[i])
+				resolvePair(batch[i], judgedRows[start+i], results[i])
 				salvaged++
 			}
 			r.logger.Warn("", "tag identity: partial adjudication reply, salvaged %d of %d pairs and deferred %d", salvaged, len(batch), deferred)
 			continue
 		}
 		for i, result := range results {
-			resolvePair(batch[i], rows[start+i], result)
+			resolvePair(batch[i], judgedRows[start+i], result)
 		}
 	}
 
@@ -375,6 +386,20 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 	for _, action := range actions {
 		r.logger.Info("", "tag identity: alias %q -> %q", action.AliasName, action.Canonical)
 	}
+}
+
+func (r *IdentityResolver) resolveDeterministicPair(ctx context.Context, row database.TagIdentityEvent, class string, report *IdentityReport) {
+	if _, err := r.client.Queries.ResolveTagIdentityEvent(ctx, database.ResolveTagIdentityEventParams{
+		ID:       row.ID,
+		Verdict:  sql.NullString{String: string(types.TagVerdicts.Same), Valid: true},
+		Model:    sql.NullString{},
+		Criteria: sameIntentCriteria("", class),
+	}); err != nil {
+		r.logger.Error("", "tag identity: resolve deterministic pair %q -> %q failed: %v", row.Candidate, row.Partner.String, err)
+		report.Failed++
+		return
+	}
+	report.Resolved++
 }
 
 func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool, error) {

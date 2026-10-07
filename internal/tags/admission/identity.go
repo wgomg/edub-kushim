@@ -29,15 +29,16 @@ type identityCandidate struct {
 }
 
 type identityPair struct {
-	query       string
-	target      string
-	sim         float64
-	runnerUpSim float64
-	verdict     types.TagVerdict
-	direction   string
-	model       string
-	cached      bool
-	decided     bool
+	query        string
+	target       string
+	sim          float64
+	runnerUpSim  float64
+	verdict      types.TagVerdict
+	direction    string
+	variantClass string
+	model        string
+	cached       bool
+	decided      bool
 }
 
 type identityAnswer struct {
@@ -493,10 +494,11 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 	return out, nil
 }
 
-// adjudicateIdentityPairs settles the shape-related pairs the identity judge answers, recording one
-// same-intent event per decided pair. A partial reply decides the pairs it returned and leaves only the
-// missing ones provisional; every other failure leaves the batch's unresolved pairs provisional. A non-nil
-// error is returned only when the provider account cannot pay.
+// adjudicateIdentityPairs settles the shape-related pairs: a pinned variant class resolves mechanically as
+// same with no judge call, and the rest go to the identity judge, recording one same-intent event per
+// decided pair. A partial reply decides the pairs it returned and leaves only the missing ones provisional;
+// every other failure leaves the batch's unresolved pairs provisional. A non-nil error is returned only
+// when the provider account cannot pay.
 func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, reqID string) error {
 	if len(pairs) == 0 {
 		return nil
@@ -541,7 +543,21 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		return nil
 	}
 
-	evidence := a.identityPairEvidence(ctx, documentID, unresolved, reqID)
+	judged := make([]*identityPair, 0, len(unresolved))
+	for _, p := range unresolved {
+		class := tags.VariantClass(p.query, p.target)
+		if class == "" {
+			judged = append(judged, p)
+			continue
+		}
+		p.verdict = types.TagVerdicts.Same
+		p.variantClass = class
+		p.decided = true
+		a.logger.Info(reqID, "identity[%s]: deterministic %s variant %q ~ %q resolved same",
+			tags.IdentityRuleSetVersion, class, p.query, p.target)
+	}
+
+	evidence := a.identityPairEvidence(ctx, documentID, judged, reqID)
 	model := a.config.ResolvedAdjudicatorLlm().Model
 	applyVerdict := func(p *identityPair, r analyzer.TagVerdictResult) {
 		p.verdict = r.Verdict
@@ -551,7 +567,7 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 	}
 	for start := 0; start < len(evidence); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(evidence))
-		batch := unresolved[start:end]
+		batch := judged[start:end]
 		results, err := a.runner.AdjudicateTags(ctx, evidence[start:end])
 		if err != nil && retryableJudgeFailure(err) {
 			a.logger.Warn(reqID, "identity[%s]: adjudicator attempt failed, retrying once: %v", tags.IdentityRuleSetVersion, err)
@@ -615,6 +631,18 @@ func identityDirection(criteria []byte) string {
 	return ""
 }
 
+// sameIntentCriteria builds the criteria JSON one same-intent identity event carries: the variant class
+// for a mechanically resolved pair, the judged direction otherwise. Every writer of the kind shares it so
+// the stored evidence shape cannot drift.
+func sameIntentCriteria(direction, variantClass string) []byte {
+	key, value := "direction", direction
+	if variantClass != "" {
+		key, value = "deterministic", variantClass
+	}
+	criteria, _ := json.Marshal(map[string]string{key: value})
+	return criteria
+}
+
 func (a *Adjudicator) identityPairEvidence(ctx context.Context, documentID string, pairs []*identityPair, reqID string) []analyzer.TagPairEvidence {
 	evidence := make([]analyzer.TagPairEvidence, len(pairs))
 	for i, p := range pairs {
@@ -656,10 +684,7 @@ func bandPairsFor(targets []string) []*bandPair {
 }
 
 func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *identityPair, reqID string) {
-	criteria, err := json.Marshal(map[string]string{"direction": p.direction})
-	if err != nil {
-		criteria = []byte("{}")
-	}
+	criteria := sameIntentCriteria(p.direction, p.variantClass)
 	var model sql.NullString
 	if p.model != "" {
 		model = sql.NullString{String: p.model, Valid: true}

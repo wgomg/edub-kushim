@@ -302,12 +302,13 @@ sub-national place. Coverage wording (every applicable dimension) is still pendi
 suggestions surface is the vocabulary's only influence on emission.
 
 **S3 — canonicality.** The mechanisms are substantial: the birth-time identity pipeline
-(M1–M4 with the same-intent gate, `tag_identity_event`, `tag_alias`), merge review with
+(M1–M4 and M8 with the same-intent gate, `tag_identity_event`, `tag_alias`), merge review with
 persisted dismissals (`tag_merge_dismissal`), and scheduled reconciliation. What the
 model adds is the *signal*: one label per intent decided by extension equality (P3)
 rather than embedding similarity. The snapshot shows why the difference matters — the
 singular/plural, orthographic, inverted, digit/word, and mixed-language variant classes
-sit outside the similarity band and never reach adjudication; merges are incident-driven;
+sit outside the similarity band; orthographic and inverted pairs resolve mechanically at
+birth, the rest reach the same-intent gate; merges are incident-driven;
 and human rejection deletes names through the blocklist (terminal) where the model's
 disposition for a same-intent label is alias/merge.
 

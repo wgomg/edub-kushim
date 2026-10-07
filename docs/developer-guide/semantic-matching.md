@@ -342,10 +342,11 @@ apply the existing label), and then candidate generation — every remaining
 candidate neighbour is kept as a **gate subject** with its similarity and
 runner-up recorded as adjudication evidence. Similarity never replaces or
 keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v5]: apply|alias|defer|separate …`. Fallback results from the legacy
-daemon (no candidates) pass through `KeptName` verbatim. Style variants and
-aliases never reach the policy: M1 house form, M3 key equality, and the alias
-resolver apply the canonical value before ranking output is used.
+`identity[v6]: apply|alias|defer|separate …`. Fallback results from the legacy
+daemon (no candidates) pass through `KeptName` verbatim. M1 house-form and M3
+key-equal variants and aliases never reach the policy: they apply the canonical
+value before ranking output is used; pinned orthographic and token-permutation
+variants reach it as gate subjects and then resolve mechanically (see below).
 
 ### Identity adjudication
 
@@ -369,10 +370,16 @@ Identity has two LLM paths, both under `enricher.tag_adjudicator.enabled`:
    the birth for review: the registration is provisional and the
    evidence-derived promotion hold blocks inline and sweep promotion until an
    operator resolves it.
-2. **Same-intent pairs** — every gate subject is adjudicated:
+2. **Same-intent pairs** — every gate subject is resolved:
    - **Pair cache** — the latest `same_intent` row per `(candidate, partner)`
      at `IdentityRuleSetVersion` from `tag_identity_event` resolves the pair
      with no LLM call, carrying the direction in its criteria payload.
+   - **Deterministic variant class** — a remaining pair whose names are pinned
+     orthographic spelling variants (`-isation`/`-ization`, `-yse`/`-yze`,
+     `-ogue`/`-og`) or literal token permutations resolves `same` mechanically
+     with no LLM call, the direction left to the lexical tie-break; plural and
+     other inflections, mixed-language spellings, and morphological or
+     function-word inversions stay with the judge.
    - **Evidence** — one batched `RankTags` call runs target-as-query for the
      remaining pairs (a rank failure drops the evidence, not the pair).
    - **Verdict** — one `AdjudicateTags` call per batch (`ContentAnalyzer.Adjudicate`,

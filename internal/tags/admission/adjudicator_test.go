@@ -681,6 +681,45 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "the salvaged verdict is recorded")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "labour movement", "labor movement"), 0, "no verdict row for the missing pair")
 	})
+
+	t.Run("deterministic variant resolves with no judge call", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		ctx := context.Background()
+
+		p := &identityPair{query: "decolonisation", target: "decolonization"}
+		a.adjudicateIdentityPairs(ctx, 0, "", []*identityPair{p}, "")
+
+		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
+		adjAssertEqual(t, p.decided, true, "pair decided")
+		adjAssertEqual(t, string(p.verdict), "same", "mechanical verdict")
+		adjAssertEqual(t, p.direction, "", "empty direction hands the pair to the M4 tie-break")
+		adjAssertEqual(t, p.variantClass, "orthographic", "class recorded on the pair")
+		adjAssertEqual(t, p.model, "", "no judge model")
+
+		rows, err := q.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+			RuleSetVersion: tags.IdentityRuleSetVersion,
+			Candidates:     []string{p.query},
+		})
+		if err != nil {
+			t.Fatalf("read identity events: %v", err)
+		}
+		recorded := 0
+		for _, row := range rows {
+			if row.Kind != tags.IdentityKindSameIntent || !row.Partner.Valid || row.Partner.String != p.target || !row.Verdict.Valid {
+				continue
+			}
+			recorded++
+			var criteria struct {
+				Deterministic string `json:"deterministic"`
+			}
+			if err := json.Unmarshal(row.Criteria, &criteria); err != nil {
+				t.Fatalf("unmarshal criteria: %v", err)
+			}
+			adjAssertEqual(t, criteria.Deterministic, "orthographic", "the recorded event names the class")
+			adjAssertEqual(t, row.Model.Valid, false, "the recorded event carries no model")
+		}
+		adjAssertEqual(t, recorded, 1, "recorded same-intent events")
+	})
 }
 
 func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {

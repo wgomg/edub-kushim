@@ -3,6 +3,7 @@ package tags
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,19 +15,18 @@ import (
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
-// IdentityRuleSetVersion pins the birth-time identity rules and the
-// judging body's criteria text; bump it when either changes. v1 added the
-// plural rule to the fold-gate criteria; v2 added the derivational
-// adjective proposal to the mechanical proposal body; v3 adds the
-// morphographic proposal to the same body and the store-anchored
-// rejection routing to the birth rules, the criteria text unchanged; v4
-// rewords the pair judge's doubt clause so morphographic and derivation
-// pairs can answer same, the mechanical rules unchanged; v5 hardens the
-// split-seam fold — suffix-local morphological anchors over the promoted
-// store view — while the birth-time rules and the judging body's criteria
-// are unchanged. The store reset truncates tag_identity_event, so no
-// cached verdict survives to invalidate.
-const IdentityRuleSetVersion = "v5"
+// IdentityRuleSetVersion pins the birth-time identity rules and the judging body's criteria text; bump
+// it when either changes. v1 added the plural rule to the fold-gate criteria; v2 added the derivational
+// adjective proposal to the mechanical proposal body; v3 adds the morphographic proposal to the same
+// body and the store-anchored rejection routing to the birth rules, the criteria text unchanged; v4
+// rewords the pair judge's doubt clause so morphographic and derivation pairs can answer same, the mechanical
+// rules unchanged; v5 hardens the split-seam fold — suffix-local morphological anchors over the promoted
+// store view — while the birth-time rules and the judging body's criteria are unchanged; v6 adds the
+// deterministic variant-class bypass at the unresolved pair loops — the pinned orthographic spelling
+// table and literal token permutation resolve mechanically — while the judging body's criteria and the
+// house-form map are unchanged. The store reset truncates tag_identity_event, so no cached identity
+// verdict survives to invalidate.
+const IdentityRuleSetVersion = "v6"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -330,6 +330,55 @@ func Key(name string) string {
 // and the composition journal key a name identically.
 func StoredName(raw string) string {
 	return HouseForm(textnorm.NormalizeTag(raw))
+}
+
+// VariantClass reports the deterministic variant class relating two store-normalized names: "orthographic"
+// when the pinned spelling table maps both to one form while the originals differ, and "inverted" when
+// they hold the same token multiset in a different order; an empty result means neither class holds. It
+// never consults the store, and callers pass names already normalized at their write boundaries. Plurals,
+// mixed-language spellings, and morphological or function-word inversions (history of anarchism beside
+// anarchist history) stay judged, as does any pair the transform table does not reach (D23).
+func VariantClass(a, b string) string {
+	if a == b {
+		return ""
+	}
+	at, bt := strings.Fields(a), strings.Fields(b)
+	if sameTokenMultiset(at, bt) {
+		return "inverted"
+	}
+	if orthographicForm(a) == orthographicForm(b) {
+		return "orthographic"
+	}
+	return ""
+}
+
+// orthographicSuffixes is the pinned spelling-variant table VariantClass applies per token, each pair
+// mapping a non-canonical token onto its canonical form; a token the table does not reach stays unchanged.
+var orthographicSuffixes = []struct{ suffix, canonical string }{
+	{"isation", "ization"},
+	{"yse", "yze"},
+	{"ogue", "og"},
+}
+
+func orthographicForm(name string) string {
+	tokens := strings.Fields(name)
+	for i, token := range tokens {
+		for _, t := range orthographicSuffixes {
+			if before, ok := strings.CutSuffix(token, t.suffix); ok {
+				tokens[i] = before + t.canonical
+				break
+			}
+		}
+	}
+	return strings.Join(tokens, " ")
+}
+
+func sameTokenMultiset(a, b []string) bool {
+	as := slices.Clone(a)
+	bs := slices.Clone(b)
+	slices.Sort(as)
+	slices.Sort(bs)
+	return slices.Equal(as, bs)
 }
 
 // Signature is a name's lemma and stem signatures

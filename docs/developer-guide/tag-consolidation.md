@@ -94,12 +94,20 @@ admin and emission registration paths
   variants collapse without judging.
 - **M4 — tie-break** (`TieBreak`): fixed lexical order decides when the
   direction criteria do not separate two labels.
-- **Version**: `IdentityRuleSetVersion = "v5"` is stamped on every alias row and
+- **M8 — deterministic variant classes** (`VariantClass`): two names are one
+  value without judging when they are pinned orthographic spelling variants
+  (`-isation`/`-ization`, `-yse`/`-yze`, `-ogue`/`-og`, applied per token) or
+  literal token permutations (the same tokens in a different order). The pair
+  resolves `same` with no direction, so M4 picks the canonical label. Plural and
+  other inflections, mixed-language spellings, and morphological or function-word
+  inversions stay with the pair judge.
+- **Version**: `IdentityRuleSetVersion = "v6"` is stamped on every alias row and
   identity-evidence row. It pins the mechanical fold proposals — the
-  plural/lemma fold, the store-anchored derivational adjective transforms, and
-  the bounded morphographic proposal — the store-anchored rejection hold, the
-  pair judge's criteria text, and the split-seam fold guards (promoted-only
-  anchors and the suffix-local morphological leg).
+  plural/lemma fold, the store-anchored derivational adjective transforms, and the
+  bounded morphographic proposal — the store-anchored rejection hold, the
+  pair judge's criteria text, the deterministic variant-class table, and the
+  split-seam fold guards (promoted-only anchors and the suffix-local
+  morphological leg).
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
   M1 rewrites, alias lookup, key equality, and M2 flagging, including the
   plural/lemma, derivational, and morphographic fold proposals. It never applies
@@ -164,10 +172,13 @@ transaction — adjudication stays outside it:
   disjoint-twin risk: the birth is held for review — provisional plus an
   evidence-derived promotion hold that blocks inline and sweep promotion until
   an operator resolves it (INFO `fold rejected beside store anchor …`).
-- **Same-intent pairs (J3/J4)** — the pair adjudicator answers `same` /
-  `variant` / `related`, plus a direction for `same` (`query`, `target`, or
-  `tie`; a tie falls back to M4). `same` yields the alias disposition;
-  `variant`/`related` keep both names.
+- **Same-intent pairs (J3/J4)** — a pair whose names are pinned variant classes
+  (orthographic spelling variants, literal token permutations) resolves `same`
+  mechanically with no judge call and no direction, so M4 picks the canonical
+  label; the rest go to the pair adjudicator, which answers `same` / `variant` /
+  `related`, plus a direction for `same` (`query`, `target`, or `tie`; a tie
+  falls back to M4). `same` yields the alias disposition; `variant`/`related` keep
+  both names.
 - **Dispositions** — `apply` (the name resolves to an existing value by alias
   or key equality), `register` (new value), `alias` (the losing name becomes a
   `tag_alias` row; when the loser already exists as a tag, its assignments are
@@ -202,12 +213,13 @@ transaction — adjudication stays outside it:
    subjects from the ranked decisions, and same-emission
    shape pairs. Flagged candidates go into one batched identity-judge call
    (cache first: `tag_identity_event` at `IdentityRuleSetVersion`); flagged
-   pairs go through the pair adjudicator. The result is a `tags.Plan` carrying
+   pairs in a pinned variant class resolve mechanically with no judge call, and
+   the rest go through the pair adjudicator. The result is a `tags.Plan` carrying
    registrations, alias actions, evidence rows, and the composition rows the
    decomposition gate judged, and per-disposition log
-   lines (`identity[v5]: apply|alias|defer|separate …`), with the applied-fold
+   lines (`identity[v6]: apply|alias|defer|separate …`), with the applied-fold
    input→output mapping and the judge-unavailable mint at DEBUG
-   (`identity[v5]: fold applied …`, `identity[v5]: pending evidence minted …`).
+   (`identity[v6]: fold applied …`, `identity[v6]: pending evidence minted …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
@@ -283,11 +295,14 @@ Resolution order per document:
    `IdentityRuleSetVersion` resolves the three criteria without a call; only
    candidates without a complete cached set enter the judge batch.
 2. **Pair cache** — the latest `same_intent` row per `(candidate, partner)`
-   resolves the pair, with the direction carried in its criteria payload; only
-   unresolved pairs enter the adjudicator batch.
-3. **Evidence** — one batched target-as-query rank (a rank failure drops the
+   resolves the pair, with the direction carried in its criteria payload.
+3. **Deterministic variant class** — a remaining pair whose names are pinned
+   orthographic spelling variants or literal token permutations resolves `same`
+   mechanically, recorded with the class in the criteria payload and no model;
+   only the pairs left after this enter the adjudicator batch.
+4. **Evidence** — one batched target-as-query rank (a rank failure drops the
    evidence, not the pair).
-4. **Verdict** — batched `AdjudicateTags` calls for all unresolved pairs. The
+5. **Verdict** — batched `AdjudicateTags` calls for all unresolved pairs. The
    pairs a reply returns are decided; a non-retryable error, an empty result,
    or a pair left missing by a partial reply keeps only those pairs pending:
    the candidates register provisionally with a pending `same_intent` row,
@@ -339,7 +354,8 @@ Migration `00029_tag_identity.sql` adds the two identity objects:
 - **`tag_identity_event`** — `(kind, candidate, partner, criteria JSONB NOT
   NULL, verdict, model, rule_set_version, created_at)` with kinds `base_form`,
   `fold_gate`, `conventional_form` (candidate criteria, partner NULL) and
-  `same_intent` (pair rows; `direction` lives in the criteria payload). The
+  `same_intent` (pair rows; `direction`, or the variant class for a mechanically
+  resolved pair, lives in the criteria payload). The
   table serves both the identity verdict cache (latest row per
   `(kind, candidate, partner)` at the current rule-set version with a non-NULL
   verdict) and the pending-evidence queue (rows with NULL verdict, deduplicated
@@ -472,7 +488,8 @@ single batched `TagPairEvidenceStats` call (a stats failure keeps every
 planned entry with zero documents instead of dropping it), and no-document
 keep flips are counted in `no_documents` so the judged/skips/capped partition
 stays exact. Each pair entry carries `reason` — `adjudicated` for LLM-judged
-pairs — and `creates_tag` (true when a keep
+pairs, `deterministic` for a mechanically resolved variant pair — and
+`creates_tag` (true when a keep
 flip creates the query tag; always present in new reports, absent only in
 reports persisted before the field existed).
 The report is served by `GET /api/v1/tags/reconciliation/report` (latest
@@ -520,10 +537,13 @@ store tag again (born since) or whose stored target fell below the
 consideration floor are dropped — future emissions will resolve them. The rest
 are evaluated through `policy.Evaluate` on the current store with the
 stored target at its fresh similarity: `identity` where the query equals the
-stored target, otherwise `ambiguous_band` → LLM adjudication (batches of 50).
-A fresh verdict that differs from the stored one is confirmed by a second,
+stored target, otherwise `ambiguous_band` → LLM adjudication (batches of 50). A
+pair whose names are pinned variant classes (orthographic spelling variants,
+literal token permutations) resolves `same` mechanically with no judge call. A
+fresh verdict that differs from the stored one is confirmed by a second,
 **orientation-reversed** adjudication pass — the flip applies only when both
-orientations agree; ambiguity or disagreement keeps the stored verdict.
+orientations agree; ambiguity or disagreement keeps the stored verdict — except a
+deterministic variant pair, which its own class confirms.
 
 **Flips and caps**: a merge flip runs the full `TagMerge.Merge` (query tag
 deleted, all assignments re-pointed). A keep flip resolves the pair's affected
@@ -535,10 +555,12 @@ unattributed pair cannot add a name to the vocabulary. Otherwise the keep flip
 those documents (`RepointDocumentTagsForDocs`, with the `NOT EXISTS` guard),
 clears their orphan marks, and upserts the verdict — all in one transaction.
 Every adjudicated pair (flip or agreement) upserts a fresh verdict row at the
-current version (`UpsertFreshTagVerdict`, `verdict_model` = the adjudicator
-model; empty when a cached verdict was applied), refreshing `verdict_at` so the aged scan does
-not re-judge it. `max_retag` bounds re-pointed documents per run, with a
-first-pair carve-out (the budget is soft by at most one pair).
+current version (`UpsertFreshTagVerdict`), refreshing `verdict_at` so the aged
+scan does not re-judge it. `verdict_model` carries the adjudicator model, the
+`deterministic` marker for a mechanically resolved pair, or is empty when a
+cached verdict was applied — the non-null marker is what the fresh-verdict scans
+require to treat the pair as settled. `max_retag` bounds re-pointed documents per
+run, with a first-pair carve-out (the budget is soft by at most one pair).
 
 **Blocklist enforcement**: a query whose name is in the `deleted_tag`
 blocklist is skipped before the create — the flip is not applied and the skip
@@ -660,9 +682,9 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   blocks or fails on this subsystem.
 - **Wrong keeps are visible and mergeable; wrong replacements are silent and
   permanent** — hence the asymmetric strictness: similarity never decides. The
-  only paths that change a name are M1 style rewrites, M3 key equality, a fold
-  confirmed by all three criteria, an explicit `same` verdict (with direction),
-  and an operator's merge.
+  only paths that change a name are M1 style rewrites, M3 key equality, the
+  deterministic variant classes (M8), a fold confirmed by all three criteria, an
+  explicit `same` verdict (with direction), and an operator's merge.
 - **Merges are explicit operator actions**; the automatic path uses the alias
   disposition instead, so a losing name stays resolvable through `tag_alias`
   rather than being deleted outright.
@@ -718,17 +740,18 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   `TimeoutStartSec` budget alongside model load and tag-cache build.
 - **Consolidation and identity logs live in the kushim (enrichment) log, not
   `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v5]` dispositions). `hugot.log` only holds the
+  decisions, `identity[v6]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in
   `internal/testutil` and `internal/tools/runner_test.go`; keep them all
   consistent.
 - **Similarity never decides** — a high-similarity neighbour is only a gate
-  subject; a name changes only through M1/M3, a fully confirmed fold, an
-  explicit `same` verdict, or an operator merge. Bands that keep without a
-  verdict stay provisional with pending evidence.
+  subject; a name changes only through M1/M3, the deterministic variant classes
+  (M8), a fully confirmed fold, an explicit `same` verdict, or an operator
+  merge. Bands that keep without a verdict stay provisional with pending
+  evidence.
 
 ---
 
-*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-07. If code and doc disagree, code wins.*

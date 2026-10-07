@@ -153,6 +153,64 @@ func TestResolvePending_SameIntentPair(t *testing.T) {
 	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
 }
 
+func TestResolvePending_DeterministicVariantPair(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+	ctx := context.Background()
+
+	orthographicWinner := database.MustCreateTag(t, client.Queries, "decolonisation")
+	database.MustCreateTag(t, client.Queries, "decolonization")
+	invertedWinner := database.MustCreateTag(t, client.Queries, "history military")
+	database.MustCreateTag(t, client.Queries, "military history")
+	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "decolonisation", "decolonization")
+	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "military history", "history military")
+
+	report, err := resolver.ResolvePending(ctx, 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 2, "pending pairs read")
+	testutil.AssertEqual(t, report.Resolved, 2, "pairs resolved without the judge")
+	testutil.AssertEqual(t, report.Aliased, 2, "both losers aliased")
+	testutil.AssertEqual(t, report.Failed, 0, "no failures")
+	testutil.AssertEqual(t, adj.called, 0, "no adjudicator call")
+
+	alias, err := client.Queries.GetTagAliasByName(ctx, "decolonization")
+	testutil.AssertNoError(t, err, "orthographic loser becomes an alias")
+	testutil.AssertEqual(t, alias.CanonicalTagID, orthographicWinner, "alias points at the lexicographically smaller name")
+
+	alias, err = client.Queries.GetTagAliasByName(ctx, "military history")
+	testutil.AssertNoError(t, err, "inverted loser becomes an alias")
+	testutil.AssertEqual(t, alias.CanonicalTagID, invertedWinner, "alias points at the lexicographically smaller name")
+
+	for _, loser := range []string{"decolonization", "military history"} {
+		if _, err := client.Queries.GetTagByName(ctx, loser); err == nil {
+			t.Errorf("loser tag %q must be removed", loser)
+		}
+	}
+
+	rows, err := client.Queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+		Candidates:     []string{"decolonisation", "military history"},
+	})
+	testutil.AssertNoError(t, err, "read resolved identity rows")
+	if len(rows) != 2 {
+		t.Fatalf("resolved rows = %d, want 2", len(rows))
+	}
+	for _, row := range rows {
+		var criteria struct {
+			Deterministic string `json:"deterministic"`
+		}
+		if err := json.Unmarshal(row.Criteria, &criteria); err != nil {
+			t.Fatalf("unmarshal criteria: %v", err)
+		}
+		if criteria.Deterministic == "" {
+			t.Errorf("row %q -> %q criteria %s do not name the class", row.Candidate, row.Partner.String, row.Criteria)
+		}
+		if row.Model.Valid {
+			t.Errorf("row %q -> %q carries model %q, want none", row.Candidate, row.Partner.String, row.Model.String)
+		}
+	}
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
+}
+
 func TestResolvePending_PartialCandidateReply(t *testing.T) {
 	resolver, client, adj := newIdentityResolver(t, true)
 

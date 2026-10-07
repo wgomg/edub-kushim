@@ -7,7 +7,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/matcher"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 const (
@@ -149,10 +151,24 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, bandEntries []*entry, targetEvidence, queryEvidence map[string]reciprocalEvidence) {
 	adjudicatorModel := cfg.ResolvedAdjudicatorLlm().Model
 
-	for i := 0; i < len(bandEntries); i += adjudicateBatchSize {
-		end := min(i+adjudicateBatchSize, len(bandEntries))
+	judgedEntries := make([]*entry, 0, len(bandEntries))
+	for _, e := range bandEntries {
+		class := tags.VariantClass(e.query, e.target)
+		if class == "" {
+			judgedEntries = append(judgedEntries, e)
+			continue
+		}
+		e.freshVerdict = types.TagVerdicts.Same
+		// verdict_model is the fresh-verdict arbiter, so a non-null provenance marker keeps the pair settled
+		e.freshModel = "deterministic"
+		e.reason = "deterministic"
+		r.logger.Info("", "tag reconcile: deterministic %s variant %q ~ %q resolved same", class, e.query, e.target)
+	}
+
+	for i := 0; i < len(judgedEntries); i += adjudicateBatchSize {
+		end := min(i+adjudicateBatchSize, len(judgedEntries))
 		evidence := make([]analyzer.TagPairEvidence, 0, end-i)
-		for _, e := range bandEntries[i:end] {
+		for _, e := range judgedEntries[i:end] {
 			ev := analyzer.TagPairEvidence{
 				Query:  e.query,
 				Target: e.target,
@@ -172,13 +188,13 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 			var incomplete *analyzer.IncompleteReplyError
 			if !errors.As(err, &incomplete) {
 				r.logger.Error("", "tag reconcile: adjudication batch failed: %v", err)
-				for _, e := range bandEntries[i:end] {
+				for _, e := range judgedEntries[i:end] {
 					e.skipReason = "adjudication_error"
 				}
 				continue
 			}
 			missing := incomplete.MissingSet()
-			batch := bandEntries[i:end]
+			batch := judgedEntries[i:end]
 			salvaged, deferred := 0, 0
 			for j := range batch {
 				e := batch[j]
@@ -196,15 +212,15 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 			continue
 		}
 		for j, res := range results {
-			e := bandEntries[i:end][j]
+			e := judgedEntries[i:end][j]
 			e.freshVerdict = res.Verdict
 			e.freshModel = adjudicatorModel
 			e.reason = "adjudicated"
 		}
 	}
 
-	// Hysteresis: a fresh verdict differing from the stored one is confirmed
-	// by a second, orientation-reversed pass
+	// Hysteresis: a fresh verdict differing from the stored one is confirmed by a second, orientation-reversed
+	// pass, except a deterministic variant pair, which its own class confirms without a second judge call
 	var confirm []*entry
 	for _, e := range bandEntries {
 		if e.skipReason != "" || !e.freshVerdict.Valid() {
@@ -216,14 +232,24 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		}
 		confirm = append(confirm, e)
 	}
-	if len(confirm) == 0 {
+	toConfirm := make([]*entry, 0, len(confirm))
+	for _, e := range confirm {
+		class := tags.VariantClass(e.target, e.query)
+		if class == "" {
+			toConfirm = append(toConfirm, e)
+			continue
+		}
+		e.confirmed = true
+		r.logger.Info("", "tag reconcile: deterministic %s variant %q ~ %q confirmed", class, e.query, e.target)
+	}
+	if len(toConfirm) == 0 {
 		return
 	}
 
-	for i := 0; i < len(confirm); i += adjudicateBatchSize {
-		end := min(i+adjudicateBatchSize, len(confirm))
+	for i := 0; i < len(toConfirm); i += adjudicateBatchSize {
+		end := min(i+adjudicateBatchSize, len(toConfirm))
 		evidence := make([]analyzer.TagPairEvidence, 0, end-i)
-		for _, e := range confirm[i:end] {
+		for _, e := range toConfirm[i:end] {
 			ev := analyzer.TagPairEvidence{
 				Query:  e.target,
 				Target: e.query,
@@ -243,13 +269,13 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 			var incomplete *analyzer.IncompleteReplyError
 			if !errors.As(err, &incomplete) {
 				r.logger.Error("", "tag reconcile: confirmation batch failed: %v", err)
-				for _, e := range confirm[i:end] {
+				for _, e := range toConfirm[i:end] {
 					e.skipReason = "confirmation_error"
 				}
 				continue
 			}
 			missing := incomplete.MissingSet()
-			batch := confirm[i:end]
+			batch := toConfirm[i:end]
 			salvaged, deferred := 0, 0
 			for j := range batch {
 				e := batch[j]
@@ -269,7 +295,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 			continue
 		}
 		for j, res := range results {
-			e := confirm[i:end][j]
+			e := toConfirm[i:end][j]
 			if res.Verdict == e.freshVerdict {
 				e.confirmed = true
 			} else {

@@ -152,3 +152,36 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 		}
 	})
 }
+
+func TestAdjudicateBand_DeterministicVariant(t *testing.T) {
+	r, fake, buf, cfg := newAdjudicateBandHarness(t)
+	agreesWithStored := bandEntry("decolonisation", "decolonization", types.TagVerdicts.Same)
+	disputed := bandEntry("military history", "history military", types.TagVerdicts.Variant)
+
+	r.adjudicateBand(context.Background(), cfg, []*entry{agreesWithStored, disputed}, nil, nil)
+
+	if fake.calls != 0 {
+		t.Errorf("adjudicator calls = %d, want 0 for mechanically resolved pairs", fake.calls)
+	}
+	for _, e := range []*entry{agreesWithStored, disputed} {
+		if e.skipReason != "" {
+			t.Errorf("%q -> %q skipReason = %q, want the entry left actionable", e.query, e.target, e.skipReason)
+		}
+		if e.freshVerdict != types.TagVerdicts.Same {
+			t.Errorf("%q -> %q freshVerdict = %q, want same", e.query, e.target, e.freshVerdict)
+		}
+		if e.freshModel != "deterministic" {
+			t.Errorf("%q -> %q freshModel = %q, want the non-null marker the freshness scans require", e.query, e.target, e.freshModel)
+		}
+		if e.reason != "deterministic" {
+			t.Errorf("%q -> %q reason = %q, want deterministic", e.query, e.target, e.reason)
+		}
+		if !e.confirmed {
+			t.Errorf("%q -> %q not confirmed without a second judge pass", e.query, e.target)
+		}
+	}
+	out := buf.String()
+	if !strings.Contains(out, "orthographic") || !strings.Contains(out, "inverted") {
+		t.Errorf("expected INFO lines naming both classes, got:\n%s", out)
+	}
+}
