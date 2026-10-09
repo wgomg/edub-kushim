@@ -393,16 +393,18 @@ func mkRanked(kept, candTag string, sim float64) matcher.RankResult {
 }
 
 type mockAdjudicator struct {
-	adjudicateFn func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
-	identityFn   func(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)
-	partFn       func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
-	compoundFn   func(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error)
-	qualityFn    func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)
-	called       int
-	identityCall int
-	partCall     int
-	compoundCall int
-	qualityCall  int
+	adjudicateFn    func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
+	identityFn      func(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)
+	partFn          func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
+	compoundFn      func(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error)
+	qualityFn       func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)
+	translationFn   func(ctx context.Context, values []string) ([]analyzer.TagTranslationResult, error)
+	called          int
+	identityCall    int
+	partCall        int
+	compoundCall    int
+	qualityCall     int
+	translationCall int
 }
 
 func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []analyzer.TypeRef, _ []analyzer.TypeRef, _ []string) (*analyzer.AnalysisResult, error) {
@@ -449,6 +451,14 @@ func (m *mockAdjudicator) JudgeTagIdentity(ctx context.Context, candidates []ana
 	m.identityCall++
 	if m.identityFn != nil {
 		return m.identityFn(ctx, candidates)
+	}
+	return nil, nil
+}
+
+func (m *mockAdjudicator) JudgeTagTranslations(ctx context.Context, values []string) ([]analyzer.TagTranslationResult, error) {
+	m.translationCall++
+	if m.translationFn != nil {
+		return m.translationFn(ctx, values)
 	}
 	return nil, nil
 }
@@ -676,7 +686,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		decided := &identityPair{query: "democratic socialism", target: "social democracy"}
-		missing := &identityPair{query: "labour movement", target: "labor movement"}
+		missing := &identityPair{query: "urban planning", target: "city planning"}
 		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{decided, missing}, "")
 
 		adjAssertEqual(t, adj.called, 1, "an incomplete reply is not retried")
@@ -684,7 +694,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adjAssertEqual(t, string(decided.verdict), "same", "the salvaged verdict")
 		adjAssertEqual(t, missing.decided, false, "the missing pair stays undecided")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "the salvaged verdict is recorded")
-		adjAssertEqual(t, countIdentityVerdicts(t, q, "labour movement", "labor movement"), 0, "no verdict row for the missing pair")
+		adjAssertEqual(t, countIdentityVerdicts(t, q, "urban planning", "city planning"), 0, "no verdict row for the missing pair")
 	})
 
 	t.Run("deterministic variant resolves with no judge call", func(t *testing.T) {
@@ -944,6 +954,13 @@ func TestApplyTagQuality(t *testing.T) {
 		}
 		return results, nil
 	}
+	adj.partFn = func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+		results := make([]analyzer.TagPartResult, len(values))
+		for i, v := range values {
+			results[i] = analyzer.TagPartResult{Index: i, Dimensional: v != "phase conjugation"}
+		}
+		return results, nil
+	}
 	ctx := context.Background()
 	docID, _ := database.CreateTestDocument(t, q, "quality-doc")
 	noStore := map[string]struct{}{}
@@ -968,7 +985,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"wave mechanics"},
 			TagDetails: []analyzer.TagDetail{{Term: "wave mechanics", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: noStore, ReducedText: "text", DocID: docID}, "")
 
 		adjAssertEqual(t, len(kept), 1, "kept tags")
 		adjAssertEqual(t, kept[0], "wave mechanics", "kept name")
@@ -986,7 +1003,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"phase conjugation"},
 			TagDetails: []analyzer.TagDetail{{Term: "phase conjugation", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: noStore, ReducedText: "text", DocID: docID}, "")
 
 		adjAssertEqual(t, len(kept), 0, "rejected tag is dropped")
 		if _, ok := decisions["phase conjugation"]; ok {
@@ -1003,7 +1020,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"spin lattice"},
 			TagDetails: []analyzer.TagDetail{{Term: "spin lattice", Category: analyzer.TagCategoryOther}},
 		}
-		kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: noStore, ReducedText: "text", DocID: docID}, "")
 
 		adjAssertEqual(t, len(kept), 1, "gray-band tag is kept")
 		adjAssertEqual(t, decisions["spin lattice"].Outcome, tags.AdmissionDefer, "decision outcome")
@@ -1033,7 +1050,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"cached candidate"},
 			TagDetails: []analyzer.TagDetail{{Term: "cached candidate", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions, _ := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a2.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: noStore, ReducedText: "text", DocID: docID}, "")
 
 		adjAssertEqual(t, len(kept), 0, "cached rejection is applied")
 		adjAssertEqual(t, len(decisions), 0, "no decision for a dropped name")
@@ -1046,7 +1063,7 @@ func TestApplyTagQuality(t *testing.T) {
 			Tags:       []string{"tunneling effect"},
 			TagDetails: []analyzer.TagDetail{{Term: "tunneling effect", Category: analyzer.TagCategoryTopic}},
 		}
-		kept, decisions, _ := a2.ApplyTagQuality(ctx, analysis, nil, noStore, "text", docID, "")
+		kept, decisions, _ := a2.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: noStore, ReducedText: "text", DocID: docID}, "")
 
 		adjAssertEqual(t, len(kept), 1, "tag survives a judge outage")
 		adjAssertEqual(t, decisions["tunneling effect"].Outcome, tags.AdmissionDefer, "decision outcome")
@@ -1078,7 +1095,7 @@ func TestApplyTagQuality_JudgeFailureWarns(t *testing.T) {
 		Tags:       []string{"resonance tunneling"},
 		TagDetails: []analyzer.TagDetail{{Term: "resonance tunneling", Category: analyzer.TagCategoryTopic}},
 	}
-	kept, decisions, _ := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+	kept, decisions, _ := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: map[string]struct{}{}, ReducedText: "text", DocID: docID}, "")
 
 	adjAssertEqual(t, len(kept), 1, "the tag survives the failed judge call")
 	adjAssertEqual(t, decisions["resonance tunneling"].Outcome, tags.AdmissionDefer, "decision outcome")
@@ -1121,6 +1138,13 @@ func TestApplyTagQuality_PartialSalvage(t *testing.T) {
 		}
 		return results, &analyzer.IncompleteReplyError{Missing: []int{missing}}
 	}
+	adj.partFn = func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+		results := make([]analyzer.TagPartResult, len(values))
+		for i, v := range values {
+			results[i] = analyzer.TagPartResult{Index: i, Dimensional: v != "salvage reject"}
+		}
+		return results, nil
+	}
 	ctx := context.Background()
 	docID, _ := database.CreateTestDocument(t, q, "salvage-doc")
 
@@ -1132,7 +1156,7 @@ func TestApplyTagQuality_PartialSalvage(t *testing.T) {
 			{Term: "salvage missing", Category: analyzer.TagCategoryTopic},
 		},
 	}
-	kept, decisions, err := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+	kept, decisions, err := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: map[string]struct{}{}, ReducedText: "text", DocID: docID}, "")
 
 	if err != nil {
 		t.Fatalf("ApplyTagQuality() error = %v", err)
@@ -1195,6 +1219,7 @@ func TestApplyTagQuality_BatchesJudgeCalls(t *testing.T) {
 		}
 		return results, nil
 	}
+	adj.partFn = partsDimensional
 	ctx := context.Background()
 	docID, _ := database.CreateTestDocument(t, q, "quality-batch-doc")
 
@@ -1208,7 +1233,7 @@ func TestApplyTagQuality_BatchesJudgeCalls(t *testing.T) {
 		analysis.TagDetails = append(analysis.TagDetails, analyzer.TagDetail{Term: name, Category: analyzer.TagCategoryTopic})
 	}
 
-	kept, decisions, err := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+	kept, decisions, err := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: map[string]struct{}{}, ReducedText: "text", DocID: docID}, "")
 	if err != nil {
 		t.Fatalf("ApplyTagQuality() error = %v", err)
 	}
@@ -1299,7 +1324,7 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 
 func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
 	a, _ := newSplitAdjudicator(t, nil, nil)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 
 	tests := []struct {
 		name string
@@ -1396,7 +1421,7 @@ func TestDecomposeTags_TwoPassDecision(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			adj := &mockAdjudicator{partFn: tt.partFn, compoundFn: tt.compoundFn}
 			a, docID := newSplitAdjudicator(t, adj, nil)
-			filter := analyzer.NewTagFilter(nil, nil, tt.title, nil)
+			filter := analyzer.NewTagFilter(nil, nil, nil)
 			got, _, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, docID, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.names, got, tt.want)
@@ -1411,7 +1436,7 @@ func TestDecomposeTags_CachedVerdictSkipsJudge(t *testing.T) {
 		compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
 	}
 	a, docID := newSplitAdjudicator(t, adj, nil)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 
 	a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 	_, cached, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
@@ -1431,7 +1456,7 @@ func TestDecomposeTags_SplitLogCarriesVersion(t *testing.T) {
 		compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
 	}
 	a, docID := newSplitAdjudicator(t, adj, &buf)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 
 	a.DecomposeTags(context.Background(), []string{"russian history"}, nil, nil, filter, docID, "")
 
@@ -1448,7 +1473,7 @@ func TestDecomposeTags_NoVerdictWarns(t *testing.T) {
 		compoundFn: compoundsStatus(""),
 	}
 	a, docID := newSplitAdjudicator(t, adj, &buf)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 
 	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 
@@ -1471,7 +1496,7 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 		compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
 	}
 	a, docID := newSplitAdjudicator(t, adj, &buf)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
 	if err := a.queries.InsertTagCompositionEvent(context.Background(), database.InsertTagCompositionEventParams{
@@ -1532,7 +1557,7 @@ func TestDecomposeTags_StoreExistingReJudgedUntilDecided(t *testing.T) {
 			var buf bytes.Buffer
 			adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
 			a, docID := newSplitAdjudicator(t, adj, &buf)
-			filter := analyzer.NewTagFilter(nil, nil, "", nil)
+			filter := analyzer.NewTagFilter(nil, nil, nil)
 			storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 			tt.seed(t, a, docID)
 
@@ -1558,7 +1583,7 @@ func TestDecomposeTags_StoreExistingKeepAppliesCachedParts(t *testing.T) {
 	var buf bytes.Buffer
 	adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
 	a, docID := newSplitAdjudicator(t, adj, &buf)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 	ctx := context.Background()
 
@@ -1612,7 +1637,7 @@ func TestDecomposeTags_StoreExistingWithoutAdjudicatorStaysSkipped(t *testing.T)
 	adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
 	a, docID := newSplitAdjudicator(t, adj, &buf)
 	setUnexportedField(t, a.runner, "tagAdjudicator", nil)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
 	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
@@ -1768,7 +1793,7 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a, docID := newSplitAdjudicator(t, tt.adj, nil)
-			filter := analyzer.NewTagFilter(nil, nil, "", tt.docTypes)
+			filter := analyzer.NewTagFilter(nil, nil, tt.docTypes)
 
 			_, rows, _ := a.DecomposeTags(context.Background(), tt.names, nil, tags.StoreNames(tt.promoted), filter, docID, "")
 
@@ -1820,7 +1845,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 
 	t.Run("parts land on their store anchors", func(t *testing.T) {
 		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
-		filter := analyzer.NewTagFilter(nil, nil, "", nil)
+		filter := analyzer.NewTagFilter(nil, nil, nil)
 
 		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 
@@ -1849,7 +1874,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
 		}
 		a, docID := newSplitAdjudicator(t, adj, nil)
-		filter := analyzer.NewTagFilter(nil, nil, "", nil)
+		filter := analyzer.NewTagFilter(nil, nil, nil)
 
 		got, _, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 		if !reflect.DeepEqual(got, []string{"mexico", "revolution"}) {
@@ -1867,7 +1892,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 
 	t.Run("without a store view the parts pass through", func(t *testing.T) {
 		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
-		filter := analyzer.NewTagFilter(nil, nil, "", nil)
+		filter := analyzer.NewTagFilter(nil, nil, nil)
 
 		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, nil, filter, docID, "")
 
@@ -1885,7 +1910,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		// after the fold, so only one survivor remains and the compound
 		// stays whole
 		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
-		filter := analyzer.NewTagFilter(nil, nil, "", []string{"mexico"})
+		filter := analyzer.NewTagFilter(nil, nil, []string{"mexico"})
 
 		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 
@@ -1943,7 +1968,7 @@ func TestDecomposeTags_CreditErrorEscapes(t *testing.T) {
 		},
 	}
 	a, docID := newSplitAdjudicator(t, adj, nil)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 
 	got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 	if err == nil {
@@ -1968,7 +1993,7 @@ func TestDecomposeTags_TransientFailureRetriesOnce(t *testing.T) {
 		return partsDimensional(context.Background(), values)
 	}
 	a, docID := newSplitAdjudicator(t, adj, nil)
-	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
 
 	got, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 	if err != nil {
@@ -1994,7 +2019,7 @@ func TestApplyTagQuality_CreditErrorEscapes(t *testing.T) {
 		Tags:       []string{"resonance tunneling"},
 		TagDetails: []analyzer.TagDetail{{Term: "resonance tunneling", Category: analyzer.TagCategoryTopic}},
 	}
-	kept, decisions, err := a.ApplyTagQuality(ctx, analysis, nil, map[string]struct{}{}, "text", docID, "")
+	kept, decisions, err := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: map[string]struct{}{}, ReducedText: "text", DocID: docID}, "")
 	if err == nil {
 		t.Fatal("credit exhaustion must escape ApplyTagQuality")
 	}
@@ -2137,4 +2162,226 @@ func TestAdjudicateIdentityPairs_CreditErrorEscapes(t *testing.T) {
 	}
 	adjAssertEqual(t, p.decided, false, "the pair stays undecided")
 	adjAssertEqual(t, adj.called, 1, "credit errors are not retried")
+}
+
+// TestDecomposeTags_PeriodClassDeterministic pins the split gate's deterministic period class (report N1):
+// a house numeric period keeps whole under the period_class reason with no parts or compound judge call —
+// a model verdict could otherwise drop it as no_dimension — and it never decomposes, while a longer
+// period phrasing keeps its judged path.
+func TestDecomposeTags_PeriodClassDeterministic(t *testing.T) {
+	adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
+	a, docID := newSplitAdjudicator(t, adj, nil)
+	filter := analyzer.NewTagFilter(nil, nil, nil)
+	ctx := context.Background()
+
+	t.Run("an ordinal period keeps without a model call", func(t *testing.T) {
+		got, rows, err := a.DecomposeTags(ctx, []string{"20th century"}, nil, nil, filter, docID, "")
+		if err != nil {
+			t.Fatalf("DecomposeTags: %v", err)
+		}
+		if !reflect.DeepEqual(got, []string{"20th century"}) {
+			t.Errorf("DecomposeTags = %v, want the period kept whole", got)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("composition rows = %d, want 1 period row", len(rows))
+		}
+		if rows[0].Disposition != tags.CompositionKeep || rows[0].Reason != tags.CompositionReasonPeriodClass {
+			t.Errorf("row = %s/%s, want keep/%s", rows[0].Disposition, rows[0].Reason, tags.CompositionReasonPeriodClass)
+		}
+		if rows[0].CriteriaVersion != analyzer.TagSplitVersion {
+			t.Errorf("criteria version = %q, want %q", rows[0].CriteriaVersion, analyzer.TagSplitVersion)
+		}
+		if len(rows[0].Parts) != 0 {
+			t.Errorf("parts = %v, want none — a period does not decompose", rows[0].Parts)
+		}
+		if adj.partCall != 0 || adj.compoundCall != 0 {
+			t.Errorf("judge calls = %d/%d, want none for a deterministic class", adj.partCall, adj.compoundCall)
+		}
+	})
+
+	t.Run("a spelled ordinal reaches the class through the house form", func(t *testing.T) {
+		_, rows, err := a.DecomposeTags(ctx, []string{"twentieth century"}, nil, nil, filter, docID, "")
+		if err != nil {
+			t.Fatalf("DecomposeTags: %v", err)
+		}
+		if len(rows) != 1 || rows[0].Reason != tags.CompositionReasonPeriodClass {
+			t.Fatalf("rows = %+v, want one period_class row", rows)
+		}
+		if rows[0].Candidate != "twentieth century" {
+			t.Errorf("candidate = %q, want the emitted spelling", rows[0].Candidate)
+		}
+		if adj.partCall != 0 || adj.compoundCall != 0 {
+			t.Errorf("judge calls = %d/%d, want none for a deterministic class", adj.partCall, adj.compoundCall)
+		}
+	})
+
+	t.Run("a three-token period phrasing stays judged", func(t *testing.T) {
+		_, rows, err := a.DecomposeTags(ctx, []string{"early 20th century"}, nil, nil, filter, docID, "")
+		if err != nil {
+			t.Fatalf("DecomposeTags: %v", err)
+		}
+		for _, row := range rows {
+			if row.Reason == tags.CompositionReasonPeriodClass {
+				t.Errorf("row for %q = %s, only the two-token shape is the class", row.Candidate, row.Reason)
+			}
+		}
+		if adj.partCall == 0 || adj.compoundCall == 0 {
+			t.Errorf("judge calls = %d/%d, want the phrasing judged through both passes", adj.partCall, adj.compoundCall)
+		}
+	})
+}
+
+// TestApplyTagQuality_ForceDefer pins the language guard's gate contract (report N2/D27): a value the
+// translation pass could not resolve stays on the document under a defer decision with its own reason so
+// the review queue sees it, and it never reaches a judge — a foreign value can be neither admitted nor
+// rejected while it waits for review.
+func TestApplyTagQuality_ForceDefer(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		results := make([]analyzer.TagQualityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagQualityResult{
+				Index:              i,
+				SubjectMatter:      true,
+				NotPersonPlaceWork: true,
+				Atomic:             true,
+				NotFormGenre:       true,
+			}
+		}
+		return results, nil
+	}
+	adj.partFn = partsDimensional
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "force-defer-doc")
+
+	analysis := &tools.ContentAnalysisResult{
+		Tags:       []string{"movimiento social"},
+		TagDetails: []analyzer.TagDetail{{Term: "movimiento social", Category: analyzer.TagCategoryTopic}},
+	}
+	kept, decisions, err := a.ApplyTagQuality(ctx, TagQualityInput{
+		Analysis:    analysis,
+		DBNames:     map[string]struct{}{},
+		ReducedText: "text",
+		DocID:       docID,
+		ForceDefer:  map[string]struct{}{"movimiento social": {}},
+	}, "")
+	if err != nil {
+		t.Fatalf("ApplyTagQuality() error = %v", err)
+	}
+	adjAssertEqual(t, len(kept), 1, "a held value stays on the document")
+	adjAssertEqual(t, kept[0], "movimiento social", "the held value")
+
+	decision, ok := decisions["movimiento social"]
+	if !ok {
+		t.Fatal("the held value needs a decision so the review queue sees it")
+	}
+	adjAssertEqual(t, decision.Outcome, tags.AdmissionDefer, "decision outcome")
+	adjAssertEqual(t, decision.Reason, reasonLanguageReview, "decision reason")
+	adjAssertEqual(t, adj.qualityCall, 0, "a held value never reaches the rubric")
+	adjAssertEqual(t, adj.partCall, 0, "a held value never reaches the parts pass")
+}
+
+// TestApplyTagQuality_MissingPartsVerdictDefers pins the abstain contract of the single dimension owner
+// (report N5): when the parts pass returns no verdict the gate defers instead of stamping a fabricated
+// false. With one genuine rubric failure a fabricated dimension would corroborate into a reject, turning a
+// parts-judge outage into a drop.
+func TestApplyTagQuality_MissingPartsVerdictDefers(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		results := make([]analyzer.TagQualityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagQualityResult{
+				Index:              i,
+				SubjectMatter:      true,
+				NotPersonPlaceWork: false,
+				Atomic:             true,
+				NotFormGenre:       true,
+			}
+		}
+		return results, nil
+	}
+	// no partFn: the parts pass hands back no verdicts, the outage the abstain path must absorb
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "missing-dimension-doc")
+
+	analysis := &tools.ContentAnalysisResult{
+		Tags:       []string{"resonant fields"},
+		TagDetails: []analyzer.TagDetail{{Term: "resonant fields", Category: analyzer.TagCategoryTopic}},
+	}
+	kept, decisions, err := a.ApplyTagQuality(ctx, TagQualityInput{
+		Analysis:    analysis,
+		DBNames:     map[string]struct{}{},
+		ReducedText: "text",
+		DocID:       docID,
+	}, "")
+	if err != nil {
+		t.Fatalf("ApplyTagQuality() error = %v", err)
+	}
+	adjAssertEqual(t, len(kept), 1, "an abstained verdict keeps the value")
+	decision, ok := decisions["resonant fields"]
+	if !ok {
+		t.Fatal("the judged value needs a decision")
+	}
+	adjAssertEqual(t, decision.Outcome, tags.AdmissionDefer, "outcome defers rather than rejects")
+	adjAssertEqual(t, decision.Reason, tags.ReasonJudgeDefer, "the abstention is why it deferred")
+	adjAssertEqual(t, adj.qualityCall, 1, "the rubric still ran")
+}
+
+// TestResolveLanguages pins the language guard's rewrite (report N2/D27): detected foreign values are
+// replaced in place by their judged English canonical form — including the tag details the category
+// feature reads — an already-English value and a store-existing value pass through untouched, and a value
+// the judge could not resolve stays in the pending set the gate holds for review.
+func TestResolveLanguages(t *testing.T) {
+	a, _, adj := newTestAdjudicator(t)
+	adj.translationFn = func(_ context.Context, values []string) ([]analyzer.TagTranslationResult, error) {
+		results := make([]analyzer.TagTranslationResult, len(values))
+		for i, v := range values {
+			results[i] = analyzer.TagTranslationResult{Index: i, Translation: v}
+			switch v {
+			case "filosofia":
+				results[i].Translation = "philosophy"
+			case "19 век":
+				results[i].Translation = "19th century"
+			case "movimiento social":
+				results[i].Defer = true
+			}
+		}
+		return results, nil
+	}
+
+	analysis := &tools.ContentAnalysisResult{
+		Tags: []string{"filosofia", "machine learning", "19 век", "movimiento social", "estado social"},
+		TagDetails: []analyzer.TagDetail{
+			{Term: "filosofia", Category: analyzer.TagCategoryTopic},
+			{Term: "machine learning", Category: analyzer.TagCategoryTopic},
+		},
+	}
+	storeKeys := map[string]struct{}{tags.Key("estado social"): {}}
+
+	pending, err := a.ResolveLanguages(context.Background(), analysis, storeKeys, "")
+	if err != nil {
+		t.Fatalf("ResolveLanguages() error = %v", err)
+	}
+
+	want := []string{"philosophy", "machine learning", "19th century", "movimiento social", "estado social"}
+	if !reflect.DeepEqual(analysis.Tags, want) {
+		t.Errorf("tags = %v, want %v", analysis.Tags, want)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending = %v, want only the unresolved value", pending)
+	}
+	if _, ok := pending["movimiento social"]; !ok {
+		t.Errorf("pending = %v, want the abstained value held for review", pending)
+	}
+	if analysis.TagDetails[0].Term != "philosophy" {
+		t.Errorf("tag detail = %q, want the rewritten English form", analysis.TagDetails[0].Term)
+	}
+	if analysis.TagDetails[1].Term != "machine learning" {
+		t.Errorf("tag detail = %q, want an English value untouched", analysis.TagDetails[1].Term)
+	}
+	adjAssertEqual(t, adj.translationCall, 1, "one batch carries every flagged value")
 }

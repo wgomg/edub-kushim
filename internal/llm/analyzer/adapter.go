@@ -55,9 +55,13 @@ type ContentAnalyzer interface {
 	// JudgeTagCompounds decides what each compound phrase denotes: the context-free named_unit/composition/no_dimension trichotomy the split
 	// gate's compound pass asks.
 	JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
-	// JudgeTagQuality considers the document text for the subject-matter criterion and the tag alone for the
-	// dimensional criteria, answering the five-criterion rubric and the judge's abstention.
+	// JudgeTagQuality considers the document text for the subject-matter criterion and the tag alone for
+	// the remaining criteria, answering the rubric and the judge's abstention. The dimension question is
+	// not asked here: the parts pass owns it and the gate stamps its verdict (report N5).
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
+	// JudgeTagTranslations returns each value's English canonical form, or the value unchanged when it is
+	// already English: the language guard's judged translation (report N2).
+	JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
 	// JudgeTagIdentity decides the canonical written form of candidate
 	// tags: folds, denotation preservation, conventional form.
 	JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)

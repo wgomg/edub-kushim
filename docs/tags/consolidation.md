@@ -97,7 +97,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v7]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v8]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -152,21 +152,24 @@ it is skipped before judgment and never split.
   (`split`/`keep`/`drop`), `reason`
   (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`; the
   decision reasons `named_unit`, `named_unit_reconstructible`, `relational_keep`,
-  `no_dimension`, `split_defer`, `conflicting_evidence`, `sample_disagreement`; or
-  `part_rejected` when an admitted part was rejected downstream and the split
-  degrades to `drop`, keeping the row's resolved parts — keep rows record the
+  `no_dimension`, `split_defer`, `conflicting_evidence`, `sample_disagreement`,
+  `period_class` for the pinned deterministic period keep; or `part_rejected`
+  when a split lost every admitted part and degrades to `drop`, or
+  `partial_parts` when it lost some but not all and keeps the compound whole with
+  its surviving parts applied alongside — keep rows record the
   parts applied alongside, pruned of any the quality gate rejected), the criteria
   version,
   and the judge model (`NULL` for cached verdicts and the conjunction
   fallback) — with a matching `tag split[...]` log line per candidate.
 - **Validation**: components are first fold-resolved onto **promoted** store
   values through the attested seam fold (the generated WordNet pertainym
-  table's adjective→noun pairs; two distinct store hits are ambiguity, never a
-  fold; shape proposals stay in the judged path; provisional births are not
+  table's adjective→noun pairs, or a pinned variant class the table does not
+  cover; a part with more than one attested base folds only while a single base
+  is a live store value, so a sibling sense present in the store blocks the fold;
+  shape proposals stay in the judged path; provisional births are not
   seam anchors) and then pass the hard
   per-document rules — normalized, deduplicated, ≤3 words, ≤64 characters, no
-  person or doc-type token matches; the title-containment echo rule does not
-  apply to parts — and a split must yield between 2 and
+  person or doc-type token matches — and a split must yield between 2 and
   `tags.MaxCompoundWords` (3) valid components; anything else keeps the
   compound as-is. Emissions are not count-capped.
 - **Retroactive cleanup**: the scheduled reconciliation task scans the store
@@ -214,13 +217,15 @@ decision decides what deserves to be born. With
 survive consolidation — names absent from the vocabulary — are decided before
 they are created:
 
-- **Features**: each candidate carries the judge's five rubric answers —
-  `subject_matter`, `dimension` (a reusable dimension of content, not a
-  per-document detail or container word), `not_person_place_work`, `atomic`
+- **Features**: each candidate carries the judge's four rubric answers —
+  `subject_matter`, `not_person_place_work`, `atomic`
   (one dimension, not a combination whose parts each work as tags), and
   `not_form_genre` (not a publishing format — genres and art
   forms are subject-side and pass) —
-  plus the judge's optional `defer` abstention, and the emission's
+  plus the `dimension` verdict the parts pass owns (read from the shared parts
+  cache, judged on a miss, and stamped onto the row; a reusable dimension of
+  content, not a per-document detail or container word), the judge's optional
+  `defer` abstention, and the emission's
   deterministic signals: a typed detail annotated `other`, and a best store
   similarity below the internal no-anchor floor (0.60).
 - **Decision**: the pinned rule set (`tags.DecideAdmission`) defers on the
@@ -232,8 +237,9 @@ they are created:
   a failing signal.
 - **Judge call**: the uncached candidates are judged in temperature-0 LLM
   calls over batches of up to 40 candidates per document; the reduced document
-  text serves the `subject_matter` question alone, the remaining criteria
-  answering on the candidate; whitelisted
+  text serves the `subject_matter` question alone, the other three criteria
+  answering on the candidate (the dimension verdict is not asked here — the
+  parts pass supplies it); whitelisted
   countries and continents are never rejected for being a place, so the typed
   facet gate and the judge cannot disagree.
 - **Cache**: verdicts are stored in the `tag_quality_event` table keyed by
@@ -254,7 +260,7 @@ they are created:
   non-credit failure keeps every novel tag with a defer decision — under the
   gate the birth is provisional and carries no verdict — and a
   credit-exhaustion failure pauses the batch instead.
-- **Logging**: rejections and defers are logged as `tagquality[v4]:` lines
+- **Logging**: rejections and defers are logged as `tagquality[v5]:` lines
   carrying the outcome and reason, siblings of the `consolidation[v1]` and
   `tags[facet]:` lines.
 
@@ -271,19 +277,28 @@ Every LLM judge pins its criteria with a version constant, and a cached verdict
 applies only under the version that produced it — a criteria or prompt change
 bumps the constant so older rows never apply. The current constants:
 
-- `analyzer.TagQualityVersion` (`v4`) — the tag-quality judge's dimension
-  rubric and prompt.
-- `analyzer.TagPartDimensionVersion` (`v2`) — the split gate's parts pass: one
+- `analyzer.TagQualityVersion` (`v5`) — the tag-quality judge's rubric and
+  prompt: the document-scoped questions the judge answers, with the `dimension`
+  feature stamped from the parts pass. The v5 stamp also records the language
+  guard (`reason=language_review`).
+- `analyzer.TagPartDimensionVersion` (`v3`) — the split gate's parts pass and
+  the single value-keyed dimension verdict the quality gate reads: one
   context-free dimensional question per value, judged in its ordinary
-  standalone sense.
-- `analyzer.TagSplitVersion` (`v4`) — the split gate's compound pass: the
+  standalone sense, with lexicalized derivations and gerunds standing and
+  abstract field nouns admitted.
+- `analyzer.TagSplitVersion` (`v5`) — the split gate's compound pass: the
   context-free `named_unit`/`composition`/`no_dimension` trichotomy plus an
   abstention, and the `criteria_version` every composition row carries. The
   version also pins what a row means: the v4 stamp records the branch-first
   decision order (a unanimous dimensional verdict is not overridden by
   `named_unit`; the combination-branch named-unit keep is the held
   `relational_keep`), the attested seam folds feeding the features, and the
-  parts-alongside keep rows.
+  parts-alongside keep rows; the v5 stamp adds the deterministic period class
+  and narrows the split degradation to all-parts-rejected (`partial_parts`
+  keeps).
+- `analyzer.TagTranslationVersion` (`v1`) — the language guard's translation
+  pass: one value's English canonical form, or the value unchanged when it is
+  already English, with an abstention.
 
 ---
 

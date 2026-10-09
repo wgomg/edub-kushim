@@ -230,7 +230,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		case analyzer.TagDirectionQuery:
 			winner, loser = p.query, p.target
 		default:
-			if tags.TieBreak(p.query, p.target) == p.query {
+			if tags.PreferCanonical(p.query, p.target) == p.query {
 				winner, loser = p.query, p.target
 			} else {
 				winner, loser = p.target, p.query

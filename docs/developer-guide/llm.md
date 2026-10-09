@@ -659,17 +659,26 @@ for i := range 2 {
     `forbidden_category`, `non_whitelisted_place`; `topic`/`other` and
     untyped emissions pass through. `FilterTags` (`tagfilter.go:121-132`) then
     drops whole-emission tags that are >3 words, overlap with LLM people names,
-    are multi-token subsets of known normalized names, overlap doc-type names, or
-    are contained in the title, with no count cap. `Adjudicator.DecomposeTags`
+    are multi-token subsets of known normalized names, or overlap doc-type names,
+    with no count cap; whole emissions and split components share the same
+    rules. Before the split gate the language guard
+    (`Adjudicator.ResolveLanguages`, `Runner.JudgeTagTranslations`, criteria
+    pinned by `analyzer.TagTranslationVersion`) rewrites detected non-English
+    emissions to their judged English canonical form (a value returned unchanged
+    is already English; an uncertain translation is held for review by the
+    admission gate with `reason=language_review`). `Adjudicator.DecomposeTags`
     (`adjudicator.go`) then replaces compound tags with their parts —
     LLM-adjudicated when the tag adjudicator is enabled, conjunction joints
-    deterministically otherwise. The parts are first fold-resolved through the
+    deterministically otherwise — except a period in the house numeric style
+    (`tags.IsPeriodClass` over the house form), which is a pinned deterministic
+    keep that stays whole, is never judged, and never decomposes. The parts are first fold-resolved through the
     attested seam fold (the generated WordNet pertainym table's adjective→noun
-    pairs, anchored only on **promoted** store values; two distinct store hits
-    are ambiguity, never a fold; provisional births are never seam anchors) and
+    pairs, or a pinned variant class the table does not cover, anchored only on
+    **promoted** store values; a part with more than one attested base folds only
+    while a single base is a live store value, so a sibling sense present in the
+    store blocks the fold; provisional births are never seam anchors) and
     then pass the hard per-document rules — length/word bounds, people,
-    known-name, and doc-type checks — with the title-containment check
-    deliberately not applied to them. Compounds whose key already exists in the
+    known-name, and doc-type checks. Compounds whose key already exists in the
     store (names and aliases) are applications and are skipped before
     judgment only once a current-version verdict decides them (a missing or
     degraded verdict re-enters judgment, and a decided keep applies its
@@ -677,8 +686,10 @@ for i := range 2 {
     compound records one `tag_composition_event`
     verdict row (split with its resolved parts, keep with the parts applied
     alongside pruned of rejected ones, or the reason it could
-    not be judged — a `part_rejected` drop keeps the parts it resolved) with a
-    matching `tag split[...]` log line. Under the shared
+    not be judged — a split that lost every admitted part is a `part_rejected`
+    drop that keeps the parts it resolved, and one that lost some but not all is a
+    `partial_parts` keep that stands whole with its survivors applied alongside)
+    with a matching `tag split[...]` log line. Under the shared
     judged-call policy (§7) a transient split-judge failure is retried once, a
     credit exhaustion aborts the document so the batch pauses, and every other
     failure keeps the compound whole. `Adjudicator.ApplyDeletedTagPolicy`
@@ -704,13 +715,16 @@ for i := range 2 {
     per document) plus the emission's
     deterministic signals (a detail annotated `other`, and a best store
     similarity below the internal `no_anchor_similarity` 0.60 cut). The rubric
-    asks `subject_matter`, `dimension`, `not_person_place_work`, `atomic` and
-    `not_form_genre`, with `defer` as the judge's abstention; the decision
+    asks `subject_matter`, `not_person_place_work`, `atomic` and
+    `not_form_genre`, with `defer` as the judge's abstention, while the
+    `dimension` verdict is the parts pass's (read from the shared parts cache,
+    judged on a miss, and stamped onto the row; a missing or abstained verdict
+    defers); the decision
     defers on abstention,
     rejects on two or more failing signals, defers on exactly one (the gray
     band), and admits when nothing fails. Rejections drop the tag for that
     document — the registration and its pending identity evidence never reach
-    the store — and log `tagquality[v4]: reject … (reason=corroborated_failures
+    the store — and log `tagquality[v5]: reject … (reason=corroborated_failures
     source=judge|cache …)`; defers are kept and logged too, and admitted
     candidates journal at DEBUG. A whitelisted
     country/continent is never rejected for being a place. Fresh verdicts

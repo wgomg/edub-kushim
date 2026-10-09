@@ -69,7 +69,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 			return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
 		}
 		salvaged := bandEntry("supply", "supply chain", types.TagVerdicts.Variant)
-		missing := bandEntry("labour", "labor", types.TagVerdicts.Variant)
+		missing := bandEntry("urban planning", "city planning", types.TagVerdicts.Variant)
 
 		r.adjudicateBand(context.Background(), cfg, []*entry{salvaged, missing}, nil, nil)
 
@@ -106,7 +106,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 			return nil, errors.New("provider 500")
 		}
 		first := bandEntry("supply", "supply chain", types.TagVerdicts.Variant)
-		second := bandEntry("labour", "labor", types.TagVerdicts.Variant)
+		second := bandEntry("urban planning", "city planning", types.TagVerdicts.Variant)
 
 		r.adjudicateBand(context.Background(), cfg, []*entry{first, second}, nil, nil)
 
@@ -133,7 +133,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 			return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
 		}
 		confirmed := bandEntry("supply", "supply chain", types.TagVerdicts.Same)
-		unconfirmed := bandEntry("labour", "labor", types.TagVerdicts.Same)
+		unconfirmed := bandEntry("urban planning", "city planning", types.TagVerdicts.Same)
 
 		r.adjudicateBand(context.Background(), cfg, []*entry{confirmed, unconfirmed}, nil, nil)
 

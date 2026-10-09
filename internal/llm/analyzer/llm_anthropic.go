@@ -400,6 +400,11 @@ func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candida
 	return judgedAnthropic(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), ParseTagQualityResponse)
 }
 
+// JudgeTagTranslations normalizes values to English through the Anthropic API.
+func (l *LlmAnthropic) JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error) {
+	return judgedAnthropic(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), ParseTagTranslationResponse)
+}
+
 // JudgeTagIdentity decides canonical forms through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
 	return judgedAnthropic(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), ParseTagIdentityResponse)

@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -11,12 +12,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
 // newTestVerdictStore wires a store over a fresh test database, with the judge runner handing results back
 // through adj. The returned document is a real row for the FK the emission path stamps.
 func newTestVerdictStore(t *testing.T, adj *mockAdjudicator) (*VerdictStore, *database.Queries, int64) {
+	return newTestVerdictStoreWithPromoted(t, adj, nil)
+}
+
+// newTestVerdictStoreWithPromoted is newTestVerdictStore with the promoted-value set the false-verdict
+// guard reads; a nil set means no value counts as promoted.
+func newTestVerdictStoreWithPromoted(t *testing.T, adj *mockAdjudicator, promoted map[string]struct{}) (*VerdictStore, *database.Queries, int64) {
 	t.Helper()
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -34,7 +42,7 @@ func newTestVerdictStore(t *testing.T, adj *mockAdjudicator) (*VerdictStore, *da
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
-	return NewVerdictStore(q, runner, logger, "test-model"), q, database.CreateUniqueDocument(t, q, "verdict-store")
+	return NewVerdictStore(q, runner, logger, "test-model", promoted), q, database.CreateUniqueDocument(t, q, "verdict-store")
 }
 
 // TestWriteCompoundVerdict_ConflictComparesReading pins the conflict reread's comparison: the stored row and
@@ -178,6 +186,116 @@ func TestVerdictStore_SalvageAppliesPresentAndDefersMissing(t *testing.T) {
 		}
 		if len(rows) != 1 || rows[0].Candidate != present {
 			t.Errorf("persisted compound rows = %v, want only the salvaged entry", rows)
+		}
+	})
+}
+
+// TestVerdictStore_PartFalseGuard pins the destructive-direction guard on a fresh part verdict (report
+// N4/N5): a false answer on a value the store already holds promoted is never persisted as a plain false —
+// the store signal wins and the verdict defers to review without a second sample — and any other fresh
+// false must be corroborated by a second sample before it is cached, deferring when the samples disagree.
+func TestVerdictStore_PartFalseGuard(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a false verdict on a promoted value defers without a second sample", func(t *testing.T) {
+		adj := &mockAdjudicator{partFn: func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+			results := make([]analyzer.TagPartResult, len(values))
+			for i := range values {
+				results[i] = analyzer.TagPartResult{Index: i, Dimensional: false}
+			}
+			return results, nil
+		}}
+		promoted := map[string]struct{}{tags.Key("economy"): {}}
+		store, q, docID := newTestVerdictStoreWithPromoted(t, adj, promoted)
+
+		verdicts, err := store.Parts(ctx, []string{"economy"}, docID, "")
+		if err != nil {
+			t.Fatalf("Parts: %v", err)
+		}
+		v, ok := verdicts["economy"]
+		if !ok {
+			t.Fatal("the promoted value needs a verdict")
+		}
+		if v.Dimensional || !v.Deferred {
+			t.Errorf("verdict = dimensional:%t defer:%t, want a defer the store signal set", v.Dimensional, v.Deferred)
+		}
+		if adj.partCall != 1 {
+			t.Errorf("judge calls = %d, want 1 — a promoted value's false is never re-sampled", adj.partCall)
+		}
+
+		rows, err := q.LatestTagPartVerdictsForValues(ctx, database.LatestTagPartVerdictsForValuesParams{
+			PolicyVersion: analyzer.TagPartDimensionVersion,
+			PartValues:    []string{"economy"},
+		})
+		if err != nil {
+			t.Fatalf("read back the verdict: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("persisted part rows = %d, want 1", len(rows))
+		}
+		var criteria analyzer.TagPartCriteria
+		if err := json.Unmarshal(rows[0].Criteria, &criteria); err != nil {
+			t.Fatalf("persisted criteria %q: %v", rows[0].Criteria, err)
+		}
+		if criteria.Defer == nil || !*criteria.Defer {
+			t.Errorf("persisted criteria = %s, want the defer the store signal set", rows[0].Criteria)
+		}
+		if criteria.Dimensional == nil || *criteria.Dimensional {
+			t.Errorf("persisted criteria = %s, want a false the store signal converted", rows[0].Criteria)
+		}
+	})
+
+	t.Run("a false the second sample contradicts defers", func(t *testing.T) {
+		call := 0
+		adj := &mockAdjudicator{partFn: func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+			call++
+			results := make([]analyzer.TagPartResult, len(values))
+			for i := range values {
+				results[i] = analyzer.TagPartResult{Index: i, Dimensional: call > 1}
+			}
+			return results, nil
+		}}
+		store, _, docID := newTestVerdictStore(t, adj)
+
+		verdicts, err := store.Parts(ctx, []string{"entropy budget"}, docID, "")
+		if err != nil {
+			t.Fatalf("Parts: %v", err)
+		}
+		v, ok := verdicts["entropy budget"]
+		if !ok {
+			t.Fatal("the value needs a verdict")
+		}
+		if v.Dimensional || !v.Deferred {
+			t.Errorf("verdict = dimensional:%t defer:%t, want a defer from the disagreement", v.Dimensional, v.Deferred)
+		}
+		if adj.partCall != 2 {
+			t.Errorf("judge calls = %d, want 2 — the fresh false took one corroborating sample", adj.partCall)
+		}
+	})
+
+	t.Run("a corroborated false persists as false", func(t *testing.T) {
+		adj := &mockAdjudicator{partFn: func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+			results := make([]analyzer.TagPartResult, len(values))
+			for i := range values {
+				results[i] = analyzer.TagPartResult{Index: i, Dimensional: false}
+			}
+			return results, nil
+		}}
+		store, _, docID := newTestVerdictStore(t, adj)
+
+		verdicts, err := store.Parts(ctx, []string{"eviction notice"}, docID, "")
+		if err != nil {
+			t.Fatalf("Parts: %v", err)
+		}
+		v, ok := verdicts["eviction notice"]
+		if !ok {
+			t.Fatal("the value needs a verdict")
+		}
+		if v.Dimensional || v.Deferred {
+			t.Errorf("verdict = dimensional:%t defer:%t, want a corroborated false", v.Dimensional, v.Deferred)
+		}
+		if adj.partCall != 2 {
+			t.Errorf("judge calls = %d, want 2 — the fresh false took one corroborating sample", adj.partCall)
 		}
 	})
 }

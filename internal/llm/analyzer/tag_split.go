@@ -6,9 +6,12 @@ import (
 	"strings"
 )
 
-// TagPartDimensionVersion pins the parts pass's criteria: the context-free dimensional question asked of a value on its own, and the policy version
-// of its cached verdict rows. A criteria or prompt change bumps it so an older generation's verdicts never apply.
-const TagPartDimensionVersion = "v2"
+// TagPartDimensionVersion pins the parts pass's criteria: the context-free dimensional question asked of
+// a value on its own, and the policy version of its cached verdict rows. It is the single value-keyed
+// dimension verdict the quality gate also reads (report N5), and a criteria or prompt change bumps it so
+// an older generation's verdicts never apply. v3 ports the emission prompt's house-form rule (lexicalized
+// derivations and gerunds stand) and adds the abstract-field clause (report N4).
+const TagPartDimensionVersion = "v3"
 
 // TagPartSystemMessage is the system prompt of the parts pass.
 const TagPartSystemMessage = "You are a tag-dimension classifier. Decide whether each value, on its own, is a subject a searcher would filter by."
@@ -61,6 +64,8 @@ func BuildTagPartPrompt(values []string) string {
 	sb.WriteString("For each value below, judge whether it names a subject a searcher would filter by in a document store: a broad, stable, reusable dimension of content.\n")
 	sb.WriteString("- A value that stands on its own as a subject counts, however rare it is in general text (repair, networking, philosophy, russia).\n")
 	sb.WriteString("- A value with no retrieval function does not: a generic container (use, thought, knowledge, irony), or a form that cannot stand as a subject on its own (an adjective, a verb form, a bare modifier).\n")
+	sb.WriteString("- Lexicalized derivations and gerunds stand and are judged as fields (programming, learning, running).\n")
+	sb.WriteString("- A noun whose standard sense names a field, domain, or discipline counts even when abstract (theory, state, economy); the generic-container exclusion applies only when no domain sense exists.\n")
 	sb.WriteString("- Judge the value in its ordinary standalone sense; do not infer a sense it might take from a phrase.\n")
 	sb.WriteString("Set defer true when you cannot decide; never guess.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"values\":[{\"index\":0,\"dimensional\":true,\"defer\":false},...]}, one entry per value, no explanations.\n\n")
@@ -143,11 +148,13 @@ func (s TagCompoundStatus) Valid() bool {
 // TagSplitVersion pins the compound pass's criteria — the context-free named_unit/composition/no_dimension
 // trichotomy asked of every compound — and the criteria version every composition row records; the
 // version-filtered reads (the promotion hold, the store-existing skip) follow it. A criteria or prompt
-// change bumps it so an older generation's verdicts never apply, and v4 also records the split-gate
-// remediation that changed what a row means: the features feeding the decision now derive from the
-// attested fold seam, the decision maps a combined parts+compound reading branch-first (the held
-// relational keep), and keeps carry applied-alongside parts. The judge's criteria text is unchanged.
-const TagSplitVersion = "v4"
+// change bumps it so an older generation's verdicts never apply. v4 recorded the split-gate remediation
+// that changed what a row means: the features feeding the decision derive from the attested fold seam, the
+// decision maps a combined parts+compound reading branch-first (the held relational keep), and keeps carry
+// applied-alongside parts. v5 adds the deterministic period class (a period-shaped candidate keeps by fiat
+// and is never judged or dropped) and narrows the part-rejection degradation to all-parts-rejected (report
+// N1/N7); the judge's criteria text is unchanged.
+const TagSplitVersion = "v5"
 
 // TagCompoundSystemMessage is the system prompt of the compound pass.
 const TagCompoundSystemMessage = "You are a tag-taxonomy classifier. Decide what a compound phrase denotes."

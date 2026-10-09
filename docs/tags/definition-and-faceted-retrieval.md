@@ -744,7 +744,7 @@ The questions the definition leaves to policy, and their decided answers:
    test, separates a named unit from pre-coordination.
 3. **Canonical form.** Labels are shaped and identified at birth: the lemma form, the
    conventional written form, same-intent resolution with the alias disposition, and
-   direction by sense-fit then a deterministic tie-break. Frequency is not a birth-time
+   direction by sense-fit, then the house form/language, then a deterministic tie-break. Frequency is not a birth-time
    criterion; it refines later through canonicalization. A kindred-form criterion is
    rejected — there is no axis model to consult (item 7).
 4. **Demotion.** Two triggers: supersession (a better label takes over; same-intent

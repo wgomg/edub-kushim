@@ -521,6 +521,11 @@ func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, 
 	return judgedOpenAI(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), ParseTagQualityResponse)
 }
 
+// JudgeTagTranslations normalizes values to English through the compatible API.
+func (l *LlmOpenAiCompatible) JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error) {
+	return judgedOpenAI(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), ParseTagTranslationResponse)
+}
+
 // JudgeTagIdentity decides canonical forms through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
 	return judgedOpenAI(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), ParseTagIdentityResponse)

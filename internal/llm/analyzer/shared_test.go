@@ -486,11 +486,11 @@ func TestFilterTags(t *testing.T) {
 			want:            []string{"physics"},
 		},
 		{
-			name:            "drops tag that is subset of title tokens",
+			name:            "keeps tag that is subset of title tokens",
 			tags:            []string{"machine learning", "deep learning"},
 			knownNormalized: nil,
 			title:           "machine learning applications",
-			want:            []string{"deep learning"},
+			want:            []string{"machine learning", "deep learning"},
 		},
 		{
 			name:            "keeps tag with partial title overlap",
@@ -505,7 +505,7 @@ func TestFilterTags(t *testing.T) {
 			people:          []PeopleResult{{Name: "Alan Turing", NormalizedName: "alan turing"}},
 			knownNormalized: nil,
 			title:           "machine learning",
-			want:            []string{"physics"},
+			want:            []string{"machine learning", "physics"},
 		},
 		{
 			name:            "keeps every tag preserving order",
@@ -586,7 +586,7 @@ func TestFilterTags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTags(tt.tags, NewTagFilter(tt.people, tt.knownNormalized, tt.title, tt.docTypeNames))
+			got := FilterTags(tt.tags, NewTagFilter(tt.people, tt.knownNormalized, tt.docTypeNames))
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("FilterTags(%v, %v, %v, %q, %v) = %v, want %v",
 					tt.tags, tt.people, tt.knownNormalized, tt.title, tt.docTypeNames, got, tt.want)
@@ -914,6 +914,12 @@ func TestBuildTagPartPrompt(t *testing.T) {
 	if !strings.Contains(result, "do not infer a sense it might take from a phrase") {
 		t.Error("parts criteria must anchor the value to its ordinary standalone sense")
 	}
+	if !strings.Contains(result, "Lexicalized derivations and gerunds stand") {
+		t.Error("parts criteria must let lexicalized derivations and gerunds stand as fields (report N4)")
+	}
+	if !strings.Contains(result, "names a field, domain, or discipline") {
+		t.Error("parts criteria must admit abstract field nouns instead of generic containers (report N4)")
+	}
 	if strings.Contains(result, "no phrase or document context") || strings.Contains(result, "any document collection") {
 		t.Error("parts criteria must not name context the call never receives")
 	}
@@ -1126,7 +1132,7 @@ func TestParseTagCompoundResponse_InvalidJSON(t *testing.T) {
 }
 
 func TestSplitComponents(t *testing.T) {
-	filter := NewTagFilter(nil, nil, "", nil)
+	filter := NewTagFilter(nil, nil, nil)
 	tests := []struct {
 		name string
 		raw  []string
@@ -1152,7 +1158,7 @@ func TestSplitComponents(t *testing.T) {
 
 func TestSplitComponents_AppliesDocumentFilter(t *testing.T) {
 	people := []PeopleResult{{NormalizedName: "John Smith"}}
-	filter := NewTagFilter(people, nil, "machine learning applications", []string{"research article"})
+	filter := NewTagFilter(people, nil, []string{"research article"})
 	got := SplitComponents([]string{"John Smith", "machine learning", "physics", "research article"}, filter)
 	want := []string{"machine learning", "physics"}
 	if !reflect.DeepEqual(got, want) {
@@ -1554,19 +1560,26 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "sub-national place") {
 		t.Error("prompt missing sub-national-place clause in criterion 3")
 	}
-	// Must contain the five criteria, the abstention and the response format.
-	for _, kw := range []string{"subject_matter", "dimension", "not_person_place_work", "atomic", "not_form_genre", "defer", "JSON"} {
+	// Must contain the four criteria, the abstention and the response format.
+	for _, kw := range []string{"subject_matter", "not_person_place_work", "atomic", "not_form_genre", "defer", "JSON"} {
 		if !strings.Contains(prompt, kw) {
 			t.Errorf("prompt missing keyword %q", kw)
 		}
 	}
-	// The rubric must ask five numbered questions, not four plus the key
-	// appearing only in the JSON example.
-	if !strings.Contains(prompt, "five yes/no questions") {
-		t.Error("prompt missing the five-question count")
+	// The rubric must ask four numbered questions: the dimension question moved to the parts pass.
+	if !strings.Contains(prompt, "four yes/no questions") {
+		t.Error("prompt missing the four-question count")
 	}
-	if !strings.Contains(prompt, "5. not_form_genre") {
-		t.Error("prompt missing the fifth numbered question")
+	if !strings.Contains(prompt, "4. not_form_genre") {
+		t.Error("prompt missing the fourth numbered question")
+	}
+	// The parts pass owns the dimension verdict, so the rubric must neither ask the question nor echo the
+	// answer key in its response envelope: a judge reply cannot decide what the gate stamps (report N5).
+	if strings.Contains(prompt, "2. dimension:") {
+		t.Error("prompt still asks the dimension question the parts pass owns")
+	}
+	if strings.Contains(prompt, `"dimension":`) {
+		t.Error("prompt envelope still requests a dimension answer from the quality judge")
 	}
 }
 
@@ -1574,10 +1587,9 @@ func TestBuildTagQualityPrompt_RestoresGenreAndLanguageBoundary(t *testing.T) {
 	prompt := BuildTagQualityPrompt("A text about poetry", []TagQualityCandidate{{Index: 0, Term: "poetry", Category: "topic"}})
 
 	for _, want := range []string{
-		"5. not_form_genre: is the tag not a publishing format?",
+		"4. not_form_genre: is the tag not a publishing format?",
 		"not a publishing format: it passes this criterion and is judged on the questions above",
 		"The document's language is never a subject matter",
-		"never a content dimension (spanish, english)",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("quality prompt missing %q", want)
@@ -1597,15 +1609,13 @@ func TestBuildTagQualityPrompt_NarrowsTheDocumentToOneQuestion(t *testing.T) {
 
 	for _, want := range []string{
 		"Question 1 asks whether the tag is a subject matter of the document",
-		"questions 2-5 ask about the tag on its own",
+		"questions 2-4 ask about the tag on its own",
 		"do not depend on the document",
 		"Document for question 1:",
 		"1. subject_matter: is the tag a subject matter of the document",
 		"something this document is about",
-		"is the tag a subject a searcher would filter by in a document store",
-		"a generic container such as use, thought, knowledge, irony",
-		"3. not_person_place_work: is the tag neither a person, nor a work, nor a place",
-		"4. atomic: is the tag one dimension, not a combination",
+		"2. not_person_place_work: is the tag neither a person, nor a work, nor a place",
+		"3. atomic: is the tag one dimension, not a combination",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("quality prompt missing v4 scope wording %q", want)
@@ -1779,6 +1789,100 @@ func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
 	if _, err := ParseTagQualityResponse(truncated, 2); err == nil {
 		t.Fatal("expected incomplete-response error, got nil")
 	}
+}
+
+// TestParseTagQualityResponse_DimensionOwnedByPartsPass pins the v5 wire: the rubric no longer asks the
+// dimension question, so a reply that omits the key entirely parses as complete and leaves the answer
+// false for the gate to stamp from the parts verdict. Requiring the key would reject every v5 reply as
+// incomplete (report N5).
+func TestParseTagQualityResponse_DimensionOwnedByPartsPass(t *testing.T) {
+	v5 := `{"tags":[{"index":0,"subject_matter":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
+	results, err := ParseTagQualityResponse(v5, 1)
+	if err != nil {
+		t.Fatalf("parse a v5 reply without a dimension key: %v", err)
+	}
+	if results[0].Dimension {
+		t.Error("an un-stamped dimension must read false until the gate stamps the parts verdict")
+	}
+	if !results[0].Criteria().Complete() {
+		t.Error("the four judge-owned criteria must make a persisted v5 row complete")
+	}
+}
+
+// TestBuildTagTranslationPrompt pins the language guard's judged question: every flagged value appears in
+// the prompt, the English-jargon rule lets an already-English value pass unchanged, and the reply shape is
+// the indexed JSON envelope the parser expects (report N2/D27).
+func TestBuildTagTranslationPrompt(t *testing.T) {
+	prompt := BuildTagTranslationPrompt([]string{"filosofia", "machine learning"})
+
+	for _, want := range []string{
+		"Value 0: \"filosofia\"",
+		"Value 1: \"machine learning\"",
+		`"translation"`,
+		"defer",
+		"returned unchanged",
+		"JSON",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("translation prompt missing %q", want)
+		}
+	}
+}
+
+// TestParseTagTranslationResponse pins the parser contract the language guard depends on: a well-formed
+// reply carries each value's translation and abstention, a reply that omits an entry reports the missing
+// indices alongside the entries it did return (so the guard defers the omission rather than reading an
+// empty translation as a name), and an omitted defer reads as false.
+func TestParseTagTranslationResponse(t *testing.T) {
+	t.Run("a full reply carries translations and abstentions", func(t *testing.T) {
+		full := `{"values":[
+			{"index":0,"translation":"philosophy","defer":false},
+			{"index":1,"translation":"machine learning","defer":false},
+			{"index":2,"translation":"","defer":true}
+		]}`
+		results, err := ParseTagTranslationResponse(full, 3)
+		if err != nil {
+			t.Fatalf("parse full reply: %v", err)
+		}
+		if results[0].Translation != "philosophy" || results[0].Defer {
+			t.Errorf("results[0] = %+v, want philosophy without abstention", results[0])
+		}
+		if results[2].Translation != "" || !results[2].Defer {
+			t.Errorf("results[2] = %+v, want an explicit abstention", results[2])
+		}
+	})
+
+	t.Run("an omitted entry reports the missing indices", func(t *testing.T) {
+		partial := `{"values":[{"index":0,"translation":"philosophy","defer":false}]}`
+		results, err := ParseTagTranslationResponse(partial, 2)
+		if err == nil {
+			t.Fatal("an omitted entry must surface an incomplete-reply error")
+		}
+		incomplete, ok := errors.AsType[*IncompleteReplyError](err)
+		if !ok {
+			t.Fatalf("error type = %T, want *IncompleteReplyError carrying the missing indices", err)
+		}
+		if len(incomplete.Missing) != 1 || incomplete.Missing[0] != 1 {
+			t.Errorf("Missing = %v, want [1]", incomplete.Missing)
+		}
+		if results[0].Translation != "philosophy" {
+			t.Errorf("the entry the judge did return = %+v, want philosophy", results[0])
+		}
+		if results[1].Translation != "" {
+			t.Errorf("the omitted entry = %+v, want an empty translation the guard never adopts", results[1])
+		}
+	})
+
+	t.Run("an omitted defer reads as false", func(t *testing.T) {
+		noDefer := `{"values":[{"index":0,"translation":"philosophy"}]}`
+		results, err := ParseTagTranslationResponse(noDefer, 1)
+		if err != nil {
+			t.Fatalf("parse reply without defer: %v", err)
+		}
+		if results[0].Defer {
+			t.Error("an omitted defer must read false, not as an abstention")
+		}
+	})
 }
 
 func TestTagDetail_PresenceSemantics(t *testing.T) {

@@ -313,13 +313,19 @@ and human rejection deletes names through the blocklist (terminal) where the mod
 disposition for a same-intent label is alias/merge.
 
 **S4 — atomicity.** At emission, every compound candidate (2–3 words, Latin script,
-content parts) whose key is not already in the store goes to the split gate
+content parts) whose key is not already in the store goes to the split gate,
+except a period in the house numeric style (an ordinal plus century/decade/
+millennium, `tags.IsPeriodClass` over the house form), which is a pinned
+deterministic keep that stays whole and never reaches judgment
 (store-keyed compounds are applications and skip judgment only once a
 current-version verdict decides them; a missing or degraded verdict re-enters
 judgment, and a decided keep applies its judged-dimensional parts alongside from
 the cache):
 with the adjudicator enabled the decision runs two context-free judged passes — a
-parts pass over each fold-resolved content word and a compound pass reading the
+parts pass over each fold-resolved content word (fold resolution anchors on the
+promoted store view; a part with more than one attested base folds only while a
+single base is live, and a part the attested table does not cover folds through a
+pinned variant class) and a compound pass reading the
 phrase as a named unit, a composition, or a phrase with no retrievable dimension —
 folded into `tags.DecideComposition`; without one only conjunction joints (`and`,
 `or`, `vs`, `versus` — `textnorm.SplitJointTag`) split mechanically while other
@@ -333,9 +339,10 @@ approximate it. “No blanket mechanical splitting” remains the rule for the n
 path; the adjudicated path approximates P4 per candidate.
 
 **S5 — admission.** The mechanics are the rubric judge (`subject_matter`,
-`dimension`, `not_person_place_work`, `atomic`, `not_form_genre`, plus the
-optional `defer` abstention), the verdict cache, and the pinned decision over
-the features:
+`not_person_place_work`, `atomic`, `not_form_genre`, plus the optional `defer`
+abstention), the parts pass that owns the `dimension` verdict the gate reads
+from its shared cache and stamps onto the row, the verdict cache, and the pinned
+decision over the features:
 `tags.DecideAdmission` defers on the judge's abstention, rejects on two or
 more failing signals, defers on exactly one (the gray band), and admits when
 nothing fails; the emission's deterministic signals (a detail annotated

@@ -335,8 +335,20 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	analysis.Tags = kept
 
-	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, analysis.Title, docTypeNames)
+	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, docTypeNames)
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
+
+	// the language guard runs before the split gate so a translated English name is what gets decomposed,
+	// registered, applied, and keyed by every downstream row; a foreign compound never reaches the split
+	// gate, so its composition evidence and parts are keyed to the English form (report N2/D27)
+	pendingLanguage, err := e.admission.ResolveLanguages(ctx, analysis, storeKeys, logId)
+	if err != nil {
+		if te := e.creditPause(logId, err); te != nil {
+			return nil, DocumentCounts{}, te
+		}
+		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("language resolution failed: %w", err)}
+	}
+
 	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, promotedStoreNames, tagFilter, document.ID, logId)
 	if err != nil {
 		if te := e.creditPause(logId, err); te != nil {
@@ -388,7 +400,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	rejected := make(map[string]bool)
 	if e.config.Enricher.TagQuality.Enabled {
 		planned := analysis.Tags
-		analysis.Tags, qualityDecisions, err = e.admission.ApplyTagQuality(ctx, analysis, decisions, dbNames, llmContent.Text, document.ID, logId)
+		analysis.Tags, qualityDecisions, err = e.admission.ApplyTagQuality(ctx, admission.TagQualityInput{
+			Analysis:    analysis,
+			Decisions:   decisions,
+			DBNames:     dbNames,
+			ReducedText: llmContent.Text,
+			DocID:       document.ID,
+			ForceDefer:  pendingLanguage,
+		}, logId)
 		if err != nil {
 			if te := e.creditPause(logId, err); te != nil {
 				return nil, DocumentCounts{}, te
@@ -407,11 +426,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		identityPlan = identityPlan.DropTagNames(rejected)
 	}
 
-	// a split whose part was rejected degrades to drop: the surviving
-	// parts keep their own admission verdicts, and the row records the
-	// compound's fate instead of letting it vanish; a kept compound whose
-	// part was rejected stands whole and only drops that part from what it
-	// applies alongside
+	// a split degrades to drop only when every part was rejected; when some parts survive the compound
+	// keeps whole and applies the survivors alongside, so a partial rejection never destroys the
+	// phrase's coverage (report N7). The compound is re-registered because the split expansion had
+	// already replaced it before identity planning; a kept compound whose part was rejected only drops
+	// that part from what it applies alongside
 	for i := range compositionRows {
 		row := &compositionRows[i]
 		row.DocumentID = document.ID
@@ -422,15 +441,29 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		if row.Disposition != tags.CompositionSplit {
 			continue
 		}
+		survived, rejectedParts := 0, 0
 		for _, part := range row.Parts {
-			name := planOutputName(part, planOutputs)
-			if rejected[name] {
-				row.Disposition = tags.CompositionDrop
-				row.Reason = tags.CompositionReasonPartRejected
-				e.logger.Info(logId, "tag split[%s]: drop %q (reason=part_rejected part=%q)",
-					analyzer.TagSplitVersion, row.Candidate, name)
-				break
+			if rejected[planOutputName(part, planOutputs)] {
+				rejectedParts++
+				continue
 			}
+			survived++
+		}
+		switch {
+		case rejectedParts == 0:
+			// the split stands unchanged
+		case survived == 0:
+			row.Disposition = tags.CompositionDrop
+			row.Reason = tags.CompositionReasonPartRejected
+			e.logger.Info(logId, "tag split[%s]: drop %q (reason=part_rejected all parts rejected)",
+				analyzer.TagSplitVersion, row.Candidate)
+		default:
+			row.Disposition = tags.CompositionKeep
+			row.Reason = tags.CompositionReasonPartialParts
+			row.Parts = pruneRejectedParts(row.Parts, planOutputs, rejected)
+			e.applyPartialKeep(&identityPlan, analysis, row.Candidate)
+			e.logger.Info(logId, "tag split[%s]: keep %q (reason=%s survivors=%d)",
+				analyzer.TagSplitVersion, row.Candidate, tags.CompositionReasonPartialParts, survived)
 		}
 	}
 	identityPlan.Composition = compositionRows
@@ -822,6 +855,29 @@ func pruneRejectedParts(parts []string, outputs map[string]string, rejected map[
 		kept = append(kept, part)
 	}
 	return kept
+}
+
+// applyPartialKeep re-registers a compound that a partial part rejection kept whole: the split expansion
+// replaced it before identity planning, so without a fresh registration the phrase would not be persisted
+// even though the row now disposes as a keep (report N7). It appends a plain registration the persist step
+// resolves against the live store (house form, alias, key equality, blocklist), so no extra store read is
+// needed; the compound is appended to the emitted tags under its stored name. The registration carries no
+// admission decision, so with the quality gate on the compound is born provisional and the reconcile
+// provisional sweep judges it — the sweep, not a second in-run gate call, is the single owner of a
+// provisional tag's rubric.
+func (e *Enricher) applyPartialKeep(plan *tags.Plan, analysis *tools.ContentAnalysisResult, candidate string) {
+	if slices.Contains(analysis.Tags, candidate) {
+		return
+	}
+	name := tags.StoredName(candidate)
+	plan.Registrations = append(plan.Registrations, tags.Registration{
+		Input:       candidate,
+		Name:        name,
+		Disposition: tags.DispositionRegister,
+	})
+	if name != "" && !slices.Contains(analysis.Tags, name) {
+		analysis.Tags = append(analysis.Tags, name)
+	}
 }
 
 func normalizedPeopleKey(p database.People) string {

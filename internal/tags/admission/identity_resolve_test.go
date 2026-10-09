@@ -246,7 +246,7 @@ func TestResolvePending_PartialPairReply(t *testing.T) {
 	resolver, client, adj := newIdentityResolver(t, true)
 
 	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "colonization", "settler colonialism")
-	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "labour", "labor")
+	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "buildings", "building")
 
 	adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 		results := make([]analyzer.TagVerdictResult, len(pairs))

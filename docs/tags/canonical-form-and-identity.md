@@ -100,11 +100,11 @@ registration.
 
 **M8 — Deterministic variant classes.** Two names are one value without judging when
 they are pinned orthographic spelling variants (`-isation`/`-ization`,
-`-yse`/`-yze`, `-ogue`/`-og`, applied per token) or literal token permutations (the
-same tokens in a different order). The pair resolves as same-intent with no
-direction, so M4 picks the canonical label. Plural and other inflections,
-mixed-language spellings, and morphological or function-word inversions stay with
-the judging body (J3), as does any pair the pinned table does not reach.
+`-yse`/`-yze`, `-ogue`/`-og`, `-our`/`-or`, applied per token) or literal token
+permutations (the same tokens in a different order). The pair resolves as same-intent
+with no direction, so M4 picks the canonical label. Plural and other inflections,
+mixed-language spellings, and morphological or function-word inversions stay with the
+judging body (J3), as does any pair the pinned table does not reach.
 
 ### 3.3 Judging body (LLM-adjudicated)
 
@@ -139,7 +139,10 @@ by, in order:
 (a) **sense-fit** — the label whose standard sense is exactly the dimension wins; a
 polysemous label loses to the precise one (`colonialism` over `colonization`, which
 also denotes space and biological colonization);
-(b) the deterministic tie-break (M4) where sense-fit does not separate the pair.
+(b) **house form / language** — where sense-fit does not separate the pair, an
+English (house-form) label wins over a non-English one; a pinned deterministic
+variant class carries no direction and keeps resolving through M8/M4;
+(c) the deterministic tie-break (M4) where the steps above do not separate the pair.
 
 Neither arrival order nor observed usage decides at birth; usage informs later
 canonicalization only. A kindred-form criterion is rejected: with no axis model
@@ -164,10 +167,12 @@ map exists in the mechanism (an operator override, if any, is configuration).
   same-emission comparison or the store candidate list.
 - **Placement.** The rules run at the registration of every label — emitted candidates
   and derived parts — and alias resolution runs whenever names are matched:
-  suggestions, consolidation, and query input. A split-derived part may first
-  resolve mechanically onto a **promoted** store label through the attested seam fold
-  (the generated WordNet pertainym table's adjective→noun pairs; two distinct store
-  hits are ambiguity, never a fold); provisional births are never seam anchors, so an
+   suggestions, consolidation, and query input. A split-derived part may first
+   resolve mechanically onto a **promoted** store label through the attested seam fold
+   (the generated WordNet pertainym table's adjective→noun pairs, or a pinned
+   variant class the table does not cover; a part with more than one attested base
+   folds only while a single base is a live store value, so a sibling sense present
+   in the store blocks the fold); provisional births are never seam anchors, so an
   unattested near-spelling of an unjudged birth flows to the judging body instead of
   being rewritten. Shape-based proposals reach only the judged path, where the gate
   confirms them. The retrospective store sweep is D1's work, outside this spec.
@@ -226,8 +231,8 @@ Behavior references for annotation; the gray rows are where review lands.
 ## 5. Open items
 
 1. **Kindred-form criterion — rejected (2026-09-20).** With no axis model (definition
-   §8.7, decided), there is no kindred membership to consult; direction is sense-fit
-   plus the deterministic tie-break.
+   §8.7, decided), there is no kindred membership to consult; direction is sense-fit,
+   then the house form/language, then the deterministic tie-break (J4).
 2. **Safe-fold optimization** — which folds can skip the J2 gate; to be justified by
    accumulated gate labels, not assumed.
 3. **Criteria and calibration** — criteria wording, pinned versions, and any thresholds

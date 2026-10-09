@@ -101,14 +101,18 @@ admin and emission registration paths
   resolves `same` with no direction, so M4 picks the canonical label. Plural and
   other inflections, mixed-language spellings, and morphological or function-word
   inversions stay with the pair judge.
-- **Version**: `IdentityRuleSetVersion = "v7"` is stamped on every alias row and
+- **Version**: `IdentityRuleSetVersion = "v8"` is stamped on every alias row and
   identity-evidence row. It pins the mechanical fold proposals — the
   plural/lemma fold, the store-anchored derivational adjective transforms, and the
   bounded morphographic proposal — the store-anchored rejection hold, the
-  pair judge's criteria text, the deterministic variant-class table, and the
+  pair judge's criteria text, the deterministic variant-class table (including the
+  `-our`/`-or` spelling pair), the birth-time canonical direction (sense-fit, then
+  the house form/language, then the M4 tie-break), and the
   split-seam fold source (promoted-only anchors over the generated attested
-  pertainym table; the shape-based legs no longer apply at the seam, where the
-  judged path's proposals remain for the gate to confirm).
+  pertainym table, folding a multi-base part only while a single base is live and
+  also folding a pinned variant class onto a promoted label; the shape-based legs
+  no longer apply at the seam, where the judged path's proposals remain for the
+  gate to confirm).
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
   M1 rewrites, alias lookup, key equality, and M2 flagging, including the
   plural/lemma, derivational, and morphographic fold proposals. It never applies
@@ -218,9 +222,9 @@ transaction — adjudication stays outside it:
    the rest go through the pair adjudicator. The result is a `tags.Plan` carrying
    registrations, alias actions, evidence rows, and the composition rows the
    decomposition gate judged, and per-disposition log
-   lines (`identity[v7]: apply|alias|defer|separate …`), with the applied-fold
+   lines (`identity[v8]: apply|alias|defer|separate …`), with the applied-fold
    input→output mapping and the judge-unavailable mint at DEBUG
-   (`identity[v7]: fold applied …`, `identity[v7]: pending evidence minted …`).
+   (`identity[v8]: fold applied …`, `identity[v8]: pending evidence minted …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
@@ -239,7 +243,7 @@ When `enricher.tag_quality.enabled` is true, `Adjudicator.ApplyTagQuality`
 (absent from the tag table) resolve from the `tag_quality_event` cache or go
 into rubric calls over batches of up to 40 candidates, and the pinned
 admission decision over the
-rubric answers plus the emission's deterministic signals drops rejected names
+rubric answers, the parts pass's dimension verdict, plus the emission's deterministic signals drops rejected names
 for that document only — their plan registrations and pending evidence never
 reach the store. Survivors are born **provisional**
 and are promoted inline once the admission decision admits them and their
@@ -742,7 +746,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   `TimeoutStartSec` budget alongside model load and tag-cache build.
 - **Consolidation and identity logs live in the kushim (enrichment) log, not
   `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v7]` dispositions). `hugot.log` only holds the
+  decisions, `identity[v8]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in

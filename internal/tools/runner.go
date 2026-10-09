@@ -647,6 +647,17 @@ func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []
 	})
 }
 
+// JudgeTagTranslations asks the LLM adjudicator for each value's English canonical form — the language
+// guard's judged translation (report N2). Returns an error when no adjudicator was configured.
+func (r *Runner) JudgeTagTranslations(ctx context.Context, values []string) ([]analyzer.TagTranslationResult, error) {
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
+	}
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagTranslationResult, error) {
+		return r.tagAdjudicator.JudgeTagTranslations(ctx, values)
+	})
+}
+
 // HasTagIdentityJudge reports whether a tag identity judge is configured.
 func (r *Runner) HasTagIdentityJudge() bool {
 	return r.tagIdentityJudge != nil

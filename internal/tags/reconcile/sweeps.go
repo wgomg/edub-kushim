@@ -301,6 +301,21 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		}
 
 		res := results[0]
+		// the parts pass owns the dimension question (report N5): resolve its verdict for this name and
+		// stamp it, so a re-judged provisional tag is not decided on a fabricated false dimension. An
+		// absent or abstained verdict defers.
+		partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model, nil)
+		dimension, abstain, verr := partStore.DimensionFeature(ctx, e.name, docID, "")
+		if verr != nil {
+			r.logger.Warn("", "tag reconcile: parts verdict for provisional tag %q: %v", e.name, verr)
+			report.Provisional.Failed++
+			continue
+		}
+		if abstain {
+			res.Defer = true
+		} else {
+			res.Dimension = dimension
+		}
 		criteria, err := json.Marshal(res.Criteria())
 		if err != nil {
 			r.logger.Error("", "tag reconcile: marshal criteria for provisional tag %q: %v", e.name, err)

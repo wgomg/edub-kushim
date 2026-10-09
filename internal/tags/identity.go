@@ -27,9 +27,12 @@ import (
 // house-form map are unchanged; v7 replaces the split seam's shape-based legs (the pinned derivational
 // transforms and the suffix-local morphographic distance) with the generated attested pertainym table
 // (attested.go) — the seam folds only attested derivations, while the judged identity path still
-// proposes shapes and the fold gate confirms them. The store reset truncates tag_identity_event, so no
-// cached identity verdict survives to invalidate.
-const IdentityRuleSetVersion = "v7"
+// proposes shapes and the fold gate confirms them; v8 refines the split seam (a part with more than one
+// attested base folds only when exactly one base is a live store value, and a part that did not fold
+// through the attestation table may fold onto a pinned deterministic variant anchor) and adds the
+// house-form/language step to the birth-time canonical direction before the M4 tie-break. The store reset
+// truncates tag_identity_event, so no cached identity verdict survives to invalidate.
+const IdentityRuleSetVersion = "v8"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -134,6 +137,8 @@ const (
 	CompositionReasonSplitDefer               = "split_defer"
 	CompositionReasonConflictingEvidence      = "conflicting_evidence"
 	CompositionReasonSampleDisagreement       = "sample_disagreement"
+	CompositionReasonPeriodClass              = "period_class"
+	CompositionReasonPartialParts             = "partial_parts"
 )
 
 // compositionHolds reports whether a composition reason withholds the compound from automatic promotion
@@ -373,10 +378,14 @@ func VariantClass(a, b string) string {
 
 // orthographicSuffixes is the pinned spelling-variant table VariantClass applies per token, each pair
 // mapping a non-canonical token onto its canonical form; a token the table does not reach stays unchanged.
+// The -our/-or pair (labour→labor, colour→color, neighbour→neighbor) is store-anchored at the seam, so a
+// collision the table could mispair (four/for, tour/tor) folds only when the anchor form is a promoted
+// store value.
 var orthographicSuffixes = []struct{ suffix, canonical string }{
 	{"isation", "ization"},
 	{"yse", "yze"},
 	{"ogue", "og"},
+	{"our", "or"},
 }
 
 func orthographicForm(name string) string {
@@ -772,20 +781,212 @@ func ProposedMorphologicalFold(name string, storeNames map[string]string) string
 	return hit
 }
 
-// AnchoredFold resolves a split component through the promoted store view: it returns the promoted
-// store value an attested adjective→noun derivation resolves onto, or "" when the table (attested.go)
-// does not attest the name, no attested base is a promoted store value, or two distinct attested
-// bases hit the store — ambiguity is not a fold, through the shared storeAnchor rule. The attestation
-// is the point: a pertainym relator links an adjective and a noun that denote the same thing, so the
-// seam folds only relations the lexical source attests and never infers a fold from shape
-// (docs/tags/canonical-form-and-identity.md V2/J1). Shape-based proposals (ProposedDerivationalFold,
-// ProposedMorphologicalFold) still reach the judged identity path's fold gate, which confirms them
-// before use; split-component resolution consults this before per-document filtering, and births never
-// rename through it — their folds stay judged in the identity path. promotedNames maps Key(storeName)
-// to the promoted store's name; provisional births are absent from it and so anchor only through the
-// judged identity path.
-func AnchoredFold(name string, promotedNames map[string]string) string {
-	return storeAnchor(attestedBases(name), promotedNames)
+// AnchoredFold resolves a split component through the promoted store view. A part with more than one
+// attested base is sense-ambiguous: it folds onto its anchor only when exactly one of its bases is a live
+// store value (promoted, provisional, or an alias), so a sibling sense's live row blocks the fold and the
+// judged identity path decides instead (report N6) — this removes the single-promoted-base lottery while
+// preserving the country-adjective folds (german→germany, russian→russia) whose alternate bases are not
+// live. A single-base part folds onto its promoted anchor through the shared storeAnchor rule; a part that
+// did not fold through the attestation table (attested.go) still folds when a promoted store label is a
+// pinned deterministic variant of it (M8 orthographic spelling or literal token permutation), resolved by
+// variantAnchor under the same ambiguity-safe rule. The attestation is the point: a pertainym relator
+// links an adjective and a noun that denote the same thing, so the seam folds only attested relations or
+// pinned variant classes and never infers a fold from bare shape
+// (docs/tags/canonical-form-and-identity.md V2/J1/M8). Shape-based proposals (ProposedDerivationalFold,
+// ProposedMorphologicalFold) still reach the judged identity path's fold gate, which confirms them before
+// use; split-component resolution consults this before per-document filtering, and births never rename
+// through it. promotedNames maps Key(storeName) to the promoted store's name; liveNames is the live store
+// key set the multi-base ambiguity check reads, which the caller must supply. provisional births are
+// absent from promotedNames and so anchor only through the judged identity path.
+func AnchoredFold(name string, promotedNames map[string]string, liveNames map[string]struct{}) string {
+	bases := attestedBases(name)
+	if len(bases) > 1 && liveBaseCount(bases, liveNames) > 1 {
+		return ""
+	}
+	if anchor := storeAnchor(bases, promotedNames); anchor != "" {
+		return anchor
+	}
+	return variantAnchor(name, promotedNames)
+}
+
+// AnchoredFoldPromoted resolves a split component against the promoted view alone, the rule for a caller
+// that does not load provisional births (the reconcile sweep): the promoted view is the live view, so a
+// multi-base part's sibling must be promoted to block the fold.
+func AnchoredFoldPromoted(name string, promotedNames map[string]string) string {
+	return AnchoredFold(name, promotedNames, PromotedKeys(promotedNames))
+}
+
+// PromotedKeys returns the Key set of a Key→name store view, the promoted guard the verdict store reads.
+func PromotedKeys(view map[string]string) map[string]struct{} {
+	set := make(map[string]struct{}, len(view))
+	for key := range view {
+		set[key] = struct{}{}
+	}
+	return set
+}
+
+// PromotedGuardKeys returns the Key set of a raw store name set, so a caller holding names rather than a
+// Key→name view builds the same promoted guard through one rule.
+func PromotedGuardKeys(names map[string]struct{}) map[string]struct{} {
+	set := make(map[string]struct{}, len(names))
+	for name := range names {
+		set[Key(name)] = struct{}{}
+	}
+	return set
+}
+
+// liveBaseCount counts the attested bases that are live store values.
+func liveBaseCount(bases []string, liveNames map[string]struct{}) int {
+	count := 0
+	for _, base := range bases {
+		if _, ok := liveNames[Key(base)]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+// variantAnchor resolves a name onto a promoted store label related by a pinned deterministic variant
+// class (M8), or "" when none is or when two distinct labels are in reach — ambiguity is not a fold.
+// Unlike the attested legs it takes the name's pinned variant classes rather than a lexical relation,
+// so an orthographic spelling pair (labour/labor) or a literal token permutation folds store-anchored.
+func variantAnchor(name string, promotedNames map[string]string) string {
+	want := tokenCount(name)
+	hit := ""
+	for _, storeName := range promotedNames {
+		if storeName == name || tokenCount(storeName) != want {
+			continue
+		}
+		if VariantClass(name, storeName) == "" {
+			continue
+		}
+		if hit != "" && storeName != hit {
+			return ""
+		}
+		hit = storeName
+	}
+	return hit
+}
+
+// tokenCount counts whitespace-separated tokens without allocating, so the variant scan skips store labels
+// of a different arity cheaply before running the variant transforms.
+func tokenCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := 1
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' {
+			n++
+		}
+	}
+	return n
+}
+
+// PreferCanonical picks the canonical label of a same-intent pair the judged direction did not separate
+// (docs/tags/canonical-form-and-identity.md §3.3 J4): a pinned deterministic variant class still resolves
+// through M4, as M8 specifies (the class carries no direction), then the English/house form wins over a
+// non-English one, and only a pair the language step cannot separate falls to the deterministic tie-break
+// (M4). It is the birth-time direction step the alias machinery reads; arrival order and usage never
+// decide.
+func PreferCanonical(a, b string) string {
+	if a == b {
+		return a
+	}
+	if VariantClass(a, b) != "" {
+		return TieBreak(a, b)
+	}
+	aEnglish, bEnglish := isEnglishName(a), isEnglishName(b)
+	if aEnglish != bEnglish {
+		if aEnglish {
+			return a
+		}
+		return b
+	}
+	return TieBreak(a, b)
+}
+
+// tokenEnglish reports whether one token is English for the language signal: a numeric ordinal is
+// language-neutral and counts, a non-ASCII token is never English, and any other token is English when the
+// dictionary knows it. Both the direction step and the D27 guard read this one predicate, so they cannot
+// disagree about a token.
+func tokenEnglish(tok string) bool {
+	if isNumericToken(tok) {
+		return true
+	}
+	if hasNonASCII(tok) {
+		return false
+	}
+	return isEnglishWord(tok)
+}
+
+// isEnglishName reports whether every token of a name is English per tokenEnglish; an empty name is not
+// English. It is the language signal the birth-time direction step reads.
+func isEnglishName(name string) bool {
+	fields := strings.Fields(name)
+	if len(fields) == 0 {
+		return false
+	}
+	for _, tok := range fields {
+		if !tokenEnglish(tok) {
+			return false
+		}
+	}
+	return true
+}
+
+// DetectNonEnglish reports whether a name has any token that is not English per tokenEnglish; it is the
+// complement of isEnglishName over non-empty names. It is a candidate signal, not a verdict — the judged
+// translation pass confirms it and returns English jargon unchanged (report N2/D27).
+func DetectNonEnglish(name string) bool {
+	fields := strings.Fields(name)
+	if len(fields) == 0 {
+		return false
+	}
+	for _, tok := range fields {
+		if !tokenEnglish(tok) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNonASCII(tok string) bool {
+	for _, r := range tok {
+		if r > 127 {
+			return true
+		}
+	}
+	return false
+}
+
+// splitNumericToken splits a leading digit run from its trailing suffix, the one place the numeric-token
+// shape is parsed.
+func splitNumericToken(tok string) (digits int, suffix string) {
+	for digits < len(tok) && tok[digits] >= '0' && tok[digits] <= '9' {
+		digits++
+	}
+	return digits, tok[digits:]
+}
+
+// isNumericToken reports whether a token is a run of digits optionally carrying an English ordinal
+// suffix (19th, 3rd), which the English-word check must not treat as foreign.
+func isNumericToken(tok string) bool {
+	digits, suffix := splitNumericToken(tok)
+	if digits == 0 {
+		return false
+	}
+	return suffix == "" || isOrdinalSuffix(suffix)
+}
+
+// isOrdinalSuffix reports whether a digit run's trailing letters are an English ordinal suffix, the one
+// place the suffix set lives.
+func isOrdinalSuffix(suffix string) bool {
+	switch suffix {
+	case "st", "nd", "rd", "th":
+		return true
+	}
+	return false
 }
 
 // AllPartsPromoted reports whether every part names a promoted store label: the established-value proxy the composition decision's

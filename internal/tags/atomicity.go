@@ -82,3 +82,28 @@ func isLatinScript(name string) bool {
 	}
 	return true
 }
+
+// periodUnits is the pinned, closed set of unit nouns the period class accepts; adding a unit is a
+// criteria change, not a config.
+var periodUnits = map[string]struct{}{"century": {}, "decade": {}, "millennium": {}}
+
+// IsPeriodClass reports whether a name is a time period in the house numeric style: an ordinal token
+// (<digits>st|nd|rd|th) followed by century, decade, or millennium. The caller must pass the house form —
+// the function does not normalize — so a spelled ordinal reaches the class only after HouseForm
+// (nineteenth → 19th). The class is the split gate's deterministic keep (report N1): the gate keeps such a
+// candidate whole without judging it and without applying its parts.
+func IsPeriodClass(name string) bool {
+	tokens := strings.Fields(strings.ToLower(name))
+	if len(tokens) != 2 {
+		return false
+	}
+	if _, ok := periodUnits[tokens[1]]; !ok {
+		return false
+	}
+	return isOrdinalToken(tokens[0])
+}
+
+func isOrdinalToken(tok string) bool {
+	digits, suffix := splitNumericToken(tok)
+	return digits > 0 && isOrdinalSuffix(suffix)
+}

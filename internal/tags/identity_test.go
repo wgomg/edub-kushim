@@ -58,7 +58,7 @@ func TestVariantClass(t *testing.T) {
 		{"plural is not a spelling variant", "railway", "railways", ""},
 		{"morphological and function-word inversion stays judged", "history of anarchism", "anarchist history", ""},
 		{"inflected spelling form stays judged", "organisations", "organizations", ""},
-		{"the pinned table does not cover -our/-or", "labour", "labor", ""},
+		{"pinned -our/-or", "labour", "labor", "orthographic"},
 		{"spelling plus permutation stays judged", "organisation history", "history organization", ""},
 		{"translation is not a spelling variant", "guerra", "war", ""},
 	}
@@ -349,11 +349,103 @@ func TestAnchoredFold(t *testing.T) {
 			storeNames: map[string]string{"romania": "romania"},
 			want:       "",
 		},
+		{
+			name:       "an orthographic variant folds onto the promoted spelling",
+			input:      "labour",
+			storeNames: map[string]string{"labor": "labor"},
+			want:       "labor",
+		},
+		{
+			name:       "a multi-token orthographic variant folds onto the promoted spelling",
+			input:      "labour movement",
+			storeNames: map[string]string{"labor movement": "labor movement"},
+			want:       "labor movement",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := AnchoredFold(tc.input, tc.storeNames); got != tc.want {
+			if got := AnchoredFoldPromoted(tc.input, tc.storeNames); got != tc.want {
 				t.Errorf("AnchoredFold(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAnchoredFold_LiveView pins the seam's multi-base ambiguity rule against the full live store view the
+// emission path passes: a part with more than one attested base folds only while exactly one of its bases
+// is live, so a sibling sense that also exists in the store blocks the fold and the judged identity path
+// decides instead (report N6). The promoted-only callers collapse to the same rule with the promoted view
+// as the live view.
+func TestAnchoredFold_LiveView(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		promoted map[string]string
+		live     []string
+		want     string
+	}{
+		{
+			name:     "a live sibling sense blocks the fold",
+			input:    "civil",
+			promoted: map[string]string{"state": "state"},
+			live:     []string{"state", "country"},
+			want:     "",
+		},
+		{
+			name:     "a single live base still folds",
+			input:    "civil",
+			promoted: map[string]string{"state": "state"},
+			live:     []string{"state"},
+			want:     "state",
+		},
+		{
+			name:     "a live alternate name blocks the country adjective",
+			input:    "german",
+			promoted: map[string]string{"germany": "germany"},
+			live:     []string{"germany", "deutschland"},
+			want:     "",
+		},
+		{
+			name:     "a variant anchor folds regardless of the sibling check",
+			input:    "labour",
+			promoted: map[string]string{"labor": "labor"},
+			live:     []string{"labor"},
+			want:     "labor",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			live := make(map[string]struct{}, len(tc.live))
+			for _, name := range tc.live {
+				live[Key(name)] = struct{}{}
+			}
+			if got := AnchoredFold(tc.input, tc.promoted, live); got != tc.want {
+				t.Errorf("AnchoredFold(%q, live=%v) = %q, want %q", tc.input, tc.live, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPreferCanonical pins the birth-time canonical direction (docs/tags/canonical-form-and-identity.md
+// J4): an English house form wins over a non-English label in either order, a deterministic variant class
+// keeps resolving through the lexicographic tie-break because it carries no direction, and two labels the
+// language step cannot separate fall through to the tie-break (report N9/D28).
+func TestPreferCanonical(t *testing.T) {
+	cases := []struct {
+		name string
+		a    string
+		b    string
+		want string
+	}{
+		{"the house form wins over a foreign label", "filosofia", "philosophy", "philosophy"},
+		{"order does not change the winner", "philosophy", "filosofia", "philosophy"},
+		{"a deterministic variant still resolves through the tie-break", "decolonisation", "decolonization", "decolonisation"},
+		{"labels the language step cannot separate fall to the tie-break", "20th century", "19th century", "19th century"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PreferCanonical(tc.a, tc.b); got != tc.want {
+				t.Errorf("PreferCanonical(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}

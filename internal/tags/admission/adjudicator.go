@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -40,6 +41,10 @@ const (
 	reasonJudgeUnavailable = "judge_unavailable"
 	reasonLegacyPass       = "legacy_pass"
 	reasonLegacyReject     = "legacy_reject"
+
+	// reasonLanguageReview marks a non-English value the language guard could not translate: it is held
+	// for review instead of being admitted plain (report N2/D27)
+	reasonLanguageReview = "language_review"
 )
 
 // Adjudicator is the document-level admission machinery: it decomposes compound tags, journals pair
@@ -96,8 +101,8 @@ type CompoundVerdict struct {
 // keep branches leave it whole and apply its judged-dimensional parts alongside, and the drop branch
 // removes it. The returned tag list is the input with approved decompositions expanded in place, dropped
 // compounds removed, and kept compounds' alongside parts inserted after them, plus one composition
-// evidence row per judged candidate. Ordering is load-bearing: fold-resolve, filter (title-echo exempt),
-// then the remainder enters the judged downstream. A compound whose key already exists in the store is an
+// evidence row per judged candidate. Ordering is load-bearing: fold-resolve, filter, then the
+// remainder enters the judged downstream. A compound whose key already exists in the store is an
 // application, not a candidate, only when a persisted verdict under the current criteria version decides
 // it: it is then skipped before judgment, and a keep among those store-existing decided compounds gets its
 // parts applied alongside on every emission. A store-existing compound with no verdict, or only a degraded
@@ -161,25 +166,27 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		}
 	}
 
+	periodRows, candidates := a.partitionPeriodCandidates(candidates, reqID)
+
 	if len(candidates) == 0 && len(skipped) == 0 {
-		return names, nil, nil
+		return names, periodRows, nil
 	}
 
-	alongsideByCompound := a.storedCoverage(ctx, skipped, promotedNames, filter, reqID)
+	alongsideByCompound := a.storedCoverage(ctx, skipped, promotedNames, storeKeys, filter, reqID)
 
 	if !a.runner.HasTagAdjudicator() {
-		expanded, rows, err := a.conjunctionSplits(names, candidates, promotedNames, filter, reqID)
+		expanded, rows, err := a.conjunctionSplits(names, candidates, promotedNames, storeKeys, filter, reqID)
 		if err != nil {
 			return nil, nil, err
 		}
-		return withAlongside(expanded, alongsideByCompound), rows, nil
+		return withAlongside(expanded, alongsideByCompound), append(rows, periodRows...), nil
 	}
 
 	resolved := make(map[string][]string, len(candidates))
 	seenValues := make(map[string]bool)
 	var values []string
 	for _, candidate := range candidates {
-		rparts := a.resolveParts(candidate, promotedNames, reqID)
+		rparts := a.resolveParts(candidate, promotedNames, storeKeys, reqID)
 		resolved[candidate] = rparts
 		for _, part := range rparts {
 			if !seenValues[part] {
@@ -189,7 +196,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		}
 	}
 
-	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model)
+	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model, tags.PromotedKeys(promotedNames))
 	partVerdicts, err := store.Parts(ctx, values, docId, reqID)
 	if err != nil {
 		return nil, nil, err
@@ -247,13 +254,36 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		}
 		rows = append(rows, row)
 	}
-	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), rows, nil
+	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), append(rows, periodRows...), nil
+}
+
+// partitionPeriodCandidates removes the period-shaped candidates from the judged set and returns a
+// deterministic keep row for each: a period in house numeric style is a valid dimension by fiat (report
+// N1), so it is never sent to the parts or compound pass and can never be dropped as no_dimension. The
+// reason is not in the composition hold set, so the kept period promotes on mass like any value.
+func (a *Adjudicator) partitionPeriodCandidates(candidates []string, reqID string) ([]tags.CompositionRow, []string) {
+	var rows []tags.CompositionRow
+	remaining := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !tags.IsPeriodClass(tags.HouseForm(candidate)) {
+			remaining = append(remaining, candidate)
+			continue
+		}
+		rows = append(rows, tags.CompositionRow{
+			Candidate:       candidate,
+			Disposition:     tags.CompositionKeep,
+			Reason:          tags.CompositionReasonPeriodClass,
+			CriteriaVersion: analyzer.TagSplitVersion,
+		})
+		a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s deterministic)", analyzer.TagSplitVersion, candidate, tags.CompositionReasonPeriodClass)
+	}
+	return rows, remaining
 }
 
 // conjunctionSplits is the no-adjudicator fallback: explicit coordination splits mechanically through the
 // joint-tag grammar (fold-resolved and validated like a judged split), every other compound keeps whole
 // under judge_unavailable. It persists nothing and writes only composition rows.
-func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedNames map[string]string, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow, error) {
+func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedNames map[string]string, liveNames map[string]struct{}, filter *analyzer.TagFilter, reqID string) ([]string, []tags.CompositionRow, error) {
 	components := make(map[string][]string, len(candidates))
 	dropped := make(map[string]bool, len(candidates))
 	rows := make([]tags.CompositionRow, 0, len(candidates))
@@ -269,7 +299,7 @@ func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedName
 		}
 		parts := analyzer.NormalizeTags(segments)
 		for i, part := range parts {
-			if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
+			if anchor := tags.AnchoredFold(part, promotedNames, liveNames); anchor != "" && anchor != part {
 				parts[i] = anchor
 			}
 		}
@@ -375,13 +405,18 @@ func expandCandidates(names []string, components map[string][]string, dropped ma
 
 // resolveParts derives a candidate's content parts and resolves each through the attested seam fold
 // against the promoted store view, logging every fold. The candidate path and the store-existing coverage
-// path resolve identically through it, so a part's value never depends on which path reached it.
-func (a *Adjudicator) resolveParts(candidate string, promotedNames map[string]string, reqID string) []string {
+// path resolve identically through it, so a part's value never depends on which path reached it. liveNames
+// is the live store key set the multi-base ambiguity check reads (promoted, provisional, and aliases).
+func (a *Adjudicator) resolveParts(candidate string, promotedNames map[string]string, liveNames map[string]struct{}, reqID string) []string {
+	if tags.IsPeriodClass(tags.HouseForm(candidate)) {
+		// a period is valid by fiat and does not decompose; its ordinal and unit are not parts to apply
+		return nil
+	}
 	parts := tags.DeriveParts(candidate)
 	resolved := make([]string, 0, len(parts))
 	for _, part := range parts {
 		resolvedPart := part
-		if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
+		if anchor := tags.AnchoredFold(part, promotedNames, liveNames); anchor != "" && anchor != part {
 			a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
 				analyzer.TagSplitVersion, part, anchor)
 			resolvedPart = anchor
@@ -411,7 +446,7 @@ func alongsideParts(resolved []string, filter *analyzer.TagFilter, verdicts map[
 // compound gets its parts applied on every emission without model calls, so coverage is idempotent and a
 // failed cache read simply retries next time. The map is empty when there is nothing to apply, and every
 // application is logged at info so the emission's review can see it.
-func (a *Adjudicator) storedCoverage(ctx context.Context, skipped []string, promotedNames map[string]string, filter *analyzer.TagFilter, reqID string) map[string][]string {
+func (a *Adjudicator) storedCoverage(ctx context.Context, skipped []string, promotedNames map[string]string, liveNames map[string]struct{}, filter *analyzer.TagFilter, reqID string) map[string][]string {
 	alongsideByCompound := make(map[string][]string)
 	if len(skipped) == 0 {
 		return alongsideByCompound
@@ -420,7 +455,7 @@ func (a *Adjudicator) storedCoverage(ctx context.Context, skipped []string, prom
 	seenValues := make(map[string]bool)
 	var values []string
 	for _, name := range skipped {
-		rparts := a.resolveParts(name, promotedNames, reqID)
+		rparts := a.resolveParts(name, promotedNames, liveNames, reqID)
 		resolved[name] = rparts
 		for _, part := range rparts {
 			if !seenValues[part] {
@@ -719,18 +754,144 @@ func (a *Adjudicator) decideQuality(ctx context.Context, docId int64, n *novelTa
 	return decision
 }
 
-// ApplyTagQuality filters the analysis's tags through the admission
-// decision: each novel candidate's features — the judge's rubric answers
-// from the verdict cache or a fresh judge call, plus the emission's
-// deterministic signals — resolve through tags.DecideAdmission. Rejected
-// tags are dropped from the returned list; deferred and admitted tags are
-// both kept, and every kept novel name's decision is returned so the
-// caller can drive promotion. A missing judge, judge failure, or context
-// cancellation keeps the tags, born provisional with a defer decision; a
-// partial judge reply salvages its returned entries and defers only the
-// missing indices; a credit-exhaustion failure is the only error returned,
-// so the caller can pause the batch.
-func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.ContentAnalysisResult, decisions []policy.Decision, dbNames map[string]struct{}, reducedText string, docId int64, reqID string) ([]string, map[string]tags.AdmissionDecision, error) {
+// ResolveLanguages is the language guard (report N2/D27): it detects non-English values that are not
+// already in the store and routes each through the judged translation to its English canonical form,
+// rewriting the analysis's tags and tag details so the English name flows through identity and admission
+// as any English name. A value the judge returns unchanged is already English — including technical
+// jargon the dictionary misses — and stays; an uncertain, failed, or missing translation leaves the value
+// in place and returns it in the pending set, so the quality gate holds it for review instead of admitting
+// it plain. Without an adjudicator the guard is inert (nothing can be translated or deferred). storeKeys
+// is the store's Key-keyed name set; a stored value is never re-translated.
+func (a *Adjudicator) ResolveLanguages(ctx context.Context, analysis *tools.ContentAnalysisResult, storeKeys map[string]struct{}, reqID string) (map[string]struct{}, error) {
+	if !a.runner.HasTagAdjudicator() {
+		return nil, nil
+	}
+	var flagged []string
+	seen := make(map[string]bool, len(analysis.Tags))
+	for _, name := range analysis.Tags {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		if _, stored := storeKeys[tags.Key(name)]; stored {
+			continue
+		}
+		if tags.DetectNonEnglish(name) {
+			flagged = append(flagged, name)
+		}
+	}
+	if len(flagged) == 0 {
+		return nil, nil
+	}
+
+	translations := make(map[string]string, len(flagged))
+	pending := make(map[string]struct{})
+	// a translation is new text the emission filter never saw; the bare filter re-applies the tag bounds
+	translationFilter := analyzer.NewTagFilter(nil, nil, nil)
+	for start := 0; start < len(flagged); start += verdictBatchSize {
+		end := min(start+verdictBatchSize, len(flagged))
+		batch := flagged[start:end]
+		results, err := a.runner.JudgeTagTranslations(ctx, batch)
+		if err != nil && retryableJudgeFailure(err) {
+			a.logger.Warn(reqID, "taglanguage[%s]: translation attempt failed, retrying once: %v", analyzer.TagTranslationVersion, err)
+			results, err = a.runner.JudgeTagTranslations(ctx, batch)
+		}
+		missing := make(map[int]bool)
+		if err != nil {
+			if isCreditError(err) {
+				return nil, err
+			}
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				a.logger.Warn(reqID, "taglanguage[%s]: translation failed for %q, deferring them: %v", analyzer.TagTranslationVersion, batch, err)
+				for _, name := range batch {
+					pending[name] = struct{}{}
+				}
+				continue
+			}
+			missing = incomplete.MissingSet()
+		}
+		for i, name := range batch {
+			if missing[i] || i >= len(results) {
+				pending[name] = struct{}{}
+				continue
+			}
+			r := results[i]
+			translated := strings.TrimSpace(r.Translation)
+			switch {
+			case r.Defer || translated == "":
+				pending[name] = struct{}{}
+			case strings.EqualFold(translated, name):
+				// already English; the judge confirmed the jargon
+			default:
+				house := tags.HouseForm(translated)
+				if !translationFilter.Accept(house) {
+					a.logger.Warn(reqID, "taglanguage[%s]: translation %q → %q fails the tag bounds, holding for review",
+						analyzer.TagTranslationVersion, name, house)
+					pending[name] = struct{}{}
+					continue
+				}
+				translations[name] = house
+			}
+		}
+	}
+
+	if len(translations) > 0 {
+		out := make([]string, 0, len(analysis.Tags))
+		seenOut := make(map[string]bool, len(analysis.Tags))
+		for _, name := range analysis.Tags {
+			resolved := name
+			if t, ok := translations[name]; ok {
+				resolved = t
+				a.logger.Info(reqID, "taglanguage[%s]: translate %q → %q", analyzer.TagTranslationVersion, name, resolved)
+			}
+			if resolved == "" || seenOut[resolved] {
+				continue
+			}
+			seenOut[resolved] = true
+			out = append(out, resolved)
+		}
+		for i := range analysis.TagDetails {
+			if t, ok := translations[textnorm.NormalizeTag(analysis.TagDetails[i].Term)]; ok {
+				analysis.TagDetails[i].Term = t
+			}
+		}
+		analysis.Tags = out
+	}
+	return pending, nil
+}
+
+// TagQualityInput is the per-document input the quality gate decides over: the analysis whose tags are
+// filtered, the matcher decisions, the store names a candidate is checked against, the document text the
+// subject-matter criterion reads, the document id, and the names the language guard holds for review
+// (ForceDefer).
+type TagQualityInput struct {
+	Analysis    *tools.ContentAnalysisResult
+	Decisions   []policy.Decision
+	DBNames     map[string]struct{}
+	ReducedText string
+	DocID       int64
+	ForceDefer  map[string]struct{}
+}
+
+// ApplyTagQuality filters the analysis's tags through the admission decision: each novel candidate's
+// features — the parts pass's dimension verdict plus the judge's rubric answers (cached or fresh) and the
+// emission's deterministic signals — resolve through tags.DecideAdmission. The parts pass owns the
+// dimension question, so the gate resolves each uncached candidate's dimension verdict from the shared
+// parts cache and stamps it; an absent or abstained verdict defers rather than counting as a false answer.
+// A name in ForceDefer is held for review and never admitted plain. Rejected tags are dropped from the
+// returned list; deferred and admitted tags are both kept, and every kept novel name's decision is
+// returned so the caller can drive promotion. A missing judge, judge failure, or context cancellation
+// keeps the tags, born provisional with a defer decision; a partial judge reply salvages its returned
+// entries and defers only the missing indices; a credit-exhaustion failure is the only error returned, so
+// the caller can pause the batch.
+func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, reqID string) ([]string, map[string]tags.AdmissionDecision, error) {
+	analysis := in.Analysis
+	decisions := in.Decisions
+	dbNames := in.DBNames
+	reducedText := in.ReducedText
+	docId := in.DocID
+	forceDefer := in.ForceDefer
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
 		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
@@ -757,6 +918,13 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 			continue
 		}
 		seenNovel[out] = true
+		if _, held := forceDefer[out]; held {
+			// a detected non-English value the language guard could not translate is held for review,
+			// never admitted plain (report N2/D27)
+			decided[out] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonLanguageReview}
+			a.logger.Info(reqID, "taglanguage[%s]: defer %q to review (non-English, untranslated)", analyzer.TagTranslationVersion, out)
+			continue
+		}
 		n := &novelTag{emitted: out}
 		if d, ok := typedByTerm[out]; ok {
 			n.category, n.haveDetail = d.Category, true
@@ -799,6 +967,35 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 			}
 			decided[n.emitted] = decision
 		}
+	}
+
+	var dimensionVerdicts map[string]PartVerdict
+	if len(uncached) > 0 && a.runner.HasTagAdjudicator() {
+		// the parts pass owns the dimension question (report N5): resolve each uncached novel name's
+		// dimension verdict from the shared parts cache, judging the misses, and stamp it onto the
+		// quality result so the admission decision reads one verdict, never two. Without an adjudicator
+		// there is no verdict to read, so the stamp abstains and the quality result defers.
+		names := make([]string, len(uncached))
+		for i, n := range uncached {
+			names[i] = n.emitted
+		}
+		partStore := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model, tags.PromotedGuardKeys(dbNames))
+		var derr error
+		dimensionVerdicts, derr = partStore.Parts(ctx, names, docId, reqID)
+		if derr != nil {
+			return nil, nil, derr
+		}
+	}
+	// an absent or abstained parts verdict is not a false answer: it defers rather than fabricating a
+	// failing signal the model never produced
+	stampDimension := func(r *analyzer.TagQualityResult, name string) {
+		v, ok := dimensionVerdicts[name]
+		dimension, abstain := PartDimensionFeature(v, ok)
+		if abstain {
+			r.Defer = true
+			return
+		}
+		r.Dimension = dimension
 	}
 
 	if len(uncached) > 0 {
@@ -844,6 +1041,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 								continue
 							}
 							salvaged++
+							stampDimension(&results[i], n.emitted)
 							decision := a.decideQuality(ctx, docId, n, results[i], model, reqID)
 							if decision.Outcome == tags.AdmissionReject {
 								rejected[n.emitted] = true
@@ -868,9 +1066,10 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, analysis *tools.Conte
 					}
 					continue
 				}
-				for i, r := range results {
+				for i := range results {
 					n := batch[i]
-					decision := a.decideQuality(ctx, docId, n, r, model, reqID)
+					stampDimension(&results[i], n.emitted)
+					decision := a.decideQuality(ctx, docId, n, results[i], model, reqID)
 					if decision.Outcome == tags.AdmissionReject {
 						rejected[n.emitted] = true
 						continue

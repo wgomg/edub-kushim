@@ -303,11 +303,14 @@ The enrichment pipeline:
    filter before it reaches the store: novel names (absent from the
    vocabulary) are resolved by the pinned admission decision over their
    features — the rubric judge's answers (one temperature-0 LLM call per
-   document, or the cached verdict row) plus the emission's deterministic
+   document, or the cached verdict row) together with the `dimension` verdict
+   the parts pass owns (read from the shared parts cache, judged on a miss,
+   and stamped onto the row) plus the emission's deterministic
    signals (a detail annotated `other`, and a best store similarity below the
    internal `no_anchor_similarity` 0.60 cut). The rubric asks
-   `subject_matter`, `dimension`, `not_person_place_work`, `atomic` and
-   `not_form_genre`, and offers `defer` as an abstention; the decision admits
+   `subject_matter`, `not_person_place_work`, `atomic` and
+   `not_form_genre`, and offers `defer` as an abstention, while a missing or
+   abstained parts verdict defers rather than counting as a failing dimension; the decision admits
    when nothing fails, defers on a lone failing signal (or the judge's
    abstention), and rejects on two or more — no single signal decides. Verdicts
    are cached per `(tag_name, policy_version)` in `tag_quality_event` with the

@@ -53,7 +53,7 @@ func (r *Reconciler) buildJointWorklist(allTags []database.Tag, tagCounts map[st
 // promotedNames is the promoted tag names' Key→name view the parts fold and the reconstructibility signal
 // read.
 func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, entries []*jointEntry, promotedNames map[string]string) {
-	componentFilter := analyzer.NewTagFilter(nil, nil, "", nil)
+	componentFilter := analyzer.NewTagFilter(nil, nil, nil)
 	validate := func(components []string) []string {
 		valid := analyzer.SplitComponents(components, componentFilter)
 		if len(valid) < 2 || len(valid) > cfg.Enricher.ContentAnalyzer.MaxTags {
@@ -84,7 +84,7 @@ func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, 
 		rparts := make([]string, 0, len(parts))
 		for _, part := range parts {
 			resolvedPart := part
-			if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
+			if anchor := tags.AnchoredFoldPromoted(part, promotedNames); anchor != "" && anchor != part {
 				resolvedPart = anchor
 			}
 			rparts = append(rparts, resolvedPart)
@@ -96,7 +96,7 @@ func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, 
 		resolved[e] = rparts
 	}
 
-	store := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model)
+	store := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model, tags.PromotedKeys(promotedNames))
 	partVerdicts, err := store.Parts(ctx, values, 0, "")
 	if err != nil {
 		r.logger.Error("", "tag reconcile: part verdicts: %v", err)

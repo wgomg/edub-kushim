@@ -176,9 +176,9 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // not_form_genre to the feature set the pinned rules read; v3 rides the criteria-v3 generation — the
 // feature set and the pinned combination rules are unchanged, and the bump keeps the promote log's stamp
 // rule_set=decision-%s traceable to the judging generation. v4 rides the criteria-v4 generation the same
-// way: the feature set and the pinned combination rules are unchanged, and the stamp keeps promote lines
-// traceable to the judging generation.
-const DecisionRuleSetVersion = "v4"
+// way. v5 rides the parts-v3/quality-v5 generation (the parts pass owning the dimension question and the
+// language guard, report N4/N5/N2), the feature set and the pinned combination rules unchanged.
+const DecisionRuleSetVersion = "v5"
 
 // RecurrenceFloor is the promotion minimum of
 // docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live
