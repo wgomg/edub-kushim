@@ -124,42 +124,51 @@ type CompositionDecision struct {
 	// whose verdict source (judge, cached, conjunction) belongs to the call and is stamped by the caller
 	// through the existing splitSource.
 	Reason string
-	Hold   bool
+	// Hold reports whether the outcome withholds the compound from automatic promotion until review; it is
+	// derived from Reason through compositionHolds, the single definition of the hold policy the
+	// persisted-reason lookup also reads.
+	Hold bool
 }
 
 // DecideComposition disposes of one compound candidate from its features under the pinned rule set of
-// docs/tags/definition-and-faceted-retrieval.md §6.6/§8.10 and docs/tags/atomicity.md §3.3–§3.5. No single
-// signal decides, and evaluation order is load-bearing: a fresh-sample disagreement defers first; an
-// unavailable judge keeps the compound with no hold, and the compound is re-judged on any re-emission; an
-// abstention defers under split_defer; a compound verdict contradicting the parts status routes to review;
-// composition splits; no_dimension drops only when the parts agree it is no dimension; and a named unit keeps
-// whole, with the reconstructible gray class held while mass accrues. An unrecognized combination falls to
-// the fail-safe split_defer hold.
+// docs/tags/definition-and-faceted-retrieval.md §3.6/§8.2/§8.10 and docs/tags/atomicity.md §3.3–§3.5. No
+// single signal decides, and evaluation order is load-bearing: a fresh-sample disagreement defers first;
+// an unavailable judge keeps the compound undecided (the persisted reason holds it from promotion until a
+// later verdict); an abstention defers under split_defer; then the parts test selects the branch — all
+// parts dimensional means the combination branch, a failing part means the unit branch — and the compound
+// reading disposes within it. In the combination branch a composition reading splits, a no-dimension
+// reading conflicts to review, and a named_unit reading is a held gray keep with its parts applied
+// alongside (reconstructible when every part is a promoted store value, relational_keep otherwise). In the
+// unit branch a named_unit reading keeps whole and a composition reading conflicts to review. An
+// unrecognized combination falls to the fail-safe split_defer hold.
 func DecideComposition(f CompositionFeatures) CompositionDecision {
+	var decision CompositionDecision
 	switch {
 	case f.SampleDisagreement:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSampleDisagreement, Hold: true}
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSampleDisagreement}
 	case f.JudgeUnavailable:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonJudgeUnavailable}
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonJudgeUnavailable}
 	case f.CompoundDeferred || f.PartsDeferred:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer, Hold: true}
-	case f.CompoundComposition && f.PartsNotDimensional:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonConflictingEvidence, Hold: true}
-	case f.CompoundComposition && f.PartsDimensional:
-		return CompositionDecision{Disposition: CompositionSplit}
-	case f.CompoundNoDimension && f.PartsNotDimensional:
-		return CompositionDecision{Disposition: CompositionDrop, Reason: CompositionReasonNoDimension}
-	case f.CompoundNoDimension && f.PartsDimensional:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonConflictingEvidence, Hold: true}
-	case f.CompoundNamedUnit && f.PartsNotDimensional:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnit}
-	case f.CompoundNamedUnit && f.PartsDimensional && f.Reconstructible:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnitReconstructible, Hold: true}
-	case f.CompoundNamedUnit && f.PartsDimensional && !f.Reconstructible:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnit}
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer}
+	case f.PartsDimensional && f.CompoundComposition:
+		decision = CompositionDecision{Disposition: CompositionSplit}
+	case f.PartsDimensional && f.CompoundNoDimension:
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonConflictingEvidence}
+	case f.PartsDimensional && f.CompoundNamedUnit && f.Reconstructible:
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnitReconstructible}
+	case f.PartsDimensional && f.CompoundNamedUnit:
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonRelationalKeep}
+	case f.PartsNotDimensional && f.CompoundNamedUnit:
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnit}
+	case f.PartsNotDimensional && f.CompoundComposition:
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonConflictingEvidence}
+	case f.PartsNotDimensional && f.CompoundNoDimension:
+		decision = CompositionDecision{Disposition: CompositionDrop, Reason: CompositionReasonNoDimension}
 	default:
-		return CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer, Hold: true}
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer}
 	}
+	decision.Hold = compositionHolds(decision.Reason)
+	return decision
 }
 
 // DecisionRuleSetVersion pins the admission and promotion rules; the promote log lines carry it so rule

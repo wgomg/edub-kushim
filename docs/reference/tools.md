@@ -157,7 +157,7 @@ The split gate's two context-free judged contracts: the **parts pass** asks whet
 
 - `TagPartDimensionVersion` (exported) — `"v2"`; pins the parts pass's criteria and the policy version of its cached rows (`tag_part_dimension_event`). A criteria or prompt change bumps it so an older generation's verdicts never apply.
 - `TagPartSystemMessage` (exported) — `"You are a tag-dimension classifier. Decide whether each value, on its own, is a subject a searcher would filter by."`
-- `TagSplitVersion` (exported) — `"v3"`; pins the compound pass's criteria, the policy version of the compound rows (`tag_compound_status_event`), and every `tag_composition_event` row's `criteria_version`. A criteria or prompt change bumps it so an older generation's verdicts never apply.
+- `TagSplitVersion` (exported) — `"v4"`; pins the compound pass's criteria, the policy version of the compound rows (`tag_compound_status_event`), and every `tag_composition_event` row's `criteria_version`. The version also pins what a composition row means (the branch-first decision order, the attested seam folds feeding the features, and the parts-alongside keep rows). A criteria or prompt change bumps it so an older generation's verdicts never apply.
 - `TagCompoundSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide what a compound phrase denotes."`
 
 ### Types

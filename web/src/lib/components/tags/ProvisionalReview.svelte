@@ -386,7 +386,7 @@
 							split hold → {tag.composition_hold}
 						</span>
 					{/if}
-					{#if tag.composition_reason === 'judge_unavailable'}
+					{#if tag.composition_reason === 'judge_unavailable' && !tag.composition_hold}
 						<span
 							class={pillPlain}
 							title="No split judge was available; the compound was kept whole and is re-judged when emitted again"

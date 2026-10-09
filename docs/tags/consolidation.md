@@ -97,7 +97,7 @@ longer decides anything. See [matcher.md](matcher.md) for the per-model value
 and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v6]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v7]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -124,7 +124,12 @@ it is skipped before judgment and never split.
   word on its own, and a **compound pass** (`analyzer.TagSplitVersion`) reads
   the phrase as a named unit, a plain composition, or a phrase with no
   retrievable dimension — and the two answer sets fold into one decision
-  (`tags.DecideComposition`). The gate splits when every part names a subject a
+  (`tags.DecideComposition`). The parts verdict selects the branch — all parts
+  dimensional is the combination branch, a failing part the unit branch — and
+  the compound reading disposes within it; a `named_unit` reading over
+  all-dimensional parts is the held gray keep (`named_unit_reconstructible`, or
+  `relational_keep` when the parts are not all promoted) whose parts apply
+  alongside. The gate splits when every part names a subject a
   searcher would filter by on its own and the phrase is just their combination,
   including a modifier before a generic head (`labor movement`, `bike
   repair`); it keeps the tag when the phrase names one established subject the
@@ -135,18 +140,30 @@ it is skipped before judgment and never split.
   `versus` — detected by `textnorm.SplitJointTag`; after normalization `&` is
   stripped, so "rock & roll" is not joint) split deterministically; every
   other compound passes whole.
+- **Store-keyed compounds**: a compound already in the store skips judgment
+  only when a current-version verdict decides it; one with no verdict, or only
+  a degraded `judge_unavailable` keep, re-enters judgment until a verdict
+  exists, and a decided keep applies its judged-dimensional parts alongside
+  from the persisted cache on every emission, making no model call. Without an
+  adjudicator no verdict is reachable, so store-keyed compounds stay skipped
+  rather than appending a degraded row on every emission.
 - **Evidence**: every judged compound appends one `tag_composition_event`
   verdict row — candidate, validated parts, `disposition`
   (`split`/`keep`/`drop`), `reason`
-  (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`, or
+  (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`; the
+  decision reasons `named_unit`, `named_unit_reconstructible`, `relational_keep`,
+  `no_dimension`, `split_defer`, `conflicting_evidence`, `sample_disagreement`; or
   `part_rejected` when an admitted part was rejected downstream and the split
-  degrades to `drop`, keeping the row's resolved parts), the criteria version,
+  degrades to `drop`, keeping the row's resolved parts — keep rows record the
+  parts applied alongside, pruned of any the quality gate rejected), the criteria
+  version,
   and the judge model (`NULL` for cached verdicts and the conjunction
   fallback) — with a matching `tag split[...]` log line per candidate.
 - **Validation**: components are first fold-resolved onto **promoted** store
-  values through the store-anchored net (derivational proposals and
-  suffix-local morphographic proposals of at most two edits; lemma folds stay
-  out; provisional births are not seam anchors) and then pass the hard
+  values through the attested seam fold (the generated WordNet pertainym
+  table's adjective→noun pairs; two distinct store hits are ambiguity, never a
+  fold; shape proposals stay in the judged path; provisional births are not
+  seam anchors) and then pass the hard
   per-document rules — normalized, deduplicated, ≤3 words, ≤64 characters, no
   person or doc-type token matches; the title-containment echo rule does not
   apply to parts — and a split must yield between 2 and
@@ -259,9 +276,14 @@ bumps the constant so older rows never apply. The current constants:
 - `analyzer.TagPartDimensionVersion` (`v2`) — the split gate's parts pass: one
   context-free dimensional question per value, judged in its ordinary
   standalone sense.
-- `analyzer.TagSplitVersion` (`v3`) — the split gate's compound pass: the
+- `analyzer.TagSplitVersion` (`v4`) — the split gate's compound pass: the
   context-free `named_unit`/`composition`/`no_dimension` trichotomy plus an
-  abstention, and the `criteria_version` every composition row carries.
+  abstention, and the `criteria_version` every composition row carries. The
+  version also pins what a row means: the v4 stamp records the branch-first
+  decision order (a unanimous dimensional verdict is not overridden by
+  `named_unit`; the combination-branch named-unit keep is the held
+  `relational_keep`), the attested seam folds feeding the features, and the
+  parts-alongside keep rows.
 
 ---
 
@@ -284,8 +306,9 @@ The `document_tag` primary key makes the count distinct-document, so a single
 document re-enriching itself cannot promote a name. An identity-held name — a
 fold the gate refused beside a live store value — and a composition-held name —
 the latest composition verdict at the current split criteria version defers,
-conflicts, disagrees, or is a reconstructible named unit — are skipped by both
-the inline check and the sweep until an operator resolves them.
+conflicts, disagrees, is a reconstructible named unit, is a relational keep, or
+is a degraded `judge_unavailable` keep — are skipped by both the inline check and
+the sweep until an operator resolves them or a later verdict decides them.
 
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
 re-judged in flight: a name already present in the tag table is not novel, so

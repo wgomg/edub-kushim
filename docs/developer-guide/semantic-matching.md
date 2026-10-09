@@ -342,7 +342,7 @@ apply the existing label), and then candidate generation — every remaining
 candidate neighbour is kept as a **gate subject** with its similarity and
 runner-up recorded as adjudication evidence. Similarity never replaces or
 keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v6]: apply|alias|defer|separate …`. Fallback results from the legacy
+`identity[v7]: apply|alias|defer|separate …`. Fallback results from the legacy
 daemon (no candidates) pass through `KeptName` verbatim. M1 house-form and M3
 key-equal variants and aliases never reach the policy: they apply the canonical
 value before ranking output is used; pinned orthographic and token-permutation
@@ -503,7 +503,8 @@ they wait for review — and neither do held names: an identity-held name (a
 refused fold beside a live store value, derived from the latest
 `base_form`/`fold_gate` evidence) or a composition-held name (the latest
 composition verdict at the current split criteria version defers, conflicts,
-disagrees, or is a reconstructible named unit). Each skips the candidate with a
+disagrees, is a reconstructible named unit, is a relational keep, or is a
+degraded judge_unavailable keep). Each skips the candidate with a
 DEBUG (`identity hold %q (anchor=%q) — left for review` / `composition hold %q
 (reason=%s) — left for review`).
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
@@ -537,8 +538,9 @@ resolve them afterwards:
   uses. Rows whose refused fold targeted a live store value carry the anchor
   as `identity_hold` and render an "identity hold" pill; rows whose latest
   composition verdict withholds promotion carry its reason as `composition_hold`
-  and render a "split hold → <reason>" pill, while a `judge_unavailable` keep
-  surfaces its reason as `composition_reason` with no hold. A rejection is a
+  and render a "split hold → <reason>" pill, and a degraded `judge_unavailable`
+  keep carries the same reason as both `composition_reason` and `composition_hold`
+  until a later verdict decides it. A rejection is a
   normal tag delete, so the `deleted_tag` blocklist keeps the name from being
   reborn.
 

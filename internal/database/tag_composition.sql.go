@@ -97,7 +97,7 @@ func (q *Queries) LatestCompositionEventsForNames(ctx context.Context, candidate
 }
 
 const latestCompositionReasonsForNames = `-- name: LatestCompositionReasonsForNames :many
-SELECT DISTINCT ON (candidate) candidate, reason
+SELECT DISTINCT ON (candidate) candidate, disposition, reason
 FROM tag_composition_event
 WHERE criteria_version = $1
   AND candidate = ANY($2::text[])
@@ -110,8 +110,9 @@ type LatestCompositionReasonsForNamesParams struct {
 }
 
 type LatestCompositionReasonsForNamesRow struct {
-	Candidate string
-	Reason    string
+	Candidate   string
+	Disposition string
+	Reason      string
 }
 
 func (q *Queries) LatestCompositionReasonsForNames(ctx context.Context, arg LatestCompositionReasonsForNamesParams) ([]LatestCompositionReasonsForNamesRow, error) {
@@ -123,7 +124,7 @@ func (q *Queries) LatestCompositionReasonsForNames(ctx context.Context, arg Late
 	var items []LatestCompositionReasonsForNamesRow
 	for rows.Next() {
 		var i LatestCompositionReasonsForNamesRow
-		if err := rows.Scan(&i.Candidate, &i.Reason); err != nil {
+		if err := rows.Scan(&i.Candidate, &i.Disposition, &i.Reason); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

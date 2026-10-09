@@ -112,9 +112,9 @@ func TestDecideComposition(t *testing.T) {
 			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSampleDisagreement, Hold: true},
 		},
 		{
-			"an unavailable judge keeps with no hold even when the compound abstained",
+			"an unavailable judge keeps and holds until a later verdict",
 			CompositionFeatures{JudgeUnavailable: true, CompoundDeferred: true},
-			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonJudgeUnavailable},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonJudgeUnavailable, Hold: true},
 		},
 		{
 			"a compound abstention holds ahead of the split branch",
@@ -162,9 +162,9 @@ func TestDecideComposition(t *testing.T) {
 			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnitReconstructible, Hold: true},
 		},
 		{
-			"a named unit with no store intersection keeps",
+			"a named unit over dimensional parts holds as a relational keep",
 			CompositionFeatures{CompoundNamedUnit: true, PartsDimensional: true},
-			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnit},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonRelationalKeep, Hold: true},
 		},
 		{
 			"a compound status no part verdict can arbitrate falls to the fail-safe",

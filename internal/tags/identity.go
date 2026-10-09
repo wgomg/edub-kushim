@@ -24,9 +24,12 @@ import (
 // store view — while the birth-time rules and the judging body's criteria are unchanged; v6 adds the
 // deterministic variant-class bypass at the unresolved pair loops — the pinned orthographic spelling
 // table and literal token permutation resolve mechanically — while the judging body's criteria and the
-// house-form map are unchanged. The store reset truncates tag_identity_event, so no cached identity
-// verdict survives to invalidate.
-const IdentityRuleSetVersion = "v6"
+// house-form map are unchanged; v7 replaces the split seam's shape-based legs (the pinned derivational
+// transforms and the suffix-local morphographic distance) with the generated attested pertainym table
+// (attested.go) — the seam folds only attested derivations, while the judged identity path still
+// proposes shapes and the fold gate confirms them. The store reset truncates tag_identity_event, so no
+// cached identity verdict survives to invalidate.
+const IdentityRuleSetVersion = "v7"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -115,8 +118,8 @@ const (
 // conjunction grammar fallback, or components that failed validation — the absence of any judge verdict
 // (judge_unavailable), the degrade reason when a split's part could not survive admission (part_rejected,
 // written by the enricher), and the pinned decision reasons — a named-unit keep, its reconstructible gray
-// class, a no-dimension drop, a deferred split, parts-versus-compound disagreement, and cross-sample
-// disagreement.
+// class, the combination-branch relational keep, a no-dimension drop, a deferred split, parts-versus-compound
+// disagreement, and cross-sample disagreement.
 const (
 	CompositionReasonJudge                    = "judge"
 	CompositionReasonCached                   = "cached"
@@ -126,18 +129,34 @@ const (
 	CompositionReasonPartRejected             = "part_rejected"
 	CompositionReasonNamedUnit                = "named_unit"
 	CompositionReasonNamedUnitReconstructible = "named_unit_reconstructible"
+	CompositionReasonRelationalKeep           = "relational_keep"
 	CompositionReasonNoDimension              = "no_dimension"
 	CompositionReasonSplitDefer               = "split_defer"
 	CompositionReasonConflictingEvidence      = "conflicting_evidence"
 	CompositionReasonSampleDisagreement       = "sample_disagreement"
 )
 
+// compositionHolds reports whether a composition reason withholds the compound from automatic promotion
+// until review or a criteria-version bump (docs/tags/atomicity.md §3.5): the cross-sample, conflict, and
+// deferred outcomes, the reconstructible and relational named-unit keeps, and a degraded keep whose judge
+// never answered. It is the single definition of the composition hold policy, read both when
+// DecideComposition stamps a decision and when the persisted-reason lookup rebuilds the hold set.
+func compositionHolds(reason string) bool {
+	switch reason {
+	case CompositionReasonSplitDefer, CompositionReasonConflictingEvidence,
+		CompositionReasonSampleDisagreement, CompositionReasonNamedUnitReconstructible,
+		CompositionReasonRelationalKeep, CompositionReasonJudgeUnavailable:
+		return true
+	}
+	return false
+}
+
 // CompositionRow is one decomposition verdict over a judged compound: the document it belongs to, the
-// candidate, the validated parts for split rows (empty otherwise), the disposition, the verdict source or
-// decision reason, the split criteria version the verdict was read under, and the split judge's model for
-// fresh verdicts. Reconstructible records the store signal the decision read when the parts pass ran (all
-// parts dimensional and every resolved part key holding live mass); it is nil when no parts verdict or
-// store reading exists.
+// candidate, the validated components for split rows and the applied-alongside parts for keep rows (empty
+// otherwise), the disposition, the verdict source or decision reason, the split criteria version the
+// verdict was read under, and the split judge's model for fresh verdicts. Reconstructible records the
+// store signal the decision read when the parts pass ran (all parts dimensional and every resolved part
+// key holding live mass); it is nil when no parts verdict or store reading exists.
 type CompositionRow struct {
 	DocumentID      int64
 	Candidate       string
@@ -452,14 +471,15 @@ func (ix *NameIndex) ShapeRelated(a, b string) bool {
 	return ix.shape[a].ShapeRelatedTo(ix.shape[b])
 }
 
-// normalizedNames normalizes each name and returns the distinct non-empty results in first-seen order,
-// the shared input boundary of the alias and held-name lookups. An empty or all-empty input yields an
-// empty slice.
-func normalizedNames(names []string) []string {
-	normalized := make([]string, 0, len(names))
+// distinctNames normalizes each name with normalize and returns the distinct non-empty results in
+// first-seen order, the shared input boundary of the name lookups: textnorm.NormalizeTag for the alias and
+// held-name reads, StoredName for the reads keyed by the store's namespace (the composition journal). An
+// empty or all-empty input yields an empty slice.
+func distinctNames(names []string, normalize func(string) string) []string {
+	distinct := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		n := textnorm.NormalizeTag(name)
+		n := normalize(name)
 		if n == "" {
 			continue
 		}
@@ -467,15 +487,15 @@ func normalizedNames(names []string) []string {
 			continue
 		}
 		seen[n] = struct{}{}
-		normalized = append(normalized, n)
+		distinct = append(distinct, n)
 	}
-	return normalized
+	return distinct
 }
 
 // ResolveAliases maps each normalized name to its canonical form through
 // the alias table; names without an alias are absent from the result.
 func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
-	normalized := normalizedNames(names)
+	normalized := distinctNames(names, textnorm.NormalizeTag)
 	if len(normalized) == 0 {
 		return map[string]string{}, nil
 	}
@@ -498,7 +518,7 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 // a live tag — either refusal blocks the fold. Unheld names are absent
 // from the result; empty input returns an empty map.
 func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
-	normalized := normalizedNames(names)
+	normalized := distinctNames(names, textnorm.NormalizeTag)
 	if len(normalized) == 0 {
 		return map[string]string{}, nil
 	}
@@ -527,11 +547,13 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 
 // CompositionHeldNames maps each held compound candidate to the reason its latest composition verdict
 // withheld promotion: a deferred split, conflicts between the parts and compound passes, cross-sample
-// disagreement, or the reconstructible named-unit gray class (docs/tags/atomicity.md §3.5). Only rows
-// carrying criteriaVersion count, so a criteria-version bump clears stale holds. Unheld candidates are
-// absent from the result; empty input returns an empty map.
+// disagreement, the reconstructible named-unit gray class, the combination-branch relational keep, or a
+// degraded keep whose judge never answered (no promotion without a decision; docs/tags/atomicity.md
+// §3.5). Only rows carrying criteriaVersion count, so a criteria-version bump clears stale holds. Names
+// are normalized to the store's name recipe (StoredName), matching the journal's keys and the sibling
+// state read. Unheld candidates are absent from the result; empty input returns an empty map.
 func CompositionHeldNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, error) {
-	normalized := normalizedNames(names)
+	normalized := distinctNames(names, StoredName)
 	if len(normalized) == 0 {
 		return map[string]string{}, nil
 	}
@@ -545,13 +567,49 @@ func CompositionHeldNames(ctx context.Context, q *database.Queries, names []stri
 	}
 	held := make(map[string]string, len(rows))
 	for _, row := range rows {
-		switch row.Reason {
-		case CompositionReasonSplitDefer, CompositionReasonConflictingEvidence,
-			CompositionReasonSampleDisagreement, CompositionReasonNamedUnitReconstructible:
+		if compositionHolds(row.Reason) {
 			held[row.Candidate] = row.Reason
 		}
 	}
 	return held, nil
+}
+
+// CompositionState is one compound candidate's latest persisted composition state under a criteria
+// version: the disposition and whether the row is a decision at all. Decided is false exactly for a
+// degraded keep (judge_unavailable) — the compound pass never answered, so the row is evidence that
+// judgment is still owed, not a verdict to replay.
+type CompositionState struct {
+	Disposition CompositionDisposition
+	Decided     bool
+}
+
+// CompositionStatesForNames returns each named candidate's latest composition state under
+// criteriaVersion: it is the version-filtered read the store-existing skip consults, so a compound is
+// skipped as an application only when a decision actually exists, and a compound carrying no row or only
+// a degraded keep stays a candidate for judgment. Names are normalized to the store's name recipe
+// (StoredName), matching the journal's keys; candidates without a row are absent from the result, and
+// empty input returns an empty map.
+func CompositionStatesForNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]CompositionState, error) {
+	normalized := distinctNames(names, StoredName)
+	if len(normalized) == 0 {
+		return map[string]CompositionState{}, nil
+	}
+
+	rows, err := q.LatestCompositionReasonsForNames(ctx, database.LatestCompositionReasonsForNamesParams{
+		CriteriaVersion: criteriaVersion,
+		Candidates:      normalized,
+	})
+	if err != nil {
+		return nil, err
+	}
+	states := make(map[string]CompositionState, len(rows))
+	for _, row := range rows {
+		states[row.Candidate] = CompositionState{
+			Disposition: CompositionDisposition(row.Disposition),
+			Decided:     row.Reason != CompositionReasonJudgeUnavailable,
+		}
+	}
+	return states, nil
 }
 
 // ProposedFold proposes the lemma-folded form of a name, or "" when the
@@ -638,8 +696,16 @@ func ProposedDerivationalFold(name string, storeNames map[string]string) string 
 	if len(strings.Fields(name)) != 1 || len(name) < 6 || !isLowerASCII(name) {
 		return ""
 	}
+	return storeAnchor(derivationalBases(name), storeNames)
+}
+
+// storeAnchor resolves candidate bases onto a store view (Key(storeName)→storeName): it returns the store
+// name the single base the store holds maps to, or "" when no base hits or two distinct bases hit — two
+// hits are ambiguity, not a fold. The attested seam fold and the judged path's derivational proposal share
+// this anchoring rule, so both stay store-anchored and ambiguity-safe by construction.
+func storeAnchor(bases []string, storeNames map[string]string) string {
 	hit := ""
-	for _, base := range derivationalBases(name) {
+	for _, base := range bases {
 		storeName, ok := storeNames[Key(base)]
 		if !ok {
 			continue
@@ -706,31 +772,20 @@ func ProposedMorphologicalFold(name string, storeNames map[string]string) string
 	return hit
 }
 
-// AnchoredFold resolves a split component through the promoted store view:
-// it returns the promoted store value the name's derivational or
-// morphological proposal resolves onto, or "" when neither proposer yields
-// an anchor. Both proposers are store-anchored by construction and
-// ambiguity-safe, so the chain inherits both properties, and the
-// morphological leg is suffix-local only — a ≤2-distance anchor whose edits
-// all fall in the suffix region — so a prefix-divergent near-spelling
-// (oppression beside repression) never folds at the seam. The lemma fold is
-// consulted only to veto the morphological leg: a proposal that merely
-// reproduces the lemma fold (railways→railway) is not taken, so that class
-// keeps folding through the judged identity machinery instead.
-// Split-component resolution consults it before per-document filtering;
-// births never rename through it — their folds stay judged in the identity
-// path. promotedNames maps Key(storeName) to the promoted store's name;
-// provisional births are absent from it and so anchor only through the
+// AnchoredFold resolves a split component through the promoted store view: it returns the promoted
+// store value an attested adjective→noun derivation resolves onto, or "" when the table (attested.go)
+// does not attest the name, no attested base is a promoted store value, or two distinct attested
+// bases hit the store — ambiguity is not a fold, through the shared storeAnchor rule. The attestation
+// is the point: a pertainym relator links an adjective and a noun that denote the same thing, so the
+// seam folds only relations the lexical source attests and never infers a fold from shape
+// (docs/tags/canonical-form-and-identity.md V2/J1). Shape-based proposals (ProposedDerivationalFold,
+// ProposedMorphologicalFold) still reach the judged identity path's fold gate, which confirms them
+// before use; split-component resolution consults this before per-document filtering, and births never
+// rename through it — their folds stay judged in the identity path. promotedNames maps Key(storeName)
+// to the promoted store's name; provisional births are absent from it and so anchor only through the
 // judged identity path.
 func AnchoredFold(name string, promotedNames map[string]string) string {
-	if anchor := ProposedDerivationalFold(name, promotedNames); anchor != "" {
-		return anchor
-	}
-	anchor := ProposedMorphologicalFold(name, promotedNames)
-	if anchor == "" || !suffixLocal(name, anchor) || anchor == ProposedFold(name) {
-		return ""
-	}
-	return anchor
+	return storeAnchor(attestedBases(name), promotedNames)
 }
 
 // AllPartsPromoted reports whether every part names a promoted store label: the established-value proxy the composition decision's
@@ -744,20 +799,6 @@ func AllPartsPromoted(parts []string, promotedNames map[string]string) bool {
 		}
 	}
 	return true
-}
-
-// suffixLocal reports whether name and its morphological anchor agree on
-// every character up to the suffix region, allowing only the last three
-// characters of name to differ. The ≤2-distance proposal can still reach a
-// prefix-divergent store value (oppression→repression); this predicate
-// rejects exactly those, matching the pinned derivational table, whose
-// transforms only strip or tail-swap a name's final characters.
-func suffixLocal(name, anchor string) bool {
-	shared := 0
-	for shared < len(name) && shared < len(anchor) && name[shared] == anchor[shared] {
-		shared++
-	}
-	return shared >= len(name)-3
 }
 
 // boundedEditDistance returns the Levenshtein distance between a and b,

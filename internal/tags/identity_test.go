@@ -281,13 +281,13 @@ func TestAnchoredFold(t *testing.T) {
 		want       string
 	}{
 		{
-			name:       "the derivation leg lands on the store noun",
+			name:       "an attested derivation lands on the store noun",
 			input:      "chilean",
 			storeNames: map[string]string{"chile": "chile"},
 			want:       "chile",
 		},
 		{
-			name:       "the morphological leg reaches the store noun",
+			name:       "an attested relation reaches the store noun",
 			input:      "mexican",
 			storeNames: map[string]string{"mexico": "mexico"},
 			want:       "mexico",
@@ -308,10 +308,10 @@ func TestAnchoredFold(t *testing.T) {
 			want: "",
 		},
 		{
-			name:       "a store-exact part resolves onto itself",
+			name:       "a store-exact name without an attested derivation does not fold",
 			input:      "revolution",
 			storeNames: map[string]string{"revolution": "revolution"},
-			want:       "revolution",
+			want:       "",
 		},
 		{
 			name:       "no store anchor resolves nothing",
@@ -332,19 +332,19 @@ func TestAnchoredFold(t *testing.T) {
 			want:       "",
 		},
 		{
-			name:       "the suffix-local extension still folds",
+			name:       "an attested relation folds through the store anchor",
 			input:      "german",
 			storeNames: map[string]string{"germany": "germany"},
 			want:       "germany",
 		},
 		{
-			name:       "the derivational leg still resolves the adjective",
+			name:       "an attested relation resolves the adjective",
 			input:      "political",
 			storeNames: map[string]string{"politics": "politics"},
 			want:       "politics",
 		},
 		{
-			name:       "the six-letter floor still excludes the short seed",
+			name:       "an attested base the store lacks does not fold",
 			input:      "roman",
 			storeNames: map[string]string{"romania": "romania"},
 			want:       "",
@@ -658,11 +658,13 @@ func TestCompositionHeldNames(t *testing.T) {
 	now := time.Now()
 	// the read takes the latest row under one criteria version, so the seeds cover every reason that can
 	// hold, every reason that cannot, a candidate a newer verdict settles, and a hold written under another
-	// version that must stay invisible to this read
+	// version that must stay invisible to this read; a degraded keep holds too — no promotion without a
+	// decision
 	seed("heldsplit", CompositionReasonSplitDefer, version, now)
 	seed("heldconflict", CompositionReasonConflictingEvidence, version, now)
 	seed("helddisagree", CompositionReasonSampleDisagreement, version, now)
 	seed("heldgray", CompositionReasonNamedUnitReconstructible, version, now)
+	seed("heldrelational", CompositionReasonRelationalKeep, version, now)
 	seed("cleankeep", CompositionReasonNamedUnit, version, now)
 	seed("degraded", CompositionReasonJudgeUnavailable, version, now)
 	seed("dropped", CompositionReasonNoDimension, version, now)
@@ -671,17 +673,19 @@ func TestCompositionHeldNames(t *testing.T) {
 	seed("stale", CompositionReasonSplitDefer, staleVersion, now)
 
 	held, err := CompositionHeldNames(ctx, q, []string{
-		"  HeldSplit ", "heldconflict", "helddisagree", "heldgray",
+		"  HeldSplit ", "heldconflict", "helddisagree", "heldgray", "heldrelational",
 		"cleankeep", "degraded", "dropped", "settled", "stale", "unjudged",
 	}, version)
 	if err != nil {
 		t.Fatalf("CompositionHeldNames: %v", err)
 	}
 	want := map[string]string{
-		"heldsplit":    CompositionReasonSplitDefer,
-		"heldconflict": CompositionReasonConflictingEvidence,
-		"helddisagree": CompositionReasonSampleDisagreement,
-		"heldgray":     CompositionReasonNamedUnitReconstructible,
+		"heldsplit":      CompositionReasonSplitDefer,
+		"heldconflict":   CompositionReasonConflictingEvidence,
+		"helddisagree":   CompositionReasonSampleDisagreement,
+		"heldgray":       CompositionReasonNamedUnitReconstructible,
+		"heldrelational": CompositionReasonRelationalKeep,
+		"degraded":       CompositionReasonJudgeUnavailable,
 	}
 	if len(held) != len(want) {
 		t.Errorf("held = %v, want exactly %v", held, want)
@@ -704,5 +708,77 @@ func TestCompositionHeldNames(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Errorf("empty input = %v, want no holds", empty)
+	}
+}
+
+// TestCompositionStatesForNames pins the read the store-existing skip consults: it is keyed the way the
+// journal writes (StoredName), version-filtered, and reports decided exactly when the latest row is not a
+// degraded keep — a compound with no row stays a candidate for judgment, and only current-version rows count.
+func TestCompositionStatesForNames(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	q := client.Queries
+	docID := database.CreateUniqueDocument(t, q, "composition-state")
+
+	// explicit created_at decides "latest" and the test's own criteria versions keep these rows out of
+	// every other read
+	const version = "state-test-v1"
+	const staleVersion = "state-test-v0"
+	seed := func(candidate, disposition, reason, criteria string, at time.Time) {
+		t.Helper()
+		if _, err := client.DB().ExecContext(ctx, `
+			INSERT INTO tag_composition_event
+			    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+			VALUES ($1, $2, '[]'::jsonb, $3, $4, $5, $6)`,
+			docID, candidate, disposition, reason, criteria, at); err != nil {
+			t.Fatalf("seed composition row for %q: %v", candidate, err)
+		}
+	}
+
+	now := time.Now()
+	seed("decidedkeep", string(CompositionKeep), CompositionReasonNamedUnit, version, now)
+	seed("decideddrop", string(CompositionDrop), CompositionReasonNoDimension, version, now)
+	seed("degraded", string(CompositionKeep), CompositionReasonJudgeUnavailable, version, now)
+	seed("settled", string(CompositionKeep), CompositionReasonJudgeUnavailable, version, now.Add(-time.Hour))
+	seed("settled", string(CompositionKeep), CompositionReasonNamedUnit, version, now)
+	seed("stale", string(CompositionKeep), CompositionReasonNamedUnit, staleVersion, now)
+	seed("world war 2", string(CompositionKeep), CompositionReasonNamedUnit, version, now)
+
+	states, err := CompositionStatesForNames(ctx, q, []string{
+		"  DecidedKeep ", "decideddrop", "degraded", "settled", "stale", "unjudged", "World War II",
+	}, version)
+	if err != nil {
+		t.Fatalf("CompositionStatesForNames: %v", err)
+	}
+	want := map[string]CompositionState{
+		"decidedkeep": {Disposition: CompositionKeep, Decided: true},
+		"decideddrop": {Disposition: CompositionDrop, Decided: true},
+		"degraded":    {Disposition: CompositionKeep, Decided: false},
+		"settled":     {Disposition: CompositionKeep, Decided: true},
+		"world war 2": {Disposition: CompositionKeep, Decided: true},
+	}
+	if len(states) != len(want) {
+		t.Errorf("states = %v, want exactly %v", states, want)
+	}
+	for name, state := range want {
+		if got := states[name]; got != state {
+			t.Errorf("states[%q] = {Disposition:%q Decided:%t}, want {Disposition:%q Decided:%t}",
+				name, got.Disposition, got.Decided, state.Disposition, state.Decided)
+		}
+	}
+	if _, ok := states["unjudged"]; ok {
+		t.Errorf("states[unjudged] = %v, a compound with no row must stay a candidate", states["unjudged"])
+	}
+
+	empty, err := CompositionStatesForNames(ctx, q, nil, version)
+	if err != nil {
+		t.Fatalf("CompositionStatesForNames(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("empty input = %v, want no states", empty)
 	}
 }

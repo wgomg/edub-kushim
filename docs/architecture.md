@@ -340,10 +340,11 @@ The enrichment pipeline:
    lands in the blocklist. An identity-held name — a fold the gate refused
    beside a live store value — and a composition-held name — its latest
    composition verdict under the current split criteria version defers,
-   conflicts, disagrees, or is a reconstructible named unit — are likewise
+   conflicts, disagrees, is a reconstructible named unit, is a relational
+   keep, or is a degraded `judge_unavailable` keep — are likewise
    provisional and blocked from inline and sweep promotion until an operator
-   resolves them; a `judge_unavailable` keep carries no hold and is re-judged
-   when emitted again. With the layer off, births are trusted as before.
+   resolves them or a later verdict decides them; the degraded keep is
+   re-judged on the next emission until then. With the layer off, births are trusted as before.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
    (`tag.CreatePlannedTx` on the transaction handle, with the quality gate as its

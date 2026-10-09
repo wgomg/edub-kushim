@@ -314,7 +314,10 @@ disposition for a same-intent label is alias/merge.
 
 **S4 — atomicity.** At emission, every compound candidate (2–3 words, Latin script,
 content parts) whose key is not already in the store goes to the split gate
-(store-keyed compounds are applications and skip judgment, with no verdict row):
+(store-keyed compounds are applications and skip judgment only once a
+current-version verdict decides them; a missing or degraded verdict re-enters
+judgment, and a decided keep applies its judged-dimensional parts alongside from
+the cache):
 with the adjudicator enabled the decision runs two context-free judged passes — a
 parts pass over each fold-resolved content word and a compound pass reading the
 phrase as a named unit, a composition, or a phrase with no retrievable dimension —

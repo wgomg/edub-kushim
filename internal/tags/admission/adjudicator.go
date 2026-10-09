@@ -88,32 +88,44 @@ type CompoundVerdict struct {
 }
 
 // DecomposeTags runs the split gate over the compound candidates: the context-free parts pass judges each
-// candidate's content words (fold-resolved through the promoted store view) once, and the context-free
-// compound pass reads what each phrase denotes. Both verdicts persist in their own append-only tables, keyed
-// by value and candidate, so a re-run reads them back instead of re-rolling; the two answer sets fold
-// into a tags.CompositionFeatures and dispose through tags.DecideComposition — the split branch expands the
-// compound into its resolved parts, the keep branches leave it whole, and the drop branch removes it. The
-// returned tag list is the input with approved decompositions expanded in place and dropped compounds
-// removed, plus one composition evidence row per judged candidate. The ordering is load-bearing:
-// fold-resolve, filter (title-echo exempt), then the remainder enters the judged downstream. A compound
-// whose key already exists in the store is an application, not a candidate: it is skipped before judgment
-// and produces no row. storeKeys is the store's names plus alias keys, which the store-existing skip reads;
-// promotedNames is the promoted tag names' Key→name view the fold resolution and the reconstructibility
-// signal read — seam fold resolution anchors only on promoted rows, and a resolved part is reconstructible
-// only when it is one. docId is the emitting document, stamped on fresh part and compound verdict rows (0
-// stores NULL provenance, as the stored-joint sweep does). A non-nil error is returned only when the
-// provider account cannot pay; every other failure degrades to keeping the compounds. Without a configured
-// adjudicator the conjunction grammar fallback stands: explicit coordination splits mechanically and every
-// other compound keeps whole under judge_unavailable.
+// candidate's content words (fold-resolved through the attested table and the promoted store view) once,
+// and the context-free compound pass reads what each phrase denotes. Both verdicts persist in their own
+// append-only tables, keyed by value and candidate, so a re-run reads them back instead of re-rolling; the
+// two answer sets fold into a tags.CompositionFeatures and dispose through tags.DecideComposition —
+// the parts test selects the branch, the split branch expands the compound into its resolved parts, the
+// keep branches leave it whole and apply its judged-dimensional parts alongside, and the drop branch
+// removes it. The returned tag list is the input with approved decompositions expanded in place, dropped
+// compounds removed, and kept compounds' alongside parts inserted after them, plus one composition
+// evidence row per judged candidate. Ordering is load-bearing: fold-resolve, filter (title-echo exempt),
+// then the remainder enters the judged downstream. A compound whose key already exists in the store is an
+// application, not a candidate, only when a persisted verdict under the current criteria version decides
+// it: it is then skipped before judgment, and a keep among those store-existing decided compounds gets its
+// parts applied alongside on every emission. A store-existing compound with no verdict, or only a degraded
+// judge_unavailable keep, stays a candidate and is re-judged until judgment succeeds when an adjudicator is
+// configured; without one it is skipped as before, because no verdict is reachable and re-judging would
+// only append rows forever.
+// storeKeys is the store's names plus alias keys, which the store-existing test reads; promotedNames is
+// the promoted tag names' Key→name view the fold resolution and the reconstructibility signal read — seam
+// fold resolution anchors only on promoted rows, and a resolved part is reconstructible only when it is
+// one. docId is the emitting document, stamped on fresh part and compound verdict rows (0 stores NULL
+// provenance, as the stored-joint sweep does). A non-nil error is returned when the provider account
+// cannot pay or the adjudication-state lookup fails; every other failure degrades to keeping the
+// compounds. Without a configured adjudicator the conjunction grammar fallback stands: explicit
+// coordination splits mechanically and every other compound keeps whole under judge_unavailable.
 func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]string, []tags.CompositionRow, error) {
 	var candidates []string
 	seenCandidates := make(map[string]bool, len(names))
+	var storeExisting []string
+	seenStore := make(map[string]bool, len(names))
 	for _, name := range names {
 		if tags.ClassifyShape(name) != tags.ShapeCompound {
 			continue
 		}
 		if _, stored := storeKeys[tags.Key(name)]; stored {
-			a.logger.Debug(reqID, "tag split[%s]: skip %q (reason=store_existing)", analyzer.TagSplitVersion, name)
+			if !seenStore[name] {
+				seenStore[name] = true
+				storeExisting = append(storeExisting, name)
+			}
 			continue
 		}
 		if seenCandidates[name] {
@@ -122,34 +134,59 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		seenCandidates[name] = true
 		candidates = append(candidates, name)
 	}
-	if len(candidates) == 0 {
+
+	var skipped []string
+	if len(storeExisting) > 0 {
+		states, err := tags.CompositionStatesForNames(ctx, a.queries, storeExisting, analyzer.TagSplitVersion)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, name := range storeExisting {
+			state, ok := states[tags.StoredName(name)]
+			switch {
+			case ok && state.Decided:
+				a.logger.Debug(reqID, "tag split[%s]: skip %q (reason=store_existing disposition=%s)",
+					analyzer.TagSplitVersion, name, state.Disposition)
+				if state.Disposition == tags.CompositionKeep {
+					skipped = append(skipped, name)
+				}
+			case !a.runner.HasTagAdjudicator():
+				a.logger.Debug(reqID, "tag split[%s]: skip %q (reason=store_existing undecided, no adjudicator)",
+					analyzer.TagSplitVersion, name)
+			default:
+				a.logger.Debug(reqID, "tag split[%s]: store-existing %q re-judged (reason=undecided)", analyzer.TagSplitVersion, name)
+				seenCandidates[name] = true
+				candidates = append(candidates, name)
+			}
+		}
+	}
+
+	if len(candidates) == 0 && len(skipped) == 0 {
 		return names, nil, nil
 	}
 
+	alongsideByCompound := a.storedCoverage(ctx, skipped, promotedNames, filter, reqID)
+
 	if !a.runner.HasTagAdjudicator() {
-		return a.conjunctionSplits(names, candidates, promotedNames, filter, reqID)
+		expanded, rows, err := a.conjunctionSplits(names, candidates, promotedNames, filter, reqID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return withAlongside(expanded, alongsideByCompound), rows, nil
 	}
 
 	resolved := make(map[string][]string, len(candidates))
 	seenValues := make(map[string]bool)
 	var values []string
 	for _, candidate := range candidates {
-		parts := tags.DeriveParts(candidate)
-		rparts := make([]string, 0, len(parts))
-		for _, part := range parts {
-			resolvedPart := part
-			if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
-				a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
-					analyzer.TagSplitVersion, part, anchor)
-				resolvedPart = anchor
-			}
-			rparts = append(rparts, resolvedPart)
-			if !seenValues[resolvedPart] {
-				seenValues[resolvedPart] = true
-				values = append(values, resolvedPart)
+		rparts := a.resolveParts(candidate, promotedNames, reqID)
+		resolved[candidate] = rparts
+		for _, part := range rparts {
+			if !seenValues[part] {
+				seenValues[part] = true
+				values = append(values, part)
 			}
 		}
-		resolved[candidate] = rparts
 	}
 
 	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model)
@@ -202,11 +239,15 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			row.Disposition = tags.CompositionKeep
 			row.Reason = decision.Reason
 			row.Model = freshModel(cv)
+			if parts := alongsideParts(resolved[candidate], filter, partVerdicts); len(parts) > 0 {
+				row.Parts = parts
+				alongsideByCompound[candidate] = parts
+			}
 			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=%t)", analyzer.TagSplitVersion, candidate, row.Reason, cv.Cached)
 		}
 		rows = append(rows, row)
 	}
-	return expandCandidates(names, components, dropped), rows, nil
+	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), rows, nil
 }
 
 // conjunctionSplits is the no-adjudicator fallback: explicit coordination splits mechanically through the
@@ -327,6 +368,100 @@ func expandCandidates(names []string, components map[string][]string, dropped ma
 			}
 			seen[segment] = true
 			out = append(out, segment)
+		}
+	}
+	return out
+}
+
+// resolveParts derives a candidate's content parts and resolves each through the attested seam fold
+// against the promoted store view, logging every fold. The candidate path and the store-existing coverage
+// path resolve identically through it, so a part's value never depends on which path reached it.
+func (a *Adjudicator) resolveParts(candidate string, promotedNames map[string]string, reqID string) []string {
+	parts := tags.DeriveParts(candidate)
+	resolved := make([]string, 0, len(parts))
+	for _, part := range parts {
+		resolvedPart := part
+		if anchor := tags.AnchoredFold(part, promotedNames); anchor != "" && anchor != part {
+			a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
+				analyzer.TagSplitVersion, part, anchor)
+			resolvedPart = anchor
+		}
+		resolved = append(resolved, resolvedPart)
+	}
+	return resolved
+}
+
+// alongsideParts returns the resolved parts a kept compound applies alongside itself: the parts the
+// per-document filter validates whose persisted verdict is dimensional and not deferred. It is the same
+// filter discipline the split branch applies — a part that could not stand as a split component does not
+// apply alongside either — with no minimum count, since the compound itself carries the dimension.
+func alongsideParts(resolved []string, filter *analyzer.TagFilter, verdicts map[string]PartVerdict) []string {
+	valid := analyzer.SplitComponents(resolved, filter)
+	parts := make([]string, 0, len(valid))
+	for _, part := range valid {
+		if v, ok := verdicts[part]; ok && v.Dimensional && !v.Deferred {
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}
+
+// storedCoverage returns the judged-dimensional parts each store-existing decided keep applies alongside
+// itself, keyed by the emitted compound name, reading part verdicts from the persisted cache only: a stored
+// compound gets its parts applied on every emission without model calls, so coverage is idempotent and a
+// failed cache read simply retries next time. The map is empty when there is nothing to apply, and every
+// application is logged at info so the emission's review can see it.
+func (a *Adjudicator) storedCoverage(ctx context.Context, skipped []string, promotedNames map[string]string, filter *analyzer.TagFilter, reqID string) map[string][]string {
+	alongsideByCompound := make(map[string][]string)
+	if len(skipped) == 0 {
+		return alongsideByCompound
+	}
+	resolved := make(map[string][]string, len(skipped))
+	seenValues := make(map[string]bool)
+	var values []string
+	for _, name := range skipped {
+		rparts := a.resolveParts(name, promotedNames, reqID)
+		resolved[name] = rparts
+		for _, part := range rparts {
+			if !seenValues[part] {
+				seenValues[part] = true
+				values = append(values, part)
+			}
+		}
+	}
+	cached := readCachedPartVerdicts(ctx, a.queries, a.logger, values, reqID)
+	for _, name := range skipped {
+		parts := alongsideParts(resolved[name], filter, cached)
+		if len(parts) == 0 {
+			continue
+		}
+		alongsideByCompound[name] = parts
+		a.logger.Info(reqID, "tag split[%s]: keep %q applies parts %q alongside (store_existing)",
+			analyzer.TagSplitVersion, name, parts)
+	}
+	return alongsideByCompound
+}
+
+// withAlongside returns the tag list with each kept compound's alongside parts inserted immediately after
+// it, first-seen order and deduplicated: a compound absent from the list (dropped or split) cannot carry
+// parts, and a part already present is not repeated.
+func withAlongside(names []string, alongsideByCompound map[string][]string) []string {
+	if len(alongsideByCompound) == 0 {
+		return names
+	}
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+		for _, part := range alongsideByCompound[name] {
+			if seen[part] {
+				continue
+			}
+			seen[part] = true
+			out = append(out, part)
 		}
 	}
 	return out

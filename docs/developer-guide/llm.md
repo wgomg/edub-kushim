@@ -664,15 +664,19 @@ for i := range 2 {
     (`adjudicator.go`) then replaces compound tags with their parts —
     LLM-adjudicated when the tag adjudicator is enabled, conjunction joints
     deterministically otherwise. The parts are first fold-resolved through the
-    store-anchored net (derivational proposals and suffix-local morphographic
-    proposals of at most two edits, anchored only on **promoted** store values;
-    lemma folds are excluded and provisional births are never seam anchors) and
+    attested seam fold (the generated WordNet pertainym table's adjective→noun
+    pairs, anchored only on **promoted** store values; two distinct store hits
+    are ambiguity, never a fold; provisional births are never seam anchors) and
     then pass the hard per-document rules — length/word bounds, people,
     known-name, and doc-type checks — with the title-containment check
     deliberately not applied to them. Compounds whose key already exists in the
     store (names and aliases) are applications and are skipped before
-    judgment, and every judged compound records one `tag_composition_event`
-    verdict row (split with its resolved parts, keep, or the reason it could
+    judgment only once a current-version verdict decides them (a missing or
+    degraded verdict re-enters judgment, and a decided keep applies its
+    judged-dimensional parts alongside from the cache), and every judged
+    compound records one `tag_composition_event`
+    verdict row (split with its resolved parts, keep with the parts applied
+    alongside pruned of rejected ones, or the reason it could
     not be judged — a `part_rejected` drop keeps the parts it resolved) with a
     matching `tag split[...]` log line. Under the shared
     judged-call policy (§7) a transient split-judge failure is retried once, a

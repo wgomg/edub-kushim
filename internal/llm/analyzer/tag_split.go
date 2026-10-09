@@ -140,10 +140,14 @@ func (s TagCompoundStatus) Valid() bool {
 	return false
 }
 
-// TagSplitVersion pins the compound pass's criteria: the context-free named_unit/composition/no_dimension
-// trichotomy asked of every compound, and the criteria version every composition row records. A criteria or
-// prompt change bumps it so an older generation's verdicts never apply.
-const TagSplitVersion = "v3"
+// TagSplitVersion pins the compound pass's criteria — the context-free named_unit/composition/no_dimension
+// trichotomy asked of every compound — and the criteria version every composition row records; the
+// version-filtered reads (the promotion hold, the store-existing skip) follow it. A criteria or prompt
+// change bumps it so an older generation's verdicts never apply, and v4 also records the split-gate
+// remediation that changed what a row means: the features feeding the decision now derive from the
+// attested fold seam, the decision maps a combined parts+compound reading branch-first (the held
+// relational keep), and keeps carry applied-alongside parts. The judge's criteria text is unchanged.
+const TagSplitVersion = "v4"
 
 // TagCompoundSystemMessage is the system prompt of the compound pass.
 const TagCompoundSystemMessage = "You are a tag-taxonomy classifier. Decide what a compound phrase denotes."

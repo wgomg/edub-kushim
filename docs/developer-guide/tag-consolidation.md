@@ -101,13 +101,14 @@ admin and emission registration paths
   resolves `same` with no direction, so M4 picks the canonical label. Plural and
   other inflections, mixed-language spellings, and morphological or function-word
   inversions stay with the pair judge.
-- **Version**: `IdentityRuleSetVersion = "v6"` is stamped on every alias row and
+- **Version**: `IdentityRuleSetVersion = "v7"` is stamped on every alias row and
   identity-evidence row. It pins the mechanical fold proposals — the
   plural/lemma fold, the store-anchored derivational adjective transforms, and the
   bounded morphographic proposal — the store-anchored rejection hold, the
   pair judge's criteria text, the deterministic variant-class table, and the
-  split-seam fold guards (promoted-only anchors and the suffix-local
-  morphological leg).
+  split-seam fold source (promoted-only anchors over the generated attested
+  pertainym table; the shape-based legs no longer apply at the seam, where the
+  judged path's proposals remain for the gate to confirm).
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
   M1 rewrites, alias lookup, key equality, and M2 flagging, including the
   plural/lemma, derivational, and morphographic fold proposals. It never applies
@@ -217,9 +218,9 @@ transaction — adjudication stays outside it:
    the rest go through the pair adjudicator. The result is a `tags.Plan` carrying
    registrations, alias actions, evidence rows, and the composition rows the
    decomposition gate judged, and per-disposition log
-   lines (`identity[v6]: apply|alias|defer|separate …`), with the applied-fold
+   lines (`identity[v7]: apply|alias|defer|separate …`), with the applied-fold
    input→output mapping and the judge-unavailable mint at DEBUG
-   (`identity[v6]: fold applied …`, `identity[v6]: pending evidence minted …`).
+   (`identity[v7]: fold applied …`, `identity[v7]: pending evidence minted …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
@@ -587,7 +588,8 @@ oldest first. Zero-assignment rows are only counted — the orphan sweep owns
 their deletion. Identity-held rows — a refused fold beside a live store value,
 derived from the latest `base_form`/`fold_gate` evidence — and composition-held
 rows — the latest composition verdict at the current split criteria version
-defers, conflicts, disagrees, or is a reconstructible named unit — are counted
+defers, conflicts, disagrees, is a reconstructible named unit, is a relational
+keep, or is a degraded judge_unavailable keep — are counted
 as skipped and left for review before any verdict check, so the sweep never
 promotes them. Rows whose latest verdict at `TagQualityVersion` passes and
 that hold ≥10 live documents are promoted through `curation.Tag.Promote` (the
@@ -740,7 +742,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   `TimeoutStartSec` budget alongside model load and tag-cache build.
 - **Consolidation and identity logs live in the kushim (enrichment) log, not
   `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v6]` dispositions). `hugot.log` only holds the
+  decisions, `identity[v7]` dispositions). `hugot.log` only holds the
   pre-rewrite history (which is exactly what the bootstrap parser reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in

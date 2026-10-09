@@ -4,7 +4,7 @@ INSERT INTO tag_composition_event
 VALUES (@document_id, @candidate, @parts, @disposition, @reason, @criteria_version, @model, @reconstructible);
 
 -- name: LatestCompositionReasonsForNames :many
-SELECT DISTINCT ON (candidate) candidate, reason
+SELECT DISTINCT ON (candidate) candidate, disposition, reason
 FROM tag_composition_event
 WHERE criteria_version = @criteria_version
   AND candidate = ANY(@candidates::text[])

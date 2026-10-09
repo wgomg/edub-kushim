@@ -165,11 +165,12 @@ map exists in the mechanism (an operator override, if any, is configuration).
 - **Placement.** The rules run at the registration of every label — emitted candidates
   and derived parts — and alias resolution runs whenever names are matched:
   suggestions, consolidation, and query input. A split-derived part may first
-  resolve mechanically onto a **promoted** store label through the store-anchored net
-  (derivational proposals and suffix-local morphographic proposals of at most two
-  edits); provisional births are never seam anchors, so a near-spelling of an unjudged
-  birth flows to the judging body instead of being rewritten. The retrospective store
-  sweep is D1's work, outside this spec.
+  resolve mechanically onto a **promoted** store label through the attested seam fold
+  (the generated WordNet pertainym table's adjective→noun pairs; two distinct store
+  hits are ambiguity, never a fold); provisional births are never seam anchors, so an
+  unattested near-spelling of an unjudged birth flows to the judging body instead of
+  being rewritten. Shape-based proposals reach only the judged path, where the gate
+  confirms them. The retrospective store sweep is D1's work, outside this spec.
 - **Shared discipline.** Pinned criteria, per-candidate/pair caching, rule-set
   versioning, and gray-band deferral follow the existing adjudicator patterns; the
   mechanical body stays deterministic and idempotent.

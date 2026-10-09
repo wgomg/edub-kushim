@@ -2885,9 +2885,9 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 
 // TestListProvisionalComposition pins the review surface's composition contract: a held compound
 // carries the reason that withholds promotion, and a degraded keep carries its latest composition
-// reason with no hold. The held event is written as the emitted "World War II" through the
-// production write boundary while the tag is stored as "world war 2", so the API surfaces the hold
-// only when the journal's house-form key matches the store-name lookup.
+// reason and holds too — no promotion without a decision. The held event is written as the emitted
+// "World War II" through the production write boundary while the tag is stored as "world war 2", so
+// the API surfaces the hold only when the journal's house-form key matches the store-name lookup.
 func TestListProvisionalComposition(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
@@ -2949,7 +2949,7 @@ func TestListProvisionalComposition(t *testing.T) {
 	if !ok {
 		t.Fatalf("degraded tag %d not found in the provisional list", degradedID)
 	}
-	testutil.AssertEqual(t, degraded.CompositionHold, "", "a degraded keep holds nothing")
+	testutil.AssertEqual(t, degraded.CompositionHold, tags.CompositionReasonJudgeUnavailable, "a degraded keep holds until decided")
 	testutil.AssertEqual(t, degraded.CompositionReason, tags.CompositionReasonJudgeUnavailable, "degraded reason")
 }
 

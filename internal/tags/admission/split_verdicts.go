@@ -56,7 +56,7 @@ func (s *VerdictStore) Parts(ctx context.Context, values []string, docId int64, 
 		s.logger.Error(reqID, "tag split[%s]: part verdict cache lookup failed: %v", analyzer.TagPartDimensionVersion, err)
 	}
 	for _, row := range rows {
-		verdicts[row.Value] = s.partVerdictFromRow(row, reqID)
+		verdicts[row.Value] = partVerdictFromRow(row, s.logger, reqID)
 	}
 	var uncached []string
 	for _, value := range values {
@@ -109,6 +109,29 @@ func (s *VerdictStore) Parts(ctx context.Context, values []string, docId int64, 
 	return verdicts, nil
 }
 
+// readCachedPartVerdicts reads the persisted dimensional verdicts for the resolved values, never judging:
+// the store-existing coverage path applies parts a decision already judged, so application makes no model
+// calls and stays idempotent across re-emissions. A lookup failure logs and returns the empty map, since
+// coverage retries on the next emission; values without a cached verdict are absent.
+func readCachedPartVerdicts(ctx context.Context, q *database.Queries, logger *log.Logger, values []string, reqID string) map[string]PartVerdict {
+	verdicts := make(map[string]PartVerdict, len(values))
+	if len(values) == 0 {
+		return verdicts
+	}
+	rows, err := q.LatestTagPartVerdictsForValues(ctx, database.LatestTagPartVerdictsForValuesParams{
+		PolicyVersion: analyzer.TagPartDimensionVersion,
+		PartValues:    values,
+	})
+	if err != nil {
+		logger.Error(reqID, "tag split[%s]: part verdict cache lookup failed: %v", analyzer.TagPartDimensionVersion, err)
+		return verdicts
+	}
+	for _, row := range rows {
+		verdicts[row.Value] = partVerdictFromRow(row, logger, reqID)
+	}
+	return verdicts
+}
+
 // writePartVerdict persists one fresh part verdict. On conflict the row another worker cached first wins, and
 // a stored answer differing from this sample sets the disagreement flag the decision reads.
 func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value string, r analyzer.TagPartResult, reqID string) PartVerdict {
@@ -143,7 +166,7 @@ func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value 
 		}
 		return fresh
 	}
-	stored := s.partVerdictFromRow(rows[0], reqID)
+	stored := partVerdictFromRow(rows[0], s.logger, reqID)
 	stored.Disagreement = stored.Dimensional != r.Dimensional || stored.Deferred != r.Defer
 	if stored.Disagreement {
 		s.logger.Warn(reqID, "tag split[%s]: part verdict disagreement for %q: fresh(%s) stored(dimensional=%t defer=%t)",
@@ -154,11 +177,11 @@ func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value 
 
 // partVerdictFromRow reads a persisted part row back into a verdict; the criteria JSON is authoritative for
 // the abstention, with the dimensional column as fallback.
-func (s *VerdictStore) partVerdictFromRow(row database.LatestTagPartVerdictsForValuesRow, reqID string) PartVerdict {
+func partVerdictFromRow(row database.LatestTagPartVerdictsForValuesRow, logger *log.Logger, reqID string) PartVerdict {
 	v := PartVerdict{Dimensional: row.Dimensional}
 	var c analyzer.TagPartCriteria
 	if err := json.Unmarshal(row.Criteria, &c); err != nil {
-		s.logger.Warn(reqID, "tag split[%s]: part verdict criteria unreadable for %q, using the dimensional column: %v",
+		logger.Warn(reqID, "tag split[%s]: part verdict criteria unreadable for %q, using the dimensional column: %v",
 			analyzer.TagPartDimensionVersion, row.Value, err)
 		return v
 	}

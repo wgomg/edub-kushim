@@ -20,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -399,4 +400,53 @@ func TestPromoteEligible_CompositionHold(t *testing.T) {
 	}
 	assertPromoted("held compound", held.Entity.ID, false)
 	assertPromoted("free compound", free.Entity.ID, true)
+}
+
+// TestPruneRejectedParts pins the keep-row half of the part-rejection rule: a kept compound stands whole
+// and records only the parts it actually applies, each resolved through the plan's output names before the
+// rejection test — the same mapping the split-degrade check reads — while a surviving part keeps the
+// emitted spelling rather than being rewritten to its output name.
+func TestPruneRejectedParts(t *testing.T) {
+	outputs := map[string]string{textnorm.NormalizeTag("Labour"): "labor"}
+	tests := []struct {
+		name     string
+		parts    []string
+		outputs  map[string]string
+		rejected map[string]bool
+		want     []string
+	}{
+		{name: "no parts leaves the row empty", parts: nil, want: nil},
+		{
+			name:  "an unrejected part is recorded verbatim",
+			parts: []string{"economy"},
+			want:  []string{"economy"},
+		},
+		{
+			name:     "a rejected part drops out of what the keep applies",
+			parts:    []string{"economy", "addition"},
+			rejected: map[string]bool{"addition": true},
+			want:     []string{"economy"},
+		},
+		{
+			name:     "a part rejected under its plan output name drops",
+			parts:    []string{"Labour"},
+			outputs:  outputs,
+			rejected: map[string]bool{"labor": true},
+			want:     []string{},
+		},
+		{
+			name:    "a surviving part keeps the emitted spelling, not its output name",
+			parts:   []string{"Labour"},
+			outputs: outputs,
+			want:    []string{"Labour"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pruneRejectedParts(tt.parts, tt.outputs, tt.rejected)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("pruneRejectedParts(%v) = %v, want %v", tt.parts, got, tt.want)
+			}
+		})
+	}
 }

@@ -409,18 +409,21 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	// a split whose part was rejected degrades to drop: the surviving
 	// parts keep their own admission verdicts, and the row records the
-	// compound's fate instead of letting it vanish
+	// compound's fate instead of letting it vanish; a kept compound whose
+	// part was rejected stands whole and only drops that part from what it
+	// applies alongside
 	for i := range compositionRows {
 		row := &compositionRows[i]
 		row.DocumentID = document.ID
+		if row.Disposition == tags.CompositionKeep {
+			row.Parts = pruneRejectedParts(row.Parts, planOutputs, rejected)
+			continue
+		}
 		if row.Disposition != tags.CompositionSplit {
 			continue
 		}
 		for _, part := range row.Parts {
-			name := part
-			if output, ok := planOutputs[textnorm.NormalizeTag(part)]; ok {
-				name = output
-			}
+			name := planOutputName(part, planOutputs)
 			if rejected[name] {
 				row.Disposition = tags.CompositionDrop
 				row.Reason = tags.CompositionReasonPartRejected
@@ -792,6 +795,33 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		promoted[i] = c.name
 	}
 	return promoted
+}
+
+// planOutputName resolves a pre-plan part name through the identity plan's output mapping, the recipe the
+// quality-gate rejection test reads: the split-degrade check and the keep-row prune must agree on which
+// name a rejected part is tested by. A part without a mapping stands as itself.
+func planOutputName(part string, outputs map[string]string) string {
+	if output, ok := outputs[textnorm.NormalizeTag(part)]; ok {
+		return output
+	}
+	return part
+}
+
+// pruneRejectedParts drops from a keep row the parts the quality gate rejected, resolving each part
+// through the plan's output names before the rejection test: the compound stands whole, and the row
+// records only the parts actually applied alongside it.
+func pruneRejectedParts(parts []string, outputs map[string]string, rejected map[string]bool) []string {
+	if len(parts) == 0 {
+		return parts
+	}
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if rejected[planOutputName(part, outputs)] {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return kept
 }
 
 func normalizedPeopleKey(p database.People) string {

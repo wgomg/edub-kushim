@@ -487,7 +487,12 @@ func setUnexportedField(t *testing.T, target any, fieldName string, value any) {
 	if !v.IsValid() {
 		t.Fatalf("field %q not found", fieldName)
 	}
-	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Set(reflect.ValueOf(value))
+	newValue := reflect.ValueOf(value)
+	if value == nil {
+		// reflect.ValueOf(nil) is invalid, so clearing an interface or pointer field needs its zero value
+		newValue = reflect.Zero(v.Type())
+	}
+	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Set(newValue)
 }
 
 func newTestAdjudicator(t *testing.T) (*Adjudicator, *database.Queries, *mockAdjudicator) {
@@ -1283,7 +1288,7 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 	}
 	q, db := database.NewTestQueries(t)
 	t.Cleanup(func() { db.Close() })
-	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event"} {
+	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event", "tag_composition_event"} {
 		if _, err := db.ExecContext(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("reset %s: %v", table, err)
 		}
@@ -1357,18 +1362,18 @@ func TestDecomposeTags_TwoPassDecision(t *testing.T) {
 			want:       []string{},
 		},
 		{
-			name:       "no dimension against dimensional parts keeps",
+			name:       "no dimension against dimensional parts keeps with its parts alongside",
 			names:      []string{"machine learning"},
 			partFn:     partsDimensional,
 			compoundFn: compoundsStatus(analyzer.TagCompoundNoDimension),
-			want:       []string{"machine learning"},
+			want:       []string{"machine learning", "machine", "learning"},
 		},
 		{
-			name:       "deferred compound keeps",
+			name:       "deferred compound keeps with its parts alongside",
 			names:      []string{"machine learning"},
 			partFn:     partsDimensional,
 			compoundFn: compoundsDeferred,
-			want:       []string{"machine learning"},
+			want:       []string{"machine learning", "machine", "learning"},
 		},
 		{
 			name:       "deferred part keeps",
@@ -1447,7 +1452,7 @@ func TestDecomposeTags_NoVerdictWarns(t *testing.T) {
 
 	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 
-	adjAssertEqual(t, len(got), 1, "the compound stays whole")
+	adjAssertEqual(t, len(got), 3, "the undecided keep stands whole and applies its dimensional parts alongside")
 	adjAssertEqual(t, len(rows), 1, "one composition row")
 	adjAssertEqual(t, rows[0].Reason, tags.CompositionReasonJudgeUnavailable, "keep reason")
 	out := buf.String()
@@ -1465,11 +1470,22 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 		partFn:     partsDimensional,
 		compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
 	}
-	a, _ := newSplitAdjudicator(t, adj, &buf)
+	a, docID := newSplitAdjudicator(t, adj, &buf)
 	filter := analyzer.NewTagFilter(nil, nil, "", nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
-	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, 0, "")
+	if err := a.queries.InsertTagCompositionEvent(context.Background(), database.InsertTagCompositionEventParams{
+		DocumentID:      docID,
+		Candidate:       tags.StoredName("machine learning"),
+		Parts:           json.RawMessage("[]"),
+		Disposition:     string(tags.CompositionKeep),
+		Reason:          tags.CompositionReasonNamedUnit,
+		CriteriaVersion: analyzer.TagSplitVersion,
+	}); err != nil {
+		t.Fatalf("seed composition row: %v", err)
+	}
+
+	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
 
 	adjAssertEqual(t, adj.partCall, 0, "a store-keyed compound never reaches the part judge")
 	adjAssertEqual(t, adj.compoundCall, 0, "a store-keyed compound never reaches the compound judge")
@@ -1477,8 +1493,139 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 		t.Errorf("DecomposeTags = %v, want the compound whole", got)
 	}
 	adjAssertEqual(t, len(rows), 0, "the skip writes no composition row")
-	if !strings.Contains(buf.String(), `skip "machine learning" (reason=store_existing)`) {
+	if !strings.Contains(buf.String(), `skip "machine learning" (reason=store_existing disposition=keep)`) {
 		t.Errorf("skip must log its reason, got:\n%s", buf.String())
+	}
+}
+
+// TestDecomposeTags_StoreExistingReJudgedUntilDecided pins the evidence-aware skip: a store-present
+// compound is an application only once a current-version verdict exists, so one with no composition row
+// and one carrying only a degraded judge_unavailable keep both re-enter judgment on the next emission.
+func TestDecomposeTags_StoreExistingReJudgedUntilDecided(t *testing.T) {
+	tests := []struct {
+		name string
+		seed func(t *testing.T, a *Adjudicator, docID int64)
+	}{
+		{
+			name: "no verdict row under the current criteria version",
+			seed: func(t *testing.T, a *Adjudicator, docID int64) {},
+		},
+		{
+			name: "a degraded keep is not a decision",
+			seed: func(t *testing.T, a *Adjudicator, docID int64) {
+				t.Helper()
+				if err := a.queries.InsertTagCompositionEvent(context.Background(), database.InsertTagCompositionEventParams{
+					DocumentID:      docID,
+					Candidate:       tags.StoredName("machine learning"),
+					Parts:           json.RawMessage("[]"),
+					Disposition:     string(tags.CompositionKeep),
+					Reason:          tags.CompositionReasonJudgeUnavailable,
+					CriteriaVersion: analyzer.TagSplitVersion,
+				}); err != nil {
+					t.Fatalf("seed degraded composition row: %v", err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
+			a, docID := newSplitAdjudicator(t, adj, &buf)
+			filter := analyzer.NewTagFilter(nil, nil, "", nil)
+			storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
+			tt.seed(t, a, docID)
+
+			got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+
+			adjAssertEqual(t, adj.partCall, 1, "the undecided compound reaches the part judge once")
+			adjAssertEqual(t, adj.compoundCall, 1, "the undecided compound reaches the compound judge once")
+			if !reflect.DeepEqual(got, []string{"machine", "learning"}) {
+				t.Errorf("DecomposeTags = %v, want the compound split into its judged parts", got)
+			}
+			adjAssertEqual(t, len(rows), 1, "the verdict the next emission can skip on is written")
+			if !strings.Contains(buf.String(), "re-judged (reason=undecided)") {
+				t.Errorf("re-judgment must be observable in the log, got:\n%s", buf.String())
+			}
+		})
+	}
+}
+
+// TestDecomposeTags_StoreExistingKeepAppliesCachedParts pins the parts-alongside coverage of a compound
+// the store already holds: the decided keep is skipped before judgment, yet its judged-dimensional parts
+// are applied from the persisted cache on every emission — no model call, no composition row, idempotent.
+func TestDecomposeTags_StoreExistingKeepAppliesCachedParts(t *testing.T) {
+	var buf bytes.Buffer
+	adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
+	a, docID := newSplitAdjudicator(t, adj, &buf)
+	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
+	ctx := context.Background()
+
+	if err := a.queries.InsertTagCompositionEvent(ctx, database.InsertTagCompositionEventParams{
+		DocumentID:      docID,
+		Candidate:       tags.StoredName("machine learning"),
+		Parts:           json.RawMessage("[]"),
+		Disposition:     string(tags.CompositionKeep),
+		Reason:          tags.CompositionReasonNamedUnit,
+		CriteriaVersion: analyzer.TagSplitVersion,
+	}); err != nil {
+		t.Fatalf("seed composition row: %v", err)
+	}
+	for _, value := range []string{"machine", "learning"} {
+		if _, err := a.queries.InsertTagPartDimensionEvent(ctx, database.InsertTagPartDimensionEventParams{
+			DocumentID:    sql.NullInt64{Int64: docID, Valid: true},
+			Value:         value,
+			Criteria:      json.RawMessage("{}"),
+			Dimensional:   true,
+			PolicyVersion: analyzer.TagPartDimensionVersion,
+		}); err != nil {
+			t.Fatalf("seed part verdict for %q: %v", value, err)
+		}
+	}
+
+	want := []string{"machine learning", "machine", "learning"}
+	got, rows, _ := a.DecomposeTags(ctx, []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DecomposeTags = %v, want the keep with its cached parts alongside %v", got, want)
+	}
+	adjAssertEqual(t, adj.partCall, 0, "coverage reads the part cache, never the judge")
+	adjAssertEqual(t, adj.compoundCall, 0, "a decided compound is never re-judged")
+	adjAssertEqual(t, len(rows), 0, "an application writes no composition row")
+	if !strings.Contains(buf.String(), `applies parts ["machine" "learning"] alongside`) {
+		t.Errorf("coverage must be observable in the log, got:\n%s", buf.String())
+	}
+
+	again, rowsAgain, _ := a.DecomposeTags(ctx, []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+	if !reflect.DeepEqual(again, want) {
+		t.Errorf("second emission = %v, want the same idempotent coverage %v", again, want)
+	}
+	adjAssertEqual(t, adj.partCall, 0, "re-emission still makes no model call")
+	adjAssertEqual(t, len(rowsAgain), 0, "re-emission still writes no row")
+}
+
+// TestDecomposeTags_StoreExistingWithoutAdjudicatorStaysSkipped pins the bounded journal: without a
+// judge no verdict is reachable, so a store-present compound is skipped instead of re-judged — re-judging
+// would append a judge_unavailable keep on every emission and never converge.
+func TestDecomposeTags_StoreExistingWithoutAdjudicatorStaysSkipped(t *testing.T) {
+	var buf bytes.Buffer
+	adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
+	a, docID := newSplitAdjudicator(t, adj, &buf)
+	setUnexportedField(t, a.runner, "tagAdjudicator", nil)
+	filter := analyzer.NewTagFilter(nil, nil, "", nil)
+	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
+
+	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+
+	if !reflect.DeepEqual(got, []string{"machine learning"}) {
+		t.Errorf("DecomposeTags = %v, want the compound whole", got)
+	}
+	adjAssertEqual(t, len(rows), 0, "the skip writes no composition row, so the journal cannot grow")
+	if !strings.Contains(buf.String(), "undecided, no adjudicator") {
+		t.Errorf("the no-adjudicator skip must be observable in the log, got:\n%s", buf.String())
+	}
+	if strings.Contains(buf.String(), "re-judged") {
+		t.Errorf("without a judge nothing may be re-judged, got:\n%s", buf.String())
 	}
 }
 
@@ -1552,6 +1699,7 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 			names: []string{"machine learning"},
 			want: tags.CompositionRow{
 				Candidate:       "machine learning",
+				Parts:           []string{"machine", "learning"},
 				Disposition:     tags.CompositionKeep,
 				Reason:          tags.CompositionReasonJudgeUnavailable,
 				CriteriaVersion: analyzer.TagSplitVersion,
@@ -1591,6 +1739,7 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 			promoted: []string{"machine", "learning"},
 			want: tags.CompositionRow{
 				Candidate:       "machine learning",
+				Parts:           []string{"machine", "learning"},
 				Disposition:     tags.CompositionKeep,
 				Reason:          tags.CompositionReasonNamedUnitReconstructible,
 				CriteriaVersion: analyzer.TagSplitVersion,
@@ -1599,7 +1748,7 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 			},
 		},
 		{
-			name: "the same named unit without an established store view stays a plain named unit",
+			name: "the same named unit without an established store view is a relational keep",
 			adj: &mockAdjudicator{
 				partFn:     partsDimensional,
 				compoundFn: compoundsStatus(analyzer.TagCompoundNamedUnit),
@@ -1607,8 +1756,9 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 			names: []string{"machine learning"},
 			want: tags.CompositionRow{
 				Candidate:       "machine learning",
+				Parts:           []string{"machine", "learning"},
 				Disposition:     tags.CompositionKeep,
-				Reason:          tags.CompositionReasonNamedUnit,
+				Reason:          tags.CompositionReasonRelationalKeep,
 				CriteriaVersion: analyzer.TagSplitVersion,
 				Model:           "test-model",
 				Reconstructible: new(false),
