@@ -335,12 +335,29 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	analysis.Tags = kept
 
+	// the deterministic time-designation gate: a year, decade, month, month+year, or unseeded ordinal
+	// period unit is not a dimension; it is admissible only when the store already holds it (a seeded
+	// period or an operator-seeded exception). It runs before decomposition, and again after the language
+	// guard, so a foreign time designation the guard translates into English is dropped too.
+	dropTimeDesignations := func(list []string) []string {
+		keptTime := make([]string, 0, len(list))
+		for _, tag := range list {
+			if tags.IsTimeDesignationDrop(tag, storeKeys) {
+				e.logger.Info(logId, "tags[time]: drop %q (reason=time_designation)", tag)
+				continue
+			}
+			keptTime = append(keptTime, tag)
+		}
+		return keptTime
+	}
+	analysis.Tags = dropTimeDesignations(analysis.Tags)
+
 	tagFilter := analyzer.NewTagFilter(analysis.People, knownNormalized, docTypeNames)
 	analysis.Tags = analyzer.FilterTags(analysis.Tags, tagFilter)
 
 	// the language guard runs before the split gate so a translated English name is what gets decomposed,
 	// registered, applied, and keyed by every downstream row; a foreign compound never reaches the split
-	// gate, so its composition evidence and parts are keyed to the English form (report N2/D27)
+	// gate, so its composition evidence and parts are keyed to the English form
 	pendingLanguage, err := e.admission.ResolveLanguages(ctx, analysis, storeKeys, logId)
 	if err != nil {
 		if te := e.creditPause(logId, err); te != nil {
@@ -348,6 +365,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("language resolution failed: %w", err)}
 	}
+	// a time designation the guard newly produced in English (a translated month+year, month, or period) is
+	// not admissible; drop it before decomposition so it never reaches the split gate or the store
+	analysis.Tags = dropTimeDesignations(analysis.Tags)
 
 	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, promotedStoreNames, tagFilter, document.ID, logId)
 	if err != nil {
@@ -428,7 +448,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	// a split degrades to drop only when every part was rejected; when some parts survive the compound
 	// keeps whole and applies the survivors alongside, so a partial rejection never destroys the
-	// phrase's coverage (report N7). The compound is re-registered because the split expansion had
+	// phrase's coverage. The compound is re-registered because the split expansion had
 	// already replaced it before identity planning; a kept compound whose part was rejected only drops
 	// that part from what it applies alongside
 	for i := range compositionRows {
@@ -451,7 +471,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		switch {
 		case rejectedParts == 0:
-			// the split stands unchanged
+			// the split stands unchanged, but the row records the applied names its components resolve to
+			row.Parts = pruneRejectedParts(row.Parts, planOutputs, rejected)
 		case survived == 0:
 			row.Disposition = tags.CompositionDrop
 			row.Reason = tags.CompositionReasonPartRejected
@@ -840,26 +861,28 @@ func planOutputName(part string, outputs map[string]string) string {
 	return part
 }
 
-// pruneRejectedParts drops from a keep row the parts the quality gate rejected, resolving each part
-// through the plan's output names before the rejection test: the compound stands whole, and the row
-// records only the parts actually applied alongside it.
+// pruneRejectedParts drops from a row the parts the quality gate rejected and records the survivors under
+// their resolved applied names (the plan's output mapping), so the composition evidence names what the
+// store actually applies — `states` records as `state` — and the compound's rejection test runs
+// on the applied name too.
 func pruneRejectedParts(parts []string, outputs map[string]string, rejected map[string]bool) []string {
 	if len(parts) == 0 {
 		return parts
 	}
 	kept := make([]string, 0, len(parts))
 	for _, part := range parts {
-		if rejected[planOutputName(part, outputs)] {
+		applied := planOutputName(part, outputs)
+		if rejected[applied] {
 			continue
 		}
-		kept = append(kept, part)
+		kept = append(kept, applied)
 	}
 	return kept
 }
 
 // applyPartialKeep re-registers a compound that a partial part rejection kept whole: the split expansion
 // replaced it before identity planning, so without a fresh registration the phrase would not be persisted
-// even though the row now disposes as a keep (report N7). It appends a plain registration the persist step
+// even though the row now disposes as a keep. It appends a plain registration the persist step
 // resolves against the live store (house form, alias, key equality, blocklist), so no extra store read is
 // needed; the compound is appended to the emitted tags under its stored name. The registration carries no
 // admission decision, so with the quality gate on the compound is born provisional and the reconcile

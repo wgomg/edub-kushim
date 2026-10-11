@@ -148,29 +148,29 @@ it is skipped before judgment and never split.
   adjudicator no verdict is reachable, so store-keyed compounds stay skipped
   rather than appending a degraded row on every emission.
 - **Evidence**: every judged compound appends one `tag_composition_event`
-  verdict row — candidate, validated parts, `disposition`
+  verdict row — candidate, validated segments, `disposition`
   (`split`/`keep`/`drop`), `reason`
   (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`; the
   decision reasons `named_unit`, `named_unit_reconstructible`, `relational_keep`,
-  `no_dimension`, `split_defer`, `conflicting_evidence`, `sample_disagreement`,
-  `period_class` for the pinned deterministic period keep; or `part_rejected`
+  `no_dimension`, `split_defer`, `conflicting_evidence`, `sample_disagreement`;
+  or `part_rejected`
   when a split lost every admitted part and degrades to `drop`, or
   `partial_parts` when it lost some but not all and keeps the compound whole with
   its surviving parts applied alongside — keep rows record the
-  parts applied alongside, pruned of any the quality gate rejected), the criteria
+  parts applied alongside under their resolved applied names, pruned of any the quality
+  gate rejected), the criteria
   version,
   and the judge model (`NULL` for cached verdicts and the conjunction
   fallback) — with a matching `tag split[...]` log line per candidate.
-- **Validation**: components are first fold-resolved onto **promoted** store
-  values through the attested seam fold (the generated WordNet pertainym
-  table's adjective→noun pairs, or a pinned variant class the table does not
-  cover; a part with more than one attested base folds only while a single base
-  is a live store value, so a sibling sense present in the store blocks the fold;
-  shape proposals stay in the judged path; provisional births are not
-  seam anchors) and then pass the hard
+- **Validation**: segments are first fold-resolved onto **promoted** store values through
+  the attested seam fold (the generated WordNet pertainym table's adjective→noun pairs in
+  WordNet sense order, or a pinned variant class the table does not cover; a multi-base
+  part folds only onto its primary-sense base and only while that base is live, with the
+  residue routed to the phrase-context fold judge; shape proposals stay in the judged path;
+  provisional births are not seam anchors) and then pass the hard
   per-document rules — normalized, deduplicated, ≤3 words, ≤64 characters, no
-  person or doc-type token matches — and a split must yield between 2 and
-  `tags.MaxCompoundWords` (3) valid components; anything else keeps the
+  person or doc-type token matches, no unseeded time designation — and a split must yield
+  between 2 and `tags.MaxCompoundWords` (3) valid **segments**; anything else keeps the
   compound as-is. Emissions are not count-capped.
 - **Retroactive cleanup**: the scheduled reconciliation task scans the store
   for conjunction joints and splits them with document re-pointing — see
@@ -218,7 +218,7 @@ survive consolidation — names absent from the vocabulary — are decided befor
 they are created:
 
 - **Features**: each candidate carries the judge's four rubric answers —
-  `subject_matter`, `not_person_place_work`, `atomic`
+  `subject_matter`, `not_person`, `atomic`
   (one dimension, not a combination whose parts each work as tags), and
   `not_form_genre` (not a publishing format — genres and art
   forms are subject-side and pass) —
@@ -239,9 +239,8 @@ they are created:
   calls over batches of up to 40 candidates per document; the reduced document
   text serves the `subject_matter` question alone, the other three criteria
   answering on the candidate (the dimension verdict is not asked here — the
-  parts pass supplies it); whitelisted
-  countries and continents are never rejected for being a place, so the typed
-  facet gate and the judge cannot disagree.
+  parts pass supplies it); the second criterion asks the person question alone,
+  so works and places are judged by the ordinary dimension criteria.
 - **Cache**: verdicts are stored in the `tag_quality_event` table keyed by
   `(tag_name, policy_version)` with the recorded outcome
   (`reject`/`defer`/`admit`). A re-emitted name resolves from the cache with
@@ -260,7 +259,7 @@ they are created:
   non-credit failure keeps every novel tag with a defer decision — under the
   gate the birth is provisional and carries no verdict — and a
   credit-exhaustion failure pauses the batch instead.
-- **Logging**: rejections and defers are logged as `tagquality[v5]:` lines
+- **Logging**: rejections and defers are logged as `tagquality[v6]:` lines
   carrying the outcome and reason, siblings of the `consolidation[v1]` and
   `tags[facet]:` lines.
 
@@ -277,28 +276,33 @@ Every LLM judge pins its criteria with a version constant, and a cached verdict
 applies only under the version that produced it — a criteria or prompt change
 bumps the constant so older rows never apply. The current constants:
 
-- `analyzer.TagQualityVersion` (`v5`) — the tag-quality judge's rubric and
-  prompt: the document-scoped questions the judge answers, with the `dimension`
-  feature stamped from the parts pass. The v5 stamp also records the language
-  guard (`reason=language_review`).
-- `analyzer.TagPartDimensionVersion` (`v3`) — the split gate's parts pass and
-  the single value-keyed dimension verdict the quality gate reads: one
-  context-free dimensional question per value, judged in its ordinary
-  standalone sense, with lexicalized derivations and gerunds standing and
-  abstract field nouns admitted.
-- `analyzer.TagSplitVersion` (`v5`) — the split gate's compound pass: the
+- `analyzer.TagQualityVersion` (`v6`) — the tag-quality judge's rubric and
+  prompt: the document-scoped questions the judge answers (`subject_matter`,
+  `not_person`, `atomic`, `not_form_genre`, plus the optional `defer`), with the
+  `dimension` feature stamped from the parts pass. The language guard
+  (`reason=language_review`) shares the policy version.
+- `analyzer.TagPartDimensionVersion` (`v4`) — the split gate's parts pass and
+  the value-keyed dimension verdict the quality gate reads: one context-free
+  dimensional question per fan segment (a content word or a contiguous bigram),
+  judged in its ordinary standalone sense, with lexicalized derivations and
+  gerunds standing and abstract field nouns admitted.
+- `analyzer.TagSplitVersion` (`v7`) — the split gate's compound pass: the
   context-free `named_unit`/`composition`/`no_dimension` trichotomy plus an
   abstention, and the `criteria_version` every composition row carries. The
-  version also pins what a row means: the v4 stamp records the branch-first
-  decision order (a unanimous dimensional verdict is not overridden by
-  `named_unit`; the combination-branch named-unit keep is the held
-  `relational_keep`), the attested seam folds feeding the features, and the
-  parts-alongside keep rows; the v5 stamp adds the deterministic period class
-  and narrows the split degradation to all-parts-rejected (`partial_parts`
-  keeps).
+  version also pins what a row means: the branch-first decision order (a
+  unanimous dimensional verdict is not overridden by `named_unit`; the
+  combination-branch named-unit keep is the held `relational_keep`), the
+  attested seam folds feeding the features, the parts-alongside keep rows
+  recording their resolved applied names, the all-parts-rejected degradation to
+  `partial_parts`, the seed-bounded time policy (a seeded period is a store
+  application; an unseeded time designation is dropped on the emission and parts
+  paths), and the in-order segment fan disposed by the coarsest cover.
 - `analyzer.TagTranslationVersion` (`v1`) — the language guard's translation
   pass: one value's English canonical form, or the value unchanged when it is
   already English, with an abstention.
+- `analyzer.TagPhraseFoldVersion` (`v1`) — the seam's residual phrase-context
+  fold: whether a part, in the context of its phrase, denotes a candidate anchor
+  store value, with an abstention.
 
 ---
 

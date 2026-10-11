@@ -54,7 +54,7 @@ WHERE t.promoted_at IS NULL
   AND ($3::text = ''
        OR coalesce(qe.criteria ->> 'dimension', 'absent') = $3::text)
   AND ($4::text = ''
-       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = $4::text)
+       OR coalesce(qe.criteria ->> 'not_person', 'absent') = $4::text)
   AND ($5::text = ''
        OR coalesce(qe.criteria ->> 'atomic', 'absent') = $5::text)
   AND ($6::text = ''
@@ -74,14 +74,14 @@ WHERE t.promoted_at IS NULL
 `
 
 type CountProvisionalTagsParams struct {
-	PolicyVersion           string
-	SubjectMatterState      string
-	DimensionState          string
-	NotPersonPlaceWorkState string
-	AtomicState             string
-	NotFormGenreState       string
-	DeferState              string
-	VerdictState            string
+	PolicyVersion      string
+	SubjectMatterState string
+	DimensionState     string
+	NotPersonState     string
+	AtomicState        string
+	NotFormGenreState  string
+	DeferState         string
+	VerdictState       string
 }
 
 func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisionalTagsParams) (int64, error) {
@@ -89,7 +89,7 @@ func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisional
 		arg.PolicyVersion,
 		arg.SubjectMatterState,
 		arg.DimensionState,
-		arg.NotPersonPlaceWorkState,
+		arg.NotPersonState,
 		arg.AtomicState,
 		arg.NotFormGenreState,
 		arg.DeferState,
@@ -455,7 +455,7 @@ WHERE t.promoted_at IS NULL
   AND ($3::text = ''
        OR coalesce(qe.criteria ->> 'dimension', 'absent') = $3::text)
   AND ($4::text = ''
-       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = $4::text)
+       OR coalesce(qe.criteria ->> 'not_person', 'absent') = $4::text)
   AND ($5::text = ''
        OR coalesce(qe.criteria ->> 'atomic', 'absent') = $5::text)
   AND ($6::text = ''
@@ -477,16 +477,16 @@ LIMIT $10 OFFSET $9
 `
 
 type ListProvisionalTagsWithDocumentCountParams struct {
-	PolicyVersion           string
-	SubjectMatterState      string
-	DimensionState          string
-	NotPersonPlaceWorkState string
-	AtomicState             string
-	NotFormGenreState       string
-	DeferState              string
-	VerdictState            string
-	PageOffset              int32
-	PageLimit               int32
+	PolicyVersion      string
+	SubjectMatterState string
+	DimensionState     string
+	NotPersonState     string
+	AtomicState        string
+	NotFormGenreState  string
+	DeferState         string
+	VerdictState       string
+	PageOffset         int32
+	PageLimit          int32
 }
 
 type ListProvisionalTagsWithDocumentCountRow struct {
@@ -501,7 +501,7 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 		arg.PolicyVersion,
 		arg.SubjectMatterState,
 		arg.DimensionState,
-		arg.NotPersonPlaceWorkState,
+		arg.NotPersonState,
 		arg.AtomicState,
 		arg.NotFormGenreState,
 		arg.DeferState,

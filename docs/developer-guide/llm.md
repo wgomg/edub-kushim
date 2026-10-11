@@ -124,12 +124,12 @@ type AnalysisResult struct {
   returns its answers alongside `*IncompleteReplyError`). Used by the tag gate
   when `enricher.tag_adjudicator.enabled` is true.
 - `JudgeTagQuality` — judges novel tags against the dimension rubric
-  (`subject_matter`, `dimension`, `not_person_place_work`, `atomic`,
+  (`subject_matter`, `dimension`, `not_person`, `atomic`,
   `not_form_genre`, plus the optional `defer` abstention) with a temperature-0
   request built from
   `BuildTagQualityPrompt` (the reduced document text scoped to the
   `subject_matter` question, plus one line per candidate
-  with its term, typed category, and a whitelisted-place carve-out note) and
+  with its term and typed category) and
   parsed by `ParseTagQualityResponse` (a missing or partially specified
   verdict for any candidate is an incomplete reply, never a silent rejection;
   an omitted `defer` reads as false). Used by the enricher when
@@ -649,14 +649,16 @@ for i := range 2 {
    non-Latin names use `NameRomanized` or an **anyascii transliteration**
    (`canonicalPersonName`, `enricher.go:797`); `NormalizedName =
    textnorm.NormalizeForDB(canonical)`.
-10. **Facet separation and tag filtering** (`enricher.go:332-338`):
+10. **Facet separation, time gate, and tag filtering** (`enricher.go:332-338`):
     `SeparateFacets` gates typed emissions by the model's own `category`:
-    `form_genre` tags are dropped (they belong to `document_type`),
-    `person` and `work` tags are dropped, and `place` tags survive only when
-    the term is a whitelisted country or continent. Every drop is logged as
+    `form_genre` tags are dropped (they belong to `document_type`) and
+    `person` tags are dropped; `place` and `work` tags are ordinary subject
+    candidates and pass. A deterministic time-designation gate then drops a
+    year, decade, month, month+year, or unseeded ordinal period unit the store
+    does not hold (`reason=time_designation`). Every drop is logged as
     `tags[facet]: drop <term> (category=… reason=…)` with `reason` one of
-    `matches_document_type`, `model_self_classification`, `people_facet`,
-    `forbidden_category`, `non_whitelisted_place`; `topic`/`other` and
+    `matches_document_type`, `model_self_classification`, `people_facet`;
+    `topic`/`other` and
     untyped emissions pass through. `FilterTags` (`tagfilter.go:121-132`) then
     drops whole-emission tags that are >3 words, overlap with LLM people names,
     are multi-token subsets of known normalized names, or overlap doc-type names,
@@ -667,18 +669,22 @@ for i := range 2 {
     emissions to their judged English canonical form (a value returned unchanged
     is already English; an uncertain translation is held for review by the
     admission gate with `reason=language_review`). `Adjudicator.DecomposeTags`
-    (`adjudicator.go`) then replaces compound tags with their parts —
+    (`adjudicator.go`) then replaces compound tags with their segments —
     LLM-adjudicated when the tag adjudicator is enabled, conjunction joints
-    deterministically otherwise — except a period in the house numeric style
-    (`tags.IsPeriodClass` over the house form), which is a pinned deterministic
-    keep that stays whole, is never judged, and never decomposes. The parts are first fold-resolved through the
+    deterministically otherwise — except a seeded period
+    (`tags.IsPeriodClass` over the house form) the store already holds, which is a
+    store application that stays whole, is never judged, and never decomposes, while an unseeded
+    time designation is dropped on the emission and parts paths. The fan is
+    `tags.DeriveSegments` (content words plus contiguous bigrams); the segments are first
+    fold-resolved through the
     attested seam fold (the generated WordNet pertainym table's adjective→noun
-    pairs, or a pinned variant class the table does not cover, anchored only on
-    **promoted** store values; a part with more than one attested base folds only
-    while a single base is a live store value, so a sibling sense present in the
-    store blocks the fold; provisional births are never seam anchors) and
+    pairs in sense order, or a pinned variant class the table does not cover, anchored only on
+    **promoted** store values; a multi-base part folds only onto its primary-sense base and
+    only while that base is live — a live sibling sense neither attracts nor blocks the fold,
+    and the residue is the phrase-context fold judge's question; provisional births are never
+    seam anchors) and
     then pass the hard per-document rules — length/word bounds, people,
-    known-name, and doc-type checks. Compounds whose key already exists in the
+    known-name, doc-type checks, and the unseeded time-designation gate. Compounds whose key already exists in the
     store (names and aliases) are applications and are skipped before
     judgment only once a current-version verdict decides them (a missing or
     degraded verdict re-enters judgment, and a decided keep applies its
@@ -715,7 +721,7 @@ for i := range 2 {
     per document) plus the emission's
     deterministic signals (a detail annotated `other`, and a best store
     similarity below the internal `no_anchor_similarity` 0.60 cut). The rubric
-    asks `subject_matter`, `not_person_place_work`, `atomic` and
+    asks `subject_matter`, `not_person`, `atomic` and
     `not_form_genre`, with `defer` as the judge's abstention, while the
     `dimension` verdict is the parts pass's (read from the shared parts cache,
     judged on a miss, and stamped onto the row; a missing or abstained verdict
@@ -724,10 +730,10 @@ for i := range 2 {
     rejects on two or more failing signals, defers on exactly one (the gray
     band), and admits when nothing fails. Rejections drop the tag for that
     document — the registration and its pending identity evidence never reach
-    the store — and log `tagquality[v5]: reject … (reason=corroborated_failures
+    the store — and log `tagquality[v6]: reject … (reason=corroborated_failures
     source=judge|cache …)`; defers are kept and logged too, and admitted
-    candidates journal at DEBUG. A whitelisted
-    country/continent is never rejected for being a place. Fresh verdicts
+    candidates journal at DEBUG. Works and places are judged by the ordinary
+    dimension criteria, so neither is rejected for being that kind of tag. Fresh verdicts
     record the judging model and the recorded outcome, cache-applied ones a
     NULL model; cached rows re-run the decision over the stored rubric with the
     current emission's deterministic signals. A transient judge failure retries

@@ -377,7 +377,7 @@ func TestTag_ListProvisionalFilters(t *testing.T) {
 	}
 
 	admitID := seed("prov-filter-admit",
-		`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`,
+		`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`,
 		true, "admit")
 	failID := seed("prov-filter-fail", `{"atomic":false}`, false, "")
 	deferredID := seed("prov-filter-deferred", `{"defer":true}`, false, "")
@@ -490,7 +490,7 @@ func TestTag_LatestQualityEventsForNames(t *testing.T) {
 	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
 
 	// Insert a quality event.
-	criteria := []byte(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`)
+	criteria := []byte(`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`)
 	_, err := client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quality-events-tag",

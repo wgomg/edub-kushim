@@ -915,10 +915,10 @@ func TestBuildTagPartPrompt(t *testing.T) {
 		t.Error("parts criteria must anchor the value to its ordinary standalone sense")
 	}
 	if !strings.Contains(result, "Lexicalized derivations and gerunds stand") {
-		t.Error("parts criteria must let lexicalized derivations and gerunds stand as fields (report N4)")
+		t.Error("parts criteria must let lexicalized derivations and gerunds stand as fields")
 	}
 	if !strings.Contains(result, "names a field, domain, or discipline") {
-		t.Error("parts criteria must admit abstract field nouns instead of generic containers (report N4)")
+		t.Error("parts criteria must admit abstract field nouns instead of generic containers")
 	}
 	if strings.Contains(result, "no phrase or document context") || strings.Contains(result, "any document collection") {
 		t.Error("parts criteria must not name context the call never receives")
@@ -1348,11 +1348,10 @@ func TestSeparateFacets(t *testing.T) {
 			wantDropped: []FacetDrop{{Term: "literary anthology", Category: TagCategoryFormGenre, Reason: "model_self_classification"}},
 		},
 		{
-			name:        "topic and whitelisted place kept, sub-national place dropped",
-			tags:        []string{"physics", "palestine", "newfoundland"},
-			details:     []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "palestine", Category: TagCategoryPlace}, {Term: "newfoundland", Category: TagCategoryPlace}},
-			wantKept:    []string{"physics", "palestine"},
-			wantDropped: []FacetDrop{{Term: "newfoundland", Category: TagCategoryPlace, Reason: "non_whitelisted_place"}},
+			name:     "topic and places kept, sub-national places are ordinary candidates",
+			tags:     []string{"physics", "palestine", "newfoundland"},
+			details:  []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "palestine", Category: TagCategoryPlace}, {Term: "newfoundland", Category: TagCategoryPlace}},
+			wantKept: []string{"physics", "palestine", "newfoundland"},
 		},
 		{
 			name:         "matches_document_type when term matches docTypeNames",
@@ -1385,11 +1384,10 @@ func TestSeparateFacets(t *testing.T) {
 			wantDropped: []FacetDrop{{Term: "marie curie", Category: TagCategoryPerson, Reason: "people_facet"}},
 		},
 		{
-			name:        "work dropped",
-			tags:        []string{"physics", "origin of species"},
-			details:     []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "origin of species", Category: TagCategoryWork}},
-			wantKept:    []string{"physics"},
-			wantDropped: []FacetDrop{{Term: "origin of species", Category: TagCategoryWork, Reason: "forbidden_category"}},
+			name:     "works are ordinary candidates, not dropped",
+			tags:     []string{"physics", "origin of species"},
+			details:  []TagDetail{{Term: "physics", Category: TagCategoryTopic}, {Term: "origin of species", Category: TagCategoryWork}},
+			wantKept: []string{"physics", "origin of species"},
 		},
 		{
 			name:     "topic and other always survive",
@@ -1415,92 +1413,6 @@ func TestSeparateFacets(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestIsWhitelistedPlace(t *testing.T) {
-	tests := []struct {
-		name string
-		term string
-		want bool
-	}{
-		// Countries.
-		{"spain", "spain", true},
-		{"united states", "united states", true},
-		{"palestine", "palestine", true},
-		{"taiwan", "taiwan", true},
-		{"kosovo", "kosovo", true},
-		// Continents.
-		{"europe", "europe", true},
-		{"africa", "africa", true},
-		{"north america", "north america", true},
-		// Aliases.
-		{"usa", "usa", true},
-		{"uk", "uk", true},
-		{"uae", "uae", true},
-		{"drc", "drc", true},
-		{"great britain", "great britain", true},
-		{"czech republic", "czech republic", true},
-		{"holland", "holland", true},
-		{"cape verde", "cape verde", true},
-		{"swaziland", "swaziland", true},
-		// Dotted forms.
-		{"u.s.a.", "u.s.a.", true},
-		{"u.k.", "u.k.", true},
-		{"u.s.", "u.s.", true},
-		// Article forms.
-		{"the philippines", "the philippines", true},
-		{"the gambia", "the gambia", true},
-		{"the netherlands", "the netherlands", true},
-		{"the bahamas", "the bahamas", true},
-		{"the united states", "the united states", true},
-		{"the united kingdom", "the united kingdom", true},
-		// Case folding.
-		{"Spain", "Spain", true},
-		{"USA", "USA", true},
-		{"The Philippines", "The Philippines", true},
-		// Punctuation folding.
-		{"Cote d'Ivoire", "Cote d'Ivoire", true},
-		{"Timor-Leste", "Timor-Leste", true},
-		// Sub-national misses.
-		{"newfoundland", "newfoundland", false},
-		{"the hague", "the hague", false},
-		{"london", "london", false},
-		{"california", "california", false},
-		// Empty/odd.
-		{"", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := IsWhitelistedPlace(tt.term)
-			if got != tt.want {
-				t.Errorf("IsWhitelistedPlace(%q) = %v, want %v", tt.term, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestPlaceWhitelist_Hygiene(t *testing.T) {
-	seen := make(map[string]string, len(placeWhitelist))
-	for _, raw := range allWhitelistEntries() {
-		key := placeWhitelistKey(raw)
-		if prev, dup := seen[key]; dup {
-			t.Errorf("duplicate normalized key %q from entries %q and %q", key, prev, raw)
-		}
-		seen[key] = raw
-	}
-	for _, raw := range allWhitelistEntries() {
-		if !IsWhitelistedPlace(raw) {
-			t.Errorf("whitelist entry %q does not survive its own lookup", raw)
-		}
-	}
-}
-
-// allWhitelistEntries returns all raw entries (continents + countries).
-func allWhitelistEntries() []string {
-	all := make([]string, 0, len(continentNames)+len(countryNames))
-	all = append(all, continentNames...)
-	all = append(all, countryNames...)
-	return all
 }
 
 func TestNormalizeTagCategory(t *testing.T) {
@@ -1534,7 +1446,7 @@ func TestNormalizeTagCategory(t *testing.T) {
 func TestBuildTagQualityPrompt(t *testing.T) {
 	candidates := []TagQualityCandidate{
 		{Index: 0, Term: "quantum computing", Category: "topic"},
-		{Index: 1, Term: "spain", Category: "place", WhitelistedPlace: true},
+		{Index: 1, Term: "spain", Category: "place"},
 		{Index: 2, Term: "John Smith", Category: "person"},
 	}
 	prompt := BuildTagQualityPrompt("A text about quantum physics", candidates)
@@ -1549,19 +1461,17 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 			t.Errorf("prompt missing candidate %d", c.Index)
 		}
 	}
-	// Whitelisted place must include the carve-out note with the expected verdict.
-	if !strings.Contains(prompt, "answer not_person_place_work: true") {
-		t.Error("prompt missing expected verdict in whitelisted place note")
+	// The place hint retires with the place policy: places are ordinary candidates and the prompt carries
+	// no whitelist carve-out.
+	if strings.Contains(prompt, "whitelisted") {
+		t.Error("prompt still carries a whitelist carve-out")
 	}
-	// Criterion 3 must name the passing class (whitelisted) and the failing classes (sub-national) explicitly.
-	if !strings.Contains(prompt, "passes this criterion") {
-		t.Error("prompt missing whitelisted-passes clause in criterion 3")
-	}
-	if !strings.Contains(prompt, "sub-national place") {
-		t.Error("prompt missing sub-national-place clause in criterion 3")
+	// Criterion 2 now asks the person question alone.
+	if !strings.Contains(prompt, "2. not_person: is the tag not a person?") {
+		t.Error("prompt missing the person-only criterion")
 	}
 	// Must contain the four criteria, the abstention and the response format.
-	for _, kw := range []string{"subject_matter", "not_person_place_work", "atomic", "not_form_genre", "defer", "JSON"} {
+	for _, kw := range []string{"subject_matter", "not_person", "atomic", "not_form_genre", "defer", "JSON"} {
 		if !strings.Contains(prompt, kw) {
 			t.Errorf("prompt missing keyword %q", kw)
 		}
@@ -1574,7 +1484,7 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 		t.Error("prompt missing the fourth numbered question")
 	}
 	// The parts pass owns the dimension verdict, so the rubric must neither ask the question nor echo the
-	// answer key in its response envelope: a judge reply cannot decide what the gate stamps (report N5).
+	// answer key in its response envelope: a judge reply cannot decide what the gate stamps.
 	if strings.Contains(prompt, "2. dimension:") {
 		t.Error("prompt still asks the dimension question the parts pass owns")
 	}
@@ -1614,7 +1524,7 @@ func TestBuildTagQualityPrompt_NarrowsTheDocumentToOneQuestion(t *testing.T) {
 		"Document for question 1:",
 		"1. subject_matter: is the tag a subject matter of the document",
 		"something this document is about",
-		"2. not_person_place_work: is the tag neither a person, nor a work, nor a place",
+		"2. not_person: is the tag not a person?",
 		"3. atomic: is the tag one dimension, not a combination",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -1680,8 +1590,8 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 	// Simulate a well-formed LLM response.
 	allTrue := `{"tags":[
-		{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false},
-		{"index":1,"subject_matter":false,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}
+		{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false},
+		{"index":1,"subject_matter":false,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}
 	]}`
 	results, err := ParseTagQualityResponse(allTrue, len(candidates))
 	if err != nil {
@@ -1690,7 +1600,7 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
-	if !results[0].SubjectMatter || !results[0].Dimension || !results[0].NotPersonPlaceWork || !results[0].Atomic || !results[0].NotFormGenre || results[0].Defer {
+	if !results[0].SubjectMatter || !results[0].Dimension || !results[0].NotPerson || !results[0].Atomic || !results[0].NotFormGenre || results[0].Defer {
 		t.Errorf("candidate 0 answers = %+v, want all criteria true and no defer", results[0])
 	}
 	if results[1].SubjectMatter || !results[1].Dimension {
@@ -1706,7 +1616,7 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	// Only 1 of 2 candidates returned — must error.
-	partial := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}]}`
+	partial := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}]}`
 	results, err := ParseTagQualityResponse(partial, 2)
 	if err == nil {
 		t.Fatal("expected error for missing index, got nil")
@@ -1725,14 +1635,14 @@ func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	if !results[0].SubjectMatter || !results[0].Dimension {
 		t.Errorf("index 0 answers = %+v, want them populated", results[0])
 	}
-	if results[1].SubjectMatter || results[1].Dimension || results[1].NotPersonPlaceWork || results[1].Atomic || results[1].NotFormGenre || results[1].Defer {
+	if results[1].SubjectMatter || results[1].Dimension || results[1].NotPerson || results[1].Atomic || results[1].NotFormGenre || results[1].Defer {
 		t.Errorf("index 1 answers = %+v, want zero-valued (all false)", results[1])
 	}
 }
 
 func TestParseTagQualityResponse_IncompleteVerdict(t *testing.T) {
 	// One criterion omitted (nil) — must error.
-	incomplete := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true}]}`
+	incomplete := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true}]}`
 	_, err := ParseTagQualityResponse(incomplete, 1)
 	if err == nil {
 		t.Fatal("expected error for incomplete verdict, got nil")
@@ -1740,7 +1650,7 @@ func TestParseTagQualityResponse_IncompleteVerdict(t *testing.T) {
 }
 
 func TestParseTagQualityResponse_DeferKey(t *testing.T) {
-	abstained := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":true}]}`
+	abstained := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":true}]}`
 	results, err := ParseTagQualityResponse(abstained, 1)
 	if err != nil {
 		t.Fatalf("parse abstained: %v", err)
@@ -1749,7 +1659,7 @@ func TestParseTagQualityResponse_DeferKey(t *testing.T) {
 		t.Error("defer=true must read as the judge's abstention")
 	}
 
-	omitted := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}]}`
+	omitted := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}]}`
 	results, err = ParseTagQualityResponse(omitted, 1)
 	if err != nil {
 		t.Fatalf("parse omitted defer: %v", err)
@@ -1768,9 +1678,9 @@ func TestParseTagQualityResponse_InvalidJSON(t *testing.T) {
 
 func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
 	bare := `[
-		{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true},
-		{"subject_matter":false,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true},
-		{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}
+		{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true},
+		{"subject_matter":false,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true},
+		{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}
 	]`
 	results, err := ParseTagQualityResponse(bare, 2)
 	if err != nil {
@@ -1785,7 +1695,7 @@ func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
 
 	// a bare array shorter than n must still fail rather than read as an
 	// all-false rejection
-	truncated := `[{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true}]`
+	truncated := `[{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}]`
 	if _, err := ParseTagQualityResponse(truncated, 2); err == nil {
 		t.Fatal("expected incomplete-response error, got nil")
 	}
@@ -1794,9 +1704,9 @@ func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
 // TestParseTagQualityResponse_DimensionOwnedByPartsPass pins the v5 wire: the rubric no longer asks the
 // dimension question, so a reply that omits the key entirely parses as complete and leaves the answer
 // false for the gate to stamp from the parts verdict. Requiring the key would reject every v5 reply as
-// incomplete (report N5).
+// incomplete.
 func TestParseTagQualityResponse_DimensionOwnedByPartsPass(t *testing.T) {
-	v5 := `{"tags":[{"index":0,"subject_matter":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
+	v5 := `{"tags":[{"index":0,"subject_matter":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
 	results, err := ParseTagQualityResponse(v5, 1)
 	if err != nil {
 		t.Fatalf("parse a v5 reply without a dimension key: %v", err)
@@ -1811,7 +1721,7 @@ func TestParseTagQualityResponse_DimensionOwnedByPartsPass(t *testing.T) {
 
 // TestBuildTagTranslationPrompt pins the language guard's judged question: every flagged value appears in
 // the prompt, the English-jargon rule lets an already-English value pass unchanged, and the reply shape is
-// the indexed JSON envelope the parser expects (report N2/D27).
+// the indexed JSON envelope the parser expects.
 func TestBuildTagTranslationPrompt(t *testing.T) {
 	prompt := BuildTagTranslationPrompt([]string{"filosofia", "machine learning"})
 
@@ -1876,6 +1786,95 @@ func TestParseTagTranslationResponse(t *testing.T) {
 	t.Run("an omitted defer reads as false", func(t *testing.T) {
 		noDefer := `{"values":[{"index":0,"translation":"philosophy"}]}`
 		results, err := ParseTagTranslationResponse(noDefer, 1)
+		if err != nil {
+			t.Fatalf("parse reply without defer: %v", err)
+		}
+		if results[0].Defer {
+			t.Error("an omitted defer must read false, not as an abstention")
+		}
+	})
+}
+
+// TestBuildTagPhraseFoldPrompt pins the residual fold's judged question: every candidate appears with its
+// phrase, part, and anchor, the fold and abstention answers are requested, and the reply shape is the
+// indexed JSON envelope the parser expects.
+func TestBuildTagPhraseFoldPrompt(t *testing.T) {
+	prompt := BuildTagPhraseFoldPrompt([]TagPhraseFoldCandidate{
+		{Index: 0, Phrase: "civil war", Part: "civil", Anchor: "state"},
+		{Index: 1, Phrase: "russian literature", Part: "russian", Anchor: "russia"},
+	})
+
+	for _, want := range []string{
+		`Item 0: phrase="civil war" part="civil" anchor="state"`,
+		`Item 1: phrase="russian literature" part="russian" anchor="russia"`,
+		"fold",
+		"defer",
+		"JSON",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("phrase-fold prompt missing %q", want)
+		}
+	}
+}
+
+// TestParseTagPhraseFoldResponse pins the parser contract the seam depends on: a well-formed reply carries
+// each fold answer and abstention, a reply that omits an entry reports the missing indices alongside the
+// entries it did return so the seam leaves the omission unfolded rather than reading an empty answer as a
+// fold, and an omitted defer reads as false.
+func TestParseTagPhraseFoldResponse(t *testing.T) {
+	t.Run("a full reply carries folds and abstentions", func(t *testing.T) {
+		full := `{"items":[
+			{"index":0,"fold":true,"defer":false},
+			{"index":1,"fold":false,"defer":true}
+		]}`
+		results, err := ParseTagPhraseFoldResponse(full, 2)
+		if err != nil {
+			t.Fatalf("parse full reply: %v", err)
+		}
+		if !results[0].Fold || results[0].Defer {
+			t.Errorf("results[0] = %+v, want a confirmed fold without abstention", results[0])
+		}
+		if results[1].Fold || !results[1].Defer {
+			t.Errorf("results[1] = %+v, want an explicit stand with abstention", results[1])
+		}
+	})
+
+	t.Run("an omitted entry reports the missing indices", func(t *testing.T) {
+		partial := `{"items":[{"index":0,"fold":true,"defer":false}]}`
+		results, err := ParseTagPhraseFoldResponse(partial, 2)
+		if err == nil {
+			t.Fatal("an omitted entry must surface an incomplete-reply error")
+		}
+		incomplete, ok := errors.AsType[*IncompleteReplyError](err)
+		if !ok {
+			t.Fatalf("error type = %T, want *IncompleteReplyError carrying the missing indices", err)
+		}
+		if len(incomplete.Missing) != 1 || incomplete.Missing[0] != 1 {
+			t.Errorf("Missing = %v, want [1]", incomplete.Missing)
+		}
+		if !results[0].Fold {
+			t.Errorf("the entry the judge did return = %+v, want the confirmed fold", results[0])
+		}
+		if results[1].Fold {
+			t.Errorf("the omitted entry = %+v, want no fold the seam would apply", results[1])
+		}
+	})
+
+	t.Run("an entry without a fold answer is never read as a fold", func(t *testing.T) {
+		noFold := `{"items":[{"index":0,"defer":true}]}`
+		_, err := ParseTagPhraseFoldResponse(noFold, 1)
+		incomplete, ok := errors.AsType[*IncompleteReplyError](err)
+		if !ok {
+			t.Fatalf("error type = %T, want *IncompleteReplyError so a zero result is never a fold", err)
+		}
+		if len(incomplete.Missing) != 1 || incomplete.Missing[0] != 0 {
+			t.Errorf("Missing = %v, want [0]", incomplete.Missing)
+		}
+	})
+
+	t.Run("an omitted defer reads as false", func(t *testing.T) {
+		noDefer := `{"items":[{"index":0,"fold":true}]}`
+		results, err := ParseTagPhraseFoldResponse(noDefer, 1)
 		if err != nil {
 			t.Fatalf("parse reply without defer: %v", err)
 		}

@@ -14,7 +14,7 @@
 	const criteria = [
 		{ key: 'subject_matter', label: 'subject matter' },
 		{ key: 'dimension', label: 'dimension' },
-		{ key: 'not_person_place_work', label: 'not person/place/work' },
+		{ key: 'not_person', label: 'not person' },
 		{ key: 'atomic', label: 'atomic' },
 		{ key: 'not_form_genre', label: 'not publishing format' },
 		{ key: 'defer', label: 'defer' }

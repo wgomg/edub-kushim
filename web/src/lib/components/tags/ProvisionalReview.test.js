@@ -40,7 +40,7 @@ import { replaceState } from '$app/navigation';
 const rubric = {
 	subject_matter: true,
 	dimension: true,
-	not_person_place_work: true,
+	not_person: true,
 	atomic: true,
 	not_form_genre: true,
 	defer: false

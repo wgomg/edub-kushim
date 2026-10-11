@@ -7,57 +7,56 @@ import (
 )
 
 // TagQualityCandidate is one tag up for quality judging: its index, term,
-// facet category, and whether it is a whitelisted place.
+// and facet category.
 type TagQualityCandidate struct {
-	Index            int
-	Term             string
-	Category         string
-	WhitelistedPlace bool
+	Index    int
+	Term     string
+	Category string
 }
 
 // TagQualityResult is one candidate's rubric answers: the five criteria
 // plus the judge's abstention. The criteria are features, not a verdict —
 // the admission decision combines them.
 type TagQualityResult struct {
-	Index              int
-	SubjectMatter      bool
-	Dimension          bool
-	NotPersonPlaceWork bool
-	Atomic             bool
-	NotFormGenre       bool
-	Defer              bool
+	Index         int
+	SubjectMatter bool
+	Dimension     bool
+	NotPerson     bool
+	Atomic        bool
+	NotFormGenre  bool
+	Defer         bool
 }
 
 // TagQualityCriteria is the persisted wire shape of one candidate's rubric
 // verdict. Pointer fields distinguish an omitted key from an explicit
 // false; defer is optional, so an omitted defer reads as false.
 type TagQualityCriteria struct {
-	SubjectMatter      *bool `json:"subject_matter"`
-	Dimension          *bool `json:"dimension"`
-	NotPersonPlaceWork *bool `json:"not_person_place_work"`
-	Atomic             *bool `json:"atomic"`
-	NotFormGenre       *bool `json:"not_form_genre"`
-	Defer              *bool `json:"defer"`
+	SubjectMatter *bool `json:"subject_matter"`
+	Dimension     *bool `json:"dimension"`
+	NotPerson     *bool `json:"not_person"`
+	Atomic        *bool `json:"atomic"`
+	NotFormGenre  *bool `json:"not_form_genre"`
+	Defer         *bool `json:"defer"`
 }
 
 // Criteria returns the persisted wire shape of the answers.
 func (r TagQualityResult) Criteria() TagQualityCriteria {
 	return TagQualityCriteria{
-		SubjectMatter:      &r.SubjectMatter,
-		Dimension:          &r.Dimension,
-		NotPersonPlaceWork: &r.NotPersonPlaceWork,
-		Atomic:             &r.Atomic,
-		NotFormGenre:       &r.NotFormGenre,
-		Defer:              &r.Defer,
+		SubjectMatter: &r.SubjectMatter,
+		Dimension:     &r.Dimension,
+		NotPerson:     &r.NotPerson,
+		Atomic:        &r.Atomic,
+		NotFormGenre:  &r.NotFormGenre,
+		Defer:         &r.Defer,
 	}
 }
 
-// Complete reports whether the four judge-owned criteria were specified. Dimension is optional here: it
-// is the parts pass's verdict the gate stamps onto the row (report N5), not a question the quality judge
-// answers, so a reply without it is complete.
+// Complete reports whether the four judge-owned criteria were specified. Dimension is optional here: it is
+// the parts pass's verdict the gate stamps onto the row, not a question the quality judge answers, so a
+// reply without it is still complete.
 func (c TagQualityCriteria) Complete() bool {
 	return c.SubjectMatter != nil &&
-		c.NotPersonPlaceWork != nil && c.Atomic != nil && c.NotFormGenre != nil
+		c.NotPerson != nil && c.Atomic != nil && c.NotFormGenre != nil
 }
 
 // Result reads the persisted criteria back into rubric answers; the
@@ -70,37 +69,39 @@ func (c TagQualityCriteria) Result() (TagQualityResult, bool) {
 		return TagQualityResult{}, false
 	}
 	return TagQualityResult{
-		SubjectMatter:      *c.SubjectMatter,
-		Dimension:          c.Dimension != nil && *c.Dimension,
-		NotPersonPlaceWork: *c.NotPersonPlaceWork,
-		Atomic:             *c.Atomic,
-		NotFormGenre:       *c.NotFormGenre,
-		Defer:              c.Defer != nil && *c.Defer,
+		SubjectMatter: *c.SubjectMatter,
+		Dimension:     c.Dimension != nil && *c.Dimension,
+		NotPerson:     *c.NotPerson,
+		Atomic:        *c.Atomic,
+		NotFormGenre:  *c.NotFormGenre,
+		Defer:         c.Defer != nil && *c.Defer,
 	}, true
 }
 
 // String renders the answers for the audit log, treating an omitted
 // answer as false.
 func (c TagQualityCriteria) String() string {
-	return fmt.Sprintf("subject_matter=%t dimension=%t not_person_place_work=%t atomic=%t not_form_genre=%t defer=%t",
+	return fmt.Sprintf("subject_matter=%t dimension=%t not_person=%t atomic=%t not_form_genre=%t defer=%t",
 		c.SubjectMatter != nil && *c.SubjectMatter,
 		c.Dimension != nil && *c.Dimension,
-		c.NotPersonPlaceWork != nil && *c.NotPersonPlaceWork,
+		c.NotPerson != nil && *c.NotPerson,
 		c.Atomic != nil && *c.Atomic,
 		c.NotFormGenre != nil && *c.NotFormGenre,
 		c.Defer != nil && *c.Defer)
 }
 
-// TagQualityVersion pins the quality judge's criteria: the rubric, the prompt, and the policy version of
-// its cached verdict rows. A criteria or prompt change bumps it so an older generation's verdicts never
-// apply. v4 narrows the document snippet to the subject-matter criterion: the snippet serves question 1,
-// criteria 2–5 are judged on the tag as a store-global dimension, and the text stays in the single call —
-// the withholding is by prompt framing. v5 makes the parts pass the single owner of the dimension
-// question (report N5): the quality judge answers the document-scoped questions and the gate stamps the
-// parts verdict as the row's dimension feature; the language guard rides the same policy version (report
-// N2). Cache lookup is version-filtered, so v4 verdicts never apply and stored v4 rows stay for the Stage
-// E sweep.
-const TagQualityVersion = "v5"
+// TagQualityVersion pins the quality judge's criteria: the rubric, the prompt, and the policy version of its
+// cached verdict rows. A criteria or prompt change bumps it so an older generation's verdicts never apply.
+// v4 narrows the document snippet to the subject-matter criterion: the snippet serves question 1, criteria
+// 2–5 are judged on the tag as a store-global dimension, and the text stays in the single call — the
+// withholding is by prompt framing. v5 makes the parts pass the single owner of the dimension question: the
+// quality judge answers the document-scoped questions and the gate stamps the parts verdict as the row's
+// dimension feature, with the language guard riding the same policy version. v6 removes the place and work
+// components from question 2: places are ordinary dimension values judged by dimensionality and recurrence,
+// works are ordinary candidates, and the criterion asks the person question alone under the wire key
+// `not_person`; the whitelisted-place hint retires with it. Cache lookup is version-filtered, so v5 verdicts
+// never apply and the stored v5 rows are superseded evidence.
+const TagQualityVersion = "v6"
 
 // TagQualitySystemMessage is the system prompt of the quality judge.
 const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether each candidate tag is a reusable dimension for a shared document vocabulary."
@@ -108,26 +109,22 @@ const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether eac
 // BuildTagQualityPrompt renders the quality rubric over the document snippet and the candidate tags.
 // The snippet serves the subject-matter question (question 1) alone; the remaining criteria are answered
 // on the tag as a store-global dimension, and their answers do not vary with the presenting document.
-// The dimension question is not asked here: the parts pass owns it and the gate stamps its verdict
-// (report N5), so this rubric carries the document-scoped questions only.
+// The dimension question is not asked here: the parts pass owns it and the gate stamps its verdict,
+// so this rubric carries the document-scoped questions only.
 func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string {
 	var sb strings.Builder
 	sb.WriteString("For each candidate tag below, answer four yes/no questions. Question 1 asks whether the tag is a subject matter of the document; questions 2-4 ask about the tag on its own, and their answers do not depend on the document.\n")
 	sb.WriteString("1. subject_matter: is the tag a subject matter of the document — something this document is about? A specialized document's technical subject counts even when the word is rare or field-specific (a repair guide about spudgers is about spudgers); a generic theme word the text merely mentions or embodies is not (air, love, nature). The document's language is never a subject matter: a language name (spanish, english) is form, not aboutness.\n")
-	sb.WriteString("2. not_person_place_work: is the tag neither a person, nor a work, nor a place other than a whitelisted country or continent? A whitelisted country or continent is a legitimate place tag and passes this criterion; only a person, a work, or a sub-national place (a city, province, region, or other non-sovereign territory) fails it.\n")
+	sb.WriteString("2. not_person: is the tag not a person? Individuals belong to the separate people field, so a person's name fails this criterion. Places, works, and genres are ordinary subject candidates and pass it.\n")
 	sb.WriteString("3. atomic: is the tag one dimension, not a combination whose parts each work as tags on their own? A compound that survives decomposition as a named unit answers true.\n")
 	sb.WriteString("4. not_form_genre: is the tag not a publishing format? Publishing formats and containers (book, article, tutorial, manual, report, anthology, collected letters) describe what a document is as a publication, not what it is about — they fail this criterion. A genre or art form (poetry, drama, science fiction, horror, autobiography, memoir) is a subject-side content dimension, not a publishing format: it passes this criterion and is judged on the questions above.\n")
 	sb.WriteString("Also answer defer: set it true when you cannot decide whether the tag is a reusable dimension. Uncertainty defers to review; it never forces a label.\n")
-	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"not_person_place_work\":true,\"atomic\":true,\"not_form_genre\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"not_person\":true,\"atomic\":true,\"not_form_genre\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
 	sb.WriteString("Document for question 1:\n")
 	sb.WriteString(text)
 	sb.WriteString("\n\nCandidate tags:\n")
 	for _, c := range candidates {
-		fmt.Fprintf(&sb, "Tag %d: term=%q category=%s", c.Index, c.Term, c.Category)
-		if c.WhitelistedPlace {
-			sb.WriteString(" (whitelisted country or continent — a legitimate place tag; answer not_person_place_work: true)")
-		}
-		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "Tag %d: term=%q category=%s\n", c.Index, c.Term, c.Category)
 	}
 	return sb.String()
 }
@@ -186,13 +183,13 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 			continue
 		}
 		results[idx] = TagQualityResult{
-			Index:              idx,
-			SubjectMatter:      *t.SubjectMatter,
-			Dimension:          t.Dimension != nil && *t.Dimension,
-			NotPersonPlaceWork: *t.NotPersonPlaceWork,
-			Atomic:             *t.Atomic,
-			NotFormGenre:       *t.NotFormGenre,
-			Defer:              t.Defer != nil && *t.Defer,
+			Index:         idx,
+			SubjectMatter: *t.SubjectMatter,
+			Dimension:     t.Dimension != nil && *t.Dimension,
+			NotPerson:     *t.NotPerson,
+			Atomic:        *t.Atomic,
+			NotFormGenre:  *t.NotFormGenre,
+			Defer:         t.Defer != nil && *t.Defer,
 		}
 		present[idx] = true
 	}

@@ -54,12 +54,25 @@ Already enforced elsewhere; listed so this spec does not restate them:
 - Strip function words: articles, conjunctions, prepositions. Content modifiers stay
   (`modern` in `modern history`, `rural` in `rural exodus`) — they carry meaning and are
   themselves candidates for values.
-- The remaining tokens are the parts `p₁…p_k` (`k ≤ 3`).
-- A stripped particle's relation (`of`, `de`) is not a part; if the candidate splits,
-  that relation falls back to free text.
-- Parts are looked up in canonical form. Adjective→noun folding (`chilean` → `chile`)
-  is canonicalization work that runs before this step.
-- A part that does not exist as a tag is a **missing value** (see “Dispositions”, below).
+- The remaining tokens are the **content words**; the decomposition **fan** over them is
+  every content word plus every contiguous bigram, in order (`{w₁, w₂, w₁w₂}` for two
+  content words; `{w₁, w₂, w₃, w₁w₂, w₂w₃}` for three).
+- A **decomposition** is a full cover of the content sequence by in-order **segments**
+  drawn from the fan: a segment counts as a value when the store already holds it or the
+  parts pass judges it dimensional. The chosen decomposition is the **coarsest cover** —
+  the fewest, longest segments — selected deterministically by a greedy longest-leftmost
+  scan; a span that covers the whole sequence is never a segment, so a two-word compound
+  decomposes into its two words or keeps whole. A segment that fails admission fails the
+  cover, and the compound keeps whole with its surviving segments applied alongside
+  (all-or-keep). The split bound is 2–`MaxCompoundWords` **segments**, not tokens.
+- A stripped particle's relation (`of`, `de`) is not a content word; if the candidate
+  splits, that relation falls back to free text.
+- Content words and segments are looked up in canonical form. Adjective→noun folding
+  (`chilean` → `chile`) is canonicalization work that runs before this step; a time
+  designation the store does not hold (a year, decade, month, or unseeded ordinal period
+  unit) is dropped, never a segment.
+- A segment that does not exist as a tag is a **missing value** (see “Dispositions”,
+  below).
 
 ### 3.2 Measurements
 

@@ -110,8 +110,8 @@ WHERE t.promoted_at IS NULL
        OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
   AND (@dimension_state::text = ''
        OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
-  AND (@not_person_place_work_state::text = ''
-       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = @not_person_place_work_state::text)
+  AND (@not_person_state::text = ''
+       OR coalesce(qe.criteria ->> 'not_person', 'absent') = @not_person_state::text)
   AND (@atomic_state::text = ''
        OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
   AND (@not_form_genre_state::text = ''
@@ -146,8 +146,8 @@ WHERE t.promoted_at IS NULL
        OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
   AND (@dimension_state::text = ''
        OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
-  AND (@not_person_place_work_state::text = ''
-       OR coalesce(qe.criteria ->> 'not_person_place_work', 'absent') = @not_person_place_work_state::text)
+  AND (@not_person_state::text = ''
+       OR coalesce(qe.criteria ->> 'not_person', 'absent') = @not_person_state::text)
   AND (@atomic_state::text = ''
        OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
   AND (@not_form_genre_state::text = ''

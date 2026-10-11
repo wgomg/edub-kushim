@@ -145,12 +145,12 @@ internal/
 │   │   ├── gates.go        # content/token/credit gates, per-call output budgets (analysis and judged), their error types, token-usage stats, request pacing
 │   │   ├── prompt.go       # SystemMessage, BuildPrompt + template, DocMetadata, BuildDocTypePrompt, ExtractHeadTailWords
 │   │   ├── tagfilter.go    # NormalizeTags, FilterTags, TagFilter, SplitComponents
-│   │   ├── places.go       # country/continent whitelist, IsWhitelistedPlace
 │   │   ├── facets.go       # TagDetail + categories, ParseAnalysisResponse, SeparateFacets
 │   │   ├── adjudication.go # same-intent pair adjudication: prompt + parser
 │   │   ├── tag_split.go    # joint-tag split gate: prompt + parser
 │   │   ├── tag_quality.go  # quality rubric judge: prompt + parser
 │   │   ├── tag_translation.go # language guard: translation prompt + parser
+│   │   ├── tag_phrase_fold.go # phrase-context fold judge: prompt + parser
 │   │   ├── tag_identity.go # canonical-form judge: prompt + parser
 │   │   ├── text.go         # estimateTokens, cleanCodeBlock, ContainsNonLatin
 │   │   ├── openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)

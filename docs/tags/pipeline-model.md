@@ -138,7 +138,8 @@ definition supersedes the earlier "is this a component a legitimate class?" test
 decides is substitutability of extension, not component-hood.
 
 ### S4 — Atomicity and compound resolution (P4, P2)
-For a multi-part candidate `c` with parts `p₁…p_k` (§3.6, §4.3 P4):
+For a multi-part candidate `c` whose content sequence has a decomposition cover of
+segments `p₁…p_k` from the fan (§3.6, §4.3 P4; atomicity §3.1):
 
 - **Parts are values, `S(c) ≈ ⋂ S(pᵢ)`** → redundant reading: the compound adds nothing
   to the algebra; it decomposes into its parts.
@@ -273,10 +274,10 @@ system already has, how far it matches the model, and what the delta is.
 
 | Stage / duty | Existing mechanism | Status | Delta |
 |---|---|---|---|
-| **S1 Emission** | Typed generation contract, subject-matter rule, place rule, choose-or-justify, three negatives, dimension language and compound decomposition (`analyzer/prompt.go`); suggestions injected from the store | Partial | Coverage wording pending; the dictionary-standard selection language is retired |
-| **S2 Facet ownership (P1)** | `SeparateFacets` category gate + country/continent whitelist (`internal/enrichment/enricher.go`) | Aligned | Untyped emissions degrade to string heuristics (accepted) |
+| **S1 Emission** | Typed generation contract, subject-matter rule, choose-or-justify, two negatives, dimension language and compound decomposition (`analyzer/prompt.go`); suggestions injected from the store | Partial | Coverage wording pending; the dictionary-standard selection language is retired |
+| **S2 Facet ownership (P1)** | `SeparateFacets` category gate (persons, form/genre) + the deterministic time-designation gate (`internal/enrichment/enricher.go`) | Aligned | Places and works are ordinary subject candidates; untyped emissions degrade to string heuristics (accepted) |
 | **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
-| **S4 Atomicity (P4)** | General compound decomposition at emission (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
+| **S4 Atomicity (P4)** | General compound decomposition at emission over the in-order segment fan, disposed by the coarsest cover (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
 | **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + the 10-live-document floor (`tags.DecidePromotion`, `tags.RecurrenceFloor`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
@@ -290,15 +291,18 @@ system already has, how far it matches the model, and what the delta is.
 ### 6.2 Stage notes
 
 **S1–S2 — emission and facet gate.** S2 is the model's P1 exactly: the typed category gate
-plus the country/continent whitelist, with the string heuristics as the untyped
-fallback. S1 carries the first re-criteria: the prompt asks for the document's broad
-subjects (the topics a reader would use to find other documents like this one), one
-subject per tag, and teaches compound decomposition — when the parts of a phrase each
-name a subject that would work as a tag on its own, the parts are emitted instead of the
-phrase (`X of Y`, adjective + head, device + operation, both-parts-exist compounds),
-while fixed names and set phrases stay whole. The dictionary-standard selection language
-is retired; the three canonical rejections that remain are form, unique argument, and
-sub-national place. Coverage wording (every applicable dimension) is still pending. The
+over persons and form/genre, plus the deterministic time-designation gate (a year, decade,
+month, month+year, or unseeded ordinal period unit is a time designation, dropped with its
+own reason; a seeded period is a store application), with the string
+heuristics as the untyped fallback. S1 carries the first re-criteria: the prompt asks for
+the document's broad subjects (the topics a reader would use to find other documents like
+this one), one subject per tag, and teaches compound decomposition — when the parts of a
+phrase each name a subject that would work as a tag on its own, the parts are emitted
+instead of the phrase (`X of Y`, adjective + head, device + operation, both-parts-exist
+compounds), while fixed names and set phrases stay whole. The dictionary-standard
+selection language is retired; the two canonical rejections that remain are form and
+unique argument, and places and works are ordinary subject candidates.
+Coverage wording (every applicable dimension) is still pending. The
 suggestions surface is the vocabulary's only influence on emission.
 
 **S3 — canonicality.** The mechanisms are substantial: the birth-time identity pipeline
@@ -314,20 +318,23 @@ disposition for a same-intent label is alias/merge.
 
 **S4 — atomicity.** At emission, every compound candidate (2–3 words, Latin script,
 content parts) whose key is not already in the store goes to the split gate,
-except a period in the house numeric style (an ordinal plus century/decade/
-millennium, `tags.IsPeriodClass` over the house form), which is a pinned
-deterministic keep that stays whole and never reaches judgment
-(store-keyed compounds are applications and skip judgment only once a
+except a seeded period the store holds (an ordinal plus century/decade/
+millennium, `tags.IsPeriodClass` over the house form), which is a store
+application that stays whole and never reaches judgment (an unseeded time
+designation is dropped before the gate). Store-keyed compounds are applications and skip judgment only once a
 current-version verdict decides them; a missing or degraded verdict re-enters
 judgment, and a decided keep applies its judged-dimensional parts alongside from
 the cache):
 with the adjudicator enabled the decision runs two context-free judged passes — a
-parts pass over each fold-resolved content word (fold resolution anchors on the
-promoted store view; a part with more than one attested base folds only while a
-single base is live, and a part the attested table does not cover folds through a
+parts pass over each fold-resolved fan segment (a content word or a contiguous bigram;
+fold resolution anchors on the
+promoted store view; a multi-base part folds only onto its primary-sense base and only
+while that base is live, the residue routed to the phrase-context fold judge, and a part
+the attested table does not cover folds through a
 pinned variant class) and a compound pass reading the
 phrase as a named unit, a composition, or a phrase with no retrievable dimension —
-folded into `tags.DecideComposition`; without one only conjunction joints (`and`,
+folded into `tags.DecideComposition`, which disposes by the coarsest in-order cover over
+the fan; without one only conjunction joints (`and`,
 `or`, `vs`, `versus` — `textnorm.SplitJointTag`) split mechanically while other
 compounds pass whole. The reconciler re-uses the conjunction detector for stored
 tags and disposes them through the same decision. P4 is wider than
@@ -339,7 +346,7 @@ approximate it. “No blanket mechanical splitting” remains the rule for the n
 path; the adjudicated path approximates P4 per candidate.
 
 **S5 — admission.** The mechanics are the rubric judge (`subject_matter`,
-`not_person_place_work`, `atomic`, `not_form_genre`, plus the optional `defer`
+`not_person`, `atomic`, `not_form_genre`, plus the optional `defer`
 abstention), the parts pass that owns the `dimension` verdict the gate reads
 from its shared cache and stamps onto the row, the verdict cache, and the pinned
 decision over the features:
@@ -448,10 +455,10 @@ Ordered by what unlocks the rest, not by effort:
 8. **Corpus relativity — resolved (2026-09-19): global.** Mass, audits, and completeness
    use store-wide counts; grouping by document metadata is analysis-time only (definition
    §8.8).
-9. **The place carve-out** — the whitelist is a kept exception to the no-curated-lists
-   principle and remains P1's existing policy; separately, the observed vocabulary
-   recorded whitelisted countries judge-rejected on the criterion the carve-out
-   excepts — a bug under any standard.
+9. **Place policy** — there is no place carve-out: the country/continent whitelist is not a
+   validation gate, places are ordinary subject dimensions judged by dimensionality and
+   recurrence, and the seeded country/continent values serve as influence only. No facet
+   gate rejects a tag for being a sub-national place.
 10. **Measurement versioning** — a judge or prompt change is a measurement change; the
     design already pins `policy_version`/`TagQualityVersion`, so re-criteria implies
     re-judging and label-pool hygiene.
@@ -466,8 +473,8 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 | Incumbent component | Role under the model | What crosses the seam |
 |---|---|---|
 | Typed contract and prompt (`analyzer`) | the emission carrier — typed shape and negatives stay; dimension language and decomposition are added; coverage wording is pending | consumes the inventory and the canonical-form instruction; produces emissions and proposed names |
-| Facet gates (`SeparateFacets`) | unchanged policy surface (P1) | facet drops; the place whitelist until its bug is fixed |
-| Seeded vocabulary (`seed-tags.sql`, `seed-tag-aliases.sql`) | the starting inventory: re-derived from the specs (broad, atomic, house form) and extended, with the place list materialized as values and the recognized alternate spellings as alias rows; inserted with influence | consumed by suggestions and as anchors; never a validation list |
+| Facet gates (`SeparateFacets`) | narrowed policy surface (P1): persons and form/genre drop; the time-designation gate drops unseeded time designations | facet drops; places and works pass as ordinary candidates |
+| Seeded vocabulary (`seed-tags.sql`, `seed-tag-aliases.sql`) | the starting inventory: re-derived from the specs (broad, atomic, house form) and extended, with the place list and the centuries materialized as values and the recognized alternate spellings as alias rows; inserted with influence | consumed by suggestions and as anchors; never a validation list |
 | Consolidation bands (`policy`) | candidate generation only: identity and gate subjects; similarity ranks, never decides | consumes emissions; produces gate subjects |
 | Adjudicator and pair-verdict table | the same-intent gate reader; verdicts become evidence, never identity authority | consumes gate subjects; produces verdicts (features, labels) |
 | Merge review and dismissals | the canonicalization action surface: alias/merge dispositions, with review | consumes canonicalization worklists; produces alias/merge actions |

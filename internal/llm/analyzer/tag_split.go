@@ -6,12 +6,14 @@ import (
 	"strings"
 )
 
-// TagPartDimensionVersion pins the parts pass's criteria: the context-free dimensional question asked of
-// a value on its own, and the policy version of its cached verdict rows. It is the single value-keyed
-// dimension verdict the quality gate also reads (report N5), and a criteria or prompt change bumps it so
-// an older generation's verdicts never apply. v3 ports the emission prompt's house-form rule (lexicalized
-// derivations and gerunds stand) and adds the abstract-field clause (report N4).
-const TagPartDimensionVersion = "v3"
+// TagPartDimensionVersion pins the parts pass's criteria: the context-free dimensional question asked of a
+// value on its own, and the policy version of its cached verdict rows. It is the single value-keyed
+// dimension verdict the quality gate also reads, and a criteria or prompt change bumps it so an older
+// generation's verdicts never apply. v3 ports the emission prompt's house-form rule (lexicalized derivations
+// and gerunds stand) and adds the abstract-field clause. v4 fans the parts pass over the decomposition fan
+// rather than single content words: a multi-word bigram segment is now a value the pass judges, so the input
+// class changes and the cached v3 verdicts never apply.
+const TagPartDimensionVersion = "v4"
 
 // TagPartSystemMessage is the system prompt of the parts pass.
 const TagPartSystemMessage = "You are a tag-dimension classifier. Decide whether each value, on its own, is a subject a searcher would filter by."
@@ -151,10 +153,14 @@ func (s TagCompoundStatus) Valid() bool {
 // change bumps it so an older generation's verdicts never apply. v4 recorded the split-gate remediation
 // that changed what a row means: the features feeding the decision derive from the attested fold seam, the
 // decision maps a combined parts+compound reading branch-first (the held relational keep), and keeps carry
-// applied-alongside parts. v5 adds the deterministic period class (a period-shaped candidate keeps by fiat
-// and is never judged or dropped) and narrows the part-rejection degradation to all-parts-rejected (report
-// N1/N7); the judge's criteria text is unchanged.
-const TagSplitVersion = "v5"
+// applied-alongside parts. v5 narrows the part-rejection degradation to all-parts-rejected; the judge's
+// criteria text is unchanged. v6 replaces the deterministic period keep with the seed-bounded time policy: a
+// seeded period is a store application, an unseeded time designation is dropped on the emission and parts
+// paths, and composition rows record the resolved applied part names. v7 fans the decomposition over in-order
+// contiguous segments and disposes by the coarsest cover: a full multi-segment cover selects the combination
+// branch, and any failing segment keeps the compound whole with its survivors alongside. The judge's criteria
+// text is unchanged throughout.
+const TagSplitVersion = "v7"
 
 // TagCompoundSystemMessage is the system prompt of the compound pass.
 const TagCompoundSystemMessage = "You are a tag-taxonomy classifier. Decide what a compound phrase denotes."

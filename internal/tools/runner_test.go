@@ -158,6 +158,10 @@ func (m *mockContentAnalyzer) JudgeTagTranslations(_ context.Context, _ []string
 	return nil, nil
 }
 
+func (m *mockContentAnalyzer) JudgeTagPhraseFolds(_ context.Context, _ []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
+	return nil, nil
+}
+
 func (m *mockContentAnalyzer) Name() string { return "mock" }
 
 func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {

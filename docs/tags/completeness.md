@@ -121,8 +121,9 @@ Already enforced elsewhere; listed so this spec does not restate them:
   pre-split compound whose decomposition will produce the dimension) ·
   **pending-canonicalization** (a stored label that denotes the dimension under `14`'s
   rules but has not been swept) · **missing** · **gray**.
-- **The audit does not read compounds.** Whether a part applies is 13's branch
-  selection to make; the audit counts pending-split coverage and does not fill, so no
+- **The audit does not read compounds.** Whether a segment applies is 13's branch
+  selection to make; the audit counts pending-split coverage over the compound's
+  decomposition cover and does not fill, so no
   fill duplicates the split work. Metrics report explicit versus pending so
   retrieval-readiness is not overstated.
 - Repairs are evidence-recorded and reversible; attaching a label gives existence, not

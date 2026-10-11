@@ -37,14 +37,14 @@ type VerdictStore struct {
 
 // NewVerdictStore wires the store to its queries, judge runner, logger, and the model a fresh verdict row
 // records. promoted is the promoted store values' key set (Key(storeName)); a fresh false dimension
-// verdict on a promoted value is deferred rather than cached (report N4).
+// verdict on a promoted value is deferred rather than cached.
 func NewVerdictStore(queries *database.Queries, runner *tools.Runner, logger *log.Logger, model string, promoted map[string]struct{}) *VerdictStore {
 	return &VerdictStore{queries: queries, runner: runner, logger: logger, model: model, promoted: promoted}
 }
 
 // PartDimensionFeature reads a value's parts verdict into the quality gate's dimension feature: a real
 // verdict yields its answer, while an absent or abstained verdict is not a false answer — it reports
-// abstain so the caller defers instead of fabricating a failing signal (report N5). The parts pass is the
+// abstain so the caller defers instead of fabricating a failing signal. The parts pass is the
 // single owner of the dimension question, so every consumer reads this one mapping.
 func PartDimensionFeature(v PartVerdict, ok bool) (dimension bool, abstain bool) {
 	if !ok || v.Deferred {
@@ -68,10 +68,73 @@ func (s *VerdictStore) DimensionFeature(ctx context.Context, value string, docId
 	return dimension, abstain, nil
 }
 
+// runVerdictBatches drives one verdict family's uncached keys through its judge in bounded batches under
+// the policy every family observes: a transient failure retries once, a credit error aborts the whole run,
+// a truncated reply applies the entries it did return and leaves the missing indices to the caller's
+// abstention path, and a reply of the wrong length is discarded. judge answers one batch; apply persists
+// one answered key. The returned error is non-nil only for credit exhaustion. Parts, Compounds, and
+// PhraseFolds share it so their retry, credit, and salvage behavior cannot drift apart.
+func runVerdictBatches[K any, R any](
+	ctx context.Context,
+	s *VerdictStore,
+	reqID, version string,
+	uncached []K,
+	judge func(context.Context, []K) ([]R, error),
+	apply func(K, R) error,
+) error {
+	for i := 0; i < len(uncached); i += verdictBatchSize {
+		end := min(i+verdictBatchSize, len(uncached))
+		batch := uncached[i:end]
+		results, err := judge(ctx, batch)
+		if err != nil && retryableJudgeFailure(err) {
+			s.logger.Warn(reqID, "tag split[%s]: judge attempt failed, retrying once: %v", version, err)
+			results, err = judge(ctx, batch)
+		}
+		if err != nil {
+			if isCreditError(err) {
+				return err
+			}
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				s.logger.Warn(reqID, "tag split[%s]: judge failed for %d keys, deferring them: %v", version, len(batch), err)
+				continue
+			}
+			missing := make(map[int]bool, len(incomplete.Missing))
+			for _, idx := range incomplete.Missing {
+				missing[idx] = true
+			}
+			salvaged, deferred := 0, 0
+			for j, r := range results {
+				if j >= len(batch) || missing[j] {
+					deferred++
+					continue
+				}
+				if aerr := apply(batch[j], r); aerr != nil {
+					return aerr
+				}
+				salvaged++
+			}
+			s.logger.Warn(reqID, "tag split[%s]: partial reply, salvaged %d of %d keys and deferred %d (re-judged on re-emission): %v",
+				version, salvaged, len(batch), deferred, err)
+			continue
+		}
+		if len(results) != len(batch) {
+			s.logger.Warn(reqID, "tag split[%s]: judge returned %d verdicts for %d keys, deferring them", version, len(results), len(batch))
+			continue
+		}
+		for j, r := range results {
+			if aerr := apply(batch[j], r); aerr != nil {
+				return aerr
+			}
+		}
+	}
+	return nil
+}
+
 // Parts resolves each distinct resolved part value's dimensional verdict from the persisted cache or one
 // judged call over the uncached remainder, in bounded batches. Values the judge left unanswered are absent
-// from the result, so a candidate holding any of them folds to judge_unavailable. A non-nil error is returned
-// only for credit exhaustion.
+// from the result, so a candidate holding any of them folds to judge_unavailable. A non-nil error is
+// returned only for credit exhaustion.
 func (s *VerdictStore) Parts(ctx context.Context, values []string, docId int64, reqID string) (map[string]PartVerdict, error) {
 	verdicts := make(map[string]PartVerdict, len(values))
 	if len(values) == 0 {
@@ -93,55 +156,19 @@ func (s *VerdictStore) Parts(ctx context.Context, values []string, docId int64, 
 			uncached = append(uncached, value)
 		}
 	}
-	for i := 0; i < len(uncached); i += verdictBatchSize {
-		end := min(i+verdictBatchSize, len(uncached))
-		batch := uncached[i:end]
-		results, err := s.runner.JudgeTagParts(ctx, batch)
-		if err != nil && retryableJudgeFailure(err) {
-			s.logger.Warn(reqID, "tag split[%s]: part judge attempt failed, retrying once: %v", analyzer.TagPartDimensionVersion, err)
-			results, err = s.runner.JudgeTagParts(ctx, batch)
-		}
-		if err != nil {
-			if isCreditError(err) {
-				return nil, err
-			}
-			var incomplete *analyzer.IncompleteReplyError
-			if !errors.As(err, &incomplete) {
-				s.logger.Warn(reqID, "tag split[%s]: part judge failed for %q, deferring them: %v", analyzer.TagPartDimensionVersion, batch, err)
-				continue
-			}
-			missing := make(map[int]bool, len(incomplete.Missing))
-			for _, idx := range incomplete.Missing {
-				missing[idx] = true
-			}
-			salvaged, deferred := 0, 0
-			for j, r := range results {
-				if j >= len(batch) || missing[j] {
-					deferred++
-					continue
-				}
-				verdict, werr := s.writePartVerdict(ctx, docId, batch[j], r, reqID)
-				if werr != nil {
-					return nil, werr
-				}
-				verdicts[batch[j]] = verdict
-				salvaged++
-			}
-			s.logger.Warn(reqID, "tag split[%s]: partial part reply, salvaged %d of %d values and deferred %d (re-judged on re-emission): %v",
-				analyzer.TagPartDimensionVersion, salvaged, len(batch), deferred, err)
-			continue
-		}
-		if len(results) != len(batch) {
-			s.logger.Warn(reqID, "tag split[%s]: part judge returned %d verdicts for %d values, deferring them", analyzer.TagPartDimensionVersion, len(results), len(batch))
-			continue
-		}
-		for j, r := range results {
-			verdict, werr := s.writePartVerdict(ctx, docId, batch[j], r, reqID)
+	if err := runVerdictBatches(ctx, s, reqID, analyzer.TagPartDimensionVersion, uncached,
+		func(ctx context.Context, batch []string) ([]analyzer.TagPartResult, error) {
+			return s.runner.JudgeTagParts(ctx, batch)
+		},
+		func(value string, r analyzer.TagPartResult) error {
+			verdict, werr := s.writePartVerdict(ctx, docId, value, r, reqID)
 			if werr != nil {
-				return nil, werr
+				return werr
 			}
-			verdicts[batch[j]] = verdict
-		}
+			verdicts[value] = verdict
+			return nil
+		}); err != nil {
+		return nil, err
 	}
 	return verdicts, nil
 }
@@ -219,7 +246,7 @@ func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value 
 // settlePartFalse guards the destructive direction of a fresh part verdict: a model false on a value the
 // store already holds promoted is not cached — the store signal wins and the verdict defers to review — and
 // any other fresh false takes one corroborating sample before it is cached, so a single noisy rejection
-// cannot sweep the whole generation (report N4/N5). A true or abstained verdict, and a corroborated false,
+// cannot sweep the whole generation. A true or abstained verdict, and a corroborated false,
 // pass through unchanged.
 func (s *VerdictStore) settlePartFalse(ctx context.Context, value string, r analyzer.TagPartResult, reqID string) (analyzer.TagPartResult, error) {
 	if r.Dimensional || r.Defer {
@@ -270,6 +297,143 @@ func partVerdictFromRow(row database.LatestTagPartVerdictsForValuesRow, logger *
 	return v
 }
 
+// PhraseFoldKey identifies one residual phrase-context fold question: the phrase a part appears in, the
+// part, and the anchor store value the part might denote.
+type PhraseFoldKey struct {
+	Phrase string
+	Part   string
+	Anchor string
+}
+
+// PhraseFoldVerdict is one residual fold's resolved answer: a confirmed fold, or an abstention.
+type PhraseFoldVerdict struct {
+	Fold     bool
+	Deferred bool
+}
+
+// PhraseFolds resolves each residual phrase-context fold key from the persisted cache or judged calls over
+// the uncached remainder, in bounded batches, mirroring Parts. A confirmed fold or an abstention persists;
+// keys the judge left unanswered are absent from the result, so the caller leaves the part unfolded. A
+// non-nil error is returned only for credit exhaustion.
+func (s *VerdictStore) PhraseFolds(ctx context.Context, keys []PhraseFoldKey, docId int64, reqID string) (map[PhraseFoldKey]PhraseFoldVerdict, error) {
+	verdicts := make(map[PhraseFoldKey]PhraseFoldVerdict, len(keys))
+	if len(keys) == 0 {
+		return verdicts, nil
+	}
+	phraseSet := make(map[string]struct{}, len(keys))
+	phrases := make([]string, 0, len(keys))
+	wanted := make(map[PhraseFoldKey]bool, len(keys))
+	for _, k := range keys {
+		wanted[k] = true
+		if _, ok := phraseSet[k.Phrase]; ok {
+			continue
+		}
+		phraseSet[k.Phrase] = struct{}{}
+		phrases = append(phrases, k.Phrase)
+	}
+	rows, err := s.queries.LatestTagPhraseFoldVerdictsForPhrases(ctx, database.LatestTagPhraseFoldVerdictsForPhrasesParams{
+		CriteriaVersion: analyzer.TagPhraseFoldVersion,
+		Phrases:         phrases,
+	})
+	if err != nil {
+		s.logger.Error(reqID, "tag split[%s]: phrase fold cache lookup failed: %v", analyzer.TagPhraseFoldVersion, err)
+	}
+	for _, row := range rows {
+		key := PhraseFoldKey{Phrase: row.Phrase, Part: row.Part, Anchor: row.Anchor}
+		if !wanted[key] {
+			continue
+		}
+		verdicts[key] = phraseFoldVerdictFromRow(row, s.logger, reqID)
+	}
+	seen := make(map[PhraseFoldKey]bool, len(keys))
+	var uncached []PhraseFoldKey
+	for _, k := range keys {
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if _, ok := verdicts[k]; !ok {
+			uncached = append(uncached, k)
+		}
+	}
+	if err := runVerdictBatches(ctx, s, reqID, analyzer.TagPhraseFoldVersion, uncached,
+		func(ctx context.Context, batch []PhraseFoldKey) ([]analyzer.TagPhraseFoldResult, error) {
+			candidates := make([]analyzer.TagPhraseFoldCandidate, len(batch))
+			for j, k := range batch {
+				candidates[j] = analyzer.TagPhraseFoldCandidate{Index: j, Phrase: k.Phrase, Part: k.Part, Anchor: k.Anchor}
+			}
+			return s.runner.JudgeTagPhraseFolds(ctx, candidates)
+		},
+		func(key PhraseFoldKey, r analyzer.TagPhraseFoldResult) error {
+			verdicts[key] = s.writePhraseFoldVerdict(ctx, docId, key, r, reqID)
+			return nil
+		}); err != nil {
+		return nil, err
+	}
+	return verdicts, nil
+}
+
+// writePhraseFoldVerdict persists one fresh residual fold verdict, mirroring writePartVerdict: the first
+// writer's row wins on conflict.
+func (s *VerdictStore) writePhraseFoldVerdict(ctx context.Context, docId int64, key PhraseFoldKey, r analyzer.TagPhraseFoldResult, reqID string) PhraseFoldVerdict {
+	criteria, err := json.Marshal(r.Criteria())
+	if err != nil {
+		criteria = json.RawMessage("{}")
+	}
+	fresh := PhraseFoldVerdict{Fold: r.Fold, Deferred: r.Defer}
+	n, err := s.queries.InsertTagPhraseFoldEvent(ctx, database.InsertTagPhraseFoldEventParams{
+		DocumentID:      sql.NullInt64{Int64: docId, Valid: docId != 0},
+		Phrase:          key.Phrase,
+		Part:            key.Part,
+		Anchor:          key.Anchor,
+		Criteria:        criteria,
+		Fold:            r.Fold,
+		VerdictModel:    sql.NullString{String: s.model, Valid: s.model != ""},
+		CriteriaVersion: analyzer.TagPhraseFoldVersion,
+	})
+	if err != nil {
+		s.logger.Error(reqID, "tag split[%s]: phrase fold insert failed for %q/%q → %q: %v", analyzer.TagPhraseFoldVersion, key.Phrase, key.Part, key.Anchor, err)
+		return fresh
+	}
+	if n > 0 {
+		return fresh
+	}
+
+	rows, err := s.queries.LatestTagPhraseFoldVerdictsForPhrases(ctx, database.LatestTagPhraseFoldVerdictsForPhrasesParams{
+		CriteriaVersion: analyzer.TagPhraseFoldVersion,
+		Phrases:         []string{key.Phrase},
+	})
+	if err != nil || len(rows) == 0 {
+		if err != nil {
+			s.logger.Error(reqID, "tag split[%s]: phrase fold cache re-read after conflict failed: %v", analyzer.TagPhraseFoldVersion, err)
+		}
+		return fresh
+	}
+	for _, row := range rows {
+		if row.Part == key.Part && row.Anchor == key.Anchor {
+			return phraseFoldVerdictFromRow(row, s.logger, reqID)
+		}
+	}
+	return fresh
+}
+
+// phraseFoldVerdictFromRow reads a persisted phrase-fold row back into a verdict; the criteria JSON is
+// authoritative for the abstention, with the fold column as fallback.
+func phraseFoldVerdictFromRow(row database.LatestTagPhraseFoldVerdictsForPhrasesRow, logger *log.Logger, reqID string) PhraseFoldVerdict {
+	v := PhraseFoldVerdict{Fold: row.Fold}
+	var c analyzer.TagPhraseFoldCriteria
+	if err := json.Unmarshal(row.Criteria, &c); err != nil {
+		logger.Warn(reqID, "tag split[%s]: phrase fold criteria unreadable for %q/%q → %q, using the fold column: %v",
+			analyzer.TagPhraseFoldVersion, row.Phrase, row.Part, row.Anchor, err)
+		return v
+	}
+	if r, ok := c.Result(); ok {
+		v.Fold = r.Fold
+		v.Deferred = r.Defer
+	}
+	return v
+}
+
 // Compounds resolves each compound candidate's status from the persisted cache or one judged call over the
 // uncached remainder, in bounded batches, mirroring Parts. Candidates the judge left unanswered are absent
 // from the result, so they fold to judge_unavailable. A non-nil error is returned only for credit exhaustion.
@@ -294,51 +458,19 @@ func (s *VerdictStore) Compounds(ctx context.Context, candidates []string, docId
 			uncached = append(uncached, candidate)
 		}
 	}
-	for i := 0; i < len(uncached); i += verdictBatchSize {
-		end := min(i+verdictBatchSize, len(uncached))
-		batch := uncached[i:end]
-		results, err := s.runner.JudgeTagCompounds(ctx, batch)
-		if err != nil && retryableJudgeFailure(err) {
-			s.logger.Warn(reqID, "tag split[%s]: compound judge attempt failed, retrying once: %v", analyzer.TagSplitVersion, err)
-			results, err = s.runner.JudgeTagCompounds(ctx, batch)
-		}
-		if err != nil {
-			if isCreditError(err) {
-				return nil, err
-			}
-			var incomplete *analyzer.IncompleteReplyError
-			if !errors.As(err, &incomplete) {
-				s.logger.Warn(reqID, "tag split[%s]: compound judge failed for %q, deferring them: %v", analyzer.TagSplitVersion, batch, err)
-				continue
-			}
-			missing := make(map[int]bool, len(incomplete.Missing))
-			for _, idx := range incomplete.Missing {
-				missing[idx] = true
-			}
-			salvaged, deferred := 0, 0
-			for j, r := range results {
-				if j >= len(batch) || missing[j] {
-					deferred++
-					continue
-				}
-				verdicts[batch[j]] = s.writeCompoundVerdict(ctx, docId, batch[j], r, reqID)
-				salvaged++
-			}
-			s.logger.Warn(reqID, "tag split[%s]: partial compound reply, salvaged %d of %d candidates and deferred %d (re-judged on re-emission): %v",
-				analyzer.TagSplitVersion, salvaged, len(batch), deferred, err)
-			continue
-		}
-		if len(results) != len(batch) {
-			s.logger.Warn(reqID, "tag split[%s]: compound judge returned %d verdicts for %d candidates, deferring them", analyzer.TagSplitVersion, len(results), len(batch))
-			continue
-		}
-		for j, r := range results {
+	if err := runVerdictBatches(ctx, s, reqID, analyzer.TagSplitVersion, uncached,
+		func(ctx context.Context, batch []string) ([]analyzer.TagCompoundResult, error) {
+			return s.runner.JudgeTagCompounds(ctx, batch)
+		},
+		func(candidate string, r analyzer.TagCompoundResult) error {
 			if !r.Status.Valid() {
-				s.logger.Warn(reqID, "tag split[%s]: compound judge returned no status for %q", analyzer.TagSplitVersion, batch[j])
-				continue
+				s.logger.Warn(reqID, "tag split[%s]: compound judge returned no status for %q", analyzer.TagSplitVersion, candidate)
+				return nil
 			}
-			verdicts[batch[j]] = s.writeCompoundVerdict(ctx, docId, batch[j], r, reqID)
-		}
+			verdicts[candidate] = s.writeCompoundVerdict(ctx, docId, candidate, r, reqID)
+			return nil
+		}); err != nil {
+		return nil, err
 	}
 	return verdicts, nil
 }

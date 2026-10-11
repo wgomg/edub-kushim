@@ -24,20 +24,31 @@ func sleepAfterRequest(ctx context.Context, delaySeconds float64) {
 	}
 }
 
-// Output budgets per call type: the analysis family answers with one record
-// per document, judged steps answer with one small record per candidate.
-// The catalog's max_output_tokens is only a ceiling — the effective bound is
-// min(budget, ceiling) — and a budget applies even with no catalog entry.
-// The constants are loose: observed judge entries run ~40-80 tokens per
-// candidate.
+// Output budgets per call type: the analysis family answers with one record per document, judged steps
+// answer with one small record per candidate. The catalog's max_output_tokens is only a ceiling — the
+// effective bound is min(budget, ceiling) — and a budget applies even with no catalog entry. The constants
+// are loose: observed judge entries run ~40-80 tokens per candidate. The quality judge carries the widest
+// per-candidate envelope (index, term, four criteria, defer) and runs reasoning models whose reasoning
+// tokens share the output bound, so it gets its own larger budget; a 40-candidate batch must fit without
+// truncation.
 const (
 	analysisOutputBudget = 4096
 	judgedOutputBase     = 512
 	judgedOutputPerItem  = 128
+	qualityOutputBase    = 2048
+	qualityOutputPerItem = 256
 )
 
+// judgedOutputBudget is the one-field judged steps' budget: adjudication, parts, compounds, phrase folds,
+// identity, and translation.
 func judgedOutputBudget(n int) int {
 	return judgedOutputBase + judgedOutputPerItem*n
+}
+
+// qualityOutputBudget is the quality judge's budget: the wider rubric envelope, with headroom for the
+// reasoning tokens a reasoning model spends against the same output bound.
+func qualityOutputBudget(n int) int {
+	return qualityOutputBase + qualityOutputPerItem*n
 }
 
 // clampOutputBudget caps budget at the cataloged model's true maximum; with

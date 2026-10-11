@@ -125,6 +125,10 @@ func TestVerdictStore_SalvageAppliesPresentAndDefersMissing(t *testing.T) {
 			return []analyzer.TagCompoundResult{{Index: 0, Status: analyzer.TagCompoundComposition}, {Index: 1}},
 				&analyzer.IncompleteReplyError{Missing: []int{1}}
 		},
+		phraseFoldFn: func(_ context.Context, candidates []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
+			return []analyzer.TagPhraseFoldResult{{Index: 0, Fold: true}, {Index: 1}},
+				&analyzer.IncompleteReplyError{Missing: []int{1}}
+		},
 	}
 	store, q, docID := newTestVerdictStore(t, adj)
 	ctx := context.Background()
@@ -188,10 +192,53 @@ func TestVerdictStore_SalvageAppliesPresentAndDefersMissing(t *testing.T) {
 			t.Errorf("persisted compound rows = %v, want only the salvaged entry", rows)
 		}
 	})
+
+	t.Run("phrase folds", func(t *testing.T) {
+		phrase := fmt.Sprintf("civil war %d", docID)
+		present := PhraseFoldKey{Phrase: phrase, Part: "civil", Anchor: "state"}
+		missing := PhraseFoldKey{Phrase: phrase, Part: "civil", Anchor: "nation"}
+
+		verdicts, err := store.PhraseFolds(ctx, []PhraseFoldKey{present, missing}, docID, "")
+		if err != nil {
+			t.Fatalf("PhraseFolds: %v", err)
+		}
+		if v, ok := verdicts[present]; !ok || !v.Fold || v.Deferred {
+			t.Errorf("the returned key = %+v, want the judged fold", v)
+		}
+		if _, ok := verdicts[missing]; ok {
+			t.Errorf("the omitted key was applied instead of deferred: %+v", verdicts[missing])
+		}
+		if adj.phraseFoldCall != 1 {
+			t.Errorf("judge calls = %d, want 1 — an incomplete reply is never retried", adj.phraseFoldCall)
+		}
+
+		rows, err := q.LatestTagPhraseFoldVerdictsForPhrases(ctx, database.LatestTagPhraseFoldVerdictsForPhrasesParams{
+			CriteriaVersion: analyzer.TagPhraseFoldVersion,
+			Phrases:         []string{phrase},
+		})
+		if err != nil {
+			t.Fatalf("read back the salvaged verdicts: %v", err)
+		}
+		if len(rows) != 1 || rows[0].Part != "civil" || rows[0].Anchor != "state" || !rows[0].Fold {
+			t.Errorf("persisted phrase-fold rows = %v, want only the salvaged fold", rows)
+		}
+
+		// the salvaged answer is the cache: re-reading the judged key asks the judge nothing again
+		reread, err := store.PhraseFolds(ctx, []PhraseFoldKey{present}, docID, "")
+		if err != nil {
+			t.Fatalf("PhraseFolds re-read: %v", err)
+		}
+		if adj.phraseFoldCall != 1 {
+			t.Errorf("judge calls after the re-read = %d, want 1 — the cache answers the salvaged key", adj.phraseFoldCall)
+		}
+		if v, ok := reread[present]; !ok || !v.Fold {
+			t.Errorf("re-read key = %+v, want the cached fold", v)
+		}
+	})
 }
 
-// TestVerdictStore_PartFalseGuard pins the destructive-direction guard on a fresh part verdict (report
-// N4/N5): a false answer on a value the store already holds promoted is never persisted as a plain false —
+// TestVerdictStore_PartFalseGuard pins the destructive-direction guard on a fresh part verdict:
+// a false answer on a value the store already holds promoted is never persisted as a plain false —
 // the store signal wins and the verdict defers to review without a second sample — and any other fresh
 // false must be corroborated by a second sample before it is cached, deferring when the samples disagree.
 func TestVerdictStore_PartFalseGuard(t *testing.T) {

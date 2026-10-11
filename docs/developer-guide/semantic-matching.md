@@ -421,7 +421,7 @@ Each candidate's features are resolved by the pinned rule set
 (`tags.DecideAdmission`):
 
 - the judge's four rubric answers — `subject_matter`,
-  `not_person_place_work`, `atomic`, `not_form_genre` — plus its optional
+  `not_person`, `atomic`, `not_form_genre` — plus its optional
   `defer` abstention, from the verdict cache or a fresh judge call, together
   with the `dimension` verdict the parts pass owns (read from the shared parts
   cache, judged on a miss, and stamped onto the row); a missing or abstained
@@ -433,7 +433,7 @@ A judge abstention defers; two or more failing signals reject; exactly one
 defers to review (the gray band — no single signal decides); none admits. A
 rejection drops the tag for that document, and `Plan.DropTagNames` removes its
 registration and pending identity evidence before persist, so the name is never
-stored; it logs `tagquality[v5]: reject … (reason=corroborated_failures …)`.
+stored; it logs `tagquality[v6]: reject … (reason=corroborated_failures …)`.
 Defers are kept and logged too. A missing detail or similarity is absence of
 evidence, not a failing signal, so a well-judged string-shaped emission can
 still admit.
@@ -449,10 +449,9 @@ The judge input resolves in two steps:
    40 candidates per document for the uncached names. The prompt scopes the
    reduced document text (the same
    text the generator saw) to the `subject_matter` question; the other three
-   criteria are answered on the candidate alone (the dimension verdict is not
-   asked here — the parts pass supplies it), one line per candidate with
-   its term, typed category, and — for whitelisted countries/continents — an
-   explicit note that the tag must not be rejected for being a place.
+    criteria are answered on the candidate alone (the dimension verdict is not
+    asked here — the parts pass supplies it), one line per candidate with
+    its term and typed category.
 
 Fresh verdicts write a row with the judging model in `verdict_model` and the
 recorded outcome (`reject`/`defer`/`admit`); the partial unique index on
@@ -500,8 +499,8 @@ skipped). A name promotes when both hold:
 
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
-via `AddToStore` only after the commit (`tagquality[v5]: promote %q
-(docs=%d reason=%s rule_set=decision-v5 floor=10)`). Deferred and rejected
+via `AddToStore` only after the commit (`tagquality[v6]: promote %q
+(docs=%d reason=%s rule_set=decision-v6 floor=10)`). Deferred and rejected
 provisionals never promote here —
 they wait for review — and neither do held names: an identity-held name (a
 refused fold beside a live store value, derived from the latest

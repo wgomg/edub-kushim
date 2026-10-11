@@ -102,9 +102,13 @@ registration.
 they are pinned orthographic spelling variants (`-isation`/`-ization`,
 `-yse`/`-yze`, `-ogue`/`-og`, `-our`/`-or`, applied per token) or literal token
 permutations (the same tokens in a different order). The pair resolves as same-intent
-with no direction, so M4 picks the canonical label. Plural and other inflections,
+with no direction, so M4 picks the canonical label. Token permutation is whole-name
+canonicalization and is explicitly **not** the decomposition fan: it does not split a
+name into value spans the way atomicity §3.1 does. Plural and other inflections,
 mixed-language spellings, and morphological or function-word inversions stay with the
-judging body (J3), as does any pair the pinned table does not reach.
+judging body (J3), as does any pair the pinned table does not reach. The class is
+consulted at birth for every novel name, so a store-anchored orthographic or permutation
+twin resolves mechanically without a judge.
 
 ### 3.3 Judging body (LLM-adjudicated)
 
@@ -169,13 +173,19 @@ map exists in the mechanism (an operator override, if any, is configuration).
   and derived parts — and alias resolution runs whenever names are matched:
    suggestions, consolidation, and query input. A split-derived part may first
    resolve mechanically onto a **promoted** store label through the attested seam fold
-   (the generated WordNet pertainym table's adjective→noun pairs, or a pinned
-   variant class the table does not cover; a part with more than one attested base
-   folds only while a single base is a live store value, so a sibling sense present
-   in the store blocks the fold); provisional births are never seam anchors, so an
+   (the generated WordNet pertainym table's adjective→noun pairs, in WordNet sense
+   order, or a pinned variant class the table does not cover; a part with more than one
+   attested base folds mechanically only onto its **primary-sense** base, the table's
+   first entry, and only while that base is live — a live sibling sense neither
+   attracts nor blocks the fold); provisional births are never seam anchors, so an
   unattested near-spelling of an unjudged birth flows to the judging body instead of
-  being rewritten. Shape-based proposals reach only the judged path, where the gate
-  confirms them. The retrospective store sweep is D1's work, outside this spec.
+  being rewritten. A multi-base part whose primary-sense base is not live while
+  another attested base is is the residue the seam does not fold on a guess: it is
+  routed to a **phrase-context fold** judged call ("in this phrase, does this part
+  denote anchor X?"), cached per (phrase, part, anchor), which folds the part on a
+  confirmed answer and holds the compound for review on an abstention. Shape-based
+  proposals reach only the judged path, where the gate confirms them. The
+  retrospective store sweep is D1's work, outside this spec.
 - **Shared discipline.** Pinned criteria, per-candidate/pair caching, rule-set
   versioning, and gray-band deferral follow the existing adjudicator patterns; the
   mechanical body stays deterministic and idempotent.

@@ -364,18 +364,19 @@ func TestAnchoredFold(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := AnchoredFoldPromoted(tc.input, tc.storeNames); got != tc.want {
+			if got := AnchoredFold(tc.input, tc.storeNames, PromotedKeys(tc.storeNames)); got != tc.want {
 				t.Errorf("AnchoredFold(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestAnchoredFold_LiveView pins the seam's multi-base ambiguity rule against the full live store view the
-// emission path passes: a part with more than one attested base folds only while exactly one of its bases
-// is live, so a sibling sense that also exists in the store blocks the fold and the judged identity path
-// decides instead (report N6). The promoted-only callers collapse to the same rule with the promoted view
-// as the live view.
+// TestAnchoredFold_LiveView pins the seam's primary-sense rule against the live store view the emission
+// path passes: a part with more than one attested base folds mechanically only onto its primary-sense base
+// (the table's first entry, WordNet sense order) and only while that base is live — a live non-primary
+// sibling sense neither attracts nor blocks the fold, and the residue is left to the phrase-context judged
+// path. The promoted-only callers collapse to the same rule with the promoted view as the live
+// view.
 func TestAnchoredFold_LiveView(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -385,24 +386,24 @@ func TestAnchoredFold_LiveView(t *testing.T) {
 		want     string
 	}{
 		{
-			name:     "a live sibling sense blocks the fold",
-			input:    "civil",
-			promoted: map[string]string{"state": "state"},
-			live:     []string{"state", "country"},
-			want:     "",
-		},
-		{
-			name:     "a single live base still folds",
-			input:    "civil",
-			promoted: map[string]string{"state": "state"},
-			live:     []string{"state"},
-			want:     "state",
-		},
-		{
-			name:     "a live alternate name blocks the country adjective",
+			name:     "a multi-base part folds onto its live primary base",
 			input:    "german",
 			promoted: map[string]string{"germany": "germany"},
 			live:     []string{"germany", "deutschland"},
+			want:     "germany",
+		},
+		{
+			name:     "a live non-primary base does not attract the fold",
+			input:    "civil",
+			promoted: map[string]string{"state": "state"},
+			live:     []string{"state"},
+			want:     "",
+		},
+		{
+			name:     "the primary base must be live to fold",
+			input:    "german",
+			promoted: map[string]string{"germany": "germany"},
+			live:     []string{"deutschland"},
 			want:     "",
 		},
 		{
@@ -429,7 +430,7 @@ func TestAnchoredFold_LiveView(t *testing.T) {
 // TestPreferCanonical pins the birth-time canonical direction (docs/tags/canonical-form-and-identity.md
 // J4): an English house form wins over a non-English label in either order, a deterministic variant class
 // keeps resolving through the lexicographic tie-break because it carries no direction, and two labels the
-// language step cannot separate fall through to the tie-break (report N9/D28).
+// language step cannot separate fall through to the tie-break.
 func TestPreferCanonical(t *testing.T) {
 	cases := []struct {
 		name string
@@ -448,6 +449,48 @@ func TestPreferCanonical(t *testing.T) {
 				t.Errorf("PreferCanonical(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestVariantKey pins the two signatures the birth-time scan precomputes: a pinned variant pair always
+// shares one of them, and two names that share neither are never a pair — so the precomputed probe and the
+// per-pair VariantClass transform cannot disagree.
+func TestVariantKey(t *testing.T) {
+	related := []struct{ a, b string }{
+		{"color", "colour"},
+		{"analyse", "analyze"},
+		{"decolonisation", "decolonization"},
+		{"war civil", "civil war"},
+	}
+	for _, tc := range related {
+		if VariantClass(tc.a, tc.b) == "" {
+			t.Errorf("VariantClass(%q, %q) = \"\", want a pinned class before the key parity holds", tc.a, tc.b)
+		}
+		aOrth, aMulti := VariantKey(tc.a)
+		bOrth, bMulti := VariantKey(tc.b)
+		if aOrth != bOrth && aMulti != bMulti {
+			t.Errorf("VariantKey(%q) = (%q, %q) and VariantKey(%q) = (%q, %q), want a shared signature",
+				tc.a, aOrth, aMulti, tc.b, bOrth, bMulti)
+		}
+	}
+
+	unrelated := []struct{ a, b string }{
+		{"civil war", "economy"},
+		{"colour", "colourless"},
+		{"revolution", "evolution"},
+		{"20th century", "19th century"},
+		{"math", "maths"},
+	}
+	for _, tc := range unrelated {
+		if VariantClass(tc.a, tc.b) != "" {
+			t.Errorf("VariantClass(%q, %q) = %q, want \"\" for an unrelated pair", tc.a, tc.b, VariantClass(tc.a, tc.b))
+		}
+		aOrth, aMulti := VariantKey(tc.a)
+		bOrth, bMulti := VariantKey(tc.b)
+		if aOrth == bOrth || aMulti == bMulti {
+			t.Errorf("VariantKey(%q) = (%q, %q) and VariantKey(%q) = (%q, %q), unrelated names must share no signature",
+				tc.a, aOrth, aMulti, tc.b, bOrth, bMulti)
+		}
 	}
 }
 

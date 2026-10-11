@@ -446,6 +446,19 @@ type TagPartDimensionEvent struct {
 	VerdictAt     time.Time
 }
 
+type TagPhraseFoldEvent struct {
+	ID              int64
+	DocumentID      sql.NullInt64
+	Phrase          string
+	Part            string
+	Anchor          string
+	Criteria        json.RawMessage
+	Fold            bool
+	VerdictModel    sql.NullString
+	CriteriaVersion string
+	VerdictAt       time.Time
+}
+
 type TagQualityEvent struct {
 	ID            int64
 	DocumentID    int64

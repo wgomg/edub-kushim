@@ -138,29 +138,29 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 // unfiltered; criterion fields otherwise carry 'true', 'false' or
 // 'absent', and Verdict carries 'none', 'admit', 'defer' or 'reject'.
 type ProvisionalFilter struct {
-	SubjectMatter      string
-	Dimension          string
-	NotPersonPlaceWork string
-	Atomic             string
-	NotFormGenre       string
-	Defer              string
-	Verdict            string
+	SubjectMatter string
+	Dimension     string
+	NotPerson     string
+	Atomic        string
+	NotFormGenre  string
+	Defer         string
+	Verdict       string
 }
 
 // ListProvisional pages the not-yet-promoted tags with document counts,
 // keeping only the rows matching the filter.
 func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, limit, offset int32) ([]database.ListProvisionalTagsWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.ListProvisionalTagsWithDocumentCount(ctx, database.ListProvisionalTagsWithDocumentCountParams{
-		PolicyVersion:           analyzer.TagQualityVersion,
-		SubjectMatterState:      filter.SubjectMatter,
-		DimensionState:          filter.Dimension,
-		NotPersonPlaceWorkState: filter.NotPersonPlaceWork,
-		AtomicState:             filter.Atomic,
-		NotFormGenreState:       filter.NotFormGenre,
-		DeferState:              filter.Defer,
-		VerdictState:            filter.Verdict,
-		PageOffset:              offset,
-		PageLimit:               limit,
+		PolicyVersion:      analyzer.TagQualityVersion,
+		SubjectMatterState: filter.SubjectMatter,
+		DimensionState:     filter.Dimension,
+		NotPersonState:     filter.NotPerson,
+		AtomicState:        filter.Atomic,
+		NotFormGenreState:  filter.NotFormGenre,
+		DeferState:         filter.Defer,
+		VerdictState:       filter.Verdict,
+		PageOffset:         offset,
+		PageLimit:          limit,
 	})
 	if err != nil {
 		return nil, errs.FromDB(err, "list provisional tags")
@@ -171,14 +171,14 @@ func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, lim
 // CountProvisional counts the not-yet-promoted tags matching the filter.
 func (s *Tag) CountProvisional(ctx context.Context, filter ProvisionalFilter) (int64, error) {
 	count, err := s.client.Queries.CountProvisionalTags(ctx, database.CountProvisionalTagsParams{
-		PolicyVersion:           analyzer.TagQualityVersion,
-		SubjectMatterState:      filter.SubjectMatter,
-		DimensionState:          filter.Dimension,
-		NotPersonPlaceWorkState: filter.NotPersonPlaceWork,
-		AtomicState:             filter.Atomic,
-		NotFormGenreState:       filter.NotFormGenre,
-		DeferState:              filter.Defer,
-		VerdictState:            filter.Verdict,
+		PolicyVersion:      analyzer.TagQualityVersion,
+		SubjectMatterState: filter.SubjectMatter,
+		DimensionState:     filter.Dimension,
+		NotPersonState:     filter.NotPerson,
+		AtomicState:        filter.Atomic,
+		NotFormGenreState:  filter.NotFormGenre,
+		DeferState:         filter.Defer,
+		VerdictState:       filter.Verdict,
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "count provisional tags")

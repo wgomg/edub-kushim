@@ -218,7 +218,21 @@ func (r *Runner) compounds(snap *Snapshot, report *Report) []compound {
 	for _, t := range snap.Tags {
 		switch ClassifyShape(t.Name) {
 		case ShapeCompound:
-			out = append(out, compound{tag: t, label: r.reader.Canonical(t.Name), parts: DeriveParts(t.Name)})
+			// the retrospective decomposition mirrors the gate's coarsest in-order cover over store values:
+			// a contiguous segment already a store tag is preferred whole over its atomization. A compound
+			// whose words no store span covers keeps its content words, so the measurement still reports it.
+			content := DeriveParts(t.Name)
+			resolve := func(span string) (string, bool) {
+				if _, ok := snap.TagByName(span); ok {
+					return span, true
+				}
+				return "", false
+			}
+			parts := GreedyCover(content, resolve, true)
+			if len(parts) == 0 {
+				parts = content
+			}
+			out = append(out, compound{tag: t, label: r.reader.Canonical(t.Name), parts: parts})
 		case ShapeTooLong:
 			report.Skipped["too_long"]++
 		case ShapeNonEnglish:

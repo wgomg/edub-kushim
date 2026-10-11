@@ -345,7 +345,7 @@ func (l *LlmAnthropic) AnalyzeDocType(ctx context.Context, prevResult *AnalysisR
 // and duration. A parse failure carries the step, the model and a bounded
 // raw prefix; a typed-incomplete reply keeps its returned entries and is
 // labeled with the step so the caller can salvage them.
-func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
+func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt, label string, n int, budget func(int) int, parse func(string, int) (T, error)) (T, error) {
 	var zero T
 	start := time.Now()
 	defer func() {
@@ -360,7 +360,7 @@ func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt
 		[]anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
-		clampOutputBudget(l.caps, judgedOutputBudget(n)),
+		clampOutputBudget(l.caps, budget(n)),
 		0)
 
 	_, responseContent, err := l.doRequest(ctx, reqBody, label)
@@ -382,32 +382,38 @@ func judgedAnthropic[T any](ctx context.Context, l *LlmAnthropic, system, prompt
 
 // Adjudicate answers the same-intent pairs through the Anthropic API.
 func (l *LlmAnthropic) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
-	return judgedAnthropic(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), ParseAdjudicationResponse)
+	return judgedAnthropic(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), judgedOutputBudget, ParseAdjudicationResponse)
 }
 
 // JudgeTagParts scores values through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error) {
-	return judgedAnthropic(ctx, l, TagPartSystemMessage, BuildTagPartPrompt(values), "tag part judge", len(values), ParseTagPartResponse)
+	return judgedAnthropic(ctx, l, TagPartSystemMessage, BuildTagPartPrompt(values), "tag part judge", len(values), judgedOutputBudget, ParseTagPartResponse)
 }
 
 // JudgeTagCompounds classifies compounds through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error) {
-	return judgedAnthropic(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), ParseTagCompoundResponse)
+	return judgedAnthropic(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), judgedOutputBudget, ParseTagCompoundResponse)
 }
 
-// JudgeTagQuality scores candidates through the Anthropic API.
+// JudgeTagQuality scores candidates through the Anthropic API under the
+// quality judge's own wider budget.
 func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
-	return judgedAnthropic(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), ParseTagQualityResponse)
+	return judgedAnthropic(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), qualityOutputBudget, ParseTagQualityResponse)
 }
 
 // JudgeTagTranslations normalizes values to English through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error) {
-	return judgedAnthropic(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), ParseTagTranslationResponse)
+	return judgedAnthropic(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), judgedOutputBudget, ParseTagTranslationResponse)
+}
+
+// JudgeTagPhraseFolds answers the residual phrase-context fold questions through the Anthropic API.
+func (l *LlmAnthropic) JudgeTagPhraseFolds(ctx context.Context, candidates []TagPhraseFoldCandidate) ([]TagPhraseFoldResult, error) {
+	return judgedAnthropic(ctx, l, TagPhraseFoldSystemMessage, BuildTagPhraseFoldPrompt(candidates), "tag phrase fold judge", len(candidates), judgedOutputBudget, ParseTagPhraseFoldResponse)
 }
 
 // JudgeTagIdentity decides canonical forms through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
-	return judgedAnthropic(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), ParseTagIdentityResponse)
+	return judgedAnthropic(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), judgedOutputBudget, ParseTagIdentityResponse)
 }
 
 // Name identifies the Anthropic implementation.

@@ -280,10 +280,9 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		}
 
 		candidates := []analyzer.TagQualityCandidate{{
-			Index:            0,
-			Term:             e.name,
-			Category:         analyzer.TagCategoryOther,
-			WhitelistedPlace: analyzer.IsWhitelistedPlace(e.name),
+			Index:    0,
+			Term:     e.name,
+			Category: analyzer.TagCategoryOther,
 		}}
 		results, err := r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -301,7 +300,7 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		}
 
 		res := results[0]
-		// the parts pass owns the dimension question (report N5): resolve its verdict for this name and
+		// the parts pass owns the dimension question: resolve its verdict for this name and
 		// stamp it, so a re-judged provisional tag is not decided on a fabricated false dimension. An
 		// absent or abstained verdict defers.
 		partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model, nil)

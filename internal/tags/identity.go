@@ -31,8 +31,11 @@ import (
 // attested base folds only when exactly one base is a live store value, and a part that did not fold
 // through the attestation table may fold onto a pinned deterministic variant anchor) and adds the
 // house-form/language step to the birth-time canonical direction before the M4 tie-break. The store reset
-// truncates tag_identity_event, so no cached identity verdict survives to invalidate.
-const IdentityRuleSetVersion = "v8"
+// truncates tag_identity_event, so no cached identity verdict survives to invalidate. v9 replaces the seam's
+// exactly-one-live-base rule with the primary-sense rule (a multi-base part folds only onto its primary base,
+// the residue routed to the phrase-context judged path) and consults the pinned variant classes at birth, so
+// a store-anchored orthographic or permutation twin resolves mechanically without a judge.
+const IdentityRuleSetVersion = "v9"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -137,7 +140,6 @@ const (
 	CompositionReasonSplitDefer               = "split_defer"
 	CompositionReasonConflictingEvidence      = "conflicting_evidence"
 	CompositionReasonSampleDisagreement       = "sample_disagreement"
-	CompositionReasonPeriodClass              = "period_class"
 	CompositionReasonPartialParts             = "partial_parts"
 )
 
@@ -407,6 +409,16 @@ func sameTokenMultiset(a, b []string) bool {
 	slices.Sort(as)
 	slices.Sort(bs)
 	return slices.Equal(as, bs)
+}
+
+// VariantKey returns a normalized name's two pinned variant signatures: its orthographic canonical form and
+// its sorted token multiset. Two distinct names are a pinned variant pair (VariantClass != "") exactly when
+// they share one of these keys, so a caller comparing one name against a large name set can index the set's
+// keys once and probe in O(1) instead of running the per-pair transform for every comparison.
+func VariantKey(name string) (orthographic, multiset string) {
+	tokens := strings.Fields(name)
+	slices.Sort(tokens)
+	return orthographicForm(name), strings.Join(tokens, "\x00")
 }
 
 // Signature is a name's lemma and stem signatures
@@ -781,39 +793,57 @@ func ProposedMorphologicalFold(name string, storeNames map[string]string) string
 	return hit
 }
 
-// AnchoredFold resolves a split component through the promoted store view. A part with more than one
-// attested base is sense-ambiguous: it folds onto its anchor only when exactly one of its bases is a live
-// store value (promoted, provisional, or an alias), so a sibling sense's live row blocks the fold and the
-// judged identity path decides instead (report N6) — this removes the single-promoted-base lottery while
-// preserving the country-adjective folds (german→germany, russian→russia) whose alternate bases are not
-// live. A single-base part folds onto its promoted anchor through the shared storeAnchor rule; a part that
-// did not fold through the attestation table (attested.go) still folds when a promoted store label is a
-// pinned deterministic variant of it (M8 orthographic spelling or literal token permutation), resolved by
-// variantAnchor under the same ambiguity-safe rule. The attestation is the point: a pertainym relator
-// links an adjective and a noun that denote the same thing, so the seam folds only attested relations or
-// pinned variant classes and never infers a fold from bare shape
+// AnchoredFold resolves a split component through the promoted store view. A single-base part folds onto its
+// attested base through the shared storeAnchor rule. A part with more than one attested base is
+// sense-ambiguous: it folds mechanically only onto its primary-sense base (the attestation table's first
+// entry, which preserves WordNet sense order) and only when that base is live — a live non-primary sibling
+// sense no longer attracts the fold, and the residue (primary base not live, another base live) is left to
+// the phrase-context judged path (ResidualFoldAnchors). A part the attestation table does not
+// reach still folds when a promoted store label is a pinned deterministic variant of it (M8 orthographic
+// spelling or literal token permutation), resolved by variantAnchor under the same ambiguity-safe rule. The
+// attestation is the point: a pertainym relator links an adjective and a noun that denote the same thing, so
+// the seam folds only attested relations or pinned variant classes and never infers a fold from bare shape
 // (docs/tags/canonical-form-and-identity.md V2/J1/M8). Shape-based proposals (ProposedDerivationalFold,
 // ProposedMorphologicalFold) still reach the judged identity path's fold gate, which confirms them before
 // use; split-component resolution consults this before per-document filtering, and births never rename
 // through it. promotedNames maps Key(storeName) to the promoted store's name; liveNames is the live store
-// key set the multi-base ambiguity check reads, which the caller must supply. provisional births are
-// absent from promotedNames and so anchor only through the judged identity path.
+// key set the primary-base liveness check reads, which the caller must supply. provisional births are absent
+// from promotedNames and so anchor only through the judged identity path.
 func AnchoredFold(name string, promotedNames map[string]string, liveNames map[string]struct{}) string {
 	bases := attestedBases(name)
-	if len(bases) > 1 && liveBaseCount(bases, liveNames) > 1 {
-		return ""
+	if len(bases) == 0 {
+		return variantAnchor(name, promotedNames)
 	}
-	if anchor := storeAnchor(bases, promotedNames); anchor != "" {
+	if len(bases) > 1 {
+		if _, live := liveNames[Key(bases[0])]; !live {
+			return ""
+		}
+	}
+	if anchor := storeAnchor(bases[:1], promotedNames); anchor != "" {
 		return anchor
 	}
 	return variantAnchor(name, promotedNames)
 }
 
-// AnchoredFoldPromoted resolves a split component against the promoted view alone, the rule for a caller
-// that does not load provisional births (the reconcile sweep): the promoted view is the live view, so a
-// multi-base part's sibling must be promoted to block the fold.
-func AnchoredFoldPromoted(name string, promotedNames map[string]string) string {
-	return AnchoredFold(name, promotedNames, PromotedKeys(promotedNames))
+// ResidualFoldAnchors returns the live attested bases of a multi-base part whose primary-sense base is not
+// live: the phrase-context fold call's candidate anchors. It returns nil when the part is not
+// multi-base, when its primary base is live (the seam folds mechanically), or when no other base is live
+// (the part falls to the judged identity path). liveNames is the live store key set.
+func ResidualFoldAnchors(name string, liveNames map[string]struct{}) []string {
+	bases := attestedBases(name)
+	if len(bases) < 2 {
+		return nil
+	}
+	if _, live := liveNames[Key(bases[0])]; live {
+		return nil
+	}
+	var anchors []string
+	for _, base := range bases[1:] {
+		if _, live := liveNames[Key(base)]; live {
+			anchors = append(anchors, base)
+		}
+	}
+	return anchors
 }
 
 // PromotedKeys returns the Key set of a Key→name store view, the promoted guard the verdict store reads.
@@ -833,17 +863,6 @@ func PromotedGuardKeys(names map[string]struct{}) map[string]struct{} {
 		set[Key(name)] = struct{}{}
 	}
 	return set
-}
-
-// liveBaseCount counts the attested bases that are live store values.
-func liveBaseCount(bases []string, liveNames map[string]struct{}) int {
-	count := 0
-	for _, base := range bases {
-		if _, ok := liveNames[Key(base)]; ok {
-			count++
-		}
-	}
-	return count
 }
 
 // variantAnchor resolves a name onto a promoted store label related by a pinned deterministic variant
@@ -937,7 +956,7 @@ func isEnglishName(name string) bool {
 
 // DetectNonEnglish reports whether a name has any token that is not English per tokenEnglish; it is the
 // complement of isEnglishName over non-empty names. It is a candidate signal, not a verdict — the judged
-// translation pass confirms it and returns English jargon unchanged (report N2/D27).
+// translation pass confirms it and returns English jargon unchanged.
 func DetectNonEnglish(name string) bool {
 	fields := strings.Fields(name)
 	if len(fields) == 0 {

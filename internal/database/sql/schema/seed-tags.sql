@@ -415,7 +415,14 @@ FROM (VALUES
     (399, 'south ossetia'),
     (400, 'taiwan'),
     (401, 'transnistria'),
-    (402, 'western sahara')
+    (402, 'western sahara'),
+    (403, '15th century'),
+    (404, '16th century'),
+    (405, '17th century'),
+    (406, '18th century'),
+    (407, '19th century'),
+    (408, '20th century'),
+    (409, '21st century')
 ) AS seed(ord, name)
 ON CONFLICT (name) DO UPDATE SET promoted_at = now()
 WHERE tag.promoted_at IS NULL;

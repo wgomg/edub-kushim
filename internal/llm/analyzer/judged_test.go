@@ -487,7 +487,7 @@ func TestJudgedAnthropic_ParseErrorCarriesModelAndRaw(t *testing.T) {
 
 // partialQualityResponse answers the first of two candidates: the reply is
 // valid JSON with a hole, the omission class a capped model produces.
-const partialQualityResponse = `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
+const partialQualityResponse = `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
 
 func twoQualityCandidates() []TagQualityCandidate {
 	return []TagQualityCandidate{

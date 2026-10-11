@@ -112,6 +112,15 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 	}
 
 	ix := tags.NewNameIndex(nil)
+	// index the store vocabulary's pinned variant signatures once, so the per-candidate scan probes maps
+	// instead of running the two-token transform for every (candidate, store name) pair
+	storeOrthographic := make(map[string][]string, len(in.DBNames))
+	storeMultiset := make(map[string][]string, len(in.DBNames))
+	for existing := range in.DBNames {
+		orthographic, multiset := tags.VariantKey(existing)
+		storeOrthographic[orthographic] = append(storeOrthographic[orthographic], existing)
+		storeMultiset[multiset] = append(storeMultiset[multiset], existing)
+	}
 	flagged := make(map[string]bool)
 	for i, cand := range candidates {
 		if cand.resolved != "" {
@@ -127,9 +136,27 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			cand.fold = fold
 			flagged[cand.name] = true
 		}
+		// a shape relation or a pinned variant class (orthographic spelling or literal token permutation)
+		// makes the candidate a pair; the variant class resolves mechanically downstream with no judge, so a
+		// store-anchored twin never forks the vocabulary. The variant names are the precomputed signature
+		// hits, never a per-pair transform.
+		candOrthographic, candMultiset := tags.VariantKey(cand.name)
+		variantHits := make(map[string]struct{})
+		for _, name := range storeOrthographic[candOrthographic] {
+			if name != cand.name {
+				variantHits[name] = struct{}{}
+			}
+		}
+		for _, name := range storeMultiset[candMultiset] {
+			if name != cand.name {
+				variantHits[name] = struct{}{}
+			}
+		}
 		for existing := range in.DBNames {
 			if !ix.ShapeRelated(cand.name, existing) {
-				continue
+				if _, hit := variantHits[existing]; !hit {
+					continue
+				}
 			}
 			flagged[cand.name] = true
 			addPair(cand.name, existing, 0, 0)
@@ -138,6 +165,14 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			flagged[cand.name] = true
 			addPair(cand.name, decisions[i].Target, decisions[i].Sim, decisions[i].RunnerUpSim)
 		}
+	}
+	candidateVariantKeys := make(map[string][2]string, len(candidates))
+	for _, c := range candidates {
+		if c.resolved != "" {
+			continue
+		}
+		orthographic, multiset := tags.VariantKey(c.name)
+		candidateVariantKeys[c.name] = [2]string{orthographic, multiset}
 	}
 	for i, a := range candidates {
 		if a.resolved != "" {
@@ -148,7 +183,8 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			if b.resolved != "" || a.name == b.name {
 				continue
 			}
-			if !ix.ShapeRelated(a.name, b.name) {
+			ka, kb := candidateVariantKeys[a.name], candidateVariantKeys[b.name]
+			if !ix.ShapeRelated(a.name, b.name) && ka[0] != kb[0] && ka[1] != kb[1] {
 				continue
 			}
 			flagged[a.name] = true
@@ -503,9 +539,6 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 	if len(pairs) == 0 {
 		return nil
 	}
-	if !a.config.Enricher.TagAdjudicator.Enabled || !a.runner.HasTagAdjudicator() {
-		return nil
-	}
 
 	queries := make([]string, 0, len(pairs))
 	for _, p := range pairs {
@@ -543,6 +576,9 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		return nil
 	}
 
+	// the pinned variant classes resolve mechanically as same with no judge call, whether or not an
+	// adjudicator is configured: M8 canonicalization is judgment-free, so the birth path must not fork the
+	// vocabulary behind an adjudicator gate
 	judged := make([]*identityPair, 0, len(unresolved))
 	for _, p := range unresolved {
 		class := tags.VariantClass(p.query, p.target)
@@ -555,6 +591,15 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		p.decided = true
 		a.logger.Info(reqID, "identity[%s]: deterministic %s variant %q ~ %q resolved same",
 			tags.IdentityRuleSetVersion, class, p.query, p.target)
+	}
+
+	if !a.config.Enricher.TagAdjudicator.Enabled || !a.runner.HasTagAdjudicator() {
+		for _, p := range unresolved {
+			if p.decided {
+				a.recordIdentityPair(ctx, docID, p, reqID)
+			}
+		}
+		return nil
 	}
 
 	evidence := a.identityPairEvidence(ctx, documentID, judged, reqID)

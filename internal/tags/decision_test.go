@@ -3,7 +3,7 @@ package tags
 import "testing"
 
 func TestDecideAdmission(t *testing.T) {
-	admissible := AdmissionFeatures{SubjectMatter: true, Dimension: true, NotPersonPlaceWork: true, Atomic: true, NotFormGenre: true}
+	admissible := AdmissionFeatures{SubjectMatter: true, Dimension: true, NotPerson: true, Atomic: true, NotFormGenre: true}
 
 	cases := []struct {
 		name        string

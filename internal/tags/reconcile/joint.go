@@ -76,31 +76,58 @@ func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, 
 		return
 	}
 
-	resolved := make(map[*jointEntry][]string, len(entries))
-	seenValues := make(map[string]bool)
-	var values []string
+	liveNames := tags.PromotedKeys(promotedNames)
+	contentByEntry := make(map[*jointEntry][]string, len(entries))
+	singlesByEntry := make(map[*jointEntry][]string, len(entries))
+	var foldKeys []admission.PhraseFoldKey
 	for _, e := range entries {
-		parts := tags.DeriveParts(e.name)
-		rparts := make([]string, 0, len(parts))
-		for _, part := range parts {
-			resolvedPart := part
-			if anchor := tags.AnchoredFoldPromoted(part, promotedNames); anchor != "" && anchor != part {
-				resolvedPart = anchor
-			}
-			rparts = append(rparts, resolvedPart)
-			if !seenValues[resolvedPart] {
-				seenValues[resolvedPart] = true
-				values = append(values, resolvedPart)
-			}
-		}
-		resolved[e] = rparts
+		// the same time-gated, fold-resolved singles the emission gate builds, so the fan covers the same
+		// words on both sides and the prospective and retrospective readings agree
+		content, singles := admission.ResolveContentSingles(e.name, promotedNames, liveNames)
+		foldKeys = append(foldKeys, admission.PhraseFoldKeys(content, singles, tags.HouseForm(e.name), liveNames)...)
+		contentByEntry[e] = content
+		singlesByEntry[e] = singles
 	}
 
 	store := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model, tags.PromotedKeys(promotedNames))
+	foldVerdicts := map[admission.PhraseFoldKey]admission.PhraseFoldVerdict{}
+	if len(foldKeys) > 0 {
+		// residual phrase-context folds, the same rule and cache the emission gate uses, so a fold the gate
+		// confirmed reads the same in the sweep and neither side asks the judge a different question
+		verdicts, ferr := store.PhraseFolds(ctx, foldKeys, 0, "")
+		if ferr != nil {
+			r.logger.Error("", "tag reconcile: phrase fold verdicts: %v", ferr)
+		}
+		foldVerdicts = verdicts
+	}
+	fans := make(map[*jointEntry]admission.Fan, len(entries))
+	seedFans := make([]admission.Fan, 0, len(entries))
+	for _, e := range entries {
+		content, singles := contentByEntry[e], singlesByEntry[e]
+		singles, deferred := admission.ApplyPhraseFolds(content, singles, tags.HouseForm(e.name), foldVerdicts, liveNames)
+		fan := admission.BuildFan(content, singles, liveNames).WithDeferred(deferred)
+		fans[e] = fan
+		seedFans = append(seedFans, fan)
+	}
+
+	seenValues := make(map[string]bool)
+	var values []string
+	for _, e := range entries {
+		for _, seg := range tags.DeriveSegments(e.name) {
+			resolved := fans[e].Resolved[seg]
+			if resolved == "" || seenValues[resolved] {
+				continue
+			}
+			seenValues[resolved] = true
+			values = append(values, resolved)
+		}
+	}
+
 	partVerdicts, err := store.Parts(ctx, values, 0, "")
 	if err != nil {
 		r.logger.Error("", "tag reconcile: part verdicts: %v", err)
 	}
+	admission.SeedStoreValues(partVerdicts, seedFans, liveNames)
 	candidates := make([]string, 0, len(entries))
 	for _, e := range entries {
 		candidates = append(candidates, e.name)
@@ -111,13 +138,15 @@ func (r *Reconciler) decideJointSplits(ctx context.Context, cfg *config.Config, 
 	}
 
 	for _, e := range entries {
-		features := admission.CompositionFeatures(resolved[e], partVerdicts, compoundVerdicts[e.name], promotedNames)
+		fan := fans[e]
+		parts, coverComplete := admission.CoverParts(fan, liveNames, partVerdicts)
+		features := admission.CompositionFeatures(parts, coverComplete, fan.DeferredSet(), partVerdicts, compoundVerdicts[e.name], promotedNames)
 		decision := tags.DecideComposition(features)
 		if decision.Disposition != tags.CompositionSplit {
 			e.skipReason = decision.Reason
 			continue
 		}
-		components := validate(resolved[e])
+		components := validate(parts)
 		if components == nil {
 			e.skipReason = "split_ambiguous"
 			continue

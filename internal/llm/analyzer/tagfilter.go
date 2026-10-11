@@ -21,7 +21,7 @@ const (
 
 // TagFilter carries the token sets the per-document hard checks run against:
 // the analysis people's names, the known people, and the document type names.
-// There is no title-containment echo rule (report N3), so a tag the title
+// There is no title-containment echo rule, so a tag the title
 // already states is kept and the tag set stays complete.
 type TagFilter struct {
 	nameTokens     map[string]struct{}

@@ -399,12 +399,14 @@ type mockAdjudicator struct {
 	compoundFn      func(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error)
 	qualityFn       func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)
 	translationFn   func(ctx context.Context, values []string) ([]analyzer.TagTranslationResult, error)
+	phraseFoldFn    func(ctx context.Context, candidates []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error)
 	called          int
 	identityCall    int
 	partCall        int
 	compoundCall    int
 	qualityCall     int
 	translationCall int
+	phraseFoldCall  int
 }
 
 func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []analyzer.TypeRef, _ []analyzer.TypeRef, _ []string) (*analyzer.AnalysisResult, error) {
@@ -459,6 +461,14 @@ func (m *mockAdjudicator) JudgeTagTranslations(ctx context.Context, values []str
 	m.translationCall++
 	if m.translationFn != nil {
 		return m.translationFn(ctx, values)
+	}
+	return nil, nil
+}
+
+func (m *mockAdjudicator) JudgeTagPhraseFolds(ctx context.Context, candidates []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
+	m.phraseFoldCall++
+	if m.phraseFoldFn != nil {
+		return m.phraseFoldFn(ctx, candidates)
 	}
 	return nil, nil
 }
@@ -796,7 +806,7 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Fatalf("create test document: %v", err)
 	}
 
-	criteria := json.RawMessage(`{"subject_matter":true,"dimension":true,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`)
+	criteria := json.RawMessage(`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`)
 
 	n, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
@@ -889,12 +899,12 @@ func TestDecisionFromStored(t *testing.T) {
 	rubric := func(subject, dimension, notPersonPlace, atomic, deferJudge bool) json.RawMessage {
 		return json.RawMessage(`{"subject_matter":` + boolJSON(subject) +
 			`,"dimension":` + boolJSON(dimension) +
-			`,"not_person_place_work":` + boolJSON(notPersonPlace) +
+			`,"not_person":` + boolJSON(notPersonPlace) +
 			`,"atomic":` + boolJSON(atomic) +
 			`,"not_form_genre":true` +
 			`,"defer":` + boolJSON(deferJudge) + `}`)
 	}
-	legacy := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person_place_work":true,"appropriately_broad":true}`)
+	legacy := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person":true,"appropriately_broad":true}`)
 
 	cases := []struct {
 		name       string
@@ -940,12 +950,12 @@ func TestApplyTagQuality(t *testing.T) {
 		results := make([]analyzer.TagQualityResult, len(candidates))
 		for i, c := range candidates {
 			results[i] = analyzer.TagQualityResult{
-				Index:              i,
-				SubjectMatter:      true,
-				Dimension:          true,
-				NotPersonPlaceWork: true,
-				Atomic:             true,
-				NotFormGenre:       true,
+				Index:         i,
+				SubjectMatter: true,
+				Dimension:     true,
+				NotPerson:     true,
+				Atomic:        true,
+				NotFormGenre:  true,
 			}
 			if c.Term == "phase conjugation" {
 				results[i].SubjectMatter = false
@@ -1037,7 +1047,7 @@ func TestApplyTagQuality(t *testing.T) {
 		if _, err := q2.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 			DocumentID:    docID,
 			TagName:       "cached candidate",
-			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":false,"not_person_place_work":true,"atomic":true,"not_form_genre":true,"defer":false}`),
+			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":false,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`),
 			Pass:          false,
 			Outcome:       sql.NullString{String: "reject", Valid: true},
 			VerdictModel:  sql.NullString{String: "seed-model", Valid: true},
@@ -1121,12 +1131,12 @@ func TestApplyTagQuality_PartialSalvage(t *testing.T) {
 		missing := -1
 		for i, c := range candidates {
 			results[i] = analyzer.TagQualityResult{
-				Index:              i,
-				SubjectMatter:      true,
-				Dimension:          true,
-				NotPersonPlaceWork: true,
-				Atomic:             true,
-				NotFormGenre:       true,
+				Index:         i,
+				SubjectMatter: true,
+				Dimension:     true,
+				NotPerson:     true,
+				Atomic:        true,
+				NotFormGenre:  true,
 			}
 			switch c.Term {
 			case "salvage reject":
@@ -1209,12 +1219,12 @@ func TestApplyTagQuality_BatchesJudgeCalls(t *testing.T) {
 				t.Errorf("candidate index = %d at position %d, want a batch-local index", c.Index, i)
 			}
 			results[i] = analyzer.TagQualityResult{
-				Index:              i,
-				SubjectMatter:      true,
-				Dimension:          true,
-				NotPersonPlaceWork: true,
-				Atomic:             true,
-				NotFormGenre:       true,
+				Index:         i,
+				SubjectMatter: true,
+				Dimension:     true,
+				NotPerson:     true,
+				Atomic:        true,
+				NotFormGenre:  true,
 			}
 		}
 		return results, nil
@@ -1313,7 +1323,7 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 	}
 	q, db := database.NewTestQueries(t)
 	t.Cleanup(func() { db.Close() })
-	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event", "tag_composition_event"} {
+	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event", "tag_composition_event", "tag_phrase_fold_event"} {
 		if _, err := db.ExecContext(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("reset %s: %v", table, err)
 		}
@@ -1880,13 +1890,15 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		if !reflect.DeepEqual(got, []string{"mexico", "revolution"}) {
 			t.Errorf("DecomposeTags = %v, want the fold-resolved parts", got)
 		}
+		// the fan adds the literal bigram: it is judged too, so a bigram value such as `civil war` can carry
+		// its own dimensional verdict
 		for _, v := range judged {
-			if v != "mexico" && v != "revolution" {
-				t.Errorf("parts pass judged %q, want the resolved values only", v)
+			if v != "mexico" && v != "revolution" && v != "mexican revolution" {
+				t.Errorf("parts pass judged %q, want the fan members only", v)
 			}
 		}
-		if len(judged) != 2 {
-			t.Errorf("parts pass judged %v, want the two resolved values", judged)
+		if len(judged) != 3 {
+			t.Errorf("parts pass judged %v, want the two resolved singles and the literal bigram", judged)
 		}
 	})
 
@@ -2164,74 +2176,128 @@ func TestAdjudicateIdentityPairs_CreditErrorEscapes(t *testing.T) {
 	adjAssertEqual(t, adj.called, 1, "credit errors are not retried")
 }
 
-// TestDecomposeTags_PeriodClassDeterministic pins the split gate's deterministic period class (report N1):
-// a house numeric period keeps whole under the period_class reason with no parts or compound judge call —
-// a model verdict could otherwise drop it as no_dimension — and it never decomposes, while a longer
-// period phrasing keeps its judged path.
-func TestDecomposeTags_PeriodClassDeterministic(t *testing.T) {
+// TestDecomposeTags_StoreExistingPeriodIsFiatSkip pins the seed-bounded period policy: a
+// seeded period is a store value applied whole — never judged, never decomposed, no parts alongside — and
+// the unseeded period shapes are dropped by the emission-path time gate before the split gate sees them.
+func TestDecomposeTags_StoreExistingPeriodIsFiatSkip(t *testing.T) {
 	adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
 	a, docID := newSplitAdjudicator(t, adj, nil)
 	filter := analyzer.NewTagFilter(nil, nil, nil)
 	ctx := context.Background()
+	storeKeys := map[string]struct{}{tags.Key("20th century"): {}}
 
-	t.Run("an ordinal period keeps without a model call", func(t *testing.T) {
-		got, rows, err := a.DecomposeTags(ctx, []string{"20th century"}, nil, nil, filter, docID, "")
+	got, rows, err := a.DecomposeTags(ctx, []string{"20th century"}, storeKeys, nil, filter, docID, "")
+	if err != nil {
+		t.Fatalf("DecomposeTags: %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"20th century"}) {
+		t.Errorf("DecomposeTags = %v, want the stored period kept whole", got)
+	}
+	if len(rows) != 0 {
+		t.Errorf("composition rows = %+v, want none for a fiat store application", rows)
+	}
+	if adj.partCall != 0 || adj.compoundCall != 0 {
+		t.Errorf("judge calls = %d/%d, want none for a store-existing period", adj.partCall, adj.compoundCall)
+	}
+}
+
+// TestPlanIdentity_OrthographicVariantResolvesWithoutJudge pins the birth-time consultation of the pinned
+// variant classes: an orthographic twin of a store name becomes a pair with no similarity band and no shape
+// relation — the candidate is under the morphological proposer's length bound and shares no lemma — and the
+// class resolves it with no judge call, so the twin never forks the vocabulary into two provisional names.
+func TestPlanIdentity_OrthographicVariantResolvesWithoutJudge(t *testing.T) {
+	// the candidate name is unique to this test, so no identity row another test leaves can answer its
+	// cached pair and mask the pair generation
+	a, _, adj := newTestAdjudicator(t)
+
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"color"},
+		DBNames: map[string]struct{}{"colour": {}},
+	}, "")
+
+	adjAssertEqual(t, adj.called, 0, "a deterministic variant must not call the judge")
+	if len(plan.Aliases) != 1 {
+		t.Fatalf("aliases = %+v, want the twin aliased onto the lexically smaller variant", plan.Aliases)
+	}
+	adjAssertEqual(t, plan.Aliases[0].AliasName, "colour", "the store name is the loser")
+	adjAssertEqual(t, plan.Aliases[0].Canonical, "color", "the lexically smaller variant wins")
+	adjAssertEqual(t, plan.Aliases[0].RemoveExistingTag, true, "a store name that becomes an alias leaves its row")
+	if len(plan.Registrations) != 1 {
+		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+	}
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Name, "color", "the candidate registers under its own name")
+	adjAssertEqual(t, reg.Disposition, tags.DispositionRegister, "the candidate registers, not aliases")
+	adjAssertEqual(t, reg.Provisional, false, "a decided variant pair leaves no pending registration")
+	adjAssertEqual(t, len(plan.Evidence), 0, "a decided pair mints no pending evidence")
+}
+
+// TestDecomposeTags_TimeDesignationPartDropped pins the derived-parts time gate: an unseeded month is pruned
+// from the fan, so the parts pass never judges the time question and the kept compound applies only the
+// surviving segment alongside — while a month the store already holds is exempt and reaches the parts pass.
+func TestDecomposeTags_TimeDesignationPartDropped(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an unseeded month never reaches the parts pass", func(t *testing.T) {
+		var judged []string
+		adj := &mockAdjudicator{
+			partFn: func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+				judged = append(judged, values...)
+				return partsDimensional(context.Background(), values)
+			},
+			compoundFn: compoundsStatus(analyzer.TagCompoundNamedUnit),
+		}
+		a, docID := newSplitAdjudicator(t, adj, nil)
+		filter := analyzer.NewTagFilter(nil, nil, nil)
+
+		got, rows, err := a.DecomposeTags(ctx, []string{"october revolution"}, nil, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}
-		if !reflect.DeepEqual(got, []string{"20th century"}) {
-			t.Errorf("DecomposeTags = %v, want the period kept whole", got)
+		if !reflect.DeepEqual(got, []string{"october revolution", "revolution"}) {
+			t.Errorf("DecomposeTags = %v, want the compound kept whole with revolution alongside", got)
+		}
+		if !reflect.DeepEqual(judged, []string{"revolution"}) {
+			t.Errorf("parts pass judged %v, want only the non-time segments", judged)
 		}
 		if len(rows) != 1 {
-			t.Fatalf("composition rows = %d, want 1 period row", len(rows))
+			t.Fatalf("composition rows = %d, want 1", len(rows))
 		}
-		if rows[0].Disposition != tags.CompositionKeep || rows[0].Reason != tags.CompositionReasonPeriodClass {
-			t.Errorf("row = %s/%s, want keep/%s", rows[0].Disposition, rows[0].Reason, tags.CompositionReasonPeriodClass)
+		if rows[0].Disposition != tags.CompositionKeep {
+			t.Errorf("Disposition = %s, want keep", rows[0].Disposition)
 		}
-		if rows[0].CriteriaVersion != analyzer.TagSplitVersion {
-			t.Errorf("criteria version = %q, want %q", rows[0].CriteriaVersion, analyzer.TagSplitVersion)
-		}
-		if len(rows[0].Parts) != 0 {
-			t.Errorf("parts = %v, want none — a period does not decompose", rows[0].Parts)
-		}
-		if adj.partCall != 0 || adj.compoundCall != 0 {
-			t.Errorf("judge calls = %d/%d, want none for a deterministic class", adj.partCall, adj.compoundCall)
+		if !reflect.DeepEqual(rows[0].Parts, []string{"revolution"}) {
+			t.Errorf("row Parts = %v, want only the surviving segment", rows[0].Parts)
 		}
 	})
 
-	t.Run("a spelled ordinal reaches the class through the house form", func(t *testing.T) {
-		_, rows, err := a.DecomposeTags(ctx, []string{"twentieth century"}, nil, nil, filter, docID, "")
-		if err != nil {
-			t.Fatalf("DecomposeTags: %v", err)
+	t.Run("a store-held month is exempt and judged", func(t *testing.T) {
+		var judged []string
+		adj := &mockAdjudicator{
+			partFn: func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+				judged = append(judged, values...)
+				return partsDimensional(context.Background(), values)
+			},
+			compoundFn: compoundsStatus(analyzer.TagCompoundNamedUnit),
 		}
-		if len(rows) != 1 || rows[0].Reason != tags.CompositionReasonPeriodClass {
-			t.Fatalf("rows = %+v, want one period_class row", rows)
-		}
-		if rows[0].Candidate != "twentieth century" {
-			t.Errorf("candidate = %q, want the emitted spelling", rows[0].Candidate)
-		}
-		if adj.partCall != 0 || adj.compoundCall != 0 {
-			t.Errorf("judge calls = %d/%d, want none for a deterministic class", adj.partCall, adj.compoundCall)
-		}
-	})
+		a, docID := newSplitAdjudicator(t, adj, nil)
+		filter := analyzer.NewTagFilter(nil, nil, nil)
+		storeKeys := map[string]struct{}{tags.Key("october"): {}}
 
-	t.Run("a three-token period phrasing stays judged", func(t *testing.T) {
-		_, rows, err := a.DecomposeTags(ctx, []string{"early 20th century"}, nil, nil, filter, docID, "")
+		got, _, err := a.DecomposeTags(ctx, []string{"october revolution"}, storeKeys, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}
-		for _, row := range rows {
-			if row.Reason == tags.CompositionReasonPeriodClass {
-				t.Errorf("row for %q = %s, only the two-token shape is the class", row.Candidate, row.Reason)
-			}
+		if !reflect.DeepEqual(got, []string{"october revolution", "october", "revolution"}) {
+			t.Errorf("DecomposeTags = %v, want the exempt month judged and applied alongside", got)
 		}
-		if adj.partCall == 0 || adj.compoundCall == 0 {
-			t.Errorf("judge calls = %d/%d, want the phrasing judged through both passes", adj.partCall, adj.compoundCall)
+		if !reflect.DeepEqual(judged, []string{"october", "revolution", "october revolution"}) {
+			t.Errorf("parts pass judged %v, want the whole fan including the exempt month", judged)
 		}
 	})
 }
 
-// TestApplyTagQuality_ForceDefer pins the language guard's gate contract (report N2/D27): a value the
+// TestApplyTagQuality_ForceDefer pins the language guard's gate contract: a value the
 // translation pass could not resolve stays on the document under a defer decision with its own reason so
 // the review queue sees it, and it never reaches a judge — a foreign value can be neither admitted nor
 // rejected while it waits for review.
@@ -2243,11 +2309,11 @@ func TestApplyTagQuality_ForceDefer(t *testing.T) {
 		results := make([]analyzer.TagQualityResult, len(candidates))
 		for i := range candidates {
 			results[i] = analyzer.TagQualityResult{
-				Index:              i,
-				SubjectMatter:      true,
-				NotPersonPlaceWork: true,
-				Atomic:             true,
-				NotFormGenre:       true,
+				Index:         i,
+				SubjectMatter: true,
+				NotPerson:     true,
+				Atomic:        true,
+				NotFormGenre:  true,
 			}
 		}
 		return results, nil
@@ -2283,8 +2349,8 @@ func TestApplyTagQuality_ForceDefer(t *testing.T) {
 	adjAssertEqual(t, adj.partCall, 0, "a held value never reaches the parts pass")
 }
 
-// TestApplyTagQuality_MissingPartsVerdictDefers pins the abstain contract of the single dimension owner
-// (report N5): when the parts pass returns no verdict the gate defers instead of stamping a fabricated
+// TestApplyTagQuality_MissingPartsVerdictDefers pins the abstain contract of the single dimension owner:
+// when the parts pass returns no verdict the gate defers instead of stamping a fabricated
 // false. With one genuine rubric failure a fabricated dimension would corroborate into a reject, turning a
 // parts-judge outage into a drop.
 func TestApplyTagQuality_MissingPartsVerdictDefers(t *testing.T) {
@@ -2295,11 +2361,11 @@ func TestApplyTagQuality_MissingPartsVerdictDefers(t *testing.T) {
 		results := make([]analyzer.TagQualityResult, len(candidates))
 		for i := range candidates {
 			results[i] = analyzer.TagQualityResult{
-				Index:              i,
-				SubjectMatter:      true,
-				NotPersonPlaceWork: false,
-				Atomic:             true,
-				NotFormGenre:       true,
+				Index:         i,
+				SubjectMatter: true,
+				NotPerson:     false,
+				Atomic:        true,
+				NotFormGenre:  true,
 			}
 		}
 		return results, nil
@@ -2331,7 +2397,7 @@ func TestApplyTagQuality_MissingPartsVerdictDefers(t *testing.T) {
 	adjAssertEqual(t, adj.qualityCall, 1, "the rubric still ran")
 }
 
-// TestResolveLanguages pins the language guard's rewrite (report N2/D27): detected foreign values are
+// TestResolveLanguages pins the language guard's rewrite: detected foreign values are
 // replaced in place by their judged English canonical form — including the tag details the category
 // feature reads — an already-English value and a store-existing value pass through untouched, and a value
 // the judge could not resolve stays in the pending set the gate holds for review.

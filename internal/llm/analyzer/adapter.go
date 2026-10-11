@@ -57,11 +57,15 @@ type ContentAnalyzer interface {
 	JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
 	// JudgeTagQuality considers the document text for the subject-matter criterion and the tag alone for
 	// the remaining criteria, answering the rubric and the judge's abstention. The dimension question is
-	// not asked here: the parts pass owns it and the gate stamps its verdict (report N5).
+	// not asked here: the parts pass owns it and the gate stamps its verdict.
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
 	// JudgeTagTranslations returns each value's English canonical form, or the value unchanged when it is
-	// already English: the language guard's judged translation (report N2).
+	// already English: the language guard's judged translation.
 	JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
+	// JudgeTagPhraseFolds decides whether each part, in the context of its phrase, denotes the candidate
+	// anchor value: the residual phrase-context fold the seam asks when a multi-base part's primary-sense
+	// base is not live while another attested base is.
+	JudgeTagPhraseFolds(ctx context.Context, candidates []TagPhraseFoldCandidate) ([]TagPhraseFoldResult, error)
 	// JudgeTagIdentity decides the canonical written form of candidate
 	// tags: folds, denotation preservation, conventional form.
 	JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)

@@ -46,9 +46,9 @@ from it.
   change is specified. Where the definition has consequences for existing machinery (§7),
   those consequences are stated conceptually so a later, separate plan can implement
   them.
-- **Not a facet-boundary decision.** Persons, works, and form/genre are owned by other
-  facets (`People`, title/works, `document_type`), and places follow the existing
-  country/continent policy with its whitelist. This document does not reopen those
+- **Not a facet-boundary decision.** Persons and form/genre are owned by other
+  facets (`People`, `document_type`); works and places are ordinary subject candidates
+  under the tag facet. This document does not reopen the person and genre
   decisions; it constrains only what the **tag facet** may hold.
 - **Not a hierarchy or typed-relations design.** Tag-to-tag relationship architectures
   are a separate concern. The definition here is intentionally flat: it says what a tag
@@ -129,7 +129,9 @@ A pre-existing failure taxonomy maps onto the same split:
   to the document; useless as a shared key.
 - **F2 — form/genre as topic:** `literary anthology`, `personal letters` — describing
   what the document *is*, which the `document_type` facet already owns.
-- **F3 — place leaks:** `newfoundland`, `libya` — facet violations.
+- **F3 — place handling:** `newfoundland`, `libya` — ordinary subject candidates, not
+  facet violations: a sub-national place is judged by the dimension test and either
+  recurs as a value or stays a pending candidate.
 - **F4 — wrong-granularity device tags:** `bail spring replacement`, `calculator
   teardown` — legitimate repair-corpus topics born at a granularity that never recurs
   while broad covering tags already exist.
@@ -257,8 +259,10 @@ preconditions here too:
 A string is a tag in this system iff it satisfies all five:
 
 1. **Facet ownership.** It classifies subject matter — what the document is *about*. It
-   is not a person, not a work, not a form/genre (those have their own facets), and not a
-   place outside the existing country/continent policy.
+   is not a person, not a form/genre (those have their own facets). Works are ordinary
+   subject candidates pending a future works facet, and places are ordinary subject
+   dimensions decided by dimensionality and recurrence rather than a country/continent
+   validation whitelist.
 2. **Dimensionality.** It is a value on a dimension of content-meaning: the kind of thing
    a searcher would use as a filter, alone or in combination, expecting other documents
    to share it. This is the "broad by design" property: a value too specific to recur is
@@ -362,8 +366,9 @@ uses 10 as its promotion minimum; axis health in a mature vocabulary wants highe
 for the core).
 
 **(P1) Facet ownership** — precondition, not a set test: `t` belongs to the subject
-facet; persons, works, form/genre, and out-of-policy places are excluded by the existing
-facet machinery. The formalization below applies only within the subject facet.
+facet; persons and form/genre are excluded by the existing facet machinery. Works and
+places are subject candidates judged by the properties below. The
+formalization below applies only within the subject facet.
 
 **(P2) Mass (recurrence)** —
 
@@ -382,8 +387,9 @@ variant classes observed in the vocabulary — singular/plural, `-isation`/`-iza
 order, digit/word, mixed-language forms — are expected to satisfy `S(t) ≈ S(u)` under
 complete tagging and are therefore canonicality candidates, not separate values.
 
-**(P4) Atomicity / reconstructibility** — for a candidate `c` with parts
-`p₁, …, p_k`:
+**(P4) Atomicity / reconstructibility** — for a candidate `c` whose content sequence has a
+decomposition cover of segments `p₁, …, p_k` drawn from the in-order contiguous fan
+(atomicity §3.1):
 
     reconstructible(c)  ⟺  S(c) ≈ S(p₁) ∩ … ∩ S(p_k)
 
@@ -492,7 +498,7 @@ This section states the verdicts the definition yields for the observed classes.
 | Both-parts-exist compounds: `sql programming`, `chemistry education` | `S(c) ≈` the parts' intersection | **split** |
 | Thesis compressions (F1): `racial scapegoating` | names no dimension; extension ≈ singleton | **drop** |
 | Form/genre (F2): `literary anthology`, `personal letters` | facet violation (`document_type` owns it) | **drop from tags** (facet machinery) |
-| Places (F3): `newfoundland`, `libya` | facet policy | **drop** per existing place policy |
+| Places (F3): `newfoundland`, `libya` | ordinary subject dimensions | **judged** by the dimension test; a sub-national place recurs or stays a pending candidate, never a facet reject |
 | Singular/plural, orthographic, inverted twins | same extension, different labels | **canonicalize** (alias/merge) |
 | Normalization artifacts: `st century`, `argentina s`, `s`, `g` | malformed labels; no dimension | **repair or drop** |
 | Generic containers: `use`, `thought`, `knowledge`, `irony` | no dimension; `|S(t)|` small or semantically empty | **drop** (or leave below mass) |
@@ -519,8 +525,11 @@ Two consequences that a pure admission policy would miss:
 
 ### 5.3 What this section does not re-open
 
-Persons, works, form/genre, and the place whitelist remain governed by their existing
-facet decisions. The definition constrains the subject-tag facet only; the fact that
+Persons and form/genre remain governed by their existing facet decisions. Works and
+places are ordinary subject candidates under the tag facet: works are judged on the
+standard criteria pending a future works facet, and places are judged by
+dimensionality and recurrence without a validation whitelist. The definition
+constrains the subject-tag facet only; the fact that
 `foucault` (a person) lives provisionally as a tag is a facet-enforcement gap under
 existing policy, not a new question here.
 

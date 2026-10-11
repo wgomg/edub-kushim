@@ -335,12 +335,12 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
 	var filter curation.ProvisionalFilter
 	fields := map[string]*string{
-		"subject_matter":        &filter.SubjectMatter,
-		"dimension":             &filter.Dimension,
-		"not_person_place_work": &filter.NotPersonPlaceWork,
-		"atomic":                &filter.Atomic,
-		"not_form_genre":        &filter.NotFormGenre,
-		"defer":                 &filter.Defer,
+		"subject_matter": &filter.SubjectMatter,
+		"dimension":      &filter.Dimension,
+		"not_person":     &filter.NotPerson,
+		"atomic":         &filter.Atomic,
+		"not_form_genre": &filter.NotFormGenre,
+		"defer":          &filter.Defer,
 	}
 	states := map[string]string{"pass": "true", "fail": "false", "absent": "absent"}
 
@@ -596,12 +596,12 @@ type DeletedTagListResponse struct {
 // TagQualityCriteriaView is the API view of the judge's rubric answers;
 // a nil answer had no signal in the stored payload.
 type TagQualityCriteriaView struct {
-	SubjectMatter      *bool `json:"subject_matter"`
-	Dimension          *bool `json:"dimension"`
-	NotPersonPlaceWork *bool `json:"not_person_place_work"`
-	Atomic             *bool `json:"atomic"`
-	NotFormGenre       *bool `json:"not_form_genre"`
-	Defer              *bool `json:"defer"`
+	SubjectMatter *bool `json:"subject_matter"`
+	Dimension     *bool `json:"dimension"`
+	NotPerson     *bool `json:"not_person"`
+	Atomic        *bool `json:"atomic"`
+	NotFormGenre  *bool `json:"not_form_genre"`
+	Defer         *bool `json:"defer"`
 }
 
 // TagQualityVerdictInfo is the latest recorded quality verdict for a

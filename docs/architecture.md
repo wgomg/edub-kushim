@@ -255,8 +255,9 @@ The enrichment pipeline:
    gated by `SeparateFacets` and every drop is logged (`tags[facet]: drop …`): `form_genre` tags
    (what the document *is*, as opposed to its subject matter) are dropped because that facet
    belongs to `document_type`; `person` tags are dropped because people have their own facet;
-   `work` tags are dropped as non-vocabulary; `place` tags survive only as countries or
-   continents from the embedded whitelist, so cities, provinces, and regions are rejected.
+   `work` and `place` tags are ordinary subject candidates and pass. A deterministic
+   time-designation gate then drops a year, decade, month, month+year, or unseeded ordinal
+   period unit the store does not hold.
    `topic`/`other` and untyped emissions pass through ungated.
 5. **Post-LLM Tag Consolidation and Identity** — Normalized tags are ranked
    against canonical tag embeddings via `Rank` (the matcher returns candidates
@@ -308,7 +309,7 @@ The enrichment pipeline:
    and stamped onto the row) plus the emission's deterministic
    signals (a detail annotated `other`, and a best store similarity below the
    internal `no_anchor_similarity` 0.60 cut). The rubric asks
-   `subject_matter`, `not_person_place_work`, `atomic` and
+   `subject_matter`, `not_person`, `atomic` and
    `not_form_genre`, and offers `defer` as an abstention, while a missing or
    abstained parts verdict defers rather than counting as a failing dimension; the decision admits
    when nothing fails, defers on a lone failing signal (or the judge's

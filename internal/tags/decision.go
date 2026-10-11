@@ -34,14 +34,14 @@ func (o AdmissionOutcome) String() string {
 // caller cannot establish stays false and never counts as failing —
 // absence of evidence is not evidence.
 type AdmissionFeatures struct {
-	SubjectMatter      bool
-	Dimension          bool
-	NotPersonPlaceWork bool
-	Atomic             bool
-	NotFormGenre       bool
-	JudgeDefer         bool
-	CategoryOther      bool
-	NoAnchor           bool
+	SubjectMatter bool
+	Dimension     bool
+	NotPerson     bool
+	Atomic        bool
+	NotFormGenre  bool
+	JudgeDefer    bool
+	CategoryOther bool
+	NoAnchor      bool
 }
 
 // The reasons an admission decision carries into the logs: a judge
@@ -77,7 +77,7 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 	for _, failed := range []bool{
 		!f.SubjectMatter,
 		!f.Dimension,
-		!f.NotPersonPlaceWork,
+		!f.NotPerson,
 		!f.Atomic,
 		!f.NotFormGenre,
 		f.CategoryOther,
@@ -177,8 +177,10 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // feature set and the pinned combination rules are unchanged, and the bump keeps the promote log's stamp
 // rule_set=decision-%s traceable to the judging generation. v4 rides the criteria-v4 generation the same
 // way. v5 rides the parts-v3/quality-v5 generation (the parts pass owning the dimension question and the
-// language guard, report N4/N5/N2), the feature set and the pinned combination rules unchanged.
-const DecisionRuleSetVersion = "v5"
+// language guard), the feature set and the pinned combination rules unchanged. v6 rides the quality-v6
+// generation: the not_person_place_work feature becomes not_person (the place and work components leave the
+// rubric), the combination rules unchanged.
+const DecisionRuleSetVersion = "v6"
 
 // RecurrenceFloor is the promotion minimum of
 // docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live

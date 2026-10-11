@@ -459,7 +459,7 @@ func (l *LlmOpenAiCompatible) buildRequestMessages(system, user, assistant strin
 // fails as an output-cap error; a parse failure carries the step, the model
 // and a bounded raw prefix; a typed-incomplete reply keeps its returned
 // entries and is labeled with the step so the caller can salvage them.
-func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, prompt, label string, n int, parse func(string, int) (T, error)) (T, error) {
+func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, prompt, label string, n int, budget func(int) int, parse func(string, int) (T, error)) (T, error) {
 	var zero T
 	start := time.Now()
 	defer func() {
@@ -470,7 +470,7 @@ func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, pr
 		return zero, err
 	}
 
-	maxOutput := clampOutputBudget(l.caps, judgedOutputBudget(n))
+	maxOutput := clampOutputBudget(l.caps, budget(n))
 	reqBody := l.buildRequestBody(system, prompt, "", 0, maxOutput)
 
 	chatResp, err := l.doRequest(ctx, reqBody)
@@ -503,32 +503,38 @@ func judgedOpenAI[T any](ctx context.Context, l *LlmOpenAiCompatible, system, pr
 
 // Adjudicate answers the same-intent pairs through the compatible API.
 func (l *LlmOpenAiCompatible) Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error) {
-	return judgedOpenAI(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), ParseAdjudicationResponse)
+	return judgedOpenAI(ctx, l, AdjudicationSystemMessage, BuildAdjudicationPrompt(pairs), "tag adjudication", len(pairs), judgedOutputBudget, ParseAdjudicationResponse)
 }
 
 // JudgeTagParts scores values through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error) {
-	return judgedOpenAI(ctx, l, TagPartSystemMessage, BuildTagPartPrompt(values), "tag part judge", len(values), ParseTagPartResponse)
+	return judgedOpenAI(ctx, l, TagPartSystemMessage, BuildTagPartPrompt(values), "tag part judge", len(values), judgedOutputBudget, ParseTagPartResponse)
 }
 
 // JudgeTagCompounds classifies compounds through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error) {
-	return judgedOpenAI(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), ParseTagCompoundResponse)
+	return judgedOpenAI(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), judgedOutputBudget, ParseTagCompoundResponse)
 }
 
-// JudgeTagQuality scores candidates through the compatible API.
+// JudgeTagQuality scores candidates through the compatible API under the
+// quality judge's own wider budget.
 func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {
-	return judgedOpenAI(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), ParseTagQualityResponse)
+	return judgedOpenAI(ctx, l, TagQualitySystemMessage, BuildTagQualityPrompt(text, candidates), "tag quality judge", len(candidates), qualityOutputBudget, ParseTagQualityResponse)
 }
 
 // JudgeTagTranslations normalizes values to English through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error) {
-	return judgedOpenAI(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), ParseTagTranslationResponse)
+	return judgedOpenAI(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), judgedOutputBudget, ParseTagTranslationResponse)
+}
+
+// JudgeTagPhraseFolds answers the residual phrase-context fold questions through the compatible API.
+func (l *LlmOpenAiCompatible) JudgeTagPhraseFolds(ctx context.Context, candidates []TagPhraseFoldCandidate) ([]TagPhraseFoldResult, error) {
+	return judgedOpenAI(ctx, l, TagPhraseFoldSystemMessage, BuildTagPhraseFoldPrompt(candidates), "tag phrase fold judge", len(candidates), judgedOutputBudget, ParseTagPhraseFoldResponse)
 }
 
 // JudgeTagIdentity decides canonical forms through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error) {
-	return judgedOpenAI(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), ParseTagIdentityResponse)
+	return judgedOpenAI(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), judgedOutputBudget, ParseTagIdentityResponse)
 }
 
 // Name identifies the OpenAI-compatible implementation.

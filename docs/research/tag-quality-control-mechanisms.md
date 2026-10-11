@@ -204,14 +204,14 @@ containment. Hard gates belong **only** where classification is unambiguous — 
 confusion — and their signal is the generator's own per-tag self-classification,
 not any curated list:
 
-- **self-classification enforcement — kills F2 and F3.** The `category` field of
+- **self-classification enforcement — kills F2.** The `category` field of
   the §3.1 typed output: the model's in-context judgment of whether each tag names
   a subject, a form/genre, a place, or a person. Enforcement is a deterministic
   string comparison on an already-parsed field: `form_genre` is not born as a
   topical tag (its information already lives in the `document_type` facet, or an
-  explicit genre facet per §7.1); `person` is not born either (persons already
-  have the People facet); `place` is born only when the term denotes a country or
-  a continent (§7.2).
+  explicit genre facet per §7.1), and `person` is not born either (persons already
+  have the People facet); `place` and `work` are ordinary subject candidates and
+  are born.
 
 A curated form-heading list or a gazetteer would be wrong twice over. It would be
 **wrong by construction**: form-vs-topic is a property of the tag *relative to the
@@ -228,13 +228,11 @@ rotting invisibly in a list. That the field can be gated on at all rests on §2.
 asymmetry: the same model that cannot reliably *obey* "never emit places" while
 generating freely (§1, F3) can *classify* its own emission under a forced choice.
 
-The place branch is the one curated set this design accepts: a fixed,
-document-independent whitelist of countries and continents. It does not decide
-whether a term is a place — the model's `category` does that — only whether a
-`place` is of tag-worthy scope (a country or continent) rather than a
-sub-national one. Being bounded and universal, it lacks the document-relative
-failure modes that rule out a form-heading list, and a miss is a visible drop
-on the enrichment log rather than a silent no-op.
+Places are not curated: the design carries no country/continent whitelist and no place
+branch. A `place` emission is an ordinary subject candidate judged by dimensionality and
+recurrence like any other, so cities, provinces, and regions are neither rejected nor
+privileged by a fixed set — the same content-driven stance that rules out a form-heading
+list applies to places too.
 
 Everything fuzzier should feed a *score*, not a hard reject — and the score's
 inputs are pattern classes of the language, not curated word lists:
@@ -279,7 +277,7 @@ judged on decomposed binary criteria (per the criteria-decomposition effect [5])
 
 1. subject matter, not form/genre?
 2. standard, widely-recognized terminology — not a per-document coinage?
-3. not a person, place, or work?
+3. not a person?
 4. appropriately broad for a shared vocabulary?
 
 This is the LLM-as-a-judge pattern [31] with the verification-scaling levers of

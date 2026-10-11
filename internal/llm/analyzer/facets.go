@@ -104,19 +104,15 @@ func classifyCategory(tag, category string, docTypes map[string]struct{}) (strin
 		return "model_self_classification", true
 	case TagCategoryPerson:
 		return "people_facet", true
-	case TagCategoryWork:
-		return "forbidden_category", true
-	case TagCategoryPlace:
-		if !IsWhitelistedPlace(tag) {
-			return "non_whitelisted_place", true
-		}
 	}
 	return "", false
 }
 
-// SeparateFacets drops tags that belong to other facets: people, works,
-// non-whitelisted places, and form-or-genre tags that restate the
-// document type. Tags without a parsed detail pass through.
+// SeparateFacets drops tags that belong to other facets: people, and
+// form-or-genre tags that restate the document type. Places and works are
+// ordinary subject candidates: a `place` or `work` annotation
+// is informational and never a drop reason. Tags without a parsed detail
+// pass through.
 func SeparateFacets(tags []string, details []TagDetail, docTypeNames []string) ([]string, []FacetDrop) {
 	if len(details) == 0 {
 		return tags, nil

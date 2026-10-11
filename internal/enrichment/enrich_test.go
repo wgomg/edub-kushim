@@ -215,6 +215,10 @@ func (r *suggestionRecorder) JudgeTagTranslations(context.Context, []string) ([]
 	return nil, nil
 }
 
+func (r *suggestionRecorder) JudgeTagPhraseFolds(context.Context, []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
+	return nil, nil
+}
+
 func (r *suggestionRecorder) Name() string { return "suggestion-recorder" }
 
 // TestEnrich_SuggestionInjectionBar drives one enrichment pass to the
@@ -439,10 +443,10 @@ func TestPruneRejectedParts(t *testing.T) {
 			want:     []string{},
 		},
 		{
-			name:    "a surviving part keeps the emitted spelling, not its output name",
+			name:    "a surviving part records its applied output name",
 			parts:   []string{"Labour"},
 			outputs: outputs,
-			want:    []string{"Labour"},
+			want:    []string{"labor"},
 		},
 	}
 	for _, tt := range tests {

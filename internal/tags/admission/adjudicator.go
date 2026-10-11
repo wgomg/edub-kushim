@@ -43,7 +43,7 @@ const (
 	reasonLegacyReject     = "legacy_reject"
 
 	// reasonLanguageReview marks a non-English value the language guard could not translate: it is held
-	// for review instead of being admitted plain (report N2/D27)
+	// for review instead of being admitted plain
 	reasonLanguageReview = "language_review"
 )
 
@@ -155,6 +155,10 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 				if state.Disposition == tags.CompositionKeep {
 					skipped = append(skipped, name)
 				}
+			case tags.IsPeriodClass(tags.HouseForm(name)):
+				// a seeded period is a store value decided by fiat: applied whole, never re-judged, and with
+				// no parts alongside — its ordinal and unit are not dimensions
+				a.logger.Debug(reqID, "tag split[%s]: skip %q (reason=store_existing period)", analyzer.TagSplitVersion, name)
 			case !a.runner.HasTagAdjudicator():
 				a.logger.Debug(reqID, "tag split[%s]: skip %q (reason=store_existing undecided, no adjudicator)",
 					analyzer.TagSplitVersion, name)
@@ -166,10 +170,8 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		}
 	}
 
-	periodRows, candidates := a.partitionPeriodCandidates(candidates, reqID)
-
 	if len(candidates) == 0 && len(skipped) == 0 {
-		return names, periodRows, nil
+		return names, nil, nil
 	}
 
 	alongsideByCompound := a.storedCoverage(ctx, skipped, promotedNames, storeKeys, filter, reqID)
@@ -179,28 +181,44 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		if err != nil {
 			return nil, nil, err
 		}
-		return withAlongside(expanded, alongsideByCompound), append(rows, periodRows...), nil
-	}
-
-	resolved := make(map[string][]string, len(candidates))
-	seenValues := make(map[string]bool)
-	var values []string
-	for _, candidate := range candidates {
-		rparts := a.resolveParts(candidate, promotedNames, storeKeys, reqID)
-		resolved[candidate] = rparts
-		for _, part := range rparts {
-			if !seenValues[part] {
-				seenValues[part] = true
-				values = append(values, part)
-			}
-		}
+		return withAlongside(expanded, alongsideByCompound), rows, nil
 	}
 
 	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model, tags.PromotedKeys(promotedNames))
+	fans := make(map[string]Fan, len(candidates))
+	for _, candidate := range candidates {
+		fan, ferr := a.resolveFan(ctx, store, candidate, promotedNames, storeKeys, docId, reqID)
+		if ferr != nil {
+			return nil, nil, ferr
+		}
+		fans[candidate] = fan
+	}
+
+	seenValues := make(map[string]bool)
+	var values []string
+	for _, candidate := range candidates {
+		for _, seg := range tags.DeriveSegments(candidate) {
+			resolved := fans[candidate].Resolved[seg]
+			if resolved == "" || seenValues[resolved] {
+				continue
+			}
+			seenValues[resolved] = true
+			values = append(values, resolved)
+		}
+	}
+
 	partVerdicts, err := store.Parts(ctx, values, docId, reqID)
 	if err != nil {
 		return nil, nil, err
 	}
+	// a segment the store already holds is a value by definition, so it reads dimensional and its cover
+	// span needs no parts verdict; a phrase-fold abstention is not seeded here — it is scoped to the fan
+	// that produced it, so it never holds an unrelated compound through the shared verdict map
+	orderedFans := make([]Fan, 0, len(candidates))
+	for _, candidate := range candidates {
+		orderedFans = append(orderedFans, fans[candidate])
+	}
+	SeedStoreValues(partVerdicts, orderedFans, storeKeys)
 	compoundVerdicts, err := store.Compounds(ctx, candidates, docId, reqID)
 	if err != nil {
 		return nil, nil, err
@@ -211,7 +229,11 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 	rows := make([]tags.CompositionRow, 0, len(candidates))
 	for _, candidate := range candidates {
 		cv := compoundVerdicts[candidate]
-		features := CompositionFeatures(resolved[candidate], partVerdicts, cv, promotedNames)
+		fan := fans[candidate]
+		// the coarsest cover's segments when the fan has a full multi-segment cover, otherwise the flat
+		// resolved content the unit branch's deferred/unavailable reads consume
+		parts, coverComplete := CoverParts(fan, storeKeys, partVerdicts)
+		features := CompositionFeatures(parts, coverComplete, fan.DeferredSet(), partVerdicts, cv, promotedNames)
 		decision := tags.DecideComposition(features)
 		reconstructible := features.Reconstructible
 		row := tags.CompositionRow{
@@ -221,11 +243,12 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		}
 		switch decision.Disposition {
 		case tags.CompositionSplit:
-			valid := analyzer.SplitComponents(resolved[candidate], filter)
-			// a compound has at most MaxCompoundWords content parts, so a verdict with more surviving components is malformed
+			valid := analyzer.SplitComponents(parts, filter)
+			// a compound has at most MaxCompoundWords content segments, so a verdict with more surviving
+			// components is malformed
 			if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
 				a.logger.Debug(reqID, "tag split[%s]: invalid components for %q proposed=%q",
-					analyzer.TagSplitVersion, candidate, resolved[candidate])
+					analyzer.TagSplitVersion, candidate, parts)
 				row.Disposition = tags.CompositionKeep
 				row.Reason = tags.CompositionReasonInvalidComponents
 				row.Model = freshModel(cv)
@@ -246,7 +269,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			row.Disposition = tags.CompositionKeep
 			row.Reason = decision.Reason
 			row.Model = freshModel(cv)
-			if parts := alongsideParts(resolved[candidate], filter, partVerdicts); len(parts) > 0 {
+			if parts := alongsideCover(fan, storeKeys, partVerdicts, filter); len(parts) > 0 {
 				row.Parts = parts
 				alongsideByCompound[candidate] = parts
 			}
@@ -254,30 +277,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		}
 		rows = append(rows, row)
 	}
-	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), append(rows, periodRows...), nil
-}
-
-// partitionPeriodCandidates removes the period-shaped candidates from the judged set and returns a
-// deterministic keep row for each: a period in house numeric style is a valid dimension by fiat (report
-// N1), so it is never sent to the parts or compound pass and can never be dropped as no_dimension. The
-// reason is not in the composition hold set, so the kept period promotes on mass like any value.
-func (a *Adjudicator) partitionPeriodCandidates(candidates []string, reqID string) ([]tags.CompositionRow, []string) {
-	var rows []tags.CompositionRow
-	remaining := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		if !tags.IsPeriodClass(tags.HouseForm(candidate)) {
-			remaining = append(remaining, candidate)
-			continue
-		}
-		rows = append(rows, tags.CompositionRow{
-			Candidate:       candidate,
-			Disposition:     tags.CompositionKeep,
-			Reason:          tags.CompositionReasonPeriodClass,
-			CriteriaVersion: analyzer.TagSplitVersion,
-		})
-		a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s deterministic)", analyzer.TagSplitVersion, candidate, tags.CompositionReasonPeriodClass)
-	}
-	return rows, remaining
+	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), rows, nil
 }
 
 // conjunctionSplits is the no-adjudicator fallback: explicit coordination splits mechanically through the
@@ -323,11 +323,15 @@ func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedName
 
 // CompositionFeatures folds the two passes' verdicts into the decision's feature set: the compound status
 // (or the abstention), the parts' dimensional reading, the judge-outage flag a missing verdict sets, the
-// cross-sample disagreement either pass observed, and the reconstructibility signal — all parts dimensional
-// and every resolved part a promoted store label (the established-value proxy the fold anchor already
-// receives). Shared by the emission gate and the stored-joint sweep so both dispose the same persisted rows
-// identically.
-func CompositionFeatures(parts []string, verdicts map[string]PartVerdict, cv CompoundVerdict, promotedNames map[string]string) tags.CompositionFeatures {
+// cross-sample disagreement either pass observed, and the reconstructibility signal — every cover segment
+// dimensional and every resolved cover segment a promoted store label (the established-value proxy the fold
+// anchor already receives). coverComplete reports whether the candidate's content sequence has a full,
+// multi-segment cover: when it does, the combination branch owns the decision and the parts
+// are the cover's segments; when it does not, the unit branch owns it and parts carries the flat resolved
+// content for the deferred/unavailable reads. deferred carries the candidate's own phrase-fold abstentions,
+// so a hold stays scoped to the phrase that abstained. Shared by the emission gate and the stored-joint
+// sweep so both dispose the same persisted rows identically.
+func CompositionFeatures(parts []string, coverComplete bool, deferred map[string]bool, verdicts map[string]PartVerdict, cv CompoundVerdict, promotedNames map[string]string) tags.CompositionFeatures {
 	var f tags.CompositionFeatures
 	switch {
 	case cv.Deferred:
@@ -345,8 +349,13 @@ func CompositionFeatures(parts []string, verdicts map[string]PartVerdict, cv Com
 		f.SampleDisagreement = true
 	}
 
-	allDimensional := len(parts) > 0
+	allDimensional := coverComplete && len(parts) > 0
 	for _, part := range parts {
+		if deferred[part] {
+			f.PartsDeferred = true
+			allDimensional = false
+			continue
+		}
 		v, ok := verdicts[part]
 		if !ok {
 			f.JudgeUnavailable = true
@@ -368,6 +377,10 @@ func CompositionFeatures(parts []string, verdicts map[string]PartVerdict, cv Com
 	if allDimensional {
 		f.PartsDimensional = true
 		f.Reconstructible = tags.AllPartsPromoted(parts, promotedNames)
+	}
+	if !coverComplete && !f.PartsDeferred && !f.JudgeUnavailable && len(parts) > 0 {
+		// no full multi-segment cover: the unit branch owns the decision
+		f.PartsNotDimensional = true
 	}
 	return f
 }
@@ -403,42 +416,228 @@ func expandCandidates(names []string, components map[string][]string, dropped ma
 	return out
 }
 
-// resolveParts derives a candidate's content parts and resolves each through the attested seam fold
-// against the promoted store view, logging every fold. The candidate path and the store-existing coverage
-// path resolve identically through it, so a part's value never depends on which path reached it. liveNames
-// is the live store key set the multi-base ambiguity check reads (promoted, provisional, and aliases).
-func (a *Adjudicator) resolveParts(candidate string, promotedNames map[string]string, liveNames map[string]struct{}, reqID string) []string {
-	if tags.IsPeriodClass(tags.HouseForm(candidate)) {
-		// a period is valid by fiat and does not decompose; its ordinal and unit are not parts to apply
-		return nil
-	}
-	parts := tags.DeriveParts(candidate)
-	resolved := make([]string, 0, len(parts))
-	for _, part := range parts {
-		resolvedPart := part
-		if anchor := tags.AnchoredFold(part, promotedNames, liveNames); anchor != "" && anchor != part {
-			a.logger.Debug(reqID, "tag split[%s]: part %q fold-resolves to store anchor %q",
-				analyzer.TagSplitVersion, part, anchor)
-			resolvedPart = anchor
-		}
-		resolved = append(resolved, resolvedPart)
-	}
-	return resolved
+// Fan is one candidate's decomposition fan: its content words, the applied form of every fan segment (a
+// content word or a contiguous bigram; a segment is absent when it is a dropped time designation), and the
+// content words whose phrase-context fold abstained. The emission gate and the reconcile sweep build and
+// consume it through the shared helpers below, so the prospective and retrospective readings agree.
+type Fan struct {
+	Content  []string
+	Resolved map[string]string
+	deferred []string
 }
 
-// alongsideParts returns the resolved parts a kept compound applies alongside itself: the parts the
-// per-document filter validates whose persisted verdict is dimensional and not deferred. It is the same
-// filter discipline the split branch applies — a part that could not stand as a split component does not
-// apply alongside either — with no minimum count, since the compound itself carries the dimension.
-func alongsideParts(resolved []string, filter *analyzer.TagFilter, verdicts map[string]PartVerdict) []string {
-	valid := analyzer.SplitComponents(resolved, filter)
-	parts := make([]string, 0, len(valid))
-	for _, part := range valid {
-		if v, ok := verdicts[part]; ok && v.Dimensional && !v.Deferred {
-			parts = append(parts, part)
+// DeferredSet returns the fan's abstained words as a set the per-candidate disposition reads, so a hold
+// stays scoped to the phrase that abstained rather than leaking through the shared value-keyed verdict map;
+// nil when the fan has none.
+func (f Fan) DeferredSet() map[string]bool {
+	if len(f.deferred) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(f.deferred))
+	for _, word := range f.deferred {
+		set[word] = true
+	}
+	return set
+}
+
+// WithDeferred returns the fan with its phrase-context abstentions set, so a caller that applied folds
+// outside the gate (the reconcile sweep) can carry them without the deferred slice being part of the public
+// shape.
+func (f Fan) WithDeferred(deferred []string) Fan {
+	f.deferred = deferred
+	return f
+}
+
+// Resolve adapts the fan to the cover scan: a fan span resolves to its applied name when the store already
+// holds that resolved form (a store value is a value by definition) or the parts pass judged the resolved
+// segment dimensional and not deferred; every other span reports not-usable. A word this fan's own
+// phrase-context fold abstained on is not usable even when the parts pass called it dimensional, so an
+// abstention in one phrase never lends a cover to another compound that shares the word.
+func (f Fan) Resolve(storeKeys map[string]struct{}, verdicts map[string]PartVerdict) func(string) (string, bool) {
+	deferred := f.DeferredSet()
+	return func(span string) (string, bool) {
+		resolved, ok := f.Resolved[span]
+		if !ok || resolved == "" || deferred[resolved] {
+			return "", false
+		}
+		if _, stored := storeKeys[tags.Key(resolved)]; stored {
+			return resolved, true
+		}
+		v, ok := verdicts[resolved]
+		if ok && v.Dimensional && !v.Deferred {
+			return resolved, true
+		}
+		return "", false
+	}
+}
+
+// FlatResolved returns the candidate's resolved content words in order, dropping the ones no resolution
+// reached; it is the flat reading the unit branch's deferred/unavailable scans consume.
+func (f Fan) FlatResolved() []string {
+	out := make([]string, 0, len(f.Content))
+	for _, w := range f.Content {
+		if resolved := f.Resolved[w]; resolved != "" {
+			out = append(out, resolved)
 		}
 	}
-	return parts
+	return out
+}
+
+// ResolveContentSingles resolves a candidate's content words through the deterministic time-designation gate
+// and the attested seam fold, returning the content words with their position-aligned resolved singles: a
+// time-designation word the live view does not hold is emptied, a mechanically folded word carries its
+// anchor, and every other word is itself. Handing back both slices keeps a caller from re-deriving the
+// content words just to index the singles. The emission gate and the stored-joint sweep share it, so both
+// build the decomposition fan over the same words. liveNames is the live store key set, promotedNames the
+// promoted store view the fold anchors on.
+func ResolveContentSingles(candidate string, promotedNames map[string]string, liveNames map[string]struct{}) (content, singles []string) {
+	content = tags.DeriveParts(candidate)
+	singles = make([]string, len(content))
+	for i, word := range content {
+		if tags.IsTimeDesignationDrop(word, liveNames) {
+			continue
+		}
+		singles[i] = word
+		if anchor := tags.AnchoredFold(word, promotedNames, liveNames); anchor != "" && anchor != word {
+			singles[i] = anchor
+		}
+	}
+	return content, singles
+}
+
+// BuildFan builds the fan resolution from position-aligned resolved singles: a bigram is literal (the
+// attestation table is single-token) and present only when both its words resolved and the bigram is not a
+// time designation the store lacks. A nil or short singles slice leaves the matching content words
+// unresolved, so a caller with no resolutions passes nil. Shared by the emission gate and the reconcile
+// sweep.
+func BuildFan(content, singles []string, liveNames map[string]struct{}) Fan {
+	resolved := make(map[string]string, len(content)*2)
+	for i, word := range content {
+		if i < len(singles) && singles[i] != "" {
+			resolved[word] = singles[i]
+		}
+	}
+	for i := 0; i+1 < len(content); i++ {
+		if i+1 >= len(singles) || singles[i] == "" || singles[i+1] == "" {
+			continue
+		}
+		bigram := content[i] + " " + content[i+1]
+		if tags.IsTimeDesignationDrop(bigram, liveNames) {
+			continue
+		}
+		resolved[bigram] = bigram
+	}
+	return Fan{Content: content, Resolved: resolved}
+}
+
+// PhraseFoldKeys returns the residual phrase-context fold keys a candidate's words raise: every content word
+// whose own single is unresolved (not time-dropped, not mechanically folded) and whose primary-sense base is
+// not live while another attested base is. The emission gate and the reconcile sweep ask the judge through
+// this one rule, so they never diverge on which words need the question.
+func PhraseFoldKeys(content, singles []string, phrase string, liveNames map[string]struct{}) []PhraseFoldKey {
+	var keys []PhraseFoldKey
+	for i, word := range content {
+		if i >= len(singles) || singles[i] == "" || singles[i] != word {
+			continue
+		}
+		for _, anchor := range tags.ResidualFoldAnchors(word, liveNames) {
+			keys = append(keys, PhraseFoldKey{Phrase: phrase, Part: word, Anchor: anchor})
+		}
+	}
+	return keys
+}
+
+// ApplyPhraseFolds completes a fan's singles with its residual phrase-context folds: a word the caller left
+// unresolved is folded onto its anchor on a confirmed answer, and an abstention (or an ambiguity across
+// several live bases) leaves it unresolved and reports it deferred, so the compound holds for review instead
+// of landing on a wrong tag. The returned singles and deferred words are what the caller's fan carries. The
+// emission gate and the reconcile sweep apply through this one rule, so their fans agree.
+func ApplyPhraseFolds(content, singles []string, phrase string, verdicts map[PhraseFoldKey]PhraseFoldVerdict, liveNames map[string]struct{}) (resolved, deferred []string) {
+	resolved = singles
+	for i, word := range content {
+		if i >= len(resolved) || resolved[i] == "" || resolved[i] != word {
+			continue
+		}
+		anchors := tags.ResidualFoldAnchors(word, liveNames)
+		switch {
+		case len(anchors) > 1:
+			// several live sibling senses: the phrase context cannot separate them, hold
+			deferred = append(deferred, word)
+		case len(anchors) == 1:
+			v := verdicts[PhraseFoldKey{Phrase: phrase, Part: word, Anchor: anchors[0]}]
+			switch {
+			case v.Fold:
+				resolved[i] = anchors[0]
+			case v.Deferred:
+				deferred = append(deferred, word)
+			}
+		}
+	}
+	return resolved, deferred
+}
+
+// SeedStoreValues marks every resolved segment the store already holds as dimensional in the parts-verdict
+// map: a store value is a value by definition, so its cover span needs no parts verdict. The gate and the
+// sweep seed through this one rule, so their cover scans read the same verdicts.
+func SeedStoreValues(verdicts map[string]PartVerdict, fans []Fan, storeKeys map[string]struct{}) {
+	for _, fan := range fans {
+		for _, resolved := range fan.Resolved {
+			if resolved == "" {
+				continue
+			}
+			if _, stored := storeKeys[tags.Key(resolved)]; !stored {
+				continue
+			}
+			if _, ok := verdicts[resolved]; !ok {
+				verdicts[resolved] = PartVerdict{Dimensional: true}
+			}
+		}
+	}
+}
+
+// CoverParts returns the segments the composition decision reads for a fan: the coarsest cover's segments
+// when the fan has a full multi-segment cover, otherwise the fan's flat resolved content for the unit
+// branch's deferred/unavailable reads. The boolean reports whether a full cover exists. The gate and the
+// sweep dispose a candidate by this one reading.
+func CoverParts(fan Fan, storeKeys map[string]struct{}, verdicts map[string]PartVerdict) (parts []string, coverComplete bool) {
+	cover := tags.GreedyCover(fan.Content, fan.Resolve(storeKeys, verdicts), false)
+	if len(cover) >= 2 {
+		return cover, true
+	}
+	return fan.FlatResolved(), false
+}
+
+// resolveFan derives the judged candidate's fan and completes it with the residual phrase-context folds: the
+// words that raise a fold question are asked together, a confirmed answer folds the word onto its anchor,
+// and an abstention defers it so the compound holds for review. Returns a non-nil error only for credit
+// exhaustion.
+func (a *Adjudicator) resolveFan(ctx context.Context, store *VerdictStore, candidate string, promotedNames map[string]string, liveNames map[string]struct{}, docId int64, reqID string) (Fan, error) {
+	content, singles := ResolveContentSingles(candidate, promotedNames, liveNames)
+	if tags.IsPeriodClass(tags.HouseForm(candidate)) {
+		// a period is valid by fiat and does not decompose: its fan carries no resolved segments
+		return BuildFan(content, nil, liveNames), nil
+	}
+	phrase := tags.HouseForm(candidate)
+	keys := PhraseFoldKeys(content, singles, phrase, liveNames)
+	var deferred []string
+	if len(keys) > 0 {
+		verdicts, err := store.PhraseFolds(ctx, keys, docId, reqID)
+		if err != nil {
+			return Fan{}, err
+		}
+		singles, deferred = ApplyPhraseFolds(content, singles, phrase, verdicts, liveNames)
+	}
+	fan := BuildFan(content, singles, liveNames)
+	fan.deferred = deferred
+	return fan, nil
+}
+
+// alongsideCover returns the parts a kept compound applies alongside itself: the greedy longest-leftmost
+// partial cover over the fan's usable spans, validated by the per-document filter. A span no parts verdict
+// or store value supports is skipped, so a covered bigram applies whole and a bare covered word applies on
+// its own.
+func alongsideCover(fan Fan, storeKeys map[string]struct{}, verdicts map[string]PartVerdict, filter *analyzer.TagFilter) []string {
+	return analyzer.SplitComponents(tags.GreedyCover(fan.Content, fan.Resolve(storeKeys, verdicts), true), filter)
 }
 
 // storedCoverage returns the judged-dimensional parts each store-existing decided keep applies alongside
@@ -451,22 +650,41 @@ func (a *Adjudicator) storedCoverage(ctx context.Context, skipped []string, prom
 	if len(skipped) == 0 {
 		return alongsideByCompound
 	}
-	resolved := make(map[string][]string, len(skipped))
+	fans := make(map[string]Fan, len(skipped))
 	seenValues := make(map[string]bool)
 	var values []string
 	for _, name := range skipped {
-		rparts := a.resolveParts(name, promotedNames, liveNames, reqID)
-		resolved[name] = rparts
-		for _, part := range rparts {
-			if !seenValues[part] {
-				seenValues[part] = true
-				values = append(values, part)
+		content, singles := ResolveContentSingles(name, promotedNames, liveNames)
+		fan := BuildFan(content, singles, liveNames)
+		fans[name] = fan
+		for _, seg := range tags.DeriveSegments(name) {
+			resolved := fan.Resolved[seg]
+			if resolved == "" || seenValues[resolved] {
+				continue
 			}
+			seenValues[resolved] = true
+			values = append(values, resolved)
 		}
 	}
 	cached := readCachedPartVerdicts(ctx, a.queries, a.logger, values, reqID)
 	for _, name := range skipped {
-		parts := alongsideParts(resolved[name], filter, cached)
+		fan := fans[name]
+		// a cached verdict drives the alongside application; a segment without one (never judged, or a
+		// criteria-version bump) is a coverage gap the review queue must see rather than a silent omission;
+		// with a warning logged here, the durable pending-coverage accounting belongs to the completeness audit.
+		for _, resolved := range fan.Resolved {
+			if resolved == "" {
+				continue
+			}
+			if _, stored := liveNames[tags.Key(resolved)]; stored {
+				continue
+			}
+			if _, ok := cached[resolved]; !ok {
+				a.logger.Warn(reqID, "tag split[%s]: %q part %q has no cached verdict, pending coverage (store_existing)",
+					analyzer.TagSplitVersion, name, resolved)
+			}
+		}
+		parts := alongsideCover(fan, liveNames, cached, filter)
 		if len(parts) == 0 {
 			continue
 		}
@@ -705,7 +923,7 @@ func DecisionFromStored(criteria json.RawMessage, pass bool, features tags.Admis
 func JudgeFeatures(r analyzer.TagQualityResult, f tags.AdmissionFeatures) tags.AdmissionFeatures {
 	f.SubjectMatter = r.SubjectMatter
 	f.Dimension = r.Dimension
-	f.NotPersonPlaceWork = r.NotPersonPlaceWork
+	f.NotPerson = r.NotPerson
 	f.Atomic = r.Atomic
 	f.NotFormGenre = r.NotFormGenre
 	f.JudgeDefer = r.Defer
@@ -754,7 +972,7 @@ func (a *Adjudicator) decideQuality(ctx context.Context, docId int64, n *novelTa
 	return decision
 }
 
-// ResolveLanguages is the language guard (report N2/D27): it detects non-English values that are not
+// ResolveLanguages is the language guard: it detects non-English values that are not
 // already in the store and routes each through the judged translation to its English canonical form,
 // rewriting the analysis's tags and tag details so the English name flows through identity and admission
 // as any English name. A value the judge returns unchanged is already English — including technical
@@ -920,7 +1138,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 		seenNovel[out] = true
 		if _, held := forceDefer[out]; held {
 			// a detected non-English value the language guard could not translate is held for review,
-			// never admitted plain (report N2/D27)
+			// never admitted plain
 			decided[out] = tags.AdmissionDecision{Outcome: tags.AdmissionDefer, Reason: reasonLanguageReview}
 			a.logger.Info(reqID, "taglanguage[%s]: defer %q to review (non-English, untranslated)", analyzer.TagTranslationVersion, out)
 			continue
@@ -971,7 +1189,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 
 	var dimensionVerdicts map[string]PartVerdict
 	if len(uncached) > 0 && a.runner.HasTagAdjudicator() {
-		// the parts pass owns the dimension question (report N5): resolve each uncached novel name's
+		// the parts pass owns the dimension question: resolve each uncached novel name's
 		// dimension verdict from the shared parts cache, judging the misses, and stamp it onto the
 		// quality result so the admission decision reads one verdict, never two. Without an adjudicator
 		// there is no verdict to read, so the stamp abstains and the quality result defers.
@@ -1012,10 +1230,9 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 				candidates := make([]analyzer.TagQualityCandidate, len(batch))
 				for i, n := range batch {
 					candidates[i] = analyzer.TagQualityCandidate{
-						Index:            i,
-						Term:             n.emitted,
-						Category:         n.promptCategory(),
-						WhitelistedPlace: analyzer.IsWhitelistedPlace(n.emitted),
+						Index:    i,
+						Term:     n.emitted,
+						Category: n.promptCategory(),
 					}
 				}
 				results, err := a.runner.JudgeTagQuality(ctx, reducedText, candidates)

@@ -109,9 +109,11 @@ admin and emission registration paths
   `-our`/`-or` spelling pair), the birth-time canonical direction (sense-fit, then
   the house form/language, then the M4 tie-break), and the
   split-seam fold source (promoted-only anchors over the generated attested
-  pertainym table, folding a multi-base part only while a single base is live and
-  also folding a pinned variant class onto a promoted label; the shape-based legs
-  no longer apply at the seam, where the judged path's proposals remain for the
+  pertainym table in sense order, folding a multi-base part only onto its
+  primary-sense base and only while that base is live — the residue goes to the
+  phrase-context fold judge — and also folding a pinned variant class onto a
+  promoted label; the shape-based legs
+  are not the seam's rule, where the judged path's proposals remain for the
   gate to confirm).
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization,
   M1 rewrites, alias lookup, key equality, and M2 flagging, including the
@@ -603,8 +605,7 @@ shared `max_rejudge` budget: `FirstDocumentIDForTag` picks the first live
 carrier, `GetDocumentTextForTagQuality` fetches its text and word count, and
 `Runner.ReduceContent` reduces it with `matcher.TargetWordCount` (the
 tagreconcile runner loads the `textreducer` tool for this path). One
-`JudgeTagQuality` call judges the single candidate — category `other` and the
-whitelisted-place flag recomputed from the name — and a failure retries once
+`JudgeTagQuality` call judges the single candidate — category `other` — and a failure retries once
 unless the error carries `context.Canceled`/`DeadlineExceeded`. The verdict is
 written with `InsertTagQualityEvent`, the enricher's `DO NOTHING` conflict
 rule: a concurrent fresh verdict is kept and its `pass`/model drive the

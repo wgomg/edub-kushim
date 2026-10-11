@@ -144,16 +144,30 @@ func download(url string) (adj, noun []byte, source string, err error) {
 	return adj, noun, fmt.Sprintf("%s (sha256 %s)", url, hex.EncodeToString(sum[:])), nil
 }
 
-// extractPertainyms parses both database files and returns the sorted, deduplicated
-// adjective→noun pairs the adj.pert pertainym relation attests, both sides single lowercase-ASCII
-// tokens. The target index spans the adjective and noun files because a pertainym may point into
-// either part of speech.
+// extractPertainyms parses both database files and returns the adjective→noun pairs the adj.pert
+// pertainym relation attests, both sides single lowercase-ASCII tokens. The target index spans the
+// adjective and noun files because a pertainym may point into either part of speech. The pairs are
+// grouped per adjective with the nouns in first-encounter order over the data.adj synset walk —
+// WordNet's own sense/frequency order — so the first noun is the adjective's primary sense and the
+// split seam folds onto it; the adjective keys are sorted for a stable asset.
 func extractPertainyms(adjData, nounData []byte) []string {
 	targets := make(map[string][]string)
 	collectWords(nounData, targets)
 	collectWords(adjData, targets)
 
-	pairs := make(map[string]struct{})
+	basesByAdjective := make(map[string][]string)
+	seen := make(map[string]map[string]struct{})
+	add := func(adjective, noun string) {
+		if seen[adjective] == nil {
+			seen[adjective] = make(map[string]struct{})
+		}
+		if _, ok := seen[adjective][noun]; ok {
+			return
+		}
+		seen[adjective][noun] = struct{}{}
+		basesByAdjective[adjective] = append(basesByAdjective[adjective], noun)
+	}
+
 	for _, synset := range parseSynsets(adjData) {
 		if synset.lexFile != adjectivePertLexFile {
 			continue
@@ -172,20 +186,29 @@ func extractPertainyms(adjData, nounData []byte) []string {
 				continue
 			}
 			for _, target := range targets[ptr.offset] {
-				if clean, ok := singleToken(target); ok {
-					for _, base := range bases {
-						pairs[base+" "+clean] = struct{}{}
-					}
+				noun, ok := singleToken(target)
+				if !ok {
+					continue
+				}
+				for _, adjective := range bases {
+					add(adjective, noun)
 				}
 			}
 		}
 	}
 
-	out := make([]string, 0, len(pairs))
-	for pair := range pairs {
-		out = append(out, pair)
+	adjectives := make([]string, 0, len(basesByAdjective))
+	for adjective := range basesByAdjective {
+		adjectives = append(adjectives, adjective)
 	}
-	sort.Strings(out)
+	sort.Strings(adjectives)
+
+	out := make([]string, 0, len(basesByAdjective))
+	for _, adjective := range adjectives {
+		for _, noun := range basesByAdjective[adjective] {
+			out = append(out, adjective+" "+noun)
+		}
+	}
 	return out
 }
 
@@ -312,7 +335,8 @@ func writeAsset(path string, pairs []string, source string) error {
 	b.WriteString(source)
 	b.WriteByte('\n')
 	b.WriteString("# Extraction: pertainym (`\\`) pointers of adjective synsets in the adj.pert lexicographer\n")
-	b.WriteString("# file; both sides kept only when a single lowercase-ASCII token. Regeneration is manual.\n")
+	b.WriteString("# file; both sides kept only when a single lowercase-ASCII token. Bases are listed per\n")
+	b.WriteString("# adjective in WordNet sense order (the first is the primary sense). Regeneration is manual.\n")
 	b.WriteString("#\n")
 	for line := range strings.SplitSeq(wndbLicense, "\n") {
 		b.WriteString("# ")
