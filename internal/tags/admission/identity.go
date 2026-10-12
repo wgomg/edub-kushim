@@ -789,13 +789,13 @@ func boolVerdict(value bool, whenTrue, whenFalse string) string {
 	return whenFalse
 }
 
-// OutputByInput maps each registration's normalized raw input to the
-// plan's output for it — the registered name, or the resolved canonical
-// when the plan applies an existing value. Callers translating names
-// they captured before the plan (tag details, composition parts) land on
-// the names the plan will write.
+// OutputByInput maps each name the plan acts on to the plan's output for it: a registration's normalized
+// raw input maps to its registered name or resolved canonical, and an alias action's normalized alias name
+// maps to its canonical target. A registration stays authoritative when both name the same input, so the
+// outcome never depends on iteration order. Callers translating names captured before the plan (tag
+// details, composition parts) land on the names the plan will write.
 func OutputByInput(plan tags.Plan) map[string]string {
-	outputByInput := make(map[string]string, len(plan.Registrations))
+	outputByInput := make(map[string]string, len(plan.Registrations)+len(plan.Aliases))
 	for _, reg := range plan.Registrations {
 		input := textnorm.NormalizeTag(reg.Input)
 		output := reg.Name
@@ -805,6 +805,16 @@ func OutputByInput(plan tags.Plan) map[string]string {
 		if input != "" && output != "" {
 			outputByInput[input] = output
 		}
+	}
+	for _, alias := range plan.Aliases {
+		input := textnorm.NormalizeTag(alias.AliasName)
+		if input == "" || alias.Canonical == "" {
+			continue
+		}
+		if _, ok := outputByInput[input]; ok {
+			continue
+		}
+		outputByInput[input] = alias.Canonical
 	}
 	return outputByInput
 }

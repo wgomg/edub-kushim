@@ -2451,3 +2451,44 @@ func TestResolveLanguages(t *testing.T) {
 	}
 	adjAssertEqual(t, adj.translationCall, 1, "one batch carries every flagged value")
 }
+
+// TestOutputByInput pins the contract the enricher's composition part rewrite and RenameTagDetails read:
+// an alias action resolves its loser onto the canonical the store applies, a registration outranks it
+// when both name the same key, and an entry missing a name or a target contributes nothing.
+func TestOutputByInput(t *testing.T) {
+	tests := []struct {
+		name string
+		plan tags.Plan
+		want map[string]string
+	}{
+		{
+			name: "an alias alone maps its loser onto the canonical",
+			plan: tags.Plan{Aliases: []tags.AliasAction{{AliasName: "States", Canonical: "state"}}},
+			want: map[string]string{"states": "state"},
+		},
+		{
+			name: "a registration keeps a key an alias also names",
+			plan: tags.Plan{
+				Registrations: []tags.Registration{{Input: "States", Name: "states"}},
+				Aliases:       []tags.AliasAction{{AliasName: "States", Canonical: "state"}},
+			},
+			want: map[string]string{"states": "states"},
+		},
+		{
+			name: "an entry missing a name or a target adds nothing",
+			plan: tags.Plan{Aliases: []tags.AliasAction{
+				{AliasName: "", Canonical: "state"},
+				{AliasName: "States", Canonical: ""},
+			}},
+			want: map[string]string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := OutputByInput(tt.plan)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("OutputByInput() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
