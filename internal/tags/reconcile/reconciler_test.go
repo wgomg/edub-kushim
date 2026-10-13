@@ -12,20 +12,22 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func TestSumReassigned(t *testing.T) {
 	tests := []struct {
 		name    string
-		entries []MergeEntry
+		entries []PairEntry
 		want    int64
 	}{
 		{name: "nil", entries: nil, want: 0},
-		{name: "empty", entries: []MergeEntry{}, want: 0},
+		{name: "empty", entries: []PairEntry{}, want: 0},
 		{
 			name:    "mixed",
-			entries: []MergeEntry{{Reassigned: 3}, {Reassigned: 0}, {Reassigned: 7}},
+			entries: []PairEntry{{Reassigned: 3}, {Reassigned: 0}, {Reassigned: 7}},
 			want:    10,
 		},
 	}
@@ -47,9 +49,9 @@ func TestReasonSuffix(t *testing.T) {
 	}
 }
 
-func TestMergeEntryJSON(t *testing.T) {
+func TestPairEntryJSON(t *testing.T) {
 	t.Run("fields present when non-zero", func(t *testing.T) {
-		e := MergeEntry{Query: "a", Target: "b", Reassigned: 5, Reason: "adjudicated", CreatesTag: true}
+		e := PairEntry{Query: "a", Target: "b", Reassigned: 5, Reason: "adjudicated", CreatesTag: true}
 		raw, err := json.Marshal(e)
 		if err != nil {
 			t.Fatal(err)
@@ -67,7 +69,7 @@ func TestMergeEntryJSON(t *testing.T) {
 	})
 
 	t.Run("reason omitted when zero, creates_tag always emitted", func(t *testing.T) {
-		e := MergeEntry{Query: "a", Target: "b", Reassigned: 5}
+		e := PairEntry{Query: "a", Target: "b", Reassigned: 5}
 		raw, err := json.Marshal(e)
 		if err != nil {
 			t.Fatal(err)
@@ -91,7 +93,7 @@ func TestMergeEntryJSON(t *testing.T) {
 	t.Run("backward compatible", func(t *testing.T) {
 		// Old persisted reports lack reason/creates_tag; unmarshaling must not break.
 		raw := []byte(`{"query":"x","target":"y","reassigned":3}`)
-		var e MergeEntry
+		var e PairEntry
 		if err := json.Unmarshal(raw, &e); err != nil {
 			t.Fatal(err)
 		}
@@ -222,11 +224,11 @@ func TestLogSummaryReportOnly(t *testing.T) {
 		ReportOnly: true,
 		Worklist:   WorklistCounts{Stale: 3, Unjudged: 2, Drifted: 1, Aged: 4},
 		Judged:     5,
-		Flips:      FlipCounts{ToMerge: 1, ToKeep: 2},
-		PlannedMerges: []MergeEntry{
+		Flips:      FlipCounts{ToAlias: 1, ToKeep: 2},
+		PlannedAliases: []PairEntry{
 			{Reassigned: 10},
 		},
-		PlannedKeepFlips: []MergeEntry{
+		PlannedKeepFlips: []PairEntry{
 			{Reassigned: 3, CreatesTag: true},
 			{Reassigned: 0, CreatesTag: true},
 		},
@@ -243,8 +245,8 @@ func TestLogSummaryApplied(t *testing.T) {
 		Worklist: WorklistCounts{Stale: 2},
 		Judged:   2,
 		Flips:    FlipCounts{ToKeep: 1},
-		Merges:   []MergeEntry{{Reassigned: 7}},
-		RetagEntries: []MergeEntry{
+		Aliases:  []PairEntry{{Reassigned: 7}},
+		RetagEntries: []PairEntry{
 			{Reassigned: 3, Reason: "adjudicated", CreatesTag: true},
 		},
 		Skips: map[string]int{},
@@ -352,22 +354,8 @@ func TestLogDeletedTagKeepFlip(t *testing.T) {
 	r := &Reconciler{logger: testutil.NewTestLogger()}
 	e := &entry{query: "removed", target: "kept"}
 
-	// blocked: no panic, no extra fields needed.
-	r.logDeletedTagKeepFlip(e, database.ListAllDeletedTagsRow{
-		Kind: "blocked",
-	})
-
-	// merged with target: no panic.
-	r.logDeletedTagKeepFlip(e, database.ListAllDeletedTagsRow{
-		Kind:       "merged",
-		TargetName: sql.NullString{String: "target", Valid: true},
-	})
-
-	// merged with null target: no panic.
-	r.logDeletedTagKeepFlip(e, database.ListAllDeletedTagsRow{
-		Kind:       "merged",
-		TargetName: sql.NullString{},
-	})
+	// blocked: no panic.
+	r.logDeletedTagKeepFlip(e)
 }
 
 // TestApplyKeepFlip_ZeroDocsCreatesNoTag guards the §3.2 ordering fix: when
@@ -399,7 +387,7 @@ func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
 		target: "keepflip zero target",
 		docIDs: nil, // empty: DocumentIDsForPairs would return nothing
 	}
-	blocklist := make(map[string]database.ListAllDeletedTagsRow)
+	blocklist := make(map[string]struct{})
 
 	repointed, skipped, err := r.applyKeepFlip(ctx, e, blocklist)
 	if err != nil {
@@ -417,6 +405,205 @@ func TestApplyKeepFlip_ZeroDocsCreatesNoTag(t *testing.T) {
 	if err == nil {
 		t.Fatal("zero-docs keep-flip must not create a tag in the database")
 	}
+}
+
+// TestReportJSONKeys pins the report wire keys the tags page parses: the alias vocabulary and no
+// leftover of the retired merge one.
+func TestReportJSONKeys(t *testing.T) {
+	raw, err := json.Marshal(Report{
+		Aliases:        []PairEntry{{Query: "a", Target: "b"}},
+		PlannedAliases: []PairEntry{{Query: "c", Target: "d"}},
+		Flips:          FlipCounts{ToAlias: 1, ToKeep: 2},
+	})
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	for _, key := range []string{"aliases", "planned_aliases", "flips", "retags"} {
+		if _, ok := wire[key]; !ok {
+			t.Errorf("report JSON missing %q: %s", key, raw)
+		}
+	}
+	flips, ok := wire["flips"].(map[string]any)
+	if !ok {
+		t.Fatalf("flips is not an object: %s", raw)
+	}
+	if _, ok := flips["to_alias"]; !ok {
+		t.Errorf("flips JSON missing to_alias: %s", raw)
+	}
+	for _, retired := range []string{"merges", "planned_merges"} {
+		if _, ok := wire[retired]; ok {
+			t.Errorf("report JSON carries the retired key %q: %s", retired, raw)
+		}
+	}
+	if _, ok := flips["to_merge"]; ok {
+		t.Errorf("flips JSON carries the retired key to_merge: %s", raw)
+	}
+}
+
+// TestApplyAliasFlips_AppliesAndTalliesSkips pins the batched flip seam: an applied action reports the
+// plan's real re-pointed count and records its verdict, while a skipped action only tallies.
+func TestApplyAliasFlips_AppliesAndTalliesSkips(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder()),
+		logger: testutil.NewTestLogger(),
+	}
+
+	database.MustCreateTag(t, client.Queries, "aliasflip canonical")
+	loserID := database.MustCreateTag(t, client.Queries, "aliasflip loser")
+	doc := database.CreateUniqueDocument(t, client.Queries, "aliasflip-doc")
+	database.MustAddDocumentTag(t, client.Queries, doc, loserID)
+	testutil.AssertNoError(t, client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+		Name: "aliasflip blocked",
+		Kind: curation.DeletedTagKindBlocked,
+	}), "seed the blocklist")
+
+	report := &Report{Skips: map[string]int{}}
+	r.applyAliasFlips(ctx, []*entry{
+		{
+			query:        "aliasflip loser",
+			target:       "aliasflip canonical",
+			documentID:   doc,
+			freshVerdict: types.TagVerdicts.Variant,
+			freshModel:   "test",
+		},
+		{
+			query:        "aliasflip blocked",
+			target:       "aliasflip canonical",
+			documentID:   doc,
+			freshVerdict: types.TagVerdicts.Variant,
+			freshModel:   "test",
+		},
+	}, report)
+
+	testutil.AssertEqual(t, report.Flips.ToAlias, 1, "only the applicable action counts as an alias")
+	testutil.AssertEqual(t, len(report.Aliases), 1, "one alias entry")
+	testutil.AssertEqual(t, report.Aliases[0].Reassigned, int64(1), "the entry carries the plan's re-pointed count")
+	testutil.AssertEqual(t, report.Skips["alias_skip"], 1, "the blocked action is tallied as a skip")
+
+	if _, err := client.Queries.GetTagAliasByName(ctx, "aliasflip loser"); err != nil {
+		t.Fatalf("the applicable pair must alias: %v", err)
+	}
+	if _, err := client.Queries.GetTagAliasByName(ctx, "aliasflip blocked"); err == nil {
+		t.Error("a blocklisted name must never become an alias")
+	}
+
+	if rows := latestVerdictsForPair(ctx, t, client, "aliasflip loser", "aliasflip canonical"); len(rows) != 1 {
+		t.Errorf("the applied action must record its verdict, got %d rows", len(rows))
+	}
+	if rows := latestVerdictsForPair(ctx, t, client, "aliasflip blocked", "aliasflip canonical"); len(rows) != 0 {
+		t.Errorf("a skipped action must leave no verdict behind, got %d rows", len(rows))
+	}
+}
+
+// TestApplyKeepFlip_WithdrawsAlias pins the withdrawal: a pair previously collapsed onto the target
+// gets its alias removed and its name recreated with the documents back on it, while an alias onto
+// another canonical is left alone.
+func TestApplyKeepFlip_WithdrawsAlias(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder()),
+		logger: testutil.NewTestLogger(),
+	}
+
+	targetID := database.MustCreateTag(t, client.Queries, "withdraw target")
+	if _, err := client.Queries.InsertTagAlias(ctx, database.InsertTagAliasParams{
+		AliasName:      "withdraw query",
+		CanonicalTagID: targetID,
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	}); err != nil {
+		t.Fatalf("seed the collapse: %v", err)
+	}
+	doc := database.CreateUniqueDocument(t, client.Queries, "withdraw-doc")
+	database.MustAddDocumentTag(t, client.Queries, doc, targetID)
+
+	repointed, skipped, err := r.applyKeepFlip(ctx, &entry{
+		query:        "withdraw query",
+		target:       "withdraw target",
+		docIDs:       []int64{doc},
+		documentID:   doc,
+		freshVerdict: types.TagVerdicts.Variant,
+		freshModel:   "test",
+	}, map[string]struct{}{})
+	testutil.AssertNoError(t, err, "apply keep flip")
+	if skipped {
+		t.Fatal("a withdrawn alias must not report the flip as skipped")
+	}
+	testutil.AssertEqual(t, repointed, 1, "the document returns to the recreated name")
+
+	if _, err := client.Queries.GetTagAliasByName(ctx, "withdraw query"); err == nil {
+		t.Error("the alias row must be withdrawn before the name is recreated")
+	}
+	queryTag, err := client.Queries.GetTagByName(ctx, "withdraw query")
+	testutil.AssertNoError(t, err, "the query name must be recreated")
+	queryDocs, err := client.Queries.GetTagDocumentIDs(ctx, queryTag.ID)
+	testutil.AssertNoError(t, err, "recreated tag assignments")
+	testutil.AssertEqual(t, len(queryDocs), 1, "the document carries the recreated name")
+
+	t.Run("an alias onto another canonical is left alone", func(t *testing.T) {
+		otherID := database.MustCreateTag(t, client.Queries, "settle canonical")
+		if _, err := client.Queries.InsertTagAlias(ctx, database.InsertTagAliasParams{
+			AliasName:      "settle query",
+			CanonicalTagID: otherID,
+			RuleSetVersion: tags.IdentityRuleSetVersion,
+		}); err != nil {
+			t.Fatalf("seed an alias onto another canonical: %v", err)
+		}
+		doc2 := database.CreateUniqueDocument(t, client.Queries, "settle-doc")
+		database.MustAddDocumentTag(t, client.Queries, doc2, targetID)
+
+		repointed, skipped, err := r.applyKeepFlip(ctx, &entry{
+			query:        "settle query",
+			target:       "withdraw target",
+			docIDs:       []int64{doc2},
+			documentID:   doc2,
+			freshVerdict: types.TagVerdicts.Variant,
+			freshModel:   "test",
+		}, map[string]struct{}{})
+		testutil.AssertNoError(t, err, "the flip settles through the existing alias")
+		if skipped {
+			t.Fatal("settling through an alias must not report the flip as skipped")
+		}
+		testutil.AssertEqual(t, repointed, 0, "no documents move")
+		if _, err := client.Queries.GetTagAliasByName(ctx, "settle query"); err != nil {
+			t.Errorf("an alias onto another canonical must be left alone: %v", err)
+		}
+		if _, err := client.Queries.GetTagByName(ctx, "settle query"); err == nil {
+			t.Error("the name must not be re-created while it resolves through its alias")
+		}
+	})
+}
+
+func latestVerdictsForPair(ctx context.Context, t *testing.T, client *database.Client, query, target string) []database.LatestTagVerdictsForPairsRow {
+	t.Helper()
+	rows, err := client.Queries.LatestTagVerdictsForPairs(ctx, database.LatestTagVerdictsForPairsParams{
+		PolicyVersion: policy.Version,
+		Queries:       []string{query},
+		Targets:       []string{target},
+	})
+	testutil.AssertNoError(t, err, "latest verdicts for pair")
+	return rows
 }
 
 func TestVerdictModelLabel(t *testing.T) {

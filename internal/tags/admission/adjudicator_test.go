@@ -60,7 +60,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 		logger:  logger,
 	}
 
-	ranked := []matcher.RankResult{mkRanked("democratic socialism", "social democracy", 0.81)}
+	ranked := []matcher.RankResult{mkRanked("social democracy", 0.81)}
 	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
 		Names:   []string{"democratic socialism"},
 		Ranked:  ranked,
@@ -385,9 +385,8 @@ func TestPlanIdentity_DerivationalFoldResolvesOntoStoreNoun(t *testing.T) {
 	}
 }
 
-func mkRanked(kept, candTag string, sim float64) matcher.RankResult {
+func mkRanked(candTag string, sim float64) matcher.RankResult {
 	return matcher.RankResult{
-		KeptName:   kept,
 		Candidates: []matcher.Candidate{{Tag: candTag, Similarity: sim}},
 	}
 }
@@ -487,15 +486,7 @@ func (m *mockTagMatcher) Rank(ctx context.Context, docId string, queries []strin
 	if m.rankFn != nil {
 		return m.rankFn(ctx, docId, queries)
 	}
-	results := make([]matcher.RankResult, len(queries))
-	for i, q := range queries {
-		results[i] = matcher.RankResult{KeptName: q}
-	}
-	return results, nil
-}
-
-func (m *mockTagMatcher) SimilarPairs(_ context.Context) ([]matcher.SimilarPair, error) {
-	return nil, nil
+	return make([]matcher.RankResult, len(queries)), nil
 }
 
 func (m *mockTagMatcher) Close()       {}
@@ -541,9 +532,6 @@ func newTestAdjudicator(t *testing.T) (*Adjudicator, *database.Queries, *mockAdj
 	a := &Adjudicator{
 		config: &config.Config{
 			Enricher: config.EnricherConfig{
-				TagMatcher: config.TagMatcherConfig{
-					AutoReplaceSimilarity: 0.95,
-				},
 				TagAdjudicator: config.TagAdjudicatorConfig{
 					Enabled: true,
 					Timeout: 0,
@@ -629,7 +617,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		insertIdentityVerdict(t, q, "democratic socialism", "social democracy", "same", "target")
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
+		a.adjudicateIdentityPairs(context.Background(), 0, []*identityPair{p}, "")
 
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
@@ -648,7 +636,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
+		a.adjudicateIdentityPairs(context.Background(), 0, []*identityPair{p}, "")
 
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
@@ -667,7 +655,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
+		a.adjudicateIdentityPairs(context.Background(), 0, []*identityPair{p}, "")
 
 		adjAssertEqual(t, p.decided, true, "pair decided")
 		adjAssertEqual(t, string(p.verdict), "variant", "variant recorded")
@@ -681,7 +669,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 
 		p := &identityPair{query: "democratic socialism", target: "social democracy"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
+		a.adjudicateIdentityPairs(context.Background(), 0, []*identityPair{p}, "")
 
 		adjAssertEqual(t, p.decided, false, "pair stays undecided")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 0, "no cached verdict rows")
@@ -697,7 +685,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 
 		decided := &identityPair{query: "democratic socialism", target: "social democracy"}
 		missing := &identityPair{query: "urban planning", target: "city planning"}
-		a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{decided, missing}, "")
+		a.adjudicateIdentityPairs(context.Background(), 0, []*identityPair{decided, missing}, "")
 
 		adjAssertEqual(t, adj.called, 1, "an incomplete reply is not retried")
 		adjAssertEqual(t, decided.decided, true, "the returned pair is decided")
@@ -712,7 +700,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		ctx := context.Background()
 
 		p := &identityPair{query: "decolonisation", target: "decolonization"}
-		a.adjudicateIdentityPairs(ctx, 0, "", []*identityPair{p}, "")
+		a.adjudicateIdentityPairs(ctx, 0, []*identityPair{p}, "")
 
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
@@ -764,7 +752,7 @@ func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
 		t.Fatalf("seed fresh verdict: %v", err)
 	}
 
-	bp := &bandPair{query: "democratic socialism", target: "social democracy", sim: 0.81}
+	bp := &bandPair{}
 	bp.verdict = types.TagVerdicts.Same
 	bp.model = "test-model"
 
@@ -2165,7 +2153,7 @@ func TestAdjudicateIdentityPairs_CreditErrorEscapes(t *testing.T) {
 	}
 
 	p := &identityPair{query: "democratic socialism", target: "social democracy"}
-	err := a.adjudicateIdentityPairs(context.Background(), 0, "", []*identityPair{p}, "")
+	err := a.adjudicateIdentityPairs(context.Background(), 0, []*identityPair{p}, "")
 	if err == nil {
 		t.Fatal("credit exhaustion must escape adjudicateIdentityPairs")
 	}

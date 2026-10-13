@@ -87,9 +87,7 @@ func serveHugotHandler(c *container.Container, args []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rpc/v1/encode", handleEncode(hugot, c.GetLogger(), bodyCap))
 	mux.HandleFunc("/rpc/v1/match", handleMatch(hugot, c.GetLogger(), bodyCap))
-	mux.HandleFunc("/rpc/v1/consolidate", handleConsolidate(hugot, c.GetLogger(), bodyCap))
 	mux.HandleFunc("/rpc/v1/rank", handleRank(hugot, c.GetLogger(), bodyCap))
-	mux.HandleFunc("/rpc/v1/similar-pairs", handleSimilarPairs(hugot, c.GetLogger()))
 	mux.HandleFunc("/rpc/v1/add-to-store", handleAddToStore(hugot, c.GetLogger(), bodyCap))
 	mux.HandleFunc("/rpc/v1/remove-from-store", handleRemoveFromStore(hugot, c.GetLogger(), bodyCap))
 	mux.HandleFunc("/health", handleHealth)
@@ -218,31 +216,6 @@ func handleMatch(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.Ha
 	}
 }
 
-func handleConsolidate(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, int64(maxBodyBytes))
-		var req struct {
-			DocID   string   `json:"doc_id"`
-			Queries []string `json:"queries"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, logger, err, http.StatusBadRequest, "bad request")
-			return
-		}
-		results, err := h.Consolidate(r.Context(), req.DocID, req.Queries)
-		if err != nil {
-			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"results": results})
-	}
-}
-
 func handleRank(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -265,22 +238,6 @@ func handleRank(h *matcher.Hugot, logger *log.Logger, maxBodyBytes int) http.Han
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"results": results})
-	}
-}
-
-func handleSimilarPairs(h *matcher.Hugot, logger *log.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		pairs, err := h.SimilarPairs(r.Context())
-		if err != nil {
-			respondError(w, logger, err, http.StatusInternalServerError, "internal error")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"pairs": pairs})
 	}
 }
 

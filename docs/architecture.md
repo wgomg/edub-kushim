@@ -41,8 +41,6 @@ A standalone HTTP server over a Unix domain socket (`kushim-hugot.sock` in the c
 | `POST /rpc/v1/encode`            | POST   | Encode text to embeddings    |
 | `POST /rpc/v1/match`             | POST   | Match text against tags      |
 | `POST /rpc/v1/rank`              | POST   | Rank tag names against the store, return candidates with scores |
-| `GET /rpc/v1/similar-pairs`      | GET    | Return the cached high-similarity tag pairs (merge-review surface) |
-| `POST /rpc/v1/consolidate`       | POST   | Legacy consolidation endpoint (pre-upgrade clients only) |
 | `POST /rpc/v1/add-to-store`      | POST   | Add names to embedding store |
 | `POST /rpc/v1/remove-from-store` | POST   | Remove names from store      |
 | `GET /health`                    | GET    | Health check                 |
@@ -96,7 +94,7 @@ flowchart TB
     end
 
     subgraph Hugot["kushim hugot\n(matcher RPC server)"]
-        H["Unix socket\nencode / match / rank / consolidate / similar-pairs"]
+        H["Unix socket\nencode / match / rank / add-to-store / remove-from-store"]
     end
 
     HTTP[HTTP Request] --> API
@@ -278,27 +276,19 @@ The enrichment pipeline:
    `tag_identity_event` at the identity rule-set version; the triggered run
    (`kushim tagidentity`, enqueued by
    `POST /api/v1/tags/identity/reevaluate`) and the scheduled reconciler's
-   identity sweep resolve pending claims. Pre-existing duplicates that survive
-   consolidation are resolved by the operator through the **merge-review
-   surface** — `GET /api/v1/tags/merge` reads the matcher daemon's pair cache
-   (every unordered pair of store entries at or above the consolidation
-   similarity floor, maintained incrementally on tag CRUD) and ranks the pairs
-   by population overlap and verdict history from `tag_verdict_event`
-   (similarity-only, lower-confidence rows when the event table is empty), and
-   `POST /api/v1/tags/{id}/merge`
-   hard-merges a source tag into a target in one transaction (re-points
-   `document_tag` rows, deletes the source tag, removes the source name from
-   the embedding store). Dismissed pairs are persisted in the global
-   `tag_merge_dismissal` table (`POST`/`DELETE /api/v1/tags/merge/dismissals`)
-   so they stay out of the queue across sessions, with a "Hide dismissed"
-   switch in the UI. Both endpoints are exposed in the tags page UI
-   ("Merge review" tab, editor-gated), where each pair's document counts link
-   to the documents page filtered by the tag and the vocabulary table expands a
-   row into the same pair cards. Deleting or merging a tag records
-   its name in the `deleted_tag` blocklist (inside the merge transaction for
-   merges), so later LLM emissions cannot resurrect it: enrichment drops
-   blocked names and rewrites merged names to their target, and the reconciler
-   skips their restoration. The tags page's "Deleted" tab lists the blocklist with per-row
+   identity sweep resolve pending claims. Pre-existing duplicates collapse by
+   **aliasing**: a same-intent loser becomes a `tag_alias` row of the canonical,
+   its assignments re-point to the canonical, its own aliases re-target (no
+   chains), and its tag row is removed — the name keeps resolving and is never
+   deleted. The scheduled reconciliation applies the same disposition to a
+   stored pair whose fresh verdict flips to `same`, and withdraws the alias when
+   a later flip says `keep` (the name is re-created with its documents). The
+   tags page exposes vocabulary CRUD (rename, delete) and the provisional
+   review; there is no merge queue and no dismissal table. Deleting a tag
+   records its name in the `deleted_tag` blocklist (kind `blocked`), so later
+   LLM emissions cannot resurrect it: enrichment drops blocked names, and the
+   reconciler skips their restoration. The tags page's "Deleted" tab lists the
+   blocklist with per-row
    restore, and the operator create path un-blocks the name it creates.
    When `enricher.tag_quality.enabled` is true, the kept set passes one more
    filter before it reaches the store: novel names (absent from the

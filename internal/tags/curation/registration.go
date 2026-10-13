@@ -256,7 +256,7 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 		if _, isBlocked := blocked[textnorm.NormalizeTag(action.AliasName)]; isBlocked {
 			continue
 		}
-		if err := s.applyAliasAction(ctx, q, existingMap, action); err != nil {
+		if _, err := s.applyAliasAction(ctx, q, existingMap, action); err != nil {
 			return nil, nil, err
 		}
 	}

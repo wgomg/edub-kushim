@@ -19,7 +19,7 @@ tags get suggested.
 4. [Bootstrapping the store](#4-bootstrapping-the-store)
 5. [Encoding: short vs long texts](#5-encoding-short-vs-long-texts)
 6. [Matching: cosine ranking against the store](#6-matching-cosine-ranking-against-the-store)
-7. [Consolidation: tag-to-tag](#7-consolidation-tag-to-tag)
+7. [Consolidation: tag-to-tag candidates](#7-consolidation-tag-to-tag-candidates)
 8. [Interfaces: local and remote implementations](#8-interfaces-local-and-remote-implementations)
 9. [The matcher daemon](#9-the-matcher-daemon)
 10. [Thresholds and configuration](#10-thresholds-and-configuration)
@@ -298,7 +298,7 @@ The result is capped at `TopN` (15). The top scores are logged for debugging
 
 ---
 
-## 7. Consolidation: tag-to-tag
+## 7. Consolidation: tag-to-tag candidates
 
 `Rank` (`hugot.go:358-390`) ranks LLM-produced tag names against canonical
 existing tags — the "the LLM said 'machine learning' but the store
@@ -306,7 +306,7 @@ has 'machine-learning'" fix. Differences from `Match`:
 
 - It encodes the query tag names (not document text) — each is short, so it
   rides the batched path.
-- It uses a **separate, higher threshold** (`consolidationSim`), because
+- It uses a **separate, higher floor** (`candidateFloor`), because
   tag-name-to-tag-name similarity is inherently sparser than
   document-to-tag (see §10).
 - It returns **candidates with scores**; the identity decision is the
@@ -314,8 +314,7 @@ has 'machine-learning'" fix. Differences from `Match`:
 
 ```go
 for i, qEmb := range out.Embeddings {
-	results[i].KeptName = normalized[i]
-	matches := h.rankMatches(qEmb, entries, h.consolidationSim)
+	matches := h.rankMatches(qEmb, entries, h.candidateFloor)
 	if len(matches) > rankCandidates {
 		matches = matches[:rankCandidates]
 	}
@@ -326,11 +325,8 @@ for i, qEmb := range out.Embeddings {
 }
 ```
 
-- `KeptName` is the **normalized** query after a completed ranking, but the
-  **original** query when ranking short-circuits (empty store,
-  `consolidationSim == 0.0`, or an embedding-count mismatch).
-- If `consolidationSim == 0.0` (disabled) or the store is empty, queries pass
-  through unchanged with no candidates.
+- If `candidateFloor == 0.0` (disabled) or the store is empty, queries pass
+  through with no candidates.
 
 `Runner.RankTags` (`internal/tools/runner.go`) wraps the call with the
 configured timeout, and the enricher applies the identity pipeline locally
@@ -339,11 +335,10 @@ configured timeout, and the enricher applies the identity pipeline locally
 Per query the policy runs, in order: short-slice and empty-candidates
 passthrough, an identity fast path (exact equality with a store tag →
 apply the existing label), and then candidate generation — every remaining
-candidate neighbour is kept as a **gate subject** with its similarity and
-runner-up recorded as adjudication evidence. Similarity never replaces or
-keeps on its own; gates and identity do. Each disposition is logged as
-`identity[v8]: apply|alias|defer|separate …`. Fallback results from the legacy
-daemon (no candidates) pass through `KeptName` verbatim. M1 house-form and M3
+candidate neighbour is kept as a **gate subject** with its similarity.
+Similarity never replaces or keeps on its own; the identity plan and the gates
+do. Each disposition is logged as
+`identity[v10]: apply|alias|defer|separate …`. M1 house-form and M3
 key-equal variants and aliases never reach the policy: they apply the canonical
 value before ranking output is used; pinned orthographic and token-permutation
 variants reach it as gate subjects and then resolve mechanically (see below).
@@ -574,10 +569,8 @@ type Embedder interface {
 - `*matcher.MatcherClient` (`internal/matcher/client.go:76`) implements both
   over the Unix socket — used by `edub`, which cannot load the model. The RPC
   surface is `Match`, `Rank`, `AddToStore`, `RemoveFromStore`, `Health`
-  (`internal/ops/cli/hugot.go:88-94`). `Rank` prefers `/rpc/v1/rank` and
-  falls back to the legacy `/rpc/v1/consolidate` on 404 (old daemon), wrapping
-  each returned name as a `RankResult{KeptName: name}` with no candidates so
-  the enricher keeps it verbatim.
+  (`internal/ops/cli/hugot.go:88-94`); `Rank` POSTs `/rpc/v1/rank` and returns
+  its `RankResult`s verbatim (candidates only).
 - The client wraps every call in `ErrMatcherUnavailable` when the socket
   daemon is down — which is what turns tag CRUD into 503.
 
@@ -629,8 +622,7 @@ All knobs live under `enricher.tagmatcher` in the config
 | `top_n` | `15` (derived) | max suggestions returned |
 | `min_similarity` | model-derived | document→tag threshold |
 | `min_suggestion_similarity` | model-derived (`0.52` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
-| `consolidation_similarity` | model-derived | tag→tag consideration floor (candidates below it never reach the identity pipeline) |
-| `auto_replace_similarity` | model-derived | formerly the tag→tag auto-replace cutoff; still derived but no decision consumes it |
+| `identity_candidate_similarity` | model-derived | tag→tag identity-candidate floor: candidate neighbours at or above it are the only pairs the identity gate considers |
 | `timeout` | `120` (s) | per-call budget |
 | `reduce_target_words` | `4000` | text is reduced to ≤ this many words before embedding |
 
@@ -653,9 +645,9 @@ func defaultMinSimilarity(modelShortName string) float64 {
 	}
 }
 
-// defaultConsolidationSimilarity ... must be higher than the document-to-tag
+// defaultIdentityCandidateSimilarity ... must be higher than the document-to-tag
 // threshold because single tag names have much sparser semantic signal ...
-func defaultConsolidationSimilarity(modelShortName string) float64 {
+func defaultIdentityCandidateSimilarity(modelShortName string) float64 {
 	switch modelShortName {
 	case "bge-m3":
 		return 0.80 // 1024-dim; reduced from 0.82 due to SentencePiece tokenization variance
@@ -665,22 +657,6 @@ func defaultConsolidationSimilarity(modelShortName string) float64 {
 		return 0.70 // 384-dim, compressed distribution
 	default:
 		return 0.75
-	}
-}
-
-// defaultAutoReplaceSimilarity ... the similarity at or above which a
-// guard-free non-identity candidate replaces the emitted tag; each value is
-// the consolidation default + 0.15 ...
-func defaultAutoReplaceSimilarity(modelShortName string) float64 {
-	switch modelShortName {
-	case "bge-m3":
-		return 0.95
-	case "all-mpnet-base-v2":
-		return 0.90
-	case "all-MiniLM-L6-v2":
-		return 0.85
-	default:
-		return 0.90
 	}
 }
 
@@ -703,9 +679,8 @@ func defaultMinSuggestionSimilarity(modelShortName string) float64 {
 ```
 
 Rules of thumb: raise `min_similarity` if false positives appear; keep
-`consolidation_similarity` well above it. If you add a model to the
-catalog/derivation, add it to all four switch
-statements.
+`identity_candidate_similarity` well above it. If you add a model to the
+catalog/derivation, add it to every switch statement.
 
 ---
 

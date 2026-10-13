@@ -1,11 +1,8 @@
-// Package curation is the tag store's human-facing operations: reading and
-// searching the vocabulary, creating tags through the deterministic
-// identity plan, renaming, deleting with blocklist bookkeeping, promoting
-// provisional tags, managing deleted-tag records, and keeping the matcher's
-// embedding store in sync with the tags table. It is the single owner of
-// the tag-store invariants; the pipeline side applies its writes through
-// this package. The merge-review flows are documented in
-// docs/tags/consolidation.md.
+// Package curation is the tag store's human-facing operations: reading and searching the vocabulary,
+// creating tags through the deterministic identity plan, renaming, deleting with blocklist bookkeeping,
+// promoting provisional tags, managing deleted-tag records, and keeping the matcher's embedding store
+// in sync with the tags table. It is the single owner of the tag-store invariants; the pipeline side
+// applies its writes through this package; consolidation flows are documented in docs/tags/consolidation.md.
 package curation
 
 import (
@@ -27,15 +24,11 @@ type TagUpdatePair struct {
 	Name string
 }
 
-// The deleted-tag kinds: blocked (deleted by an operator) and merged
-// (folded into a surviving target). DocumentTagSourceEnrich marks document
-// tag rows created by the enrichment pipeline.
-const (
-	DeletedTagKindBlocked = "blocked"
-	DeletedTagKindMerged  = "merged"
+// DeletedTagKindBlocked records an operator deletion in the deleted_tag blocklist.
+const DeletedTagKindBlocked = "blocked"
 
-	DocumentTagSourceEnrich = "enrich"
-)
+// DocumentTagSourceEnrich marks document tag rows created by the enrichment pipeline.
+const DocumentTagSourceEnrich = "enrich"
 
 // Tag is the tag store's read, write and administration surface: CRUD,
 // planned registrations, aliases, deleted tags, promotion, and the sync
@@ -438,17 +431,14 @@ func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int3
 	return rows, total, nil
 }
 
-// RestoreDeleted drops a deleted-tag record; blocked entries have their
-// tag recreated through Create. Merged entries only clear the blocklist.
+// RestoreDeleted clears a deleted-tag record and recreates the blocked tag through Create.
 func (s *Tag) RestoreDeleted(ctx context.Context, name string) (database.DeletedTag, error) {
 	row, err := s.client.Queries.GetDeletedTag(ctx, name)
 	if err != nil {
 		return database.DeletedTag{}, errs.FromDB(err, "restore deleted tag")
 	}
-	if row.Kind == DeletedTagKindBlocked {
-		if _, err := s.Create(ctx, []string{row.Name}); err != nil {
-			return row, err
-		}
+	if _, err := s.Create(ctx, []string{row.Name}); err != nil {
+		return row, err
 	}
 	if err := s.client.Queries.DeleteDeletedTag(ctx, name); err != nil {
 		return row, errs.FromDB(err, "restore deleted tag")

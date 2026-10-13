@@ -266,24 +266,6 @@ export const api = {
 		},
 		restoreDeleted: (name) =>
 			requestRaw(`/api/v1/tags/deleted/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-		mergeSuggestions: (limit = 20, { forTag = '', includeDismissed = false } = {}) => {
-			const params = new URLSearchParams({ limit: String(limit) });
-			if (forTag) params.set('for_tag', forTag);
-			if (includeDismissed) params.set('include_dismissed', 'true');
-			return requestRaw(`/api/v1/tags/merge?${params.toString()}`);
-		},
-		dismissMergePair: (tagA, tagB) =>
-			requestRaw('/api/v1/tags/merge/dismissals', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ tag_a: tagA, tag_b: tagB })
-			}),
-		restoreMergePair: (tagA, tagB) =>
-			requestRaw('/api/v1/tags/merge/dismissals', {
-				method: 'DELETE',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ tag_a: tagA, tag_b: tagB })
-			}),
 		reconcileReport: () => requestRaw('/api/v1/tags/reconciliation/report'),
 		provisionalList: (limit = 50, offset = 0, { criteria = [], verdict = '' } = {}) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
@@ -292,13 +274,7 @@ export const api = {
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
-		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' }),
-		merge: (sourceId, targetId) =>
-			requestRaw(`/api/v1/tags/${sourceId}/merge`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ target_id: targetId })
-			})
+		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' })
 	},
 
 	people: {

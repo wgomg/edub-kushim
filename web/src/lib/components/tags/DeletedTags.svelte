@@ -23,16 +23,6 @@
 			width: '100%'
 		},
 		{
-			key: 'kind',
-			label: 'Kind',
-			sortable: false,
-			width: '220px',
-			cell: (_v, row) =>
-				row.kind === 'merged' && row.target_name
-					? `merged into ${escapeHtml(row.target_name)}`
-					: 'blocked'
-		},
-		{
 			key: 'created_at',
 			label: 'Deleted',
 			sortable: false,
@@ -100,8 +90,7 @@
 </div>
 
 <p class="mb-4 max-w-3xl text-[0.8125rem] text-parchment-500">
-	Names listed here are blocked from enrichment. Blocked tags are re-created when restored; merged
-	names are simply allowed again.
+	Names listed here are blocked from enrichment. A blocked tag is re-created when restored.
 </p>
 
 <DataTable

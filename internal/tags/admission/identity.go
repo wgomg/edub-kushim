@@ -32,7 +32,6 @@ type identityPair struct {
 	query        string
 	target       string
 	sim          float64
-	runnerUpSim  float64
 	verdict      types.TagVerdict
 	direction    string
 	variantClass string
@@ -50,14 +49,13 @@ type identityAnswer struct {
 }
 
 // IdentityPlanInput is the data PlanIdentity plans against: the document's
-// row id and public id, the candidate names, their ranked matches, and the
-// store's known names.
+// row id, the candidate names, their ranked matches, and the store's known
+// names.
 type IdentityPlanInput struct {
-	DocID      int64
-	DocumentID string
-	Names      []string
-	Ranked     []matcher.RankResult
-	DBNames    map[string]struct{}
+	DocID   int64
+	Names   []string
+	Ranked  []matcher.RankResult
+	DBNames map[string]struct{}
 }
 
 // PlanIdentity plans the document's candidate tags against the store: the
@@ -94,7 +92,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 
 	pairs := make([]*identityPair, 0)
 	pairAt := make(map[string]*identityPair)
-	addPair := func(query, target string, sim, runnerUp float64) {
+	addPair := func(query, target string, sim float64) {
 		if query == "" || target == "" || query == target || tags.Key(query) == tags.Key(target) {
 			return
 		}
@@ -102,11 +100,10 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		if p, ok := pairAt[key]; ok {
 			if sim > p.sim {
 				p.sim = sim
-				p.runnerUpSim = runnerUp
 			}
 			return
 		}
-		p := &identityPair{query: query, target: target, sim: sim, runnerUpSim: runnerUp}
+		p := &identityPair{query: query, target: target, sim: sim}
 		pairAt[key] = p
 		pairs = append(pairs, p)
 	}
@@ -159,11 +156,11 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 				}
 			}
 			flagged[cand.name] = true
-			addPair(cand.name, existing, 0, 0)
+			addPair(cand.name, existing, 0)
 		}
 		if i < len(decisions) && decisions[i].Reason == policy.ReasonBand && decisions[i].Target != "" {
 			flagged[cand.name] = true
-			addPair(cand.name, decisions[i].Target, decisions[i].Sim, decisions[i].RunnerUpSim)
+			addPair(cand.name, decisions[i].Target, decisions[i].Sim)
 		}
 	}
 	candidateVariantKeys := make(map[string][2]string, len(candidates))
@@ -189,7 +186,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			}
 			flagged[a.name] = true
 			flagged[b.name] = true
-			addPair(a.name, b.name, 0, 0)
+			addPair(a.name, b.name, 0)
 		}
 	}
 
@@ -249,7 +246,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		cand.fold = ""
 	}
 
-	err = a.adjudicateIdentityPairs(ctx, in.DocID, in.DocumentID, pairs, reqID)
+	err = a.adjudicateIdentityPairs(ctx, in.DocID, pairs, reqID)
 	if err != nil {
 		return nil, tags.Plan{}, nil, err
 	}
@@ -535,7 +532,7 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 // decided pair. A partial reply decides the pairs it returned and leaves only the missing ones provisional;
 // every other failure leaves the batch's unresolved pairs provisional. A non-nil error is returned only
 // when the provider account cannot pay.
-func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, documentID string, pairs []*identityPair, reqID string) error {
+func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, pairs []*identityPair, reqID string) error {
 	if len(pairs) == 0 {
 		return nil
 	}
@@ -602,7 +599,10 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		return nil
 	}
 
-	evidence := a.identityPairEvidence(ctx, documentID, judged, reqID)
+	evidence := make([]analyzer.TagPairEvidence, len(judged))
+	for i, p := range judged {
+		evidence[i] = analyzer.TagPairEvidence{Query: p.query, Target: p.target}
+	}
 	model := a.config.ResolvedAdjudicatorLlm().Model
 	applyVerdict := func(p *identityPair, r analyzer.TagVerdictResult) {
 		p.verdict = r.Verdict
@@ -688,46 +688,6 @@ func sameIntentCriteria(direction, variantClass string) []byte {
 	return criteria
 }
 
-func (a *Adjudicator) identityPairEvidence(ctx context.Context, documentID string, pairs []*identityPair, reqID string) []analyzer.TagPairEvidence {
-	evidence := make([]analyzer.TagPairEvidence, len(pairs))
-	for i, p := range pairs {
-		evidence[i] = analyzer.TagPairEvidence{
-			Query:       p.query,
-			Target:      p.target,
-			Sim:         p.sim,
-			RunnerUpSim: p.runnerUpSim,
-		}
-	}
-	if documentID == "" {
-		return evidence
-	}
-	targets := make([]string, 0, len(pairs))
-	seen := make(map[string]struct{}, len(pairs))
-	for _, p := range pairs {
-		if _, ok := seen[p.target]; ok {
-			continue
-		}
-		seen[p.target] = struct{}{}
-		targets = append(targets, p.target)
-	}
-	reciprocal := a.reciprocalEvidence(ctx, documentID, bandPairsFor(targets), reqID)
-	for i, p := range pairs {
-		if ev, ok := reciprocal[p.target]; ok {
-			evidence[i].TargetRunnerUpTag = ev.tag
-			evidence[i].TargetRunnerUpSim = ev.sim
-		}
-	}
-	return evidence
-}
-
-func bandPairsFor(targets []string) []*bandPair {
-	pairs := make([]*bandPair, len(targets))
-	for i, target := range targets {
-		pairs[i] = &bandPair{target: target}
-	}
-	return pairs
-}
-
 func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *identityPair, reqID string) {
 	criteria := sameIntentCriteria(p.direction, p.variantClass)
 	var model sql.NullString
@@ -779,7 +739,7 @@ func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *id
 		Target: p.target,
 		Output: p.query,
 		Sim:    p.sim,
-	}, &bandPair{query: p.query, target: p.target, sim: p.sim, verdict: p.verdict, model: p.model, cached: p.cached}, reqID)
+	}, &bandPair{verdict: p.verdict, model: p.model, cached: p.cached}, reqID)
 }
 
 func boolVerdict(value bool, whenTrue, whenFalse string) string {

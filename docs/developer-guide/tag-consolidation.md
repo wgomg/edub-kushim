@@ -3,8 +3,8 @@
 This guide explains how the post-LLM tag-consolidation subsystem works
 internally: the birth-time identity machinery, the pure candidate-generation
 policy, the enricher flow that applies it, LLM adjudication of the same-intent
-gate, the verdict and identity-evidence tables, the matcher RPC surface and
-pair cache, the merge-review service, and the scheduled reconciler.
+gate, the verdict and identity-evidence tables, the matcher RPC surface, the
+alias disposition, and the scheduled reconciler.
 
 It is the internal-mechanics companion to `docs/tags/consolidation.md` and
 `docs/tags/canonical-form-and-identity.md` (design). Audience: developers who
@@ -20,8 +20,8 @@ canonical vocabulary.
 3. [The enricher flow](#3-the-enricher-flow)
 4. [LLM adjudication](#4-llm-adjudication)
 5. [The verdict and evidence tables](#5-the-verdict-and-evidence-tables)
-6. [Matcher RPC surface and the pair cache](#6-matcher-rpc-surface-and-the-pair-cache)
-7. [Merge review](#7-merge-review)
+6. [Matcher RPC surface](#6-matcher-rpc-surface)
+7. [Alias disposition](#7-alias-disposition)
 8. [Scheduled reconciliation](#8-scheduled-reconciliation)
 9. [Tag extension measurement](#9-tag-extension-measurement)
 10. [Safety properties](#10-safety-properties)
@@ -48,8 +48,8 @@ The subsystem spans these packages:
 | `internal/tags/admission` | admission seams: alias lookup, identity planning, judge/adjudicator orchestration, tag-quality gating, plan application |
 | `internal/enrichment` (`enricher.go`) | coordinator: runs the pipeline and calls the admission seams |
 | `internal/tags/reconcile` | scheduled re-adjudication + log bootstrap parser + identity-evidence sweep |
-| `internal/tags/curation` | tag vocabulary services: tag CRUD, merge operation + merge suggestions, identity-run enqueue |
-| `internal/matcher` | the daemon (`Rank`, pair cache, embedding store) and the RPC client (`edub`'s deployment) |
+| `internal/tags/curation` | tag vocabulary services: tag CRUD, alias disposition, identity-run enqueue |
+| `internal/matcher` | the daemon (`Rank`, embedding store) and the RPC client (`edub`'s deployment) |
 | `internal/database` | migrations 00017/00018/00029, verdict + evidence queries |
 
 Two deployments share the `matcher.Matcher` interface: the in-process
@@ -57,13 +57,13 @@ Two deployments share the `matcher.Matcher` interface: the in-process
 `kushim hugot`). Any interface change must update both plus the test doubles
 (`internal/testutil`, `internal/tools/runner_test.go`).
 
-Thresholds involved (`internal/config/config.go`): `consolidation_similarity`
-is the **consideration floor** — the daemon's `Rank` candidate filter
-(bge-m3 → 0.80). The former `auto_replace_similarity` cutoff is no longer
-consumed by any decision: a similarity score never replaces a name on its own,
-only identity or the same-intent gate do. The field is still derived per model
-and serialized in config responses. Per-model values and the derivation
-switches are documented in the [semantic matching guide](semantic-matching.md#10-thresholds-and-configuration).
+Thresholds involved (`internal/config/config.go`): `identity_candidate_similarity`
+is the **identity-candidate floor** — the daemon's `Rank` candidate filter
+(bge-m3 → 0.80), and the only stored neighbours the identity gate considers. No
+similarity cutoff replaces or keeps a name on its own: identity resolution and
+the same-intent gate do. The field is derived per model and serialized in config
+responses. Per-model values and the derivation switches are documented in the
+[semantic matching guide](semantic-matching.md#10-thresholds-and-configuration).
 
 ---
 
@@ -151,12 +151,12 @@ Per query, `Evaluate` runs in order:
    traffic: casing, hyphenation, and symbol-form fixes after normalization;
    key-equivalent style variants resolve earlier through M3.
 3. **Band subjects** — every other candidate becomes a gate subject
-   (`ambiguous_band`): the emitted `KeptName` is kept and the top candidate is
-   recorded with its similarity and runner-up. Similarity ranks and filters
-   candidates; it never replaces or keeps on its own.
+   (`ambiguous_band`): the query keeps its name and the top candidate is
+   recorded with its similarity. Similarity ranks and filters candidates; it
+   never replaces or keeps on its own.
 
-The runner-up similarity is recorded on every decision and never affects it —
-it exists as adjudication evidence.
+The judge sees only the two terms of a pair; the similarity that selected the
+pair is never part of the prompt.
 
 ### 2.3 The gate and its dispositions
 
@@ -224,9 +224,9 @@ transaction — adjudication stays outside it:
    the rest go through the pair adjudicator. The result is a `tags.Plan` carrying
    registrations, alias actions, evidence rows, and the composition rows the
    decomposition gate judged, and per-disposition log
-   lines (`identity[v8]: apply|alias|defer|separate …`), with the applied-fold
+   lines (`identity[v10]: apply|alias|defer|separate …`), with the applied-fold
    input→output mapping and the judge-unavailable mint at DEBUG
-   (`identity[v8]: fold applied …`, `identity[v8]: pending evidence minted …`).
+   (`identity[v10]: fold applied …`, `identity[v10]: pending evidence minted …`).
 4. **Application** (`CreatePlannedTx`) runs inside the caller's persist
    transaction: registrations (write-boundary normalization, blocklist
    re-check, provisional births, promotion when not quarantined), scheduled
@@ -285,8 +285,8 @@ and both temperature 0 with structured output where the provider supports it:
   carries the criteria plus the fold the mechanism proposed.
 - **Pair adjudication** — `Runner.AdjudicateTags` →
   `ContentAnalyzer.Adjudicate`. The prompt (`BuildAdjudicationPrompt`) carries
-  the same-intent test, the pair terms, the pair's embedding similarity, the
-  query-side runner-up, and the target's nearest other store tag; for a `same`
+  the same-intent test and the pair's two terms and nothing else — similarity
+  selected the pair and is never an input to the verdict. For a `same`
   verdict it also asks which term is the precise one (`direction`:
   `query`/`target`/`tie`). `ParseAdjudicationResponse` treats a pair with no
   parseable verdict — a missing entry, an unknown verdict string, or an
@@ -346,8 +346,8 @@ cache-applied rows store NULL.
 
 The table is deliberately a shared schema object, not a KV cache:
 `TagPairEvidenceStats` aggregates per-pair population overlap and verdict
-counts across both orientations and all policy versions (it feeds merge
-suggestions and the reconciliation drift scan), and the reconciler's worklist
+counts across both orientations and all policy versions (the reconciler's drift
+scan reads it), and the reconciler's worklist
 scans (§8) all query it. Query reference: [database reference](../reference/database.md).
 
 Migration `00029_tag_identity.sql` adds the two identity objects:
@@ -374,83 +374,65 @@ Migration `00029_tag_identity.sql` adds the two identity objects:
 
 ---
 
-## 6. Matcher RPC surface and the pair cache
+## 6. Matcher RPC surface
 
 The daemon (`internal/ops/cli/hugot.go`) serves:
 
 | Endpoint | Purpose |
 | -------- | ------- |
-| `POST /rpc/v1/rank` | Per query: `{kept_name, candidates: [{tag, similarity}]}` — top-2 candidates (`rankCandidates`, `hugot.go:124`), all ≥ the consideration floor. The daemon makes no replacement decision. |
-| `GET /rpc/v1/similar-pairs` | The full pair cache — every unordered pair of store entries ≥ the floor. No legacy fallback: an old daemon 404s → matcher-unavailable → suggestions 503 until the daemon restarts. |
-| `POST /rpc/v1/consolidate` | Legacy endpoint (`Hugot.Consolidate`, `hugot.go:324`) kept for pre-upgrade clients only. |
+| `POST /rpc/v1/rank` | Per query: `{candidates: [{tag, similarity}]}` — top-2 candidates (`rankCandidates`), all ≥ the identity-candidate floor. The daemon makes no replacement decision. |
+| `POST /rpc/v1/encode`, `match`, `add-to-store`, `remove-from-store` | The embedding, document-matching and store-maintenance calls. |
 
-`MatcherClient.Rank` (`internal/matcher/client.go:203`) prefers `/rpc/v1/rank`
-and falls back to the legacy endpoint on 404 via `rankViaConsolidate`
-(`client.go:222`), wrapping each returned name as a no-candidates
-`RankResult` — which the policy passes through verbatim. Both skew directions
-therefore keep working without lock-step restarts; only `similar-pairs`
-requires the daemon restart.
-
-The **pair cache** (`Hugot.pairs`, guarded by a mutex because the HTTP handlers
-run concurrently with store mutations) mirrors the embedding store exactly:
-`SetStore` rebuilds it with a full N²/2 cosine pass at boot (after
-`BuildTagCache`; sub-second to a few seconds at realistic tag scale, zero
-encoding), `AddToStore` adds the new name's pairs with a 1×N pass,
-`RemoveFromStore` drops every pair mentioning the removed name — tag delete and
-rename both flow through it, so renames stay correct. With
-`consolidationSim == 0.0` (consolidation disabled) the cache stays empty,
-matching `Rank`'s early-return. `Hugot.SimilarPairs` (`hugot.go:250`) snapshots
-the map; `MatcherClient.SimilarPairs` (`client.go:254`) GETs the endpoint.
+`MatcherClient.Rank` (`internal/matcher/client.go`) POSTs `/rpc/v1/rank` and
+returns its `RankResult`s verbatim; the policy turns the candidates into gate
+subjects, and the identity plan owns the outputs it sets. The store calls are
+what tag create, rename and delete flow through, keeping the daemon's view of
+the vocabulary current. A daemon that is down surfaces as matcher-unavailable
+(503), the same contract as tag CRUD.
 
 ---
 
-## 7. Merge review
+## 7. Alias disposition
 
-`TagMerge` (`internal/tags/curation/tagmerge.go`) —
-nothing merges automatically; this is the operator's explicit action.
+Same-intent labels collapse by **aliasing**, never by deletion. The mechanics
+live in `curation` and run from three places: the birth-time plan
+(`Tag.CreatePlannedTx` applies the plan's `AliasAction`s inside the persist
+transaction), the identity resolver's fold and alias application, and the
+reconciler's confirmed `same` flips.
 
-**`Merge(ctx, sourceID, targetID)`** runs one transaction:
+**`Tag.ApplyAliasPlan(ctx, actions []tags.AliasAction) ([]tags.AliasOutcome, error)`**
+(`internal/tags/curation/alias.go`) applies a batch in one transaction and
+returns one outcome per action in order:
 
-1. `GetTagForUpdate` on both tag rows, `FOR UPDATE` in ascending id order —
-   an unlocked concurrent delete of the target would cascade away the rows
-   just re-pointed (`document_tag.tag_id` is `ON DELETE CASCADE`), and the
-   id-ordered lock makes opposite-direction concurrent merges deadlock-free.
-2. `ReassignDocumentTags` re-points the source's `document_tag` rows to the
-   target, skipping documents that already carry the target (`NOT EXISTS`
-   guard).
-3. `DeleteDocumentTagsForTag` clears the skipped leftovers; `DeleteTag` removes
-   the source tag.
-4. Post-commit, `RemoveFromStore` drops the source name from the embedding
-   store (log-only failure, same contract as tag delete). The target's
-   embedding is untouched.
+1. A blocklisted name is skipped (`Applied:false`).
+2. The canonical is resolved by name; an action whose canonical or loser row is
+   missing, or whose name is already an alias, is skipped.
+3. With `RemoveExistingTag`, `GetTagForUpdateByName` locks the loser,
+   `ReassignDocumentTags` re-points its `document_tag` rows to the canonical
+   (skipping documents that already carry it), leftovers are cleared, the
+   loser's own aliases re-target the canonical (`RetargetTagAliases` — no alias
+   chains), and the loser's tag row is deleted.
+4. A `tag_alias` row (`alias_name`, `canonical_tag_id`, `rule_set_version` =
+   `tags.IdentityRuleSetVersion`) records the collapse.
 
-Event-table rows mentioning the merged source are left as history — the
-reconciler's dead-name pass (§8) is what prevents a cached verdict from
-resurrecting it. Errors: same id → invalid (400), missing source/target →
-not-found (404).
+The outcome reports `Applied` and how many documents the action re-pointed
+(zero for an applied action whose loser carried none). Post-commit, the removed
+names leave the embedding store (log-only failure, the same contract as tag
+delete).
 
-**`Suggestions(ctx, SuggestionsParams{Limit, ForTag, IncludeDismissed})`**: one
-`SimilarPairs` RPC → `ListAllTagsWithDocumentCount` (one query for the canonical
-tag set and document counts) → drop pairs whose names are no longer in the tag
-table → `ListTagMergeDismissals` into a set keyed by `pairKey` (canonical
-normalized names) → `TagPairEvidenceStats` over the survivors → shape, canonical
-two-tag ordering (higher document count first, tie lexicographic — a display
-default, not a merge decision), confidence `"population"` when the pair has
-event rows else `"similarity_only"`, `Dismissed` from the set, sort
-population-first, then keep up to `Limit` entries per class (live vs dismissed)
-so dismissed pairs cannot displace live suggestions; `ForTag` (normalized)
-narrows the scan to pairs involving one tag for the vocabulary row expansion.
-The endpoint 503s when the matcher is down (`isMatcherUnavailable`), surfaced as
-a distinct state in the UI ("Merge review" on the tags page).
+**Withdrawal.** A stored pair whose fresh verdict flips back to `keep` undoes a
+collapse: `withdrawAlias` deletes the alias row that pointed the query at the
+target, `Tag.Create` re-creates the name, and `RepointDocumentTagsForDocs`
+returns the pair's affected documents to it. An alias onto a *different*
+canonical is left alone — the name still resolves, and the flip settles without
+re-creating it.
 
-**`DismissPair(ctx, tagA, tagB)` / `RestorePair(ctx, tagA, tagB)`** touch only
-the database, never the matcher: both normalize the names, reject empty or
-identical inputs (invalid → 400) and sort them into canonical order (the pair
-identity is the sorted normalized names, not the display order), then dismiss
-(both tags must exist — `GetTagByName` → 404 otherwise — then upsert with
-`ON CONFLICT DO NOTHING`) or restore (`DeleteTagMergeDismissal`, a no-op for an
-absent row). Dismissals are global and are never pruned, so they survive tag
-delete/recreate cycles.
+**Operator surfaces.** The tags page exposes vocabulary CRUD (rename, delete)
+and the provisional review; there is no merge queue and no dismissal table.
+Deleting a tag records it in the `deleted_tag` blocklist (`kind` `blocked`), and
+the Deleted tab restores a name by clearing the row and re-creating the tag.
+The reconciler reports its applied collapses under `aliases` (with the
+re-pointed count), skipped ones under the `alias_skip` skip reason.
 
 ---
 
@@ -481,10 +463,11 @@ run restores the steady rule. The handler
 (`internal/tags/reconcile/tagreconcile.go`) owns the batch lifecycle
 (`MarkBatchProcessing`/`FinalizeBatchStatus`), dedups on
 `tagreconcile:<UTC date>`, and reports a JSON `Report` — worklist counts per
-category, judged/confirmed, flips by direction, merges with reassignment
+category, judged/confirmed, flips by direction, aliases with reassignment
 counts, re-tags, invalidations, skip reasons — as the task result. The report
-also carries pair-level entries (`planned_merges`, `planned_keep_flips`,
-`retag_entries`, `invalidated_entries`) plus `capped`, `no_documents`,
+also carries pair-level entries (`aliases`, `planned_aliases`,
+`planned_keep_flips`, `retag_entries`, `invalidated_entries`) plus `capped`,
+`no_documents`,
 `swept` (orphan tags deleted, or the would-be count in report-only runs),
 `provisional` (the provisional sweep's `worklist`, `zero_assignment`,
 `promoted`, `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`),
@@ -521,13 +504,16 @@ tags page.
   `TagVerdictPairsByVerdict` + `TagPairEvidenceStats`.
 - **Log bootstrap** (`bootstrap.go`) — pairs absent from the table entirely,
   parsed from `hugot.log*`/`kushim.log*` rotations (timestamped siblings,
-  `.gz` decompressed, chronological). Four line shapes are recognized: the
+  `.gz` decompressed, chronological). The parser reads archived formats only:
+  the enricher no longer emits them. Four line shapes are recognized: the
   pre-rewrite `hugot: consolidate "q" → t (sim)`, the unversioned
   `consolidate "q" → t (sim)`, `consolidation[vN]: keep "q" (sim=…
   reason=ambiguous_band …)` — any version prefix — and the band-less
   `consolidation[vN]: keep "q" (reason=rank_unavailable)` emitted when the
   post-LLM rank call fails (  parsed with an empty target and zero similarity,
-  so the entry flows through the normal re-adjudication path). Legacy
+  so the entry flows through the normal re-adjudication path; the live
+  equivalent is `policy[vN]: keep "q" (reason=rank_unavailable)`, which the
+  parser does not read). Legacy
   guard-reason keeps and `auto_replace` replaces from pre-identity logs are not
   parsed — they were decided by rules that no longer exist; REQIDs resolve to
   document ids via
@@ -541,7 +527,7 @@ and capped by `max_rejudge`.
 `RankTags` (256 names per batch, synthetic docId `tagreconcile`) plus one
 target-as-query rank pass for reciprocal evidence. Entries whose query is a
 store tag again (born since) or whose stored target fell below the
-consideration floor are dropped — future emissions will resolve them. The rest
+identity-candidate floor are dropped — future emissions will resolve them. The rest
 are evaluated through `policy.Evaluate` on the current store with the
 stored target at its fresh similarity: `identity` where the query equals the
 stored target, otherwise `ambiguous_band` → LLM adjudication (batches of 50). A
@@ -552,12 +538,16 @@ fresh verdict that differs from the stored one is confirmed by a second,
 orientations agree; ambiguity or disagreement keeps the stored verdict — except a
 deterministic variant pair, which its own class confirms.
 
-**Flips and caps**: a merge flip runs the full `TagMerge.Merge` (query tag
-deleted, all assignments re-pointed). A keep flip resolves the pair's affected
+**Flips and caps**: a `same` flip aliases the loser onto the canonical in one
+batched `ApplyAliasPlan` call per run — the loser's assignments re-point, its
+own aliases re-target, its tag row is removed, and the name survives as an
+alias row. A keep flip resolves the pair's affected
 documents (`DocumentIDsForPairs`, event-derived or REQID-derived doc ids)
 *before* touching the store: when the pair has no resolvable documents the
 entry is only marked judged (`upsertVerdict`) and no tag is created, so an
 unattributed pair cannot add a name to the vocabulary. Otherwise the keep flip
+first withdraws the alias row that collapsed the query onto the target
+(`GetTagAliasByName` → `DeleteTagAliasByName`), then
 `Tag.Create`s the query tag (Created or Conflict both fine), re-points only
 those documents (`RepointDocumentTagsForDocs`, with the `NOT EXISTS` guard),
 clears their orphan marks, and upserts the verdict — all in one transaction.
@@ -623,7 +613,7 @@ pending identity evidence up to `max_rejudge` rows through the shared resolver
 batches, same-intent pairs adjudicated, and the dispositions applied: a
 confirmed fold renames the tag (or aliases it when the folded name already
 exists), a same-intent loser becomes an alias of its winner, a deleted fold
-target is skipped, and a deferral stays for review. The per-pair cache settles
+target is skipped, and a deferral stays for review. The per-pair verdict cache settles
 each claim once, so the triggered run and this sweep converge on whichever
 runs first. Report-only runs skip the sweep. The counts land in
 `Report.Identity` (`pending`, `resolved`, `folded`, `aliased`, `deferred`,
@@ -701,9 +691,8 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 - **Dead names cannot resurrect** — the registration path re-checks the
   `deleted_tag` blocklist (a blocked name is never registered and never
   aliased), fold application skips deleted targets, dead-target verdict rows
-  are deleted, and every operator delete/merge is recorded in the blocklist:
-  enrichment drops blocked names (and rewrites merged names to their merge
-  target), and the reconciler skips their restoration.
+  are deleted, and every operator delete is recorded in the blocklist:
+  enrichment drops blocked names, and the reconciler skips their restoration.
 
 ---
 
@@ -714,8 +703,7 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   same-intent claims wait as pending evidence (their candidates register
   provisionally) until `enricher.tag_adjudicator.enabled` is set or the
   triggered run/sweep resolves them; both event tables stay empty until their
-  layers run. Merge suggestions then run similarity-only (`similarity_only`
-  confidence).
+  layers run.
 - **Quarantined tags are invisible to the vocabulary** — with `tag_quality`
   on, a newborn is attached and searchable from birth but stays out of the
   embedding store — and therefore out of suggestions, consolidation targets,
@@ -728,12 +716,9 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   phase or an operator in the review queue resolves them.
 - **The first reconciliation run is always report-only**, even with
   `report_only: false` — flip behavior only starts with the second run.
-- **`GET /rpc/v1/similar-pairs` has no legacy fallback** — after upgrading
-  edub, restart `kushim hugot` or merge suggestions 503. `Rank` does fall back
-  (legacy consolidate endpoint), so enrichment itself is skew-safe.
-- **`consolidation_similarity: 0` disables the whole subsystem** — `Rank`
-  returns no candidates, the pair cache stays empty, everything passes
-  through. That is the documented knob, not a bug.
+- **`identity_candidate_similarity: 0` disables candidate generation** — `Rank`
+  returns no candidates, so nothing becomes a gate subject, and every name
+  passes through. That is the documented knob, not a bug.
 - **Verdicts are cache-scoped to `policy.Version`** — bumping the version
   invalidates every cached verdict at once (old rows stay in the table for
   analysis; they are simply never read for the new version). Until the
@@ -742,13 +727,11 @@ delete — stay with the reconciler's worklists and the operator surfaces.
   quality verdicts another, `TagQualityVersion`, and the split verdicts two
   more, `TagPartDimensionVersion` (parts) and `TagSplitVersion` (compounds);
   bumping any of them retires its cached rows at once.
-- **The pair cache rebuild is N²/2 at daemon boot** — sub-second to a few
-  seconds at hundreds-to-low-thousands of tags, but it is part of the
-  `TimeoutStartSec` budget alongside model load and tag-cache build.
-- **Consolidation and identity logs live in the kushim (enrichment) log, not
-  `hugot.log`** — since the policy moved enricher-side (`consolidation[v1]`
-  decisions, `identity[v8]` dispositions). `hugot.log` only holds the
-  pre-rewrite history (which is exactly what the bootstrap parser reads).
+- **Identity and policy logs live in the kushim (enrichment) log, not
+  `hugot.log`** — the identity dispositions (`identity[v10]`) and the pinned
+  policy's passthroughs (`policy[v1]`) are emitted enricher-side. `hugot.log`
+  only holds the older history (which is exactly what the bootstrap parser
+  reads).
 - **Interface changes ripple** — `Matcher`/`Embedder` implementations include
   `*Hugot`, `*matcher.MatcherClient`, and the test doubles in
   `internal/testutil` and `internal/tools/runner_test.go`; keep them all
@@ -756,9 +739,9 @@ delete — stay with the reconciler's worklists and the operator surfaces.
 - **Similarity never decides** — a high-similarity neighbour is only a gate
   subject; a name changes only through M1/M3, the deterministic variant classes
   (M8), a fully confirmed fold, an explicit `same` verdict, or an operator
-  merge. Bands that keep without a verdict stay provisional with pending
-  evidence.
+  rename/delete. Bands that keep without a verdict stay provisional with
+  pending evidence.
 
 ---
 
-*Last verified against the tree: 2026-10-07. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-13. If code and doc disagree, code wins.*

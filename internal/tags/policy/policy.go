@@ -1,10 +1,8 @@
-// Package policy is the pinned layer of the tag admission decision:
-// fixed, versioned rules over the matcher's ranked results, with no
-// observations and nothing fitted. Per query it decides whether a
-// candidate tag's name is replaced by an exact identity match, kept as the
-// matcher consolidated it, or passed through unchanged, and records why.
-// The staged design (pinned rules as the operational layer, fitted
-// refinement only where evidence accumulates) is documented in
+// Package policy is the pinned layer of the tag admission decision: fixed, versioned rules over the
+// matcher's ranked candidates, with no observations and nothing fitted. Per query it classifies the top
+// candidate as an exact identity match or as an ambiguous-band neighbour and records why; it never takes
+// a name from a similarity result — the identity plan owns the outputs it sets. The staged design (pinned
+// rules as the operational layer, fitted refinement only where evidence accumulates) is documented in
 // docs/tags/consolidation.md.
 package policy
 
@@ -16,12 +14,11 @@ import (
 // semantics change.
 const Version = "v1"
 
-// Action is what the policy says to do with a candidate tag's name.
+// Action is what the policy says about a candidate tag's name.
 type Action int
 
-// The actions a decision can take: pass the query through unchanged (no
-// usable evidence), replace it with an exact identity match, or keep the
-// matcher's consolidated name.
+// The actions a decision can take: pass the query through unchanged (no usable evidence), mark an exact
+// identity match, or keep the query beside an ambiguous-band neighbour.
 const (
 	ActionPassthrough Action = iota
 	ActionReplace
@@ -42,17 +39,16 @@ const (
 	ReasonShortSlice   Reason = "short_slice"
 )
 
-// Decision is the pinned-rule outcome for one query: the query, the name
-// the pipeline should use (Output), the candidate it judged and the
-// similarities that informed it, and the action and reason.
+// Decision is the pinned-rule outcome for one query: the query, the output name seeded with the query
+// and overwritten by the identity plan, the candidate it judged and the similarity that informed it,
+// and the action and reason.
 type Decision struct {
-	Query       string
-	Output      string
-	Target      string
-	Sim         float64
-	RunnerUpSim float64
-	Action      Action
-	Reason      Reason
+	Query  string
+	Output string
+	Target string
+	Sim    float64
+	Action Action
+	Reason Reason
 }
 
 // Evaluate decides each query against the ranked result at the matching
@@ -71,7 +67,6 @@ func evaluate(query string, ranked []matcher.RankResult, i int) Decision {
 		return d
 	}
 
-	d.Output = ranked[i].KeptName
 	if len(ranked[i].Candidates) == 0 {
 		d.Reason = ReasonNoCandidates
 		return d
@@ -80,18 +75,13 @@ func evaluate(query string, ranked []matcher.RankResult, i int) Decision {
 	cand := ranked[i].Candidates[0]
 	d.Target = cand.Tag
 	d.Sim = cand.Similarity
-	if len(ranked[i].Candidates) > 1 {
-		d.RunnerUpSim = ranked[i].Candidates[1].Similarity
-	}
 
 	if cand.Tag == query {
-		d.Output = cand.Tag
 		d.Action = ActionReplace
 		d.Reason = ReasonIdentity
 		return d
 	}
 
-	d.Output = ranked[i].KeptName
 	d.Action = ActionKeep
 	d.Reason = ReasonBand
 	return d

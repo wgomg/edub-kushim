@@ -135,12 +135,12 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ### Types
 
-- `TagPairEvidence` — `Query`, `Target`, `Sim`, `RunnerUpSim` (query-side runner-up similarity), `TargetRunnerUpTag`/`TargetRunnerUpSim` (target's nearest other store tag). Fed to `Adjudicate`'s prompt.
+- `TagPairEvidence` — `Query`, `Target`. The pair's two terms — similarity selected the pair upstream, it is never an input to the verdict. Fed to `Adjudicate`'s prompt.
 - `TagVerdictResult` — `Index int`, `Verdict types.TagVerdict` (`same`/`variant`/`related`; zero verdict = the pair was missing from the reply, caller keeps it pending), `Direction string` (for `same`: which term is the precise one — `query`/`target`/`tie`; empty when absent).
 
 ### Functions
 
-- `BuildAdjudicationPrompt(pairs []TagPairEvidence) string` — Builds the JSON-verdict prompt: per pair, the two terms, their embedding similarity, the query-side runner-up similarity, and the target's nearest other store tag.
+- `BuildAdjudicationPrompt(pairs []TagPairEvidence) string` — Builds the JSON-verdict prompt: per pair, the faithful-replacement framing and the two terms, with no similarity context.
 - `ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error)` — Parses `{"pairs":[{"index":0,"verdict":"same"},...]}` (code-fenced or plain) into one result per pair; a bare top-level array is accepted as the envelope's value, and an entry without `index` is placed by its array position. An entry with no parseable verdict — a missing entry, an unknown verdict string, or an out-of-range index — counts as missing, so an unanswered pair is never invented; a present pair whose `direction` is unrecognized keeps an empty direction. A truncated reply returns `*IncompleteReplyError` alongside one result per pair (the returned pairs carry their verdict), so callers act on those and keep only the missing pairs pending. Invalid JSON returns an error.
 
 ---
@@ -274,7 +274,6 @@ The seam's residual phrase-context fold contract: whether a word, as it is used 
 type Matcher interface {
     Match(ctx, docId, input string) ([]Candidate, error)
     Rank(ctx, docId string, queries []string) ([]RankResult, error)
-    SimilarPairs(ctx context.Context) ([]SimilarPair, error)
     Close()
     Name() string
 }
@@ -293,14 +292,7 @@ type Candidate struct {
 }
 
 type RankResult struct {
-    KeptName   string      `json:"kept_name"`
     Candidates []Candidate `json:"candidates"`
-}
-
-type SimilarPair struct {
-    A          string  `json:"a"`
-    B          string  `json:"b"`
-    Similarity float64 `json:"similarity"`
 }
 
 type EmbeddingStore interface {
@@ -311,16 +303,14 @@ type EmbeddingStore interface {
 ```
 
 The `Matcher` interface is used by the Runner for document-to-tag matching
-(`Match`), post-LLM tag ranking (`Rank`), and by `TagMerge.Suggestions` for
-the merge-review pair list (`SimilarPairs`). The `Embedder` interface is used
+(`Match`) and post-LLM tag ranking (`Rank`). The `Embedder` interface is used
 by TagService for encoding and store management; `AddToStore`/`RemoveFromStore`
 delegate store management to the adapter (encoding + adding to the embedding
 store, or removing from it). The `EmbeddingStore` interface provides read/write
-access to the shared tag embedding cache. `RankResult` carries the name to keep
-when no candidate is chosen (`KeptName`) plus up to two ranked candidates with
-scores; the identity decision lives in the admission pipeline
-(`Adjudicator.PlanIdentity`). `SimilarPair` is an unordered pair of store names
-with their cosine similarity, canonicalized so each pair is stored once.
+access to the shared tag embedding cache. `RankResult` carries up to two
+candidates per query with scores, the ones above the identity-candidate
+similarity floor; the identity decision lives in the admission pipeline
+(`Adjudicator.PlanIdentity`).
 
 The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `*matcher.MatcherClient` (for the `edub` API server) — both satisfy the `Matcher` and `Embedder` interfaces. The `MatcherClient` forwards all calls over a Unix socket to a standalone `kushim hugot` process.
 
@@ -334,20 +324,19 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 
 - **Backend**: `"ort"` (default — ONNX Runtime, auto-downloads `libonnxruntime.so`) or `"go"` (pure Go with `libtokenizers.a`)
 - **Chunked encoding**: Texts exceeding the effective chunk size (configured `chunk_size`, default `4096`; `0` = the model's `max_position_embeddings` minus a 12-token safety margin, 8180 for BGE-M3) are split into overlapping token chunks, mean-pooled. The default bounds per-request memory — see [Tag Matcher guide](../tags/matcher.md)
-- **Ranking**: Cosine similarity on L2-normalized embeddings (dot product); separate `minSimilarity` (doc→tag) and `consolidationSim` (tag→tag consideration floor) — similarity ranks candidates and never decides identity
-- **Config**: `TopN`, `MinSimilarity`, `ConsolidationSimilarity`, `ChunkSize` (default 4096; `0` = model max, clamped to `max_position_embeddings` − 12), `ChunkOverlap` (10% of chunk size)
-- **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache; `pairs` — mutex-guarded map of unordered `similarPairKey` → cosine similarity holding every pair of store entries at or above `consolidationSim`
+- **Ranking**: Cosine similarity on L2-normalized embeddings (dot product); separate `minSimilarity` (doc→tag) and `candidateFloor` (tag→tag identity-candidate floor, from `IdentityCandidateSimilarity`) — similarity ranks candidates and never decides identity
+- **Config**: `TopN`, `MinSimilarity`, `IdentityCandidateSimilarity`, `ChunkSize` (default 4096; `0` = model max, clamped to `max_position_embeddings` − 12), `ChunkOverlap` (10% of chunk size)
+- **Fields**: `store EmbeddingStore` — shared reference to the tag embedding cache
 - **Methods**:
   - `Match(ctx, docId, input)` — Reads all entries from the store, encodes the input, ranks by cosine similarity, returns top-N matches
-  - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes the queries verbatim (they are already canonical — `analyzer.NormalizeTags` output), ranks against the store embeddings, and returns up to two candidates per query with scores plus the kept name
-  - `SimilarPairs(ctx)` — Snapshots the pair cache under the mutex and returns it as a slice of `SimilarPair`
+  - `Rank(ctx, docId, queries []string)` — Reads all entries from the store internally, encodes the queries verbatim (they are already canonical — `analyzer.NormalizeTags` output), ranks against the store embeddings, and returns up to two candidates per query with scores
   - `Encode(ctx, docId, texts)` — Batch embedding with chunked encoding for long inputs (an empty `docId` means no log correlation). Does NOT normalize input — shared with document text matching where punctuation is meaningful.
-  - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `curation.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`), adds them to the store, and maintains the pair cache: one `Entries()` snapshot per batch, prune-then-insert per name (re-encodes drop stale pairs), fresh batch vectors used for intra-batch pairs
-  - `RemoveFromStore(ctx, names)` — Removes names from the store and drops every pair mentioning them
-  - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction and rebuilds the pair cache from the store's entries (N²/2 cosine pass, skipped when `consolidationSim` is 0)
+  - `AddToStore(ctx, names)` — Encodes names verbatim (canonical DB names from `curation.Tag.Create`/`Update`) in batches of 32 (`embedBatchSize`) and adds them to the store
+  - `RemoveFromStore(ctx, names)` — Removes names from the store
+  - `SetStore(s EmbeddingStore)` — Injects the shared store reference after construction
   - `Close()` — Idempotent (nil-safe, sets session to nil after destroy)
-- **Nil-receiver guards**: `Match`, `Rank`, `SimilarPairs`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
-- **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`, `canonicalPairKey`, `rebuildPairs`, `addPairsFor`, `removePairsFor`
+- **Nil-receiver guards**: `Match`, `Rank`, `Encode` all return an error if `h == nil`, preventing typed-nil interface panics
+- **Helpers**: `meanPool`, `rankMatches`, `cosineSimilarity`, `tokenize`, `encodeChunked`, `readMaxPositionEmbeddings`, `downloadLib`, `getBackendSession`
 
 ---
 

@@ -12,25 +12,26 @@ import (
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
-// ApplyAliasPlan applies the planned alias actions in one transaction:
-// blocked names are skipped, the loser's own aliases are retargeted (no
-// alias chains), its documents are reassigned and its tag row deleted
-// when RemoveExistingTag is set, and the removed names leave the matcher
-// store after commit.
-func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) error {
+// ApplyAliasPlan applies the planned alias actions in one transaction and returns, per action in order,
+// what happened: whether it applied and how many documents it re-pointed; blocked names are skipped,
+// the loser's own aliases re-target (no alias chains), its documents are reassigned and its tag row
+// deleted when RemoveExistingTag is set, and the removed names leave the matcher store after the commit.
+// A skipped action reports Applied false with zero documents.
+func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) ([]tags.AliasOutcome, error) {
+	outcomes := make([]tags.AliasOutcome, len(actions))
 	if len(actions) == 0 {
-		return nil
+		return outcomes, nil
 	}
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
-		return errs.FromDB(err, "begin alias plan")
+		return nil, errs.FromDB(err, "begin alias plan")
 	}
 	defer tx.Rollback()
 	txQ := s.client.Queries.WithTx(tx)
 
 	existingTags, err := txQ.ListAllTags(ctx)
 	if err != nil {
-		return errs.FromDB(err, "load existing tags")
+		return nil, errs.FromDB(err, "load existing tags")
 	}
 	existing := make(map[string]database.Tag, len(existingTags))
 	for _, t := range existingTags {
@@ -39,7 +40,7 @@ func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) er
 
 	deleted, err := txQ.ListAllDeletedTags(ctx)
 	if err != nil {
-		return errs.FromDB(err, "load deleted tags")
+		return nil, errs.FromDB(err, "load deleted tags")
 	}
 	blocked := make(map[string]struct{}, len(deleted))
 	for _, row := range deleted {
@@ -47,91 +48,102 @@ func (s *Tag) ApplyAliasPlan(ctx context.Context, actions []tags.AliasAction) er
 	}
 
 	var removed []string
-	for _, action := range actions {
+	for i, action := range actions {
 		if _, isBlocked := blocked[textnorm.NormalizeTag(action.AliasName)]; isBlocked {
 			continue
 		}
-		if err := s.applyAliasAction(ctx, txQ, existing, action); err != nil {
-			return err
+		outcome, err := s.applyAliasAction(ctx, txQ, existing, action)
+		if err != nil {
+			return nil, err
 		}
-		if action.RemoveExistingTag {
+		outcomes[i] = outcome
+		if action.RemoveExistingTag && outcome.Applied {
 			removed = append(removed, action.AliasName)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errs.FromDB(err, "commit alias plan")
+		return nil, errs.FromDB(err, "commit alias plan")
 	}
 	if len(removed) > 0 {
 		if err := s.embedder.RemoveFromStore(ctx, removed); err != nil {
 			s.logger.Error("", "tag service: remove aliased names from store: %v", err)
 		}
 	}
-	return nil
+	return outcomes, nil
 }
 
-func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existing map[string]database.Tag, action tags.AliasAction) error {
+func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existing map[string]database.Tag, action tags.AliasAction) (tags.AliasOutcome, error) {
+	var none tags.AliasOutcome
 	aliasName := textnorm.NormalizeTag(action.AliasName)
 	canonicalName := textnorm.NormalizeTag(action.Canonical)
 	if aliasName == "" || canonicalName == "" || aliasName == canonicalName {
-		return nil
+		return none, nil
 	}
 
 	canonical, ok := existing[canonicalName]
 	if !ok {
 		tag, err := q.GetTagByName(ctx, canonicalName)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil
+			return none, nil
 		}
 		if err != nil {
-			return errs.FromDB(err, "get alias target "+canonicalName)
+			return none, errs.FromDB(err, "get alias target "+canonicalName)
 		}
 		canonical = tag
 	}
 
 	if _, err := q.GetTagAliasByName(ctx, aliasName); err == nil {
-		return nil
+		return none, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return errs.FromDB(err, "get tag alias "+aliasName)
+		return none, errs.FromDB(err, "get tag alias "+aliasName)
 	}
 
 	if action.RemoveExistingTag {
 		loser, err := q.GetTagForUpdateByName(ctx, aliasName)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return nil
+				return none, nil
 			}
-			return errs.FromDB(err, "get alias loser "+aliasName)
+			return none, errs.FromDB(err, "get alias loser "+aliasName)
 		}
 		if loser.ID == canonical.ID {
-			return nil
+			return none, nil
 		}
 
-		reassigned, err := q.ReassignDocumentTags(ctx, database.ReassignDocumentTagsParams{
+		repointed, err := q.ReassignDocumentTags(ctx, database.ReassignDocumentTagsParams{
 			SourceID: loser.ID,
 			TargetID: canonical.ID,
 		})
 		if err != nil {
-			return errs.FromDB(err, "reassign document tags for alias "+aliasName)
+			return none, errs.FromDB(err, "reassign document tags for alias "+aliasName)
 		}
-		if reassigned > 0 {
+		if repointed > 0 {
 			if err := q.ClearOrphanTagMarksByTagIDs(ctx, []int64{canonical.ID}); err != nil {
-				return errs.FromDB(err, "clear orphan tag marks for alias "+aliasName)
+				return none, errs.FromDB(err, "clear orphan tag marks for alias "+aliasName)
 			}
 		}
 		if _, err := q.DeleteDocumentTagsForTag(ctx, loser.ID); err != nil {
-			return errs.FromDB(err, "delete leftover document tags for alias "+aliasName)
+			return none, errs.FromDB(err, "delete leftover document tags for alias "+aliasName)
 		}
 		// no alias chains: the loser's own aliases re-target the new canonical
 		if _, err := q.RetargetTagAliases(ctx, database.RetargetTagAliasesParams{
 			NewTagID: canonical.ID,
 			OldTagID: loser.ID,
 		}); err != nil {
-			return errs.FromDB(err, "retarget aliases for "+aliasName)
+			return none, errs.FromDB(err, "retarget aliases for "+aliasName)
 		}
 		if err := q.DeleteTag(ctx, loser.ID); err != nil {
-			return errs.FromDB(err, "delete alias loser "+aliasName)
+			return none, errs.FromDB(err, "delete alias loser "+aliasName)
 		}
+		if _, err := q.InsertTagAlias(ctx, database.InsertTagAliasParams{
+			AliasName:      textnorm.NormalizeTag(aliasName),
+			CanonicalTagID: canonical.ID,
+			RuleSetVersion: tags.IdentityRuleSetVersion,
+		}); err != nil {
+			return none, errs.FromDB(err, "insert tag alias "+aliasName)
+		}
+		return tags.AliasOutcome{Applied: true, Reassigned: repointed}, nil
 	}
 
 	if _, err := q.InsertTagAlias(ctx, database.InsertTagAliasParams{
@@ -139,9 +151,9 @@ func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existin
 		CanonicalTagID: canonical.ID,
 		RuleSetVersion: tags.IdentityRuleSetVersion,
 	}); err != nil {
-		return errs.FromDB(err, "insert tag alias "+aliasName)
+		return none, errs.FromDB(err, "insert tag alias "+aliasName)
 	}
-	return nil
+	return tags.AliasOutcome{Applied: true}, nil
 }
 
 func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, rows []tags.EvidenceRow) error {

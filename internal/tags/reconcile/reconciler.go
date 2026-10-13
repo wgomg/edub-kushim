@@ -1,10 +1,8 @@
-// Package reconcile is the tag store's scheduled maintenance: it sweeps
-// the recorded verdict evidence for stale, unjudged and drifted pairs,
-// re-ranks and re-adjudicates what changed, and applies or plans merges,
-// keep flips, joint splits and provisional-tag outcomes through the
-// curation surface. It is the scheduled reconciliation flow of
-// docs/tags/consolidation.md, the machine-driven complement of the human
-// worklist review.
+// Package reconcile is the tag store's scheduled maintenance: it sweeps the recorded verdict evidence
+// for stale, unjudged and drifted pairs, re-ranks and re-adjudicates what changed, and applies or plans
+// alias collapses, keep flips, joint splits and provisional-tag outcomes through the curation surface.
+// It is the scheduled reconciliation flow of docs/tags/consolidation.md, the machine-driven complement
+// of the human worklist review.
 package reconcile
 
 import (
@@ -26,38 +24,32 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// Reconciler is the scheduled tag-store maintainer: it re-judges stale
-// verdict evidence, flips decisions whose evidence changed, plans and
-// applies merges and joint splits, and settles provisional tags, capped
-// per run and report-only when configured.
+// Reconciler is the scheduled tag-store maintainer: it re-judges stale verdict evidence, flips decisions
+// whose evidence changed, plans and applies alias collapses and joint splits, and settles provisional
+// tags, capped per run and report-only when configured.
 type Reconciler struct {
 	getConfig func() *config.Config
 	client    *database.Client
 	tag       *curation.Tag
-	merges    *curation.TagMerge
 	runner    *tools.Runner
 	logger    *log.Logger
 }
 
-// NewReconciler wires the reconciler: the dynamic config, the database,
-// the curation surfaces it writes through, the tools runner, and the
-// logger.
+// NewReconciler wires the reconciler: the dynamic config, the database, the curation surface it writes
+// through, the tools runner, and the logger.
 func NewReconciler(getConfig func() *config.Config, client *database.Client,
-	tag *curation.Tag, merges *curation.TagMerge,
-	runner *tools.Runner, logger *log.Logger) *Reconciler {
+	tag *curation.Tag, runner *tools.Runner, logger *log.Logger) *Reconciler {
 	return &Reconciler{
 		getConfig: getConfig,
 		client:    client,
 		tag:       tag,
-		merges:    merges,
 		runner:    runner,
 		logger:    logger,
 	}
 }
 
-// Report summarizes one reconcile run: the worklist by category, the
-// judged, confirmed and flipped counts, the applied and planned merges,
-// keep flips, retags, invalidations and joint splits, and the
+// Report summarizes one reconcile run: the worklist by category, the judged, confirmed and flipped counts,
+// the applied and planned alias collapses, keep flips, retags, invalidations and joint splits, and the
 // provisional-tag outcomes.
 type Report struct {
 	ReportOnly          bool                      `json:"report_only"`
@@ -65,14 +57,14 @@ type Report struct {
 	Judged              int                       `json:"judged"`
 	Confirmed           int                       `json:"confirmed"`
 	Flips               FlipCounts                `json:"flips"`
-	Merges              []MergeEntry              `json:"merges"`
+	Aliases             []PairEntry               `json:"aliases"`
 	Retags              int                       `json:"retags"`
 	Invalidated         int                       `json:"invalidated"`
 	Skips               map[string]int            `json:"skips"`
-	PlannedMerges       []MergeEntry              `json:"planned_merges,omitempty"`
-	PlannedKeepFlips    []MergeEntry              `json:"planned_keep_flips,omitempty"`
-	RetagEntries        []MergeEntry              `json:"retag_entries,omitempty"`
-	InvalidatedEntries  []MergeEntry              `json:"invalidated_entries,omitempty"`
+	PlannedAliases      []PairEntry               `json:"planned_aliases,omitempty"`
+	PlannedKeepFlips    []PairEntry               `json:"planned_keep_flips,omitempty"`
+	RetagEntries        []PairEntry               `json:"retag_entries,omitempty"`
+	InvalidatedEntries  []PairEntry               `json:"invalidated_entries,omitempty"`
 	JointSplits         []JointSplitEntry         `json:"joint_splits,omitempty"`
 	PlannedJointSplits  []JointSplitEntry         `json:"planned_joint_splits,omitempty"`
 	Capped              int                       `json:"capped,omitempty"`
@@ -117,17 +109,17 @@ type JointSplitEntry struct {
 	Reason     string   `json:"reason,omitempty"`
 }
 
-// FlipCounts counts the evidence-driven direction flips: decisions that
-// became merges and keeps that flipped back.
+// FlipCounts counts the evidence-driven direction flips: decisions that became aliases and keeps that
+// flipped back.
 type FlipCounts struct {
-	ToMerge int `json:"to_merge"`
+	ToAlias int `json:"to_alias"`
 	ToKeep  int `json:"to_keep"`
 }
 
-// MergeEntry is one planned or applied merge: the query, its target, how
-// many documents applying it reassigned, the reason, and whether applying
-// it would first create the target tag.
-type MergeEntry struct {
+// PairEntry is one planned or applied pair action: the query, its target canonical, how many documents
+// applying it re-pointed, the reason, and whether applying it would first create the target tag. Alias
+// collapses, keep-flip retags and invalidations all report through this entry.
+type PairEntry struct {
 	Query      string `json:"query"`
 	Target     string `json:"target"`
 	Reassigned int64  `json:"reassigned"`
@@ -150,7 +142,6 @@ type entry struct {
 	docIDs        []int64
 
 	trueRank     matcher.RankResult
-	freshRank    matcher.RankResult
 	freshSim     float64
 	freshVerdict types.TagVerdict
 	freshModel   string
@@ -198,9 +189,9 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	if err != nil {
 		return report, fmt.Errorf("list deleted tags: %w", err)
 	}
-	blocklist := make(map[string]database.ListAllDeletedTagsRow, len(deletedTags))
+	blocklist := make(map[string]struct{}, len(deletedTags))
 	for _, row := range deletedTags {
-		blocklist[row.Name] = row
+		blocklist[row.Name] = struct{}{}
 	}
 	tagCounts := make(map[string]int64, len(allTags))
 	{
@@ -271,23 +262,23 @@ func (r *Reconciler) logSummary(report Report) {
 		skipped += n
 	}
 	if report.ReportOnly {
-		documents := sumReassigned(report.PlannedMerges) + sumReassigned(report.PlannedKeepFlips)
+		documents := sumReassigned(report.PlannedAliases) + sumReassigned(report.PlannedKeepFlips)
 		created := 0
 		for _, e := range report.PlannedKeepFlips {
 			if e.CreatesTag {
 				created++
 			}
 		}
-		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d merges and %d restorations planned (%d documents would move, %d tags would be created); %d joint tags would split; %d skipped, %d over cap",
-			checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, created, len(report.PlannedJointSplits), skipped, report.Capped)
+		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d joint tags would split; %d skipped, %d over cap",
+			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedJointSplits), skipped, report.Capped)
 		return
 	}
-	documents := sumReassigned(report.Merges) + sumReassigned(report.RetagEntries)
-	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d merges and %d restorations applied (%d documents re-pointed); %d joint tags split; %d skipped, %d over cap",
-		checked, report.Judged, report.Flips.ToMerge, report.Flips.ToKeep, documents, len(report.JointSplits), skipped, report.Capped)
+	documents := sumReassigned(report.Aliases) + sumReassigned(report.RetagEntries)
+	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d joint tags split; %d skipped, %d over cap",
+		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.JointSplits), skipped, report.Capped)
 }
 
-func sumReassigned(entries []MergeEntry) int64 {
+func sumReassigned(entries []PairEntry) int64 {
 	var sum int64
 	for _, e := range entries {
 		sum += e.Reassigned

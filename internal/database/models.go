@@ -277,10 +277,9 @@ type BatchOwner struct {
 }
 
 type DeletedTag struct {
-	Name       string
-	Kind       string
-	TargetName sql.NullString
-	CreatedAt  time.Time
+	Name      string
+	Kind      string
+	CreatedAt time.Time
 }
 
 type Document struct {
@@ -427,12 +426,6 @@ type TagMeasurement struct {
 	State          string
 	Caveats        []string
 	CreatedAt      time.Time
-}
-
-type TagMergeDismissal struct {
-	TagA      string
-	TagB      string
-	CreatedAt time.Time
 }
 
 type TagPartDimensionEvent struct {

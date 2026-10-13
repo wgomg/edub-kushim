@@ -18,11 +18,6 @@ const (
 	reconcileDocID      = "tagreconcile"
 )
 
-type reciprocalEvidence struct {
-	tag string
-	sim float64
-}
-
 func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, worklist []*entry) {
 	for i := 0; i < len(worklist); i += rankBatchSize {
 		end := min(i+rankBatchSize, len(worklist))
@@ -44,41 +39,6 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 				continue
 			}
 			e.trueRank = ranked[j]
-		}
-	}
-
-	targets := distinctTargets(worklist)
-	targetEvidence := make(map[string]reciprocalEvidence, len(targets))
-	for i := 0; i < len(targets); i += rankBatchSize {
-		end := min(i+rankBatchSize, len(targets))
-		batch := targets[i:end]
-		ranked, err := r.runner.RankTags(ctx, reconcileDocID, batch)
-		if err != nil {
-			r.logger.Error("", "tag reconcile: target rank batch failed: %v", err)
-			continue
-		}
-		for j, t := range batch {
-			if j >= len(ranked) {
-				continue
-			}
-			for _, c := range ranked[j].Candidates {
-				if c.Tag == t {
-					continue
-				}
-				targetEvidence[t] = reciprocalEvidence{tag: c.Tag, sim: c.Similarity}
-				break
-			}
-		}
-	}
-
-	queryEvidence := make(map[string]reciprocalEvidence, len(worklist))
-	for _, e := range worklist {
-		for _, c := range e.trueRank.Candidates {
-			if c.Tag == e.query {
-				continue
-			}
-			queryEvidence[e.query] = reciprocalEvidence{tag: c.Tag, sim: c.Similarity}
-			break
 		}
 	}
 
@@ -127,7 +87,7 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 		e.target = target
 		e.freshSim = freshSim
 
-		synth := matcher.RankResult{KeptName: e.query}
+		synth := matcher.RankResult{}
 		synth.Candidates = append(synth.Candidates, matcher.Candidate{Tag: target, Similarity: freshSim})
 		for _, c := range rank.Candidates {
 			if c.Tag == target || c.Tag == e.query {
@@ -135,7 +95,6 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 			}
 			synth.Candidates = append(synth.Candidates, c)
 		}
-		e.freshRank = synth
 
 		decisions := policy.Evaluate([]string{e.query}, []matcher.RankResult{synth})
 		if decisions[0].Reason == policy.ReasonBand {
@@ -144,11 +103,11 @@ func (r *Reconciler) evidencePass(ctx context.Context, cfg *config.Config, workl
 	}
 
 	if len(bandEntries) > 0 {
-		r.adjudicateBand(ctx, cfg, bandEntries, targetEvidence, queryEvidence)
+		r.adjudicateBand(ctx, cfg, bandEntries)
 	}
 }
 
-func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, bandEntries []*entry, targetEvidence, queryEvidence map[string]reciprocalEvidence) {
+func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, bandEntries []*entry) {
 	adjudicatorModel := cfg.ResolvedAdjudicatorLlm().Model
 
 	judgedEntries := make([]*entry, 0, len(bandEntries))
@@ -169,19 +128,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		end := min(i+adjudicateBatchSize, len(judgedEntries))
 		evidence := make([]analyzer.TagPairEvidence, 0, end-i)
 		for _, e := range judgedEntries[i:end] {
-			ev := analyzer.TagPairEvidence{
-				Query:  e.query,
-				Target: e.target,
-				Sim:    e.freshSim,
-			}
-			if len(e.freshRank.Candidates) > 1 {
-				ev.RunnerUpSim = e.freshRank.Candidates[1].Similarity
-			}
-			if rec, ok := targetEvidence[e.target]; ok {
-				ev.TargetRunnerUpTag = rec.tag
-				ev.TargetRunnerUpSim = rec.sim
-			}
-			evidence = append(evidence, ev)
+			evidence = append(evidence, analyzer.TagPairEvidence{Query: e.query, Target: e.target})
 		}
 		results, err := r.runner.AdjudicateTags(ctx, evidence)
 		if err != nil {
@@ -250,19 +197,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		end := min(i+adjudicateBatchSize, len(toConfirm))
 		evidence := make([]analyzer.TagPairEvidence, 0, end-i)
 		for _, e := range toConfirm[i:end] {
-			ev := analyzer.TagPairEvidence{
-				Query:  e.target,
-				Target: e.query,
-				Sim:    e.freshSim,
-			}
-			if rec, ok := targetEvidence[e.target]; ok {
-				ev.RunnerUpSim = rec.sim
-			}
-			if rec, ok := queryEvidence[e.query]; ok {
-				ev.TargetRunnerUpTag = rec.tag
-				ev.TargetRunnerUpSim = rec.sim
-			}
-			evidence = append(evidence, ev)
+			evidence = append(evidence, analyzer.TagPairEvidence{Query: e.target, Target: e.query})
 		}
 		results, err := r.runner.AdjudicateTags(ctx, evidence)
 		if err != nil {

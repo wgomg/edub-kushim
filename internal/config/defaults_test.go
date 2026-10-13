@@ -54,3 +54,25 @@ func TestDefaultConfig_SupportedFilesExcludesDocxOdt(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultIdentityCandidateSimilarity(t *testing.T) {
+	tests := []struct {
+		model string
+		want  float64
+	}{
+		{model: "bge-m3", want: 0.80},
+		{model: "all-mpnet-base-v2", want: 0.75},
+		{model: "all-MiniLM-L6-v2", want: 0.70},
+		{model: "unknown-model", want: 0.75},
+	}
+	for _, tt := range tests {
+		got := defaultIdentityCandidateSimilarity(tt.model)
+		if got != tt.want {
+			t.Errorf("defaultIdentityCandidateSimilarity(%q) = %v, want %v", tt.model, got, tt.want)
+		}
+		if got <= defaultMinSimilarity(tt.model) {
+			t.Errorf("defaultIdentityCandidateSimilarity(%q) = %v must stay above the document-to-tag threshold %v",
+				tt.model, got, defaultMinSimilarity(tt.model))
+		}
+	}
+}

@@ -6,12 +6,10 @@ import (
 	"sync"
 )
 
-// MockEmbedder implements matcher.Embedder for testing: a simple map
-// store, fixed encode results, and an injectable consolidation behavior.
+// MockEmbedder implements matcher.Embedder for testing: a simple map store and fixed encode results.
 type MockEmbedder struct {
-	mu            sync.RWMutex
-	store         map[string][]float32
-	consolidateFn func(ctx context.Context, docId string, queries []string) ([]string, error)
+	mu    sync.RWMutex
+	store map[string][]float32
 }
 
 // NewMockEmbedder builds an empty mock store.
@@ -27,18 +25,6 @@ func (m *MockEmbedder) Encode(ctx context.Context, docId string, texts []string)
 	for i := range texts {
 		result[i] = []float32{0.1, 0.2, 0.3}
 	}
-	return result, nil
-}
-
-// Consolidate delegates to the injected behavior or echoes the queries.
-func (m *MockEmbedder) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.consolidateFn != nil {
-		return m.consolidateFn(ctx, docId, queries)
-	}
-	result := make([]string, len(queries))
-	copy(result, queries)
 	return result, nil
 }
 
@@ -74,11 +60,4 @@ func (m *MockEmbedder) Has(name string) bool {
 	defer m.mu.RUnlock()
 	_, ok := m.store[name]
 	return ok
-}
-
-// SetConsolidateFn replaces the default consolidation behavior.
-func (m *MockEmbedder) SetConsolidateFn(fn func(ctx context.Context, docId string, queries []string) ([]string, error)) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.consolidateFn = fn
 }

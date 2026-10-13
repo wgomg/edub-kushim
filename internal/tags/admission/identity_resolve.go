@@ -377,7 +377,7 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 	if len(actions) == 0 {
 		return
 	}
-	if err := r.tag.ApplyAliasPlan(ctx, actions); err != nil {
+	if _, err := r.tag.ApplyAliasPlan(ctx, actions); err != nil {
 		r.logger.Error("", "tag identity: apply alias plan failed: %v", err)
 		report.Failed += len(actions)
 		return
@@ -412,7 +412,7 @@ func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool
 	}
 
 	if _, err := r.client.Queries.GetTagByName(ctx, to); err == nil {
-		if err := r.tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
+		if _, err := r.tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -435,7 +435,7 @@ func (r *IdentityResolver) applyFold(ctx context.Context, from, to string) (bool
 	case types.Updated, types.Noop:
 		return true, nil
 	case types.UpdateConflict:
-		if err := r.tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
+		if _, err := r.tag.ApplyAliasPlan(ctx, []tags.AliasAction{{AliasName: from, Canonical: to, RemoveExistingTag: true}}); err != nil {
 			return false, err
 		}
 		return true, nil

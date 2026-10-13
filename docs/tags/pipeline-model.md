@@ -276,17 +276,17 @@ system already has, how far it matches the model, and what the delta is.
 |---|---|---|---|
 | **S1 Emission** | Typed generation contract, subject-matter rule, choose-or-justify, two negatives, dimension language and compound decomposition (`analyzer/prompt.go`); suggestions injected from the store | Partial | Coverage wording pending; the dictionary-standard selection language is retired |
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate (persons, form/genre) + the deterministic time-designation gate (`internal/enrichment/enricher.go`) | Aligned | Places and works are ordinary subject candidates; untyped emissions degrade to string heuristics (accepted) |
-| **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, merge review + dismissals, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; merges are incident-driven, not a standing duty |
+| **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, alias disposition, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; the disposition is not yet a standing mandate |
 | **S4 Atomicity (P4)** | General compound decomposition at emission over the in-order segment fan, disposed by the coarsest cover (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
 | **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + the 10-live-document floor (`tags.DecidePromotion`, `tags.RecurrenceFloor`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
 | **S8 Retrieval** | Multi-tag AND filter (`internal/database/structured_search.go`, `tagsAnd`) | Aligned · Absent (completeness) | Coverage of dimensions is audited nowhere |
-| **D1 Canonicalization** | Merge review, adjudicator and reconciler (incident response) | Absent as a standing duty | Detector by extension equality missing |
+| **D1 Canonicalization** | Adjudicator and reconciler (the confirmed flips alias) | Absent as a standing duty | A detector by extension equality is missing |
 | **D2 Composition review** | — (the observed catalogs are the first worklist) | Absent | No retrospective composition review |
 | **D3 Completeness** | — (the prompt bounds tag count, not coverage) | Absent | The load-bearing adoption risk (definition §7.3) |
 | **D4 Measurement substrate** | Document counts (`CountLiveTagDocumentsByTagIDs`), embedding similarities, pair verdict stats (`TagPairEvidenceStats`) | Partial | No per-value extension algebra |
-| **D5 Review surfaces** | Provisional review queue, merge review, blocklist, reconciler report | Partial | Labels accrue under the old standard; usage is not a signal (definition §6.3) |
+| **D5 Review surfaces** | Provisional review queue, blocklist, reconciliation report | Partial | Labels accrue under the old standard; usage is not a signal (definition §6.3) |
 
 ### 6.2 Stage notes
 
@@ -306,8 +306,8 @@ Coverage wording (every applicable dimension) is still pending. The
 suggestions surface is the vocabulary's only influence on emission.
 
 **S3 — canonicality.** The mechanisms are substantial: the birth-time identity pipeline
-(M1–M4 and M8 with the same-intent gate, `tag_identity_event`, `tag_alias`), merge review with
-persisted dismissals (`tag_merge_dismissal`), and scheduled reconciliation. What the
+(M1–M4 and M8 with the same-intent gate, `tag_identity_event`, `tag_alias`), the alias
+disposition the sweep applies to confirmed flips, and scheduled reconciliation. What the
 model adds is the *signal*: one label per intent decided by extension equality (P3)
 rather than embedding similarity. The snapshot shows why the difference matters — the
 singular/plural, orthographic, inverted, digit/word, and mixed-language variant classes
@@ -477,7 +477,7 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 | Seeded vocabulary (`seed-tags.sql`, `seed-tag-aliases.sql`) | the starting inventory: re-derived from the specs (broad, atomic, house form) and extended, with the place list and the centuries materialized as values and the recognized alternate spellings as alias rows; inserted with influence | consumed by suggestions and as anchors; never a validation list |
 | Consolidation bands (`policy`) | candidate generation only: identity and gate subjects; similarity ranks, never decides | consumes emissions; produces gate subjects |
 | Adjudicator and pair-verdict table | the same-intent gate reader; verdicts become evidence, never identity authority | consumes gate subjects; produces verdicts (features, labels) |
-| Merge review and dismissals | the canonicalization action surface: alias/merge dispositions, with review | consumes canonicalization worklists; produces alias/merge actions |
+| Alias disposition | the canonicalization action: a same-intent loser aliases onto the canonical and is never deleted | consumes canonicalization worklists; produces alias rows |
 | Reconciler (`reconcile`) | the retrospective action executor — decomposition, anchor creation, alias materialization, report-only first | consumes composition-review and canonicalization worklists; produces store changes and reports |
 | Rubric judge, quality verdict cache, admission decision | feature providers and the pinned decision over features — the judge's conjunction is no longer the verdict, and the decision carries an abstention path | consumes candidates and documents; produces per-criterion booleans, deterministic signals, cached features, and the disposition |
 | Quarantine and promotion gate | lifecycle mechanics (existence versus influence); promotion becomes one input to the staged decision | consumes birth and document events; produces provisional/promoted state |
@@ -487,8 +487,8 @@ authority moves to features and rules keeps its mechanics and becomes a supplier
 
 The new components wrap rather than replace these: the **extension algebra** reads the
 store and produces evidence; **composition review** turns it into worklists acted
-through the reconciler; the **canonicalization detector** turns `≈` pairs into merge
-review and aliases; **completeness** adds the contract requirement and its separate
+through the reconciler; the **canonicalization detector** turns `≈` pairs into alias
+actions; **completeness** adds the contract requirement and its separate
 audit; the **staged decision** is the pinned rule set over the feature vector, with
 abstention into review; **demotion** revokes influence through the same lifecycle
 mechanics.
@@ -516,7 +516,7 @@ compute a retired signal may live on as feature providers.
 | `max_tags` as a quality bound | a count cap contradicts coverage: the contract must deliver every applicable dimension | the completeness contract |
 | "Never split non-conjunctions" at runtime | contradicts P4's fan; the prospective/retrospective split was the interim | general decomposition at emission |
 | Reject-as-delete for provisional twins (name into the blocklist) | same-intent labels alias, never delete | the alias disposition; terminal rejects keep the blocklist |
-| Hard-merge deletion on the merge-review surface | the loser's name must remain resolvable | the alias disposition |
+| Hard-merge deletion of a same-intent pair | the loser's name must remain resolvable | the alias disposition (a `same` flip aliases, a `keep` flip withdraws the alias) |
 | Legacy prompt and judge criteria (document relevance, dictionary standardness) | the definition re-derives both | the re-criteria, landed in place under the same version; the store reset retires the cached rows |
 | Duplicated measurement helpers (`CountLiveTagDocumentsByTagIDs`, `TagPairEvidenceStats`) | subsumed by the extension algebra | the measurement substrate |
 
@@ -529,8 +529,8 @@ aliases, terminal rejects stay; and the retired criteria text changed in place u
 the same quality version, riding the store reset that retires the cached rows.
 
 Explicitly retained: facet gates (P1, with the place bug fixed), exact-key identity,
-quarantine and promotion mechanics, the review surfaces (with the actions above
-reworked), the reconciler and sweeps as executors, suggestion injection, and the
+quarantine and promotion mechanics, the review surfaces (the provisional queue and the
+blocklist), the reconciler and sweeps as executors, suggestion injection, and the
 versioned verdict caches.
 
 ---

@@ -41,7 +41,6 @@ type Server struct {
 	matcherClient *matcher.MatcherClient
 	services      *service.CrudServices
 	tag           *curation.Tag
-	tagMerge      *curation.TagMerge
 	tagIdentity   *curation.TagIdentity
 	configWatcher *config.Watcher
 	db            *sql.DB
@@ -90,7 +89,6 @@ func (s *Server) rebuild(client *database.Client) {
 	services := &service.CrudServices{}
 
 	s.tag = curation.NewTag(client, s.logger, s.matcherClient)
-	s.tagMerge = curation.NewTagMerge(client, s.matcherClient, s.matcherClient, s.logger)
 	services.Batch = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	services.People = service.NewPeople(client.Queries, s.logger)
 	services.PeopleType = service.NewPeopleType(client.Queries)
@@ -127,7 +125,7 @@ func (s *Server) rebuild(client *database.Client) {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore, s.tag, s.tagMerge, s.tagIdentity)
+	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore, s.tag, s.tagIdentity)
 	handlers.RegisterStaticRoutes(mux, static.WebFS())
 
 	s.services = services
@@ -192,7 +190,6 @@ func registerRoutes(
 	services *service.CrudServices,
 	workStore *task.Store,
 	tag *curation.Tag,
-	tagMerge *curation.TagMerge,
 	tagIdentity *curation.TagIdentity,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -266,19 +263,15 @@ func registerRoutes(
 
 	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
 
-	tagHandler := handlers.NewTagHandler(tag, tagMerge, tagIdentity, logger)
+	tagHandler := handlers.NewTagHandler(tag, tagIdentity, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
 	mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(http.HandlerFunc(tagHandler.ListDeleted)))
 	mux.Handle("GET /api/v1/tags/provisional", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListProvisional)))
-	mux.Handle("GET /api/v1/tags/merge", RequireRole(viewer...)(http.HandlerFunc(tagHandler.MergeSuggestions)))
-	mux.Handle("POST /api/v1/tags/merge/dismissals", RequireRole(editor...)(http.HandlerFunc(tagHandler.DismissMergePair)))
-	mux.Handle("DELETE /api/v1/tags/merge/dismissals", RequireRole(editor...)(http.HandlerFunc(tagHandler.RestoreMergePair)))
 	mux.Handle("GET /api/v1/tags/reconciliation/report", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetTagReconcileReport)))
 	mux.Handle("POST /api/v1/tags", RequireRole(editor...)(http.HandlerFunc(tagHandler.Create)))
 	mux.Handle("PUT /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Update)))
 	mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Delete)))
 	mux.Handle("DELETE /api/v1/tags/deleted/{name}", RequireRole(editor...)(http.HandlerFunc(tagHandler.RestoreDeleted)))
-	mux.Handle("POST /api/v1/tags/{id}/merge", RequireRole(editor...)(http.HandlerFunc(tagHandler.Merge)))
 	mux.Handle("POST /api/v1/tags/identity/reevaluate", RequireRole(editor...)(http.HandlerFunc(tagHandler.ReevaluateIdentity)))
 	mux.Handle("POST /api/v1/tags/{id}/promote", RequireRole(editor...)(http.HandlerFunc(tagHandler.PromoteTag)))
 

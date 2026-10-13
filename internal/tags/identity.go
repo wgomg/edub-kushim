@@ -34,8 +34,10 @@ import (
 // truncates tag_identity_event, so no cached identity verdict survives to invalidate. v9 replaces the seam's
 // exactly-one-live-base rule with the primary-sense rule (a multi-base part folds only onto its primary base,
 // the residue routed to the phrase-context judged path) and consults the pinned variant classes at birth, so
-// a store-anchored orthographic or permutation twin resolves mechanically without a judge.
-const IdentityRuleSetVersion = "v9"
+// a store-anchored orthographic or permutation twin resolves mechanically without a judge. v10 drops the
+// similarity context from the pair-adjudication prompt — the two terms are the gate's only evidence — so
+// the judged criteria are pinned under the new stamp.
+const IdentityRuleSetVersion = "v10"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -81,6 +83,14 @@ type AliasAction struct {
 	AliasName         string
 	Canonical         string
 	RemoveExistingTag bool
+}
+
+// AliasOutcome is what one planned alias action did: whether it applied at all and how many documents
+// it re-pointed; a skipped action — a blocked name, an existing alias, or a missing row — reports Applied
+// false with zero documents.
+type AliasOutcome struct {
+	Applied    bool
+	Reassigned int64
 }
 
 // Registration is the plan's outcome for one candidate name: the raw

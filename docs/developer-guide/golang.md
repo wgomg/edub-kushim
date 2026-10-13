@@ -1106,7 +1106,6 @@ Each resource is a struct holding its dependencies; methods are the handlers
 ```go
 type TagHandler struct {
 	tag      *curation.Tag
-	merges   *curation.TagMerge
 	identity *curation.TagIdentity
 	logger   *log.Logger
 }

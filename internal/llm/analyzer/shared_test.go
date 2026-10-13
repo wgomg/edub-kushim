@@ -1566,7 +1566,7 @@ func TestBuildTagQualityPrompt_NarrowsTheDocumentToOneQuestion(t *testing.T) {
 }
 
 func TestBuildAdjudicationPrompt_SameReachableForMeaningMatches(t *testing.T) {
-	prompt := BuildAdjudicationPrompt([]TagPairEvidence{{Query: "labour", Target: "labor", Sim: 0.93}})
+	prompt := BuildAdjudicationPrompt([]TagPairEvidence{{Query: "labour", Target: "labor"}})
 
 	for _, want := range []string{
 		`Use "same" exactly when faithful replacement holds`,
@@ -1579,6 +1579,17 @@ func TestBuildAdjudicationPrompt_SameReachableForMeaningMatches(t *testing.T) {
 	}
 	if strings.Contains(prompt, "when in doubt") {
 		t.Error("adjudication prompt still carries the doubt clause that closes the same path")
+	}
+}
+
+func TestBuildAdjudicationPrompt_TermsOnlyEvidence(t *testing.T) {
+	prompt := BuildAdjudicationPrompt([]TagPairEvidence{{Query: "labour", Target: "labor"}})
+
+	if !strings.Contains(prompt, `query: "labour"`) || !strings.Contains(prompt, `target: "labor"`) {
+		t.Errorf("prompt must render both terms of the pair, got:\n%s", prompt)
+	}
+	if strings.Contains(strings.ToLower(prompt), "similarity") {
+		t.Errorf("prompt must carry no similarity context, got:\n%s", prompt)
 	}
 }
 

@@ -46,7 +46,7 @@ internal/
 │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   └── mupdf_nocgo.go      # Non-CGo stub (build-tag gated)
 ├── config/                 # Configuration parsing
-│   ├── config.go           # Configuration structs and loading (ConsolidationSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
+│   ├── config.go           # Configuration structs and loading (IdentityCandidateSimilarity, default thresholds, engine identifier constants, AvailableEngines map)
 │   ├── configdir.go        # ConfigDir() — returns ~/.config/edub-kushim
 │   ├── setup.go            # Bootstrap config, SaveMap, tessdata/Hugot model download helpers
 │   ├── servicefiles.go     # Generates systemd service files during setup
@@ -136,7 +136,7 @@ internal/
 │       ├── mupdf.go        # MuPDF page renderer (CGo)
 │       └── standalone.go   # RunStandalone thumbnail pipeline (subprocess entry)
 ├── enrichment/             # Enrichment engine (LLM pipeline) + its task handler
-│   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → consolidation → admission seams → people/tag/doc type with romanization + normalization; truncate (rune-aware title truncation with the "Unknown" sentinel)
+│   ├── enricher.go         # Enricher: dual text reduction → tag matching → token budget pre-check + retry loop → LLM → identity → admission seams → people/tag/doc type with romanization + normalization; truncate (rune-aware title truncation with the "Unknown" sentinel)
 │   └── enrich.go           # EnrichTaskHandler (fetches document, calls Enricher.Enrich)
 ├── errs/                   # Error classification (kind, wrapping, FromDB/PgError mapping)
 ├── llm/                    # LLM capability registry
@@ -172,7 +172,7 @@ internal/
 │   │   ├── backup.go       # Backup and restore commands
 │   │   ├── config.go       # `kushim config` command (dump/get/set/unset/validate/path)
 │   │   ├── enrich.go       # Enrich command (single document, --limit N, or --all)
-│   │   ├── hugot.go        # Matcher RPC server over Unix socket (encode, match, rank, consolidate, store ops)
+│   │   ├── hugot.go        # Matcher RPC server over Unix socket (encode, match, rank, store ops)
 │   │   ├── migrate.go      # `kushim migrate` database/storage migration commands
 │   │   ├── mirror.go       # `kushim mirror` command (rsync --delete, waits for the backup lock)
 │   │   ├── search.go       # Search command (CLI)
@@ -226,7 +226,6 @@ internal/
 │   │   ├── tag.go          # Tag service (NewTag, query delegates, rename/delete/promote, deleted-tag records, embedder integration)
 │   │   ├── registration.go # Planned tag registration (Create/CreateAndUnblock, PlanRegistration, CreatePlannedTx)
 │   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
-│   │   ├── tagmerge.go     # TagMerge service (NewTagMerge — explicit hard merge of two tags + merge-suggestion scan over embedding similarity and verdict history)
 │   │   └── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
 │   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, joint-tag splits, deleted-tag policy, identity planning, tag-quality gating)
@@ -239,7 +238,7 @@ internal/
 │       ├── reconciler.go   # Reconciler orchestrator (NewReconciler, Run, Report, ProvisionalCounts)
 │       ├── worklist.go     # Worklist build (buildWorklist, bootstrap, category ordering)
 │       ├── evidence.go     # Evidence pass (re-rank, band adjudication, hysteresis confirmation)
-│       ├── apply.go        # Apply pass (merge/keep flips, verdict upsert)
+│       ├── apply.go        # Apply pass (alias/keep flips, verdict upsert)
 │       ├── sweeps.go       # Orphan, provisional and identity-evidence sweeps
 │       ├── tagreconcile.go # TagReconcileTaskHandler (reconciler run + batch lifecycle)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)

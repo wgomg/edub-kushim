@@ -3,21 +3,22 @@ package reconcile
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist []*entry, report *Report, tagCounts map[string]int64, blocklist map[string]database.ListAllDeletedTagsRow) {
+func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist []*entry, report *Report, tagCounts map[string]int64, blocklist map[string]struct{}) {
 	budget := cfg.Enricher.TagReconcile.MaxRetag
 	appliedFlip := false
 	var plannedKeepFlips []*entry
+	var aliasFlips []*entry
 
 	for i, e := range worklist {
 		if e.skipReason != "" {
@@ -33,10 +34,10 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		}
 		report.Confirmed++
 
-		flipToMerge := e.freshVerdict == types.TagVerdicts.Same && e.verdict != types.TagVerdicts.Same
+		flipToAlias := e.freshVerdict == types.TagVerdicts.Same && e.verdict != types.TagVerdicts.Same
 		flipToKeep := e.freshVerdict != types.TagVerdicts.Same && e.verdict == types.TagVerdicts.Same
 
-		if !flipToMerge && !flipToKeep {
+		if !flipToAlias && !flipToKeep {
 			if err := r.upsertVerdict(ctx, e); err != nil {
 				r.logger.Error("", "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
 			}
@@ -44,15 +45,15 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		}
 
 		if report.ReportOnly {
-			if flipToMerge {
-				report.Flips.ToMerge++
-				report.PlannedMerges = append(report.PlannedMerges, MergeEntry{
+			if flipToAlias {
+				report.Flips.ToAlias++
+				report.PlannedAliases = append(report.PlannedAliases, PairEntry{
 					Query:      e.query,
 					Target:     e.target,
 					Reassigned: tagCounts[e.query],
 					Reason:     e.reason,
 				})
-				r.logger.Info("", "tag reconcile (report-only): would merge %q into %q (%d documents)%s", e.query, e.target, tagCounts[e.query], reasonSuffix(e.reason))
+				r.logger.Info("", "tag reconcile (report-only): would alias %q onto %q (%d documents)%s", e.query, e.target, tagCounts[e.query], reasonSuffix(e.reason))
 			} else {
 				plannedKeepFlips = append(plannedKeepFlips, e)
 			}
@@ -70,13 +71,11 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 			break
 		}
 
-		if flipToMerge {
+		if flipToAlias {
 			appliedFlip = true
-			if err := r.applyMergeFlip(ctx, e, report); err != nil {
-				r.logger.Error("", "tag reconcile: merge flip %q → %q: %v", e.query, e.target, err)
-				continue
-			}
-			budget -= int(report.Merges[len(report.Merges)-1].Reassigned)
+			aliasFlips = append(aliasFlips, e)
+			// the loser's full count is an upper bound on the batch's re-pointing
+			budget -= int(tagCounts[e.query])
 			continue
 		}
 
@@ -92,7 +91,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		report.Flips.ToKeep++
 		report.Retags += repointed
 		if repointed > 0 {
-			report.RetagEntries = append(report.RetagEntries, MergeEntry{
+			report.RetagEntries = append(report.RetagEntries, PairEntry{
 				Query:      e.query,
 				Target:     e.target,
 				Reassigned: int64(repointed),
@@ -105,6 +104,9 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		budget -= repointed
 	}
 
+	if len(aliasFlips) > 0 {
+		r.applyAliasFlips(ctx, aliasFlips, report)
+	}
 	if len(plannedKeepFlips) > 0 {
 		r.resolvePlannedKeepFlips(ctx, plannedKeepFlips, report)
 	}
@@ -134,7 +136,7 @@ func (r *Reconciler) resolvePlannedKeepFlips(ctx context.Context, entries []*ent
 			reassigned = counts[orderedPairKey(e.query, e.target)]
 		}
 		report.Flips.ToKeep++
-		report.PlannedKeepFlips = append(report.PlannedKeepFlips, MergeEntry{
+		report.PlannedKeepFlips = append(report.PlannedKeepFlips, PairEntry{
 			Query:      e.query,
 			Target:     e.target,
 			Reassigned: reassigned,
@@ -203,41 +205,54 @@ func (r *Reconciler) pairDocumentCounts(ctx context.Context, entries []*entry) (
 	return counts, nil
 }
 
-func (r *Reconciler) applyMergeFlip(ctx context.Context, e *entry, report *Report) error {
-	queryTag, ok := r.tagByName(ctx, e.query)
-	if !ok {
-		return fmt.Errorf("query tag %q not in store", e.query)
+// applyAliasFlips collapses the confirmed pairs onto their targets in one alias plan: each loser's
+// assignments re-point, its own aliases re-target, its tag row is removed and the loser becomes an
+// alias row of the canonical — the names resolve and survive, never deleted and never blocklisted.
+// Actions the plan skipped are tallied under alias_skip and leave no verdict behind.
+func (r *Reconciler) applyAliasFlips(ctx context.Context, entries []*entry, report *Report) {
+	actions := make([]tags.AliasAction, 0, len(entries))
+	for _, e := range entries {
+		actions = append(actions, tags.AliasAction{
+			AliasName:         e.query,
+			Canonical:         e.target,
+			RemoveExistingTag: true,
+		})
 	}
-	targetTag, ok := r.tagByName(ctx, e.target)
-	if !ok {
-		return fmt.Errorf("target tag %q not in store", e.target)
-	}
-	res, err := r.merges.Merge(ctx, queryTag.ID, targetTag.ID)
+	outcomes, err := r.tag.ApplyAliasPlan(ctx, actions)
 	if err != nil {
-		return err
+		r.logger.Error("", "tag reconcile: alias plan failed for %d pairs: %v", len(entries), err)
+		for range entries {
+			report.Skips["alias_error"]++
+		}
+		return
 	}
-	report.Flips.ToMerge++
-	report.Merges = append(report.Merges, MergeEntry{
-		Query:      e.query,
-		Target:     e.target,
-		Reassigned: res.Reassigned,
-		Reason:     e.reason,
-	})
-	r.logger.Info("", "tag reconcile: merged %q into %q (re-pointed %d documents)", e.query, e.target, res.Reassigned)
-	if err := r.upsertVerdict(ctx, e); err != nil {
-		r.logger.Error("", "tag reconcile: upsert verdict after merge %q → %q: %v", e.query, e.target, err)
+	for i, e := range entries {
+		if !outcomes[i].Applied {
+			report.Skips["alias_skip"]++
+			continue
+		}
+		report.Flips.ToAlias++
+		report.Aliases = append(report.Aliases, PairEntry{
+			Query:      e.query,
+			Target:     e.target,
+			Reassigned: outcomes[i].Reassigned,
+			Reason:     e.reason,
+		})
+		r.logger.Info("", "tag reconcile: aliased %q onto %q (%d documents)", e.query, e.target, outcomes[i].Reassigned)
+		if err := r.upsertVerdict(ctx, e); err != nil {
+			r.logger.Error("", "tag reconcile: upsert verdict after alias %q → %q: %v", e.query, e.target, err)
+		}
 	}
-	return nil
 }
 
-func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[string]database.ListAllDeletedTagsRow) (int, bool, error) {
+func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[string]struct{}) (int, bool, error) {
 	targetTag, ok := r.tagByName(ctx, e.target)
 	if !ok {
 		return 0, false, fmt.Errorf("target tag %q not in store", e.target)
 	}
 
-	if row, deleted := blocklist[e.query]; deleted {
-		r.logDeletedTagKeepFlip(e, row)
+	if _, deleted := blocklist[e.query]; deleted {
+		r.logDeletedTagKeepFlip(e)
 		if err := r.upsertVerdict(ctx, e); err != nil {
 			r.logger.Error("", "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
 		}
@@ -245,8 +260,8 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 	}
 
 	docIDs := e.docIDs
-	var err error
 	if len(docIDs) == 0 {
+		var err error
 		docIDs, err = r.client.DocumentIDsForPairs(ctx, database.DocumentIDsForPairsParams{
 			Column1: []string{e.query},
 			Column2: []string{e.target},
@@ -263,17 +278,35 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 		return 0, false, nil
 	}
 
+	// a prior same verdict collapsed the query into the target as an alias; the fresh keep verdict
+	// withdraws it so the re-created name is not shadowed by the alias
+	if err := r.withdrawAlias(ctx, e, targetTag); err != nil {
+		return 0, false, err
+	}
+
 	results, err := r.tag.Create(ctx, []string{e.query})
 	if err != nil {
 		return 0, false, fmt.Errorf("create query tag: %w", err)
 	}
 	var queryTag database.Tag
+	aliased := false
 	for _, res := range results {
-		if res.Status == types.Created || res.Status == types.Conflict {
+		switch res.Status {
+		case types.Created, types.Conflict:
 			queryTag = res.Entity
+		case types.Apply, types.Alias:
+			aliased = true
 		}
 	}
 	if queryTag.ID == 0 {
+		if aliased {
+			// the name resolves through an existing alias onto another canonical
+			// the fresh verdict does not touch; record it and settle
+			if err := r.upsertVerdict(ctx, e); err != nil {
+				r.logger.Error("", "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
+			}
+			return 0, false, nil
+		}
 		return 0, false, fmt.Errorf("create query tag %q: invalid result", e.query)
 	}
 
@@ -316,11 +349,30 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 	return int(repointed), false, nil
 }
 
-func (r *Reconciler) logDeletedTagKeepFlip(e *entry, row database.ListAllDeletedTagsRow) {
-	if row.Kind == curation.DeletedTagKindMerged {
-		r.logger.Info("", "tag reconcile: skipping restoration of %q — it was merged into %q", e.query, row.TargetName.String)
-		return
+// withdrawAlias removes the alias row that collapsed the query name onto the target, if one exists:
+// the fresh keep verdict means the name must stand on its own, and the recreate that follows would
+// otherwise be shadowed by the alias. An alias onto another canonical is left alone, and a blocked
+// name is handled before this point.
+func (r *Reconciler) withdrawAlias(ctx context.Context, e *entry, targetTag database.Tag) error {
+	queryName := textnorm.NormalizeTag(e.query)
+	alias, err := r.client.Queries.GetTagAliasByName(ctx, queryName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("look up alias %q: %w", e.query, err)
+	}
+	if alias.CanonicalTagID != targetTag.ID {
+		return nil
+	}
+	if _, err := r.client.Queries.DeleteTagAliasByName(ctx, queryName); err != nil {
+		return fmt.Errorf("withdraw alias %q: %w", e.query, err)
+	}
+	r.logger.Info("", "tag reconcile: withdrew the alias %q (it was collapsed into %q)", e.query, e.target)
+	return nil
+}
+
+func (r *Reconciler) logDeletedTagKeepFlip(e *entry) {
 	r.logger.Info("", "tag reconcile: skipping restoration of %q — the tag was deleted by an operator", e.query)
 }
 

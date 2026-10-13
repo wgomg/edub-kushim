@@ -21,7 +21,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
@@ -738,11 +737,9 @@ func freshModel(cv CompoundVerdict) string {
 	return cv.Model
 }
 
-// ApplyDeletedTagPolicy rewrites a tag list through the deleted-tag
-// blocklist: blocked tags are dropped, merged tags are rewritten to their
-// merge target when that target still exists, and the result is
-// deduplicated.
-func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]struct{}, blocklist map[string]database.ListAllDeletedTagsRow, reqID string) []string {
+// ApplyDeletedTagPolicy drops a tag list's blocked names: an operator deletion lands in the blocklist
+// and enrichment cannot resurrect it. The result is deduplicated.
+func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, blocklist map[string]struct{}, reqID string) []string {
 	if len(blocklist) == 0 {
 		return tags
 	}
@@ -750,24 +747,9 @@ func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, knownTags map[string]
 	out := make([]string, 0, len(tags))
 	seen := make(map[string]bool, len(tags))
 	for _, tag := range tags {
-		if row, ok := blocklist[tag]; ok {
-			switch row.Kind {
-			case curation.DeletedTagKindBlocked:
-				a.logger.Info(reqID, "deleted tag policy: dropping %q — the tag was deleted by an operator", tag)
-				continue
-			case curation.DeletedTagKindMerged:
-				target := row.TargetName.String
-				if !row.TargetName.Valid || target == "" {
-					a.logger.Info(reqID, "deleted tag policy: dropping %q — the merge target is unknown", tag)
-					continue
-				}
-				if _, ok := knownTags[target]; !ok {
-					a.logger.Info(reqID, "deleted tag policy: dropping %q — it was merged into %q, which no longer exists", tag, target)
-					continue
-				}
-				a.logger.Info(reqID, "deleted tag policy: rewriting %q to %q (merged)", tag, target)
-				tag = target
-			}
+		if _, ok := blocklist[tag]; ok {
+			a.logger.Info(reqID, "deleted tag policy: dropping %q — the tag was deleted by an operator", tag)
+			continue
 		}
 		if seen[tag] {
 			continue
@@ -804,19 +786,12 @@ func isCreditError(err error) bool {
 	return errors.As(err, &credErr)
 }
 
+// bandPair carries the verdict provenance a stored pair row needs: the judge's answer and whether it
+// came from the cache.
 type bandPair struct {
-	query       string
-	target      string
-	sim         float64
-	runnerUpSim float64
-	verdict     types.TagVerdict
-	model       string
-	cached      bool
-}
-
-type reciprocalEvidence struct {
-	tag string
-	sim float64
+	verdict types.TagVerdict
+	model   string
+	cached  bool
 }
 
 func (a *Adjudicator) writeVerdictEvent(ctx context.Context, docId int64, d policy.Decision, bp *bandPair, reqID string) {
@@ -1357,40 +1332,4 @@ func (a *Adjudicator) writeTagQualityEvent(ctx context.Context, docId int64, nam
 		model = row.VerdictModel.String
 	}
 	return row.Pass, row.Criteria, model
-}
-
-func (a *Adjudicator) reciprocalEvidence(ctx context.Context, documentID string, pairs []*bandPair, reqID string) map[string]reciprocalEvidence {
-	targets := make([]string, 0, len(pairs))
-	seen := make(map[string]struct{}, len(pairs))
-	for _, bp := range pairs {
-		if _, ok := seen[bp.target]; ok {
-			continue
-		}
-		seen[bp.target] = struct{}{}
-		targets = append(targets, bp.target)
-	}
-
-	evidence := make(map[string]reciprocalEvidence, len(targets))
-	if len(targets) == 0 {
-		return evidence
-	}
-
-	ranked, err := a.runner.RankTags(ctx, documentID, targets)
-	if err != nil {
-		a.logger.Error(reqID, "tag adjudication evidence rank failed: %v", err)
-		return evidence
-	}
-	for i, target := range targets {
-		if i >= len(ranked) {
-			break
-		}
-		for _, c := range ranked[i].Candidates {
-			if c.Tag == target {
-				continue
-			}
-			evidence[target] = reciprocalEvidence{tag: c.Tag, sim: c.Similarity}
-			break
-		}
-	}
-	return evidence
 }

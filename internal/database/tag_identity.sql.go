@@ -24,6 +24,18 @@ func (q *Queries) CountPendingTagIdentityEvents(ctx context.Context) (int64, err
 	return count, err
 }
 
+const deleteTagAliasByName = `-- name: DeleteTagAliasByName :execrows
+DELETE FROM tag_alias WHERE alias_name = $1
+`
+
+func (q *Queries) DeleteTagAliasByName(ctx context.Context, aliasName string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteTagAliasByName, aliasName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getTagAliasByName = `-- name: GetTagAliasByName :one
 SELECT id, alias_name, canonical_tag_id, rule_set_version, created_at FROM tag_alias WHERE alias_name = $1
 `

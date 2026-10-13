@@ -118,8 +118,8 @@ describe('worklistTotal', () => {
 });
 
 describe('changedDecisions', () => {
-	it('sums to_merge and to_keep', () => {
-		expect(changedDecisions({ flips: { to_merge: 2, to_keep: 3 } })).toBe(5);
+	it('sums to_alias and to_keep', () => {
+		expect(changedDecisions({ flips: { to_alias: 2, to_keep: 3 } })).toBe(5);
 	});
 
 	it('handles missing flips', () => {
@@ -130,9 +130,9 @@ describe('changedDecisions', () => {
 describe('affectedDocuments', () => {
 	it('sums reassigned across all entry arrays', () => {
 		const report = {
-			planned_merges: [{ reassigned: 5 }],
+			planned_aliases: [{ reassigned: 5 }],
 			planned_keep_flips: [{ reassigned: 3 }],
-			merges: [{ reassigned: 10 }],
+			aliases: [{ reassigned: 10 }],
 			retag_entries: [{ reassigned: 2 }]
 		};
 		expect(affectedDocuments(report)).toBe(20);
@@ -156,5 +156,12 @@ describe('notActedGroups', () => {
 		expect(groups).toHaveLength(1);
 		expect(groups[0].label).toBe('run limit reached — remaining pairs wait for the next run');
 		expect(groups[0].count).toBe(4);
+	});
+
+	it('labels the alias skip reasons', () => {
+		const groups = notActedGroups({ alias_error: 1, alias_skip: 2 }, 0, 0);
+		const labels = groups.map((g) => g.label);
+		expect(labels).toContain('applying the alias failed this run — retried next run');
+		expect(labels).toContain('the alias collapse no longer applied — skipped');
 	});
 });

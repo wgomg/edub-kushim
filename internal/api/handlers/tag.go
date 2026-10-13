@@ -27,19 +27,17 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 	})
 }
 
-// TagHandler is the tag API: CRUD, provisional promotion and its
-// quality verdicts, deleted-tag records, merges, and the merge-review
-// endpoints backed by curation.
+// TagHandler is the tag API: CRUD, provisional promotion and its quality verdicts, deleted-tag records,
+// and the identity reevaluation trigger backed by curation.
 type TagHandler struct {
 	tag      *curation.Tag
-	merges   *curation.TagMerge
 	identity *curation.TagIdentity
 	logger   *log.Logger
 }
 
 // NewTagHandler wires the tag handler to the curation services.
-func NewTagHandler(tag *curation.Tag, merges *curation.TagMerge, identity *curation.TagIdentity, logger *log.Logger) *TagHandler {
-	return &TagHandler{tag: tag, merges: merges, identity: identity, logger: logger}
+func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, logger *log.Logger) *TagHandler {
+	return &TagHandler{tag: tag, identity: identity, logger: logger}
 }
 
 // List serves the paged tag listing with a name-prefix search and
@@ -409,41 +407,6 @@ func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// Merge folds one tag into the target from the JSON body.
-func (h *TagHandler) Merge(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := log.ReqIDFrom(ctx)
-
-	idStr := r.PathValue("id")
-	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid id", http.StatusBadRequest)
-		return
-	}
-
-	var req MergeTagRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	if req.TargetID <= 0 {
-		http.Error(w, "target_id is required", http.StatusBadRequest)
-		return
-	}
-
-	result, err := h.merges.Merge(ctx, id, req.TargetID)
-	if err != nil {
-		writeServiceError(w, h.logger, reqID, "merge tag", err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, MergeTagResponse{
-		ID:         result.TargetID,
-		Name:       result.TargetName,
-		Reassigned: result.Reassigned,
-	})
-}
-
 // ListDeleted serves the paged deleted-tag records.
 func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -468,10 +431,9 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	responses := make([]DeletedTagResponse, len(rows))
 	for i, t := range rows {
 		responses[i] = DeletedTagResponse{
-			Name:       t.Name,
-			Kind:       t.Kind,
-			TargetName: t.TargetName.String,
-			CreatedAt:  t.CreatedAt,
+			Name:      t.Name,
+			Kind:      t.Kind,
+			CreatedAt: t.CreatedAt,
 		}
 	}
 
@@ -502,89 +464,18 @@ func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"name": row.Name, "kind": row.Kind})
 }
 
-// MergeSuggestions serves the paged merge-review candidates.
-func (h *TagHandler) MergeSuggestions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := log.ReqIDFrom(ctx)
-
-	pb := GetParamBag(r)
-	if pb == nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	limit := pb.GetInt64("limit", 20, 1, 100)
-	forTag := pb.Get("for_tag", "")
-	includeDismissed := pb.GetBool("include_dismissed", false)
-
-	suggestions, err := h.merges.Suggestions(ctx, curation.SuggestionsParams{
-		Limit:            int(limit),
-		ForTag:           forTag,
-		IncludeDismissed: includeDismissed,
-	})
-	if err != nil {
-		if isMatcherUnavailable(err) {
-			matcherUnavailableResponse(w)
-			return
-		}
-		writeServiceError(w, h.logger, reqID, "merge suggestions", err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"results": suggestions})
-}
-
-// DismissMergePair records the decision not to merge a pair.
-func (h *TagHandler) DismissMergePair(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := log.ReqIDFrom(ctx)
-
-	var req MergePairRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.merges.DismissPair(ctx, req.TagA, req.TagB); err != nil {
-		writeServiceError(w, h.logger, reqID, "dismiss merge pair", err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// RestoreMergePair makes a dismissed pair reviewable again.
-func (h *TagHandler) RestoreMergePair(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := log.ReqIDFrom(ctx)
-
-	var req MergePairRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.merges.RestorePair(ctx, req.TagA, req.TagB); err != nil {
-		writeServiceError(w, h.logger, reqID, "restore merge pair", err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // TagListResponse is one page of the tag listing.
 type TagListResponse struct {
 	Results []TagResponse `json:"results"`
 	Total   int64         `json:"total"`
 }
 
-// DeletedTagResponse is one deleted-tag record as the API shows it:
-// the name, whether it was blocked or merged (with the target), and
-// when.
+// DeletedTagResponse is one deleted-tag record as the API shows it: the name, its kind (an operator
+// block), and when.
 type DeletedTagResponse struct {
-	Name       string    `json:"name"`
-	Kind       string    `json:"kind"`
-	TargetName string    `json:"target_name,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // DeletedTagListResponse is one page of deleted-tag records.
@@ -648,24 +539,4 @@ type CreateTagRequest struct {
 // UpdateTagRequest is the body of a tag rename.
 type UpdateTagRequest struct {
 	Name string `json:"name"`
-}
-
-// MergeTagRequest is the body of a tag merge: the surviving tag's id.
-type MergeTagRequest struct {
-	TargetID int64 `json:"target_id"`
-}
-
-// MergeTagResponse reports the merge: the surviving tag and how many
-// documents were reassigned.
-type MergeTagResponse struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Reassigned int64  `json:"reassigned"`
-}
-
-// MergePairRequest is the body of a pair-level merge or dismissal: the
-// two tag names as typed.
-type MergePairRequest struct {
-	TagA string `json:"tag_a"`
-	TagB string `json:"tag_b"`
 }

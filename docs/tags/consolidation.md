@@ -1,17 +1,17 @@
-# Tag Consolidation — Policy, Adjudication, Merge Review & Reconciliation
+# Tag Consolidation — Identity Policy, Adjudication & Reconciliation
 
 After the LLM assigns tags to a document, every emitted name is mapped onto the
 existing tag vocabulary before anything is saved: spelling and casing variants
 collapse onto their canonical form (`machine learning` → the existing
 `machine-learning`), synonyms are recognized, and genuinely new concepts are
 born as new tags. This page documents the consolidation subsystem end to end —
-the deterministic replacement policy that runs on every enrichment, the opt-in
-LLM adjudication of ambiguous pairs, the merge-review surface for pre-existing
-duplicates, and the scheduled reconciliation task that heals older damage.
+the deterministic identity policy that runs on every enrichment, the opt-in
+LLM adjudication of ambiguous pairs, and the scheduled reconciliation task that
+heals older damage.
 
 The principle throughout: **creation is the default; replacement requires
-positive evidence of concept identity.** A wrongly kept tag is a visible,
-mergeable duplicate; a wrongly replaced tag silently and permanently erases a
+positive evidence of concept identity.** A wrongly kept tag is a visible
+duplicate; a wrongly replaced tag silently and permanently erases a
 concept from the vocabulary. Every failure, ambiguity, or outage defaults to
 *keep*.
 
@@ -21,7 +21,7 @@ concept from the vocabulary. Every failure, ambiguity, or outage defaults to
 - [LLM adjudication (opt-in)](#llm-adjudication-opt-in)
 - [Tag quality judge (opt-in)](#tag-quality-judge-opt-in)
 - [Quarantine and promotion](#quarantine-and-promotion)
-- [Merge review](#merge-review)
+- [Aliases and operator actions](#aliases-and-operator-actions)
 - [Scheduled reconciliation](#scheduled-reconciliation)
 - [Configuration](#configuration)
 - [Operating notes](#operating-notes)
@@ -73,8 +73,9 @@ default 3; the filter applies no count cap):
    decomposition pass replaces compound tags by their parts — see
    [Compound tags](#compound-tags) below.
 3. The matcher daemon ranks each name against the tag store and returns up to
-   two candidates with similarity scores, all at or above the **consideration
-   floor** (`consolidation_similarity`, 0.80 for bge-m3).
+   two candidate neighbours with similarity scores, all at or above the
+   **identity-candidate floor** (`identity_candidate_similarity`, 0.80 for
+   bge-m3).
 4. The enricher resolves identity before any judging: names are normalized and
    brought to house form (M1: word ordinals and roman numerals become numeric,
    `world war ii` → `world war 2`), alias names resolve to their canonical
@@ -91,13 +92,13 @@ default 3; the filter applies no count cap):
 | Any other candidate neighbour — the same-intent gate | judged (J3) with a direction (J4): `same` aliases the loser onto the winner (a store label that loses becomes the alias), `variant`/`related` register both | the residual band and shape-related pairs |
 | No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
 
-The consideration floor (`consolidation_similarity`, 0.80 for bge-m3) is a
-model-derived internal (not YAML-settable); the former auto-replace cutoff no
-longer decides anything. See [matcher.md](matcher.md) for the per-model value
-and the derivation.
+The identity-candidate floor (`identity_candidate_similarity`, 0.80 for bge-m3)
+is a model-derived internal (not YAML-settable); it selects which stored
+neighbours reach the identity gate. See [matcher.md](matcher.md) for the
+per-model value and the derivation.
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v8]: apply|alias|defer|separate <name> …`), so the pipeline's
+(`identity[v10]: apply|alias|defer|separate <name> …`), so the pipeline's
 behavior is auditable after the fact — and so the reconciliation task can
 recover history the database never captured.
 
@@ -194,9 +195,10 @@ proposed folds and candidate neighbours with LLM calls:
 - **Cache**: every verdict is stored in the `tag_verdict_event` table keyed by
   `(query, target, policy_version)`. A repeat pair resolves from the cache with
   no LLM call, whichever document produced it.
-- **Evidence, not just names**: the prompt carries the pair's embedding
-  similarity, the query's runner-up similarity, and the target's own nearest
-  other store tag.
+- **Terms only**: the prompt carries the pair's two terms and nothing else.
+  Similarity selects which pairs are judged; it is never an input to the
+  verdict, so the judge cannot be swayed by a score the pipeline already used
+  to decide what to ask about.
 - **Failure safety**: a transient failure (transport, generic provider error
   or empty response) retries once; parse failures, incomplete replies,
   output-cap hits, credit exhaustion, token-limit, content-too-large and
@@ -260,8 +262,8 @@ they are created:
   gate the birth is provisional and carries no verdict — and a
   credit-exhaustion failure pauses the batch instead.
 - **Logging**: rejections and defers are logged as `tagquality[v6]:` lines
-  carrying the outcome and reason, siblings of the `consolidation[v1]` and
-  `tags[facet]:` lines.
+  carrying the outcome and reason, siblings of the `identity[v10]` and
+  `policy[v1]` lines.
 
 The decision thresholds are pinned v1 constants, not configuration keys; the
 judge LLM and timeout inherit the content analyzer's unless the `llm` block
@@ -359,38 +361,30 @@ promoted. Layer off ⇒ newborns are born trusted exactly as before.
 
 ---
 
-## Merge review
+## Aliases and operator actions
 
-Nothing merges automatically. The conservative policy deliberately keeps
-near-duplicates visible, and the merge-review surface is where an operator
-resolves them:
+Nothing is deleted to resolve a duplicate: a same-intent pair collapses by
+**aliasing** the losing name onto the winner. The loser becomes a `tag_alias`
+row pointing at the canonical — its `document_tag` assignments re-point to the
+canonical, its own aliases re-target (no alias chains), its tag row is removed,
+and the name leaves the embedding store. The name keeps resolving, a later
+document that emits it lands on the canonical, and no concept is erased.
 
-- **Tags page → "Merge review" tab** (editor-gated): fetches suggestions on
-  demand; each pair shows similarity, population overlap, and verdict history,
-  carries a survivor selector (defaulting to the higher-document-count tag),
-  Merge with confirmation naming the tag to be deleted, and Dismiss/Restore.
-  Both document counts link to the documents page pre-filtered by the tag, and
-  the vocabulary table expands an editor row into the same pair cards for the
-  pairs involving that tag.
-- **Dismissals are persisted** in the global `tag_merge_dismissal` table
-  (`POST`/`DELETE /api/v1/tags/merge/dismissals`, editor/admin), so a dismissed
-  pair stays out of the queue across sessions and for every operator. The
-  "Hide dismissed" switch (on by default, remembered per browser) decides
-  whether dismissed pairs are listed; when listed they carry a "dismissed" pill
-  and a Restore action, and the `include_dismissed` parameter returns them
-  without letting them consume the live queue's slots.
-- **Suggestions** come from the matcher daemon's pair cache — every pair of
-  store tags at or above the consideration floor, maintained incrementally on
-  tag CRUD — ranked by document-population overlap and verdict counts from
-  `tag_verdict_event`. Pairs without adjudication history are ranked by
-  similarity alone and flagged `similarity_only` (lower confidence); with the
-  adjudicator disabled that is the common case.
-- **`POST /api/v1/tags/{id}/merge`** hard-merges source into target in one
-  transaction: `document_tag` rows re-pointed (documents already carrying the
-  target keep a single row), leftovers cleared, source tag deleted, source name
-  dropped from the embedding store. Editor/admin only; suggestions are
-  viewer-readable via `GET /api/v1/tags/merge`, and dismissals are global
-  (shared by all operators), keyed by the two normalized tag names.
+Where aliasing happens:
+
+- **At birth** — the identity pipeline resolves alias lookups, house form, key
+  equality, and judged or pinned same-intent pairs (see
+  [LLM adjudication](#llm-adjudication-opt-in)).
+- **In the scheduled reconciliation** — a stored pair whose fresh verdict flips
+  to `same` aliases the loser onto the canonical, and a pair that flips back to
+  `keep` **withdraws** the alias: the alias row is removed, the name is
+  re-created, and the affected documents return to it.
+
+The tags page exposes vocabulary CRUD (rename, delete) and the provisional
+review; there is no merge queue to work through. An operator delete records the
+name in the `deleted_tag` blocklist as `blocked`, so enrichment cannot
+resurrect it, and the Deleted tab restores a name by clearing the row and
+re-creating the tag.
 
 ---
 
@@ -403,8 +397,8 @@ anti-oscillating:
 - **What it re-examines:** pairs whose verdicts predate the current policy
   version (the policy changed under them); fresh verdicts older than 90 days;
   kept pairs whose document-population overlap drifted; pairs with a dead side
-  (a merged or deleted tag — dead-target verdicts are invalidated so a cached
-  `same` verdict can never resurrect a deleted tag); and, for history the table
+  (a deleted tag — dead-target verdicts are invalidated so a cached `same`
+  verdict can never resurrect a deleted name); and, for history the table
   never captured, pairs parsed from the daemon's rotated logs
   (`hugot.log*`/`kushim.log*`, `.gz` rotations included). A joint-tag scan
   (appended after the pair scans, same caps) detects store tags that join
@@ -413,15 +407,15 @@ anti-oscillating:
 - **How it flips:** each pair is re-evaluated through the current policy on a
   fresh rank; band survivors are re-adjudicated, and a verdict flip must be
   confirmed by a second, orientation-reversed adjudication before it applies.
-  A merge flip runs the full merge operation; a keep flip creates the tag and
-  re-points only the affected documents. A joint-tag split ranks the components
-  against the store excluding the joint tag itself, consolidates them through
-  the policy, creates them via `Tag.Create`, adds them to every document
-  carrying the joint tag (single set-based insert), and deletes the joint tag
-  with a post-commit store removal — idempotent and crash-tolerant (component
+  A `same` flip aliases the loser onto the canonical (the name resolves and
+  survives); a `keep` flip withdraws the alias and re-creates the tag with only
+  the affected documents. A joint-tag split takes the cover's components,
+  creates them via `Tag.Create`, adds them to every document carrying the joint
+  tag (single set-based insert), and deletes the joint tag with a post-commit
+  store removal — idempotent and crash-tolerant (component
   creation and document assignment are additive, deletion is last). Pair
   entries whose query is itself a joint tag are dropped from the pair worklist
-  so a merge verdict can never resurrect a tag the split scan is deleting.
+  so a same-intent verdict can never resurrect a tag the split scan is deleting.
 - **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the
   provisional re-judge shares the `max_rejudge` budget. The first run is always
   **report-only** (it lists would-be actions and touches nothing), regardless
@@ -441,9 +435,9 @@ anti-oscillating:
 - **Dead-tag hygiene:** the same run sweeps zero-assignment tags — a tag whose
   `orphaned_since` mark is older than `dead_tag_grace_days` (default 7) is
   deleted and removed from the embedding store, and every assignment path
-  clears the mark so the window tracks real last usage. Names blocked or
-  merged away by an operator are skipped by the keep-flip path (and dropped or
-  rewritten by enrichment), so they cannot be resurrected outside the restore
+  clears the mark so the window tracks real last usage. Names blocked by an
+  operator are skipped by the keep-flip path (and dropped by enrichment), so
+  they cannot be resurrected outside the restore
   flow.
 - **Report:** each run persists a full JSON report as its task result — worklist
   counts (including the joint-tag category), judged/confirmed, flips,
@@ -495,25 +489,25 @@ enricher:
 All three blocks are also editable on the Settings page ("Tag adjudicator",
 "Tag quality", and "Tag reconciliation" cards), including an "Inherit from
 content analyzer" option for the judge LLMs — leaving the LLM fields empty
-follows the content analyzer's model even after it changes. The similarity
-floor (`consolidation_similarity`), the identity rule-set version, and the
-quality band constants are internals — see [matcher.md](matcher.md).
+follows the content analyzer's model even after it changes. The
+identity-candidate floor (`identity_candidate_similarity`), the identity
+rule-set version, and the quality band constants are internals — see
+[matcher.md](matcher.md).
 
 ---
 
 ## Operating notes
 
-- **Rollout order**: after upgrading, restart `kushim hugot` first (the
-  similar-pairs endpoint has no legacy fallback — merge suggestions return 503
-  against an old daemon). Optionally enable the adjudicator, use the Merge review
-  on demand, and enable reconciliation when you want automatic healing. Both
-  features default to off so an upgrade never silently changes tag behavior or
-  adds LLM cost.
+- **Rollout**: `kushim` and `edub` ship as one version over the matcher socket,
+  so an upgrade needs no restart ordering. Optionally enable the adjudicator
+  and the reconciliation when you want automatic healing; both default to off,
+  so an upgrade never silently changes tag behavior or adds LLM cost.
 - **While the adjudicator is off**, claims wait: folds are not applied and
   same-intent pairs leave pending identity evidence with their candidates born
   provisional (resolvable later by `POST /api/v1/tags/identity/reevaluate` or
   the reconciliation sweep). The store grows faster with near-duplicates — the
-  accepted safe direction — and the merge-review surface is the manual valve.
+  accepted safe direction — and the review queue's holds plus the sweep's
+  automatic alias disposition resolve them.
 - **Provisional review**: with the quality judge on, new names stay provisional
   until promoted and show up in the tags page's "New tags" tab. Identity-held
   names (a refused fold beside a live store value) show their store anchor and
@@ -522,16 +516,16 @@ quality band constants are internals — see [matcher.md](matcher.md).
   once they pass `provisional_grace_days`, so the panel is a manual override
   rather than a required step, and a rejection recorded there is a normal tag
   delete (blocklist included).
-- **Matcher dependency**: with the daemon down, tag CRUD and merge suggestions
-  return 503 and enrichment degrades to LLM-only tags (no consolidation) — the
-  pipeline degrades, it does not fail.
-- **Monitoring**: consolidation decisions live in the kushim log
-  (`consolidation[v1]: … reason=…`); reconciliation results in the task's JSON
-  report (worklist counts, judged/confirmed, flips, merges, re-tags,
-  invalidations), visible in the web UI — the task detail page shows the full
-  report with pair-level breakdowns (would-be merges, would-be re-tags,
-  invalidated decisions, skip reasons), and the tags page shows a status strip
-  for the latest run.
+- **Matcher dependency**: with the daemon down, tag CRUD and identity planning
+  return 503 and enrichment degrades to LLM-only tags (no identity
+  resolution) — the pipeline degrades, it does not fail.
+- **Monitoring**: identity dispositions live in the kushim log
+  (`identity[v10]: …`) and the pinned policy's passthroughs as `policy[v1]: …
+  reason=…`; reconciliation results in the task's JSON report (worklist counts,
+  judged/confirmed, flips, aliases, re-tags, invalidations), visible in the web
+  UI — the task detail page shows the full report with pair-level breakdowns
+  (would-be aliases, would-be re-tags, invalidated decisions, skip reasons),
+  and the tags page shows a status strip for the latest run.
 
 ---
 
@@ -539,5 +533,5 @@ quality band constants are internals — see [matcher.md](matcher.md).
 
 - [Tag matcher](matcher.md) — embedding model, thresholds, memory/CPU sizing
 - [Developer guide: tag consolidation](../developer-guide/tag-consolidation.md) — internals for developers
-- [User manual](../user-manual.md) — merge API, full config reference, task types
+- [User manual](../user-manual.md) — tag API, full config reference, task types
 - [Architecture](../architecture.md) — pipeline placement and process model

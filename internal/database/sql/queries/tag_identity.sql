@@ -6,6 +6,9 @@ ON CONFLICT (alias_name) DO NOTHING;
 -- name: GetTagAliasByName :one
 SELECT * FROM tag_alias WHERE alias_name = $1;
 
+-- name: DeleteTagAliasByName :execrows
+DELETE FROM tag_alias WHERE alias_name = $1;
+
 -- name: ResolveTagAliasNames :many
 SELECT ta.alias_name, t.name AS canonical_name
 FROM tag_alias ta

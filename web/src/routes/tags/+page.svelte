@@ -7,18 +7,16 @@
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import TagReconcileStrip from '$lib/components/tags/TagReconcileStrip.svelte';
-	import MergeReview from '$lib/components/tags/MergeReview.svelte';
-	import TagMergeSuggestions from '$lib/components/tags/TagMergeSuggestions.svelte';
 	import ProvisionalReview from '$lib/components/tags/ProvisionalReview.svelte';
 	import DeletedTags from '$lib/components/tags/DeletedTags.svelte';
-	import { EDIT_ICON, DELETE_ICON, CHEVRON_ICON, actionButton } from '$lib/icons.js';
+	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
 
-	const TABS = ['vocabulary', 'merges', 'provisional', 'deleted'];
+	const TABS = ['vocabulary', 'provisional', 'deleted'];
 
 	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip
 	// stick flush under the topbar instead of leaving a 24px band over the panel
@@ -42,9 +40,7 @@
 	let savingTag = $state(false);
 	let activeTab = $state('vocabulary');
 	let vocabularyTotal = $state(null);
-	let mergeSuggestions = $state(null);
-	let expandedTagId = $state(null);
-	let counts = $state({ merges: 0, provisional: 0, deleted: 0 });
+	let counts = $state({ provisional: 0, deleted: 0 });
 
 	const columns = [
 		{
@@ -70,10 +66,7 @@
 				const safeName = escapeHtml(row.name);
 				const actionable =
 					'text-parchment-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
-				const expanded = expandedTagId === row.id;
-				const chevron = `transition-transform focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none ${expanded ? 'rotate-90 text-gold-500' : 'text-parchment-400 hover:text-gold-500'}`;
-				return `${actionButton(CHEVRON_ICON, 'Merge suggestions', chevron, { 'data-toggle-merge': row.id })}
-${actionButton(EDIT_ICON, 'Edit', `${actionable} hover:text-gold-500`, { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
+				return `${actionButton(EDIT_ICON, 'Edit', `${actionable} hover:text-gold-500`, { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
 ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
 			}
 		}
@@ -94,15 +87,11 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 	}
 
 	async function refreshCounts() {
-		const [merges, provisional, deleted] = await Promise.all([
-			api.tags.mergeSuggestions(50, { includeDismissed: true }),
+		const [provisional, deleted] = await Promise.all([
 			api.tags.provisionalList(1, 0),
 			api.tags.deletedList({ limit: 1 })
 		]);
-		const mergeList = merges.ok ? (merges.data?.results ?? []) : null;
-		mergeSuggestions = mergeList;
 		counts = {
-			merges: mergeList ? mergeList.filter((s) => !s.dismissed).length : 0,
 			provisional: provisional.ok ? (provisional.data?.total ?? 0) : 0,
 			deleted: deleted?.total ?? 0
 		};
@@ -176,12 +165,6 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 	}
 
 	function handlePageClick(e) {
-		const toggleBtn = e.target.closest('[data-toggle-merge]');
-		if (toggleBtn) {
-			const id = parseInt(toggleBtn.getAttribute('data-toggle-merge'));
-			expandedTagId = expandedTagId === id ? null : id;
-			return;
-		}
 		const editBtn = e.target.closest('[data-edit-tag]');
 		if (editBtn) {
 			const id = parseInt(editBtn.getAttribute('data-edit-tag'));
@@ -237,18 +220,6 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 		Vocabulary
 	</button>
 	{#if canModerate()}
-		<button
-			id="tab-merges"
-			type="button"
-			role="tab"
-			aria-selected={activeTab === 'merges'}
-			aria-controls="panel-merges"
-			onclick={() => selectTab('merges')}
-			class={tabClass('merges')}
-		>
-			Merge review
-			{#if counts.merges}<span class={tabBadge}>{formatNumber(counts.merges)}</span>{/if}
-		</button>
 		<button
 			id="tab-provisional"
 			type="button"
@@ -316,13 +287,7 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 			onRowClick={filterByTag}
 			onActionClick={handlePageClick}
 			onTotal={(t) => (vocabularyTotal = t)}
-			expandedKey={expandedTagId}
-			{expansion}
 		/>
-	</div>
-{:else if activeTab === 'merges'}
-	<div id="panel-merges" role="tabpanel" aria-labelledby="tab-merges">
-		<MergeReview initialSuggestions={mergeSuggestions} onchanged={onReviewChanged} />
 	</div>
 {:else if activeTab === 'provisional'}
 	<div id="panel-provisional" role="tabpanel" aria-labelledby="tab-provisional">
@@ -333,10 +298,6 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 		<DeletedTags refreshKey={deletedRefreshKey} onchanged={onReviewChanged} />
 	</div>
 {/if}
-
-{#snippet expansion(row)}
-	<TagMergeSuggestions tag={row} onchanged={onReviewChanged} />
-{/snippet}
 
 <Modal
 	open={showModal}

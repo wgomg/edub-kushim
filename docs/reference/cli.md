@@ -76,7 +76,7 @@ The process layer is split by role: the verb table and the `kushim` verbs live i
     - `SocketPath() string` — `<config_dir>/kushim-hugot.sock`
     - `GetMatcherClient() *matcher.MatcherClient` — Lazily builds the RPC client over the socket, capping request bodies at the configured reduce-target size
     - `GetTagToolsRunner() *tools.Runner` — Lazily builds the `textreducer`, `contentanalyzer` and `tagmatcher` tools over the matcher client
-    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates the dispatcher together with the runner, store and tag services, so `GetDispatcher`, `GetRunner` and `GetTagService` work in any call order. Builds the curation tag services (`Tag` wired through the matcher client, `TagMerge`) and `Enricher` with the matcher.
+    - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates the dispatcher together with the runner, store and tag services, so `GetDispatcher`, `GetRunner` and `GetTagService` work in any call order. Builds the curation tag service (`Tag` wired through the matcher client) and `Enricher` with the matcher.
     - `GetRunner() (*task.Runner, error)` — Builds the runner over the dispatcher and registers every task handler (consume, enrich, thumbnail, thumbbackfill, config, backup, mirror, tagreconcile, tagmeasure, tagidentity)
     - `SetRunnerOwnerID(id) error` — Per-process batch owner UUID
     - `GetPool(taskType) (*task.Pool, error)` — Returns (or lazily creates) the pool for a task type from the `poolSpecs` table (worker count and poll interval per type)
@@ -95,8 +95,7 @@ The process layer is split by role: the verb table and the `kushim` verbs live i
 | -------------------------------- | ------ | -------------------------------------------------------------------------- |
 | `POST /rpc/v1/encode`            | POST   | Accepts `{"texts": [...]}`, returns `{"embeddings": [[...], ...]}`         |
 | `POST /rpc/v1/match`             | POST   | Accepts `{"doc_id", "input"}`, returns `{"matches": []}` |
-| `POST /rpc/v1/rank`              | POST   | Accepts `{"doc_id", "queries"}`, returns `{"results": [{"kept_name", "candidates": [{"tag", "similarity"}]}]}` |
-| `POST /rpc/v1/consolidate`       | POST   | Legacy endpoint (pre-upgrade clients): accepts `{"doc_id", "queries"}`, returns `{"results": []}` |
+| `POST /rpc/v1/rank`              | POST   | Accepts `{"doc_id", "queries"}`, returns `{"results": [{"candidates": [{"tag", "similarity"}]}]}` |
 | `POST /rpc/v1/add-to-store`      | POST   | Accepts `{"names": [...]}`, encodes and adds to embedding store            |
 | `POST /rpc/v1/remove-from-store` | POST   | Accepts `{"names": [...]}`, removes from embedding store                   |
 | `GET /health`                    | GET    | Returns `{"ok": true}`                                                     |

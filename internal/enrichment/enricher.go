@@ -179,9 +179,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	if err != nil {
 		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to retrieve deleted tags: %w", err)}
 	}
-	blocklist := make(map[string]database.ListAllDeletedTagsRow, len(deletedTags))
+	blocklist := make(map[string]struct{}, len(deletedTags))
 	for _, row := range deletedTags {
-		blocklist[row.Name] = row
+		blocklist[row.Name] = struct{}{}
 	}
 
 	var tagSuggestions []string
@@ -376,30 +376,29 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("tag decomposition failed: %w", err)}
 	}
-	analysis.Tags = e.admission.ApplyDeletedTagPolicy(decomposed, dbNames, blocklist, logId)
+	analysis.Tags = e.admission.ApplyDeletedTagPolicy(decomposed, blocklist, logId)
 
-	consolidateStart := time.Now()
-	report("consolidate", "", 0)
+	identityStart := time.Now()
+	report("identity", "", 0)
 	ranked, err := e.runner.RankTags(ctx, document.DocumentID, analysis.Tags)
 	var decisions []policy.Decision
 	var identityPlan tags.Plan
 	if err != nil {
-		e.logger.Error(logId, "post-LLM consolidation failed: %v", err)
+		e.logger.Error(logId, "identity planning: matcher rank failed: %v", err)
 		for _, tag := range analysis.Tags {
-			e.logger.Info(logId, "consolidation[%s]: keep %q (reason=rank_unavailable)", policy.Version, tag)
+			e.logger.Info(logId, "policy[%s]: keep %q (reason=rank_unavailable)", policy.Version, tag)
 		}
 		identityPlan, err = e.tag.PlanRegistration(ctx, analysis.Tags)
 		if err != nil {
 			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("identity planning failed: %w", err)}
 		}
 	} else {
-		var consolidated []string
-		consolidated, identityPlan, decisions, err = e.admission.PlanIdentity(ctx, admission.IdentityPlanInput{
-			DocID:      document.ID,
-			DocumentID: document.DocumentID,
-			Names:      analysis.Tags,
-			Ranked:     ranked,
-			DBNames:    dbNames,
+		var planned []string
+		planned, identityPlan, decisions, err = e.admission.PlanIdentity(ctx, admission.IdentityPlanInput{
+			DocID:   document.ID,
+			Names:   analysis.Tags,
+			Ranked:  ranked,
+			DBNames: dbNames,
 		}, logId)
 		if err != nil {
 			if te := e.creditPause(logId, err); te != nil {
@@ -407,8 +406,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			}
 			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("identity planning failed: %w", err)}
 		}
-		analysis.Tags = consolidated
-		e.logger.Debug(logId, "post-LLM consolidation: %d tags (%s)", len(consolidated), time.Since(consolidateStart))
+		analysis.Tags = planned
+		e.logger.Debug(logId, "identity planning: %d tags (%s)", len(planned), time.Since(identityStart))
 	}
 	analysis.TagDetails = admission.RenameTagDetails(analysis.TagDetails, identityPlan)
 	// the quality gate keys rejections by the plan's output names, so the

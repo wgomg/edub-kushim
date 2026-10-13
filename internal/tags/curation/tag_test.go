@@ -124,32 +124,6 @@ func TestTag_RestoreDeleted_Blocked(t *testing.T) {
 	testutil.AssertEqual(t, tag.Name, tagNormalized, "tag name")
 }
 
-func TestTag_RestoreDeleted_Merged(t *testing.T) {
-	svc, client := newTestTag(t)
-	ctx := context.Background()
-
-	// Seed a merged deleted-tag entry.
-	testutil.AssertNoError(t, client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
-		Name:       "restore-test-merged",
-		Kind:       "merged",
-		TargetName: sql.NullString{String: "some-target", Valid: true},
-	}), "seed merged tag")
-
-	// Restore merged: un-map only, no re-create.
-	row, err := svc.RestoreDeleted(ctx, "restore-test-merged")
-	testutil.AssertNoError(t, err, "restore merged")
-	testutil.AssertEqual(t, row.Name, "restore-test-merged", "restored name")
-	testutil.AssertEqual(t, row.Kind, "merged", "restored kind")
-
-	// Blocklist entry must be gone.
-	_, err = client.Queries.GetDeletedTag(ctx, "restore-test-merged")
-	testutil.AssertError(t, err, "blocklist row removed")
-
-	// Tag must NOT exist in the tag table (merged restore doesn't create).
-	_, err = client.Queries.GetTagByName(ctx, "restore-test-merged")
-	testutil.AssertError(t, err, "tag must not exist for merged restore")
-}
-
 func TestTag_RestoreDeleted_NotFound(t *testing.T) {
 	svc, _ := newTestTag(t)
 	ctx := context.Background()
@@ -582,10 +556,17 @@ func TestTag_ApplyAliasPlan(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "seed alias on the loser")
 
-	testutil.AssertNoError(t, svc.ApplyAliasPlan(ctx, []tags.AliasAction{
+	outcomes, err := svc.ApplyAliasPlan(ctx, []tags.AliasAction{
 		{AliasName: "alias loser tag", Canonical: "alias canonical tag", RemoveExistingTag: true},
 		{AliasName: "never a row", Canonical: "alias canonical tag"},
-	}), "apply alias plan")
+	})
+	testutil.AssertNoError(t, err, "apply alias plan")
+	testutil.AssertEqual(t, len(outcomes), 2, "one outcome per action")
+	testutil.AssertEqual(t, outcomes[0].Applied, true, "the loser collapse applies")
+	// only the loser-only document moves; the dual-tagged one already carries the canonical
+	testutil.AssertEqual(t, outcomes[0].Reassigned, int64(1), "the plan counts the re-pointed documents")
+	testutil.AssertEqual(t, outcomes[1].Applied, true, "the alias-only action applies")
+	testutil.AssertEqual(t, outcomes[1].Reassigned, int64(0), "an alias-only action moves no documents")
 
 	if _, err := client.Queries.GetTagByName(ctx, "alias loser tag"); err == nil {
 		t.Error("loser tag row must be removed")
@@ -628,9 +609,11 @@ func TestTag_ApplyAliasPlan(t *testing.T) {
 			Kind: DeletedTagKindBlocked,
 		}), "seed blocked tag")
 
-		testutil.AssertNoError(t, svc.ApplyAliasPlan(ctx, []tags.AliasAction{
+		outcomes, err := svc.ApplyAliasPlan(ctx, []tags.AliasAction{
 			{AliasName: "blocked loser", Canonical: "alias canonical tag"},
-		}), "apply blocked alias")
+		})
+		testutil.AssertNoError(t, err, "apply blocked alias")
+		testutil.AssertEqual(t, outcomes[0].Applied, false, "a blocklisted name reports the action as not applied")
 
 		if _, err := client.Queries.GetTagAliasByName(ctx, "blocked loser"); err == nil {
 			t.Error("a blocklisted name must never be aliased")
@@ -807,9 +790,11 @@ func TestTag_ApplyAliasPlan_StoresNormalizedName(t *testing.T) {
 
 	canonicalID := database.MustCreateTag(t, client.Queries, "boundary canonical")
 
-	testutil.AssertNoError(t, svc.ApplyAliasPlan(ctx, []tags.AliasAction{
+	if _, err := svc.ApplyAliasPlan(ctx, []tags.AliasAction{
 		{AliasName: "Boundary Loser", Canonical: "Boundary Canonical"},
-	}), "apply alias plan")
+	}); err != nil {
+		t.Fatalf("apply alias plan: %v", err)
+	}
 
 	alias, err := client.Queries.GetTagAliasByName(ctx, "boundary loser")
 	testutil.AssertNoError(t, err, "alias stored under the normalized name")

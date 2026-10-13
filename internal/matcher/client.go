@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,9 +17,7 @@ import (
 // apart from domain-level results.
 var ErrMatcherUnavailable = fmt.Errorf("matcher unavailable")
 
-// StatusError carries the HTTP status the daemon answered with. Rank treats
-// a 404 as an older daemon without the rank endpoint and falls back to the
-// consolidate endpoint.
+// StatusError carries the HTTP status the daemon answered with.
 type StatusError struct{ Code int }
 
 func (e *StatusError) Error() string { return fmt.Sprintf("status %d", e.Code) }
@@ -198,8 +195,7 @@ func (c *MatcherClient) Encode(ctx context.Context, _ string, texts []string) ([
 	return resp.Embeddings, nil
 }
 
-// Rank ranks the queries against the daemon's stored tags. A 404 degrades
-// to Consolidate, returning its results as KeptName-only RankResults.
+// Rank ranks the queries against the daemon's stored tags.
 func (c *MatcherClient) Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error) {
 	var resp struct {
 		Results []RankResult `json:"results"`
@@ -208,57 +204,10 @@ func (c *MatcherClient) Rank(ctx context.Context, docId string, queries []string
 		DocID   string   `json:"doc_id"`
 		Queries []string `json:"queries"`
 	}{DocID: docId, Queries: queries}
-	err := c.do(ctx, "POST", "/rpc/v1/rank", req, &resp)
-	var se *StatusError
-	if errors.As(err, &se) && se.Code == http.StatusNotFound {
-		return c.rankViaConsolidate(ctx, docId, queries)
-	}
-	if err != nil {
+	if err := c.do(ctx, "POST", "/rpc/v1/rank", req, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Results, nil
-}
-
-func (c *MatcherClient) rankViaConsolidate(ctx context.Context, docId string, queries []string) ([]RankResult, error) {
-	names, err := c.Consolidate(ctx, docId, queries)
-	if err != nil {
-		return nil, err
-	}
-	results := make([]RankResult, len(names))
-	for i, name := range names {
-		results[i] = RankResult{KeptName: name}
-	}
-	return results, nil
-}
-
-// Consolidate resolves each query to the stored tag it consolidates to at
-// the consolidation similarity, or to itself when nothing passes.
-func (c *MatcherClient) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
-	var resp struct {
-		Results []string `json:"results"`
-	}
-	req := struct {
-		DocID   string   `json:"doc_id"`
-		Queries []string `json:"queries"`
-	}{
-		DocID:   docId,
-		Queries: queries,
-	}
-	if err := c.do(ctx, "POST", "/rpc/v1/consolidate", req, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Results, nil
-}
-
-// SimilarPairs returns the daemon's stored-tag similarity pairs.
-func (c *MatcherClient) SimilarPairs(ctx context.Context) ([]SimilarPair, error) {
-	var resp struct {
-		Pairs []SimilarPair `json:"pairs"`
-	}
-	if err := c.do(ctx, "GET", "/rpc/v1/similar-pairs", nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Pairs, nil
 }
 
 // Health pings the daemon; ErrMatcherUnavailable when it is not reachable.

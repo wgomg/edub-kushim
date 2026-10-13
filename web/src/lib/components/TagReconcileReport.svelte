@@ -23,7 +23,7 @@
 	const why = $derived(worklistReasons(report?.worklist));
 
 	const cleared = $derived(report?.invalidated_entries ?? []);
-	const merges = $derived((reportOnly ? report?.planned_merges : report?.merges) ?? []);
+	const aliases = $derived((reportOnly ? report?.planned_aliases : report?.aliases) ?? []);
 	const keepFlips = $derived(splitKeepFlips(report));
 	const creates = $derived(keepFlips.creates);
 	const retags = $derived(
@@ -31,7 +31,7 @@
 			(entry) => (entry?.reassigned ?? 0) > 0
 		)
 	);
-	const mergeDocs = $derived(sumReassigned(merges));
+	const aliasDocs = $derived(sumReassigned(aliases));
 	const createsDocs = $derived(sumReassigned(creates));
 	const retagDocs = $derived(sumReassigned(retags));
 	const notActed = $derived(notActedGroups(report?.skips, report?.capped, report?.no_documents));
@@ -125,14 +125,14 @@
 					</details>
 				{/if}
 
-				{#if merges.length > 0}
+				{#if aliases.length > 0}
 					<details class="group rounded-lg border border-clay-800 bg-clay-950">
 						<summary
 							class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-parchment-200 [&::-webkit-details-marker]:hidden"
 						>
 							<span>
-								{reportOnly ? 'Would merge' : 'Merged tags'} ({merges.length}
-								{plural(merges.length, 'pair', 'pairs')}, {documentsLabel(mergeDocs)})
+								{reportOnly ? 'Would alias' : 'Aliased tags'} ({aliases.length}
+								{plural(aliases.length, 'pair', 'pairs')}, {documentsLabel(aliasDocs)})
 							</span>
 							<svg
 								class="size-4 shrink-0 text-parchment-500 transition-transform group-open:rotate-90 motion-reduce:transition-none"
@@ -148,7 +148,7 @@
 							</svg>
 						</summary>
 						<ul class="space-y-1 border-t border-clay-800 px-4 py-3">
-							{#each merges as entry, i (i)}
+							{#each aliases as entry, i (i)}
 								<li class="text-sm text-parchment-300">
 									<span class="font-mono">{entry.query}</span>
 									<span class="text-parchment-600" aria-hidden="true">→</span>

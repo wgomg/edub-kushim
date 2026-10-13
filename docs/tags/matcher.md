@@ -39,7 +39,7 @@ enricher:
 
 | Key | Default | Meaning |
 | --- | ------- | ------- |
-| `timeout` | `120` | Deadline for matcher RPC calls (match/rank/consolidate) in seconds, applied as a context deadline on the client and mirrored into the matcher server's `WriteTimeout` at startup. `0` disables the deadline — not recommended for production. |
+| `timeout` | `120` | Deadline for matcher RPC calls (match/rank) in seconds, applied as a context deadline on the client and mirrored into the matcher server's `WriteTimeout` at startup. `0` disables the deadline — not recommended for production. |
 | `reduce_target_words` | `4000` | Word target for TextRank reduction applied *before* tag matching. Also drives the RPC request body cap (`reduce_target_words × 24` bytes, clamped to 256 KiB–4 MiB), bounding how much text can reach the matcher. |
 | `chunk_size` | `4096` | Maximum number of tokens per inference window. See [below](#chunk_size--the-memory-lever). |
 | `min_suggestion_similarity` | `0.52` (bge-m3, derived) | Injection bar at the enricher seam: only matched tags at or above it are passed into the emission prompt. When no match clears the bar the suggestion list is empty (no fallback). An explicit `0` reverts to the per-model default; negative values are rejected at load. |
@@ -53,8 +53,7 @@ auto-derived or internal:
 | ---------------- | ------- | ----- |
 | `top_n` | `15` | Max tags returned per document. |
 | `min_similarity` | `0.40` (bge-m3) | Doc→tag threshold, tuned per model. |
-| `consolidation_similarity` | `0.80` (bge-m3) | Tag→tag consideration floor for post-LLM consolidation (candidates below it never reach the identity pipeline). |
-| `auto_replace_similarity` | `0.95` (bge-m3) | Derived per model but no longer consumed by any decision: similarity never replaces a name. Its replacement, the same-intent gate, is adjudicated by the LLM when `enricher.tag_adjudicator.enabled` is true, otherwise the claim waits as pending evidence. |
+| `identity_candidate_similarity` | `0.80` (bge-m3) | Tag→tag identity-candidate floor: the daemon returns candidate neighbours at or above it, and they are the only pairs the identity gate considers (candidates below it never reach it). |
 | `CpuMemArena` / `MemPattern` | `false` / `false` | ORT memory behavior; see [Memory usage](#memory-usage-by-configuration). Toggle only via `DefaultConfig` (code), not YAML. |
 
 ---

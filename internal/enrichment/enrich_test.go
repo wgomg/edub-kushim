@@ -166,10 +166,6 @@ func (m *barMatcher) Rank(context.Context, string, []string) ([]matcher.RankResu
 	return nil, nil
 }
 
-func (m *barMatcher) SimilarPairs(context.Context) ([]matcher.SimilarPair, error) {
-	return nil, nil
-}
-
 func (m *barMatcher) Close() {}
 
 func (m *barMatcher) Name() string { return "bar-matcher" }

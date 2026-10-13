@@ -75,7 +75,7 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 			}
 		}
 		for _, p := range deadTargetPairs {
-			report.InvalidatedEntries = append(report.InvalidatedEntries, MergeEntry{Query: p[0], Target: p[1]})
+			report.InvalidatedEntries = append(report.InvalidatedEntries, PairEntry{Query: p[0], Target: p[1]})
 			r.logger.Info("", "tag reconcile: discarding cached decision %q → %q — the target tag no longer exists", p[0], p[1])
 		}
 	}
@@ -380,17 +380,4 @@ func lastDocID(ids []int64) int64 {
 		return 0
 	}
 	return ids[len(ids)-1]
-}
-
-func distinctTargets(worklist []*entry) []string {
-	seen := make(map[string]bool, len(worklist))
-	var out []string
-	for _, e := range worklist {
-		if e.target == "" || seen[e.target] {
-			continue
-		}
-		seen[e.target] = true
-		out = append(out, e.target)
-	}
-	return out
 }

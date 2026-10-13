@@ -584,8 +584,6 @@ endpoints:
 | `POST /rpc/v1/encode`           | POST   | Encode text into embedding vectors            |
 | `POST /rpc/v1/match`            | POST   | Match document content against the tag embedding store |
 | `POST /rpc/v1/rank`             | POST   | Rank tag names against the store; returns candidates with similarity scores |
-| `GET /rpc/v1/similar-pairs`     | GET    | Return every unordered pair of store entries at or above the consolidation-similarity floor (pair cache) |
-| `POST /rpc/v1/consolidate`      | POST   | Legacy consolidation endpoint (pre-upgrade clients only) |
 | `POST /rpc/v1/add-to-store`     | POST   | Add new tag names to the embedding store      |
 | `POST /rpc/v1/remove-from-store`| POST   | Remove tag names from the embedding store     |
 | `GET /health`                   | GET    | Health check                                 |
@@ -1369,90 +1367,9 @@ GET /api/v1/document-types
 
 Response `200` — `PersonListResponse` envelope: `{ "results": [{ "id": 1, "name": "…", "document_count": N }], "total": N }` (people-types and document-types add `description`).
 
-### Merge Tag Suggestions
-
-Lists candidate tag pairs for an explicit merge, ranked by embedding similarity and — when adjudication history exists — population overlap and verdict counts. The pair list is served from the matcher daemon's in-memory pair cache (every unordered pair of store entries at or above the consolidation-similarity floor, maintained on tag CRUD), so the endpoint does no per-request embedding work. Editor-gated in the UI; viewer-readable via the API.
-
-```
-GET /api/v1/tags/merge?limit=20&for_tag=software%20development&include_dismissed=true
-```
-
-- `limit` — pairs per class (default 20, clamped 1–100).
-- `for_tag` — optional; keeps only the pairs where either tag matches the normalized name, so the vocabulary row expansion can ask for one tag's suggestions.
-- `include_dismissed` — optional (default `false`); when `true`, pairs the operator dismissed are included, marked `"dismissed": true`, and the `limit` is applied per class (up to `limit` live pairs plus up to `limit` dismissed ones, in relevance order) so dismissed pairs never push live suggestions out of the response.
-
-Response `200`:
-
-```json
-{
-  "results": [
-    {
-      "tags": [
-        { "id": 1, "name": "software engineering", "document_count": 12 },
-        { "id": 2, "name": "software development", "document_count": 3 }
-      ],
-      "similarity": 0.92,
-      "event_count": 5,
-      "document_overlap": 4,
-      "same_count": 1,
-      "variant_count": 3,
-      "related_count": 1,
-      "confidence": "population"
-    }
-  ]
-}
-```
-
-- `tags` — exactly two entries in canonical order (higher document count first, tie-break lexicographically smaller name). This is a display default, not a merge decision.
-- `confidence` — `"population"` when the pair has adjudication event rows, `"similarity_only"` otherwise (lower-confidence, ranked by similarity alone).
-- `dismissed` — present (`true`) only for pairs in the dismissal list.
-- `503` when the matcher daemon is unreachable.
-
-### Merge Tags
-
-Hard-merges a source tag into a target tag in one transaction: all `document_tag` rows re-point to the target (documents already carrying the target keep a single row), the source tag is deleted, and the source name is removed from the embedding store. The source name is also recorded in the deleted-tag blocklist as `merged` with the target as its pointer, so a later LLM emission of the source name resolves to the target instead of re-creating the tag. Nothing merges automatically — this is always an explicit operator action. Editor/admin only.
-
-```
-POST /api/v1/tags/{id}/merge
-Content-Type: application/json
-
-{ "target_id": 5 }
-```
-
-Response `200`:
-
-```json
-{ "id": 5, "name": "software engineering", "reassigned": 12 }
-```
-
-- `400` — `target_id` missing/zero, or source and target are the same tag.
-- `404` — source or target tag does not exist.
-
-### Dismissing and Restoring Merge Suggestions
-
-Dismissals are global (shared by all operators) and persisted, so a dismissed pair stays out of the merge queue across sessions until it is restored. The tags page keeps a "Hide dismissed" switch (on by default, remembered per browser) that controls whether dismissed pairs are shown; when shown, they carry a "dismissed" pill and a Restore action. Pair identity is the two normalized tag names, in either order. Editor/admin only.
-
-```
-POST /api/v1/tags/merge/dismissals
-Content-Type: application/json
-
-{ "tag_a": "software development", "tag_b": "software engineering" }
-```
-
-`204 No Content` on success; repeating the same dismissal is a no-op. `404` when either name is not in the tag table, `400` when a name is empty or the two names are identical.
-
-```
-DELETE /api/v1/tags/merge/dismissals
-Content-Type: application/json
-
-{ "tag_a": "software development", "tag_b": "software engineering" }
-```
-
-`204 No Content` on success; restoring a pair that is not dismissed is a no-op.
-
 ### Deleted Tags
 
-Deleted and merged tag names are kept in a blocklist so enrichment does not silently re-create them: blocked names are dropped when the LLM emits them again and merged names are rewritten to the merge target (dropped when the target no longer exists). Operators manage the list from the tags page ("Deleted" tab, per-row Restore with confirmation); `POST /api/v1/tags` also clears the blocklist row for the name being created, so re-creating a deleted tag through the API un-blocks it. Editor/admin only.
+Deleted tag names are kept in a blocklist so enrichment does not silently re-create them: blocked names are dropped when the LLM emits them again. Same-intent names collapse by aliasing instead — the loser becomes a `tag_alias` row of the canonical and is never deleted — so the blocklist only ever holds blocked names. Operators manage the list from the tags page ("Deleted" tab, per-row Restore with confirmation); `POST /api/v1/tags` also clears the blocklist row for the name being created, so re-creating a deleted tag through the API un-blocks it. Editor/admin only.
 
 ```
 GET /api/v1/tags/deleted?q=soft&limit=50&offset=0
@@ -1463,14 +1380,13 @@ Response `200`:
 ```json
 {
   "results": [
-    { "name": "software development", "kind": "blocked", "created_at": "2024-03-19T10:30:12Z" },
-    { "name": "ml", "kind": "merged", "target_name": "machine learning", "created_at": "2024-03-18T09:00:00Z" }
+    { "name": "software development", "kind": "blocked", "created_at": "2024-03-19T10:30:12Z" }
   ],
-  "total": 2
+  "total": 1
 }
 ```
 
-- `kind` — `blocked` (operator delete via `DELETE /api/v1/tags/{id}`) or `merged` (source of a hard merge; `target_name` carries the merge target).
+- `kind` — always `blocked` (operator delete via `DELETE /api/v1/tags/{id}`).
 - `q` filters by name prefix; `limit` (default `50`, max `100`) and `offset` paginate.
 
 ```
@@ -1483,8 +1399,7 @@ Response `200`:
 { "name": "software development", "kind": "blocked" }
 ```
 
-- Restoring a `blocked` name re-creates the tag (an existing tag is tolerated) and then drops the blocklist row.
-- Restoring a `merged` name only drops the row — the merge itself is not undone.
+- Restoring a name re-creates the tag (an existing tag is tolerated) and then drops the blocklist row.
 - `404` — the name is not in the blocklist.
 
 ### Tag Reconciliation Report
@@ -1508,7 +1423,7 @@ Response `200`:
     "worklist": { "stale": 116, "unjudged": 3, "drifted": 0, "aged": 0, "joint": 2 },
     "judged": 5,
     "confirmed": 5,
-    "flips": { "to_merge": 0, "to_keep": 5 },
+    "flips": { "to_alias": 0, "to_keep": 5 },
     "planned_keep_flips": [
       { "query": "machine learning", "target": "ml", "reassigned": 12, "reason": "adjudicated", "creates_tag": true }
     ],
@@ -1523,7 +1438,7 @@ Response `200`:
 
 - `result` is the raw `Report` JSON persisted as the task's result: worklist counts
   (including the `joint` category for conjunction-joined tags), judged/confirmed,
-  flips, planned/applied pair entries (`planned_merges`, `planned_keep_flips`,
+  flips, planned/applied pair entries (`aliases`, `planned_aliases`, `planned_keep_flips`,
   `retag_entries`, `invalidated_entries`), planned/applied joint splits
   (`planned_joint_splits` / `joint_splits` — query, components, reassigned documents,
   reason), skip reasons, the `swept` count of orphan tags deleted during the run

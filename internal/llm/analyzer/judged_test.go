@@ -97,7 +97,7 @@ func writeTestJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func testPairs() []TagPairEvidence {
-	return []TagPairEvidence{{Query: "urban planning", Target: "city planning", Sim: 0.92}}
+	return []TagPairEvidence{{Query: "urban planning", Target: "city planning"}}
 }
 
 const fencedVerdictResponse = "```json\n{\"pairs\":[{\"index\":0,\"verdict\":\"same\",\"direction\":\"query\"}]}\n```"

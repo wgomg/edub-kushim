@@ -71,7 +71,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 		salvaged := bandEntry("supply", "supply chain", types.TagVerdicts.Variant)
 		missing := bandEntry("urban planning", "city planning", types.TagVerdicts.Variant)
 
-		r.adjudicateBand(context.Background(), cfg, []*entry{salvaged, missing}, nil, nil)
+		r.adjudicateBand(context.Background(), cfg, []*entry{salvaged, missing})
 
 		if salvaged.skipReason != "" {
 			t.Errorf("skipReason = %q, want the salvaged entry left actionable", salvaged.skipReason)
@@ -108,7 +108,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 		first := bandEntry("supply", "supply chain", types.TagVerdicts.Variant)
 		second := bandEntry("urban planning", "city planning", types.TagVerdicts.Variant)
 
-		r.adjudicateBand(context.Background(), cfg, []*entry{first, second}, nil, nil)
+		r.adjudicateBand(context.Background(), cfg, []*entry{first, second})
 
 		if first.skipReason != "adjudication_error" || second.skipReason != "adjudication_error" {
 			t.Errorf("skipReasons = %q/%q, want adjudication_error for both", first.skipReason, second.skipReason)
@@ -135,7 +135,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 		confirmed := bandEntry("supply", "supply chain", types.TagVerdicts.Same)
 		unconfirmed := bandEntry("urban planning", "city planning", types.TagVerdicts.Same)
 
-		r.adjudicateBand(context.Background(), cfg, []*entry{confirmed, unconfirmed}, nil, nil)
+		r.adjudicateBand(context.Background(), cfg, []*entry{confirmed, unconfirmed})
 
 		if fake.calls != 2 {
 			t.Fatalf("adjudicator calls = %d, want 2 (adjudication then confirmation)", fake.calls)
@@ -158,7 +158,7 @@ func TestAdjudicateBand_DeterministicVariant(t *testing.T) {
 	agreesWithStored := bandEntry("decolonisation", "decolonization", types.TagVerdicts.Same)
 	disputed := bandEntry("military history", "history military", types.TagVerdicts.Variant)
 
-	r.adjudicateBand(context.Background(), cfg, []*entry{agreesWithStored, disputed}, nil, nil)
+	r.adjudicateBand(context.Background(), cfg, []*entry{agreesWithStored, disputed})
 
 	if fake.calls != 0 {
 		t.Errorf("adjudicator calls = %d, want 0 for mechanically resolved pairs", fake.calls)

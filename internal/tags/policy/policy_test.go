@@ -6,8 +6,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/matcher"
 )
 
-func mkResult(kept string, cands ...matcher.Candidate) matcher.RankResult {
-	return matcher.RankResult{KeptName: kept, Candidates: cands}
+func mkResult(cands ...matcher.Candidate) matcher.RankResult {
+	return matcher.RankResult{Candidates: cands}
 }
 
 func cand(tag string, sim float64) matcher.Candidate {
@@ -24,9 +24,9 @@ func TestEvaluate(t *testing.T) {
 		{
 			name:    "short slice falls back to query",
 			queries: []string{"a", "b", "c"},
-			ranked:  []matcher.RankResult{mkResult("A")},
+			ranked:  []matcher.RankResult{mkResult()},
 			want: []Decision{
-				{Query: "a", Output: "A", Action: ActionPassthrough, Reason: ReasonNoCandidates},
+				{Query: "a", Output: "a", Action: ActionPassthrough, Reason: ReasonNoCandidates},
 				{Query: "b", Output: "b", Action: ActionPassthrough, Reason: ReasonShortSlice},
 				{Query: "c", Output: "c", Action: ActionPassthrough, Reason: ReasonShortSlice},
 			},
@@ -40,37 +40,37 @@ func TestEvaluate(t *testing.T) {
 			},
 		},
 		{
-			name:    "empty candidates passes KeptName through",
+			name:    "empty candidates passes the query through",
 			queries: []string{"foo"},
-			ranked:  []matcher.RankResult{mkResult("foo")},
+			ranked:  []matcher.RankResult{mkResult()},
 			want: []Decision{
 				{Query: "foo", Output: "foo", Action: ActionPassthrough, Reason: ReasonNoCandidates},
 			},
 		},
 		{
-			name:    "identity replaces with sim and runner recorded",
+			name:    "identity marks the query as the exact match",
 			queries: []string{"foo"},
 			ranked: []matcher.RankResult{
-				mkResult("foo", cand("foo", 1.0), cand("bar", 0.5)),
+				mkResult(cand("foo", 1.0), cand("bar", 0.5)),
 			},
 			want: []Decision{
-				{Query: "foo", Output: "foo", Target: "foo", Sim: 1.0, RunnerUpSim: 0.5, Action: ActionReplace, Reason: ReasonIdentity},
+				{Query: "foo", Output: "foo", Target: "foo", Sim: 1.0, Action: ActionReplace, Reason: ReasonIdentity},
 			},
 		},
 		{
 			name:    "candidate neighbour is a band subject",
 			queries: []string{"foo"},
 			ranked: []matcher.RankResult{
-				mkResult("foo", cand("foobar", 0.92), cand("bar", 0.5)),
+				mkResult(cand("foobar", 0.92), cand("bar", 0.5)),
 			},
 			want: []Decision{
-				{Query: "foo", Output: "foo", Target: "foobar", Sim: 0.92, RunnerUpSim: 0.5, Action: ActionKeep, Reason: ReasonBand},
+				{Query: "foo", Output: "foo", Target: "foobar", Sim: 0.92, Action: ActionKeep, Reason: ReasonBand},
 			},
 		},
 		{
 			name:    "high similarity stays a band subject",
 			queries: []string{"social revolution"},
-			ranked:  []matcher.RankResult{mkResult("social revolution", cand("revolution", 0.99))},
+			ranked:  []matcher.RankResult{mkResult(cand("revolution", 0.99))},
 			want: []Decision{
 				{Query: "social revolution", Output: "social revolution", Target: "revolution", Sim: 0.99, Action: ActionKeep, Reason: ReasonBand},
 			},
@@ -78,7 +78,7 @@ func TestEvaluate(t *testing.T) {
 		{
 			name:    "partial token overlap stays a band subject",
 			queries: []string{"access control"},
-			ranked:  []matcher.RankResult{mkResult("access control", cand("remote control", 0.92))},
+			ranked:  []matcher.RankResult{mkResult(cand("remote control", 0.92))},
 			want: []Decision{
 				{Query: "access control", Output: "access control", Target: "remote control", Sim: 0.92, Action: ActionKeep, Reason: ReasonBand},
 			},
@@ -86,7 +86,7 @@ func TestEvaluate(t *testing.T) {
 		{
 			name:    "negation pair stays a band subject",
 			queries: []string{"anti fascism"},
-			ranked:  []matcher.RankResult{mkResult("anti fascism", cand("fascism", 0.95))},
+			ranked:  []matcher.RankResult{mkResult(cand("fascism", 0.95))},
 			want: []Decision{
 				{Query: "anti fascism", Output: "anti fascism", Target: "fascism", Sim: 0.95, Action: ActionKeep, Reason: ReasonBand},
 			},
@@ -94,7 +94,7 @@ func TestEvaluate(t *testing.T) {
 		{
 			name:    "subset direction stays a band subject",
 			queries: []string{"democracy"},
-			ranked:  []matcher.RankResult{mkResult("democracy", cand("direct democracy", 0.89))},
+			ranked:  []matcher.RankResult{mkResult(cand("direct democracy", 0.89))},
 			want: []Decision{
 				{Query: "democracy", Output: "democracy", Target: "direct democracy", Sim: 0.89, Action: ActionKeep, Reason: ReasonBand},
 			},
@@ -102,7 +102,7 @@ func TestEvaluate(t *testing.T) {
 		{
 			name:    "disjoint candidate stays a band subject",
 			queries: []string{"foo"},
-			ranked:  []matcher.RankResult{mkResult("foo", cand("bar", 0.5))},
+			ranked:  []matcher.RankResult{mkResult(cand("bar", 0.5))},
 			want: []Decision{
 				{Query: "foo", Output: "foo", Target: "bar", Sim: 0.5, Action: ActionKeep, Reason: ReasonBand},
 			},
@@ -134,9 +134,6 @@ func assertDecisions(t *testing.T, got, want []Decision) {
 		}
 		if got[i].Sim != want[i].Sim {
 			t.Errorf("decision[%d].Sim = %v, want %v", i, got[i].Sim, want[i].Sim)
-		}
-		if got[i].RunnerUpSim != want[i].RunnerUpSim {
-			t.Errorf("decision[%d].RunnerUpSim = %v, want %v", i, got[i].RunnerUpSim, want[i].RunnerUpSim)
 		}
 		if got[i].Action != want[i].Action {
 			t.Errorf("decision[%d].Action = %v, want %v", i, got[i].Action, want[i].Action)

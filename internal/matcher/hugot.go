@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/knights-analytics/hugot"
 	"github.com/knights-analytics/hugot/backends"
@@ -30,29 +29,20 @@ type modelConfigJSON struct {
 	MaxPositionEmbeddings int `json:"max_position_embeddings"`
 }
 
-// Hugot is the daemon-side embedding engine: it loads the configured
-// backend (ONNX or Go) with its model, embeds texts in token chunks sized
-// from the model's max_position_embeddings, and matches them against an
-// attached tag embedding store. It implements Matcher and Embedder and
-// serves the matcher daemon's HTTP handlers; the pair index behind
-// SimilarPairs is mutex-guarded. Built only into cgo builds.
+// Hugot is the daemon-side embedding engine: it loads the configured backend (ONNX or Go) with its
+// model, embeds texts in token chunks sized from the model's max_position_embeddings, and matches them
+// against an attached tag embedding store. It implements Matcher and Embedder and serves the matcher
+// daemon's HTTP handlers. Built only into cgo builds.
 type Hugot struct {
-	logger           *log.Logger
-	session          *hugot.Session
-	pipeline         *pipelines.FeatureExtractionPipeline
-	topN             int
-	minSimilarity    float64
-	consolidationSim float64 // tag→tag matching (post-LLM, higher)
-	chunkSize        int     // effective max tokens per chunk
-	chunkOverlap     int     // overlap in tokens between consecutive chunks
-	store            EmbeddingStore
-
-	pairsMu sync.Mutex
-	pairs   map[similarPairKey]float64
-}
-
-type similarPairKey struct {
-	a, b string
+	logger         *log.Logger
+	session        *hugot.Session
+	pipeline       *pipelines.FeatureExtractionPipeline
+	topN           int
+	minSimilarity  float64
+	candidateFloor float64 // tag→tag candidate generation floor, higher than minSimilarity
+	chunkSize      int     // effective max tokens per chunk
+	chunkOverlap   int     // overlap in tokens between consecutive chunks
+	store          EmbeddingStore
 }
 
 type match struct {
@@ -109,54 +99,27 @@ func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string
 		effectiveChunkSize, chunkOverlap, topN, minSim)
 
 	return &Hugot{
-		logger:           logger,
-		session:          session,
-		pipeline:         pipeline,
-		topN:             topN,
-		minSimilarity:    minSim,
-		chunkSize:        effectiveChunkSize,
-		chunkOverlap:     chunkOverlap,
-		consolidationSim: tmCfg.ConsolidationSimilarity,
-		pairs:            make(map[similarPairKey]float64),
+		logger:         logger,
+		session:        session,
+		pipeline:       pipeline,
+		topN:           topN,
+		minSimilarity:  minSim,
+		chunkSize:      effectiveChunkSize,
+		chunkOverlap:   chunkOverlap,
+		candidateFloor: tmCfg.IdentityCandidateSimilarity,
 	}, nil
 }
 
 const rankCandidates = 2
 
-// SetStore attaches the tag embedding store that Match, Rank and
-// SimilarPairs read from. It must be called before the daemon serves
-// requests.
+// SetStore attaches the tag embedding store that Match and Rank read from; it must be called before
+// the daemon serves requests.
 func (h *Hugot) SetStore(s EmbeddingStore) {
 	h.store = s
-	h.rebuildPairs()
 }
 
-func (h *Hugot) rebuildPairs() {
-	h.pairsMu.Lock()
-	defer h.pairsMu.Unlock()
-	h.pairs = make(map[similarPairKey]float64)
-	if h.consolidationSim == 0.0 {
-		return
-	}
-	entries := h.store.Entries()
-	names := make([]string, 0, len(entries))
-	for name := range entries {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for i := 0; i < len(names); i++ {
-		for j := i + 1; j < len(names); j++ {
-			sim := cosineSimilarity(entries[names[i]], entries[names[j]])
-			if sim >= h.consolidationSim {
-				h.pairs[canonicalPairKey(names[i], names[j])] = sim
-			}
-		}
-	}
-}
-
-// AddToStore embeds the named tags and adds them to the store and the pair
-// index. AddToStore and RemoveFromStore are what keeps the daemon's view of
-// the tag vocabulary current as tags are created, promoted and deleted.
+// AddToStore embeds the named tags and adds them to the store. AddToStore and RemoveFromStore are what
+// keeps the daemon's view of the tag vocabulary current as tags are created, promoted and deleted.
 func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
@@ -171,14 +134,9 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 			continue
 		}
 
-		var existing map[string][]float32
-		if h.consolidationSim != 0.0 {
-			existing = h.store.Entries()
-		}
 		for j, name := range chunk {
 			if j < len(vecs) && vecs[j] != nil {
 				h.store.Add(name, vecs[j])
-				h.addPairsFor(name, vecs[j], chunk, vecs, existing)
 				h.logger.Info("", "hugot: add to store `%s`", name)
 			}
 		}
@@ -186,85 +144,16 @@ func (h *Hugot) AddToStore(ctx context.Context, names []string) error {
 	return nil
 }
 
-func (h *Hugot) addPairsFor(name string, emb []float32, chunk []string, vecs [][]float32, existing map[string][]float32) {
-	if h.consolidationSim == 0.0 {
-		return
-	}
-	h.pairsMu.Lock()
-	defer h.pairsMu.Unlock()
-	for k := range h.pairs {
-		if k.a == name || k.b == name {
-			delete(h.pairs, k)
-		}
-	}
-	for other, otherEmb := range existing {
-		if other == name {
-			continue
-		}
-		sim := cosineSimilarity(emb, otherEmb)
-		if sim >= h.consolidationSim {
-			h.pairs[canonicalPairKey(name, other)] = sim
-		}
-	}
-	for k, otherEmb := range vecs {
-		if otherEmb == nil || chunk[k] == name {
-			continue
-		}
-		key := canonicalPairKey(name, chunk[k])
-		sim := cosineSimilarity(emb, otherEmb)
-		if sim >= h.consolidationSim {
-			h.pairs[key] = sim
-		} else {
-			// batch members may have been compared above with their pre-batch
-			// embeddings; drop the pair when the fresh embedding no longer qualifies
-			delete(h.pairs, key)
-		}
-	}
-}
-
-// RemoveFromStore drops the named tags from the store and the pair index.
+// RemoveFromStore drops the named tags from the store.
 func (h *Hugot) RemoveFromStore(ctx context.Context, names []string) error {
 	if h == nil {
 		return fmt.Errorf("tag matcher not initialized")
 	}
 	for _, name := range names {
 		h.store.Remove(name)
-		h.removePairsFor(name)
 		h.logger.Info("", "hugot: remove from store `%s`", name)
 	}
 	return nil
-}
-
-func (h *Hugot) removePairsFor(name string) {
-	h.pairsMu.Lock()
-	defer h.pairsMu.Unlock()
-	for k := range h.pairs {
-		if k.a == name || k.b == name {
-			delete(h.pairs, k)
-		}
-	}
-}
-
-// SimilarPairs returns the pair index: every stored pair above the
-// consolidation similarity, as maintained by AddToStore and RemoveFromStore.
-func (h *Hugot) SimilarPairs(ctx context.Context) ([]SimilarPair, error) {
-	if h == nil {
-		return nil, fmt.Errorf("tag matcher not initialized")
-	}
-	h.pairsMu.Lock()
-	defer h.pairsMu.Unlock()
-	out := make([]SimilarPair, 0, len(h.pairs))
-	for k, sim := range h.pairs {
-		out = append(out, SimilarPair{A: k.a, B: k.b, Similarity: sim})
-	}
-	return out, nil
-}
-
-func canonicalPairKey(a, b string) similarPairKey {
-	if a < b {
-		return similarPairKey{a: a, b: b}
-	}
-	return similarPairKey{a: b, b: a}
 }
 
 // Close destroys the backend session; safe on a nil receiver.
@@ -319,53 +208,15 @@ func (h *Hugot) Match(ctx context.Context, docId, input string) ([]Candidate, er
 	return result, nil
 }
 
-// Consolidate resolves each query to the stored tag it consolidates to at
-// the consolidation similarity, or to itself when nothing passes. An empty
-// store or a zero similarity returns the queries unchanged.
-func (h *Hugot) Consolidate(ctx context.Context, docId string, queries []string) ([]string, error) {
-	if h == nil {
-		return nil, fmt.Errorf("tag matcher not initialized")
-	}
-	entries := h.store.Entries()
-	if len(entries) == 0 || h.consolidationSim == 0.0 {
-		return queries, nil
-	}
-
-	out, err := h.pipeline.RunPipeline(ctx, queries)
-	if err != nil {
-		return nil, fmt.Errorf("encode queries: %w", err)
-	}
-	if len(out.Embeddings) != len(queries) {
-		return queries, nil
-	}
-
-	result := make([]string, len(queries))
-	for i, qEmb := range out.Embeddings {
-		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
-		if len(matches) > 0 {
-			h.logger.Info(docId, "hugot: consolidate %q → %s (%.3f)", queries[i], matches[0].tag, matches[0].similarity)
-			result[i] = matches[0].tag
-		} else {
-			result[i] = queries[i]
-		}
-	}
-
-	return result, nil
-}
-
-// Rank returns per query the candidates above the consolidation
-// similarity, at most two and best first; KeptName always carries the query
-// itself. An empty store or a zero similarity returns the queries unranked.
+// Rank returns per query the candidates above the identity-candidate similarity, at most two and best
+// first. An empty store or a zero similarity returns the queries with no candidates.
 func (h *Hugot) Rank(ctx context.Context, docId string, queries []string) ([]RankResult, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
 	}
 	results := make([]RankResult, len(queries))
-	for i, q := range queries {
-		results[i] = RankResult{KeptName: q}
-	}
 	entries := h.store.Entries()
-	if len(queries) == 0 || len(entries) == 0 || h.consolidationSim == 0.0 {
+	if len(queries) == 0 || len(entries) == 0 || h.candidateFloor == 0.0 {
 		return results, nil
 	}
 
@@ -378,7 +229,7 @@ func (h *Hugot) Rank(ctx context.Context, docId string, queries []string) ([]Ran
 	}
 
 	for i, qEmb := range out.Embeddings {
-		matches := h.rankMatches(qEmb, entries, h.consolidationSim)
+		matches := h.rankMatches(qEmb, entries, h.candidateFloor)
 		if len(matches) > rankCandidates {
 			matches = matches[:rankCandidates]
 		}

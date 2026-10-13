@@ -45,7 +45,6 @@ type Container struct {
 	store          *task.Store
 	services       *service.CrudServices
 	tag            *curation.Tag
-	merges         *curation.TagMerge
 	matcherClient  *matcher.MatcherClient
 	tagToolsRunner *tools.Runner
 	pools          map[types.TaskType]*task.Pool
@@ -168,7 +167,6 @@ func (c *Container) InvalidateDB() {
 	c.store = nil
 	c.services = nil
 	c.tag = nil
-	c.merges = nil
 	c.matcherClient = nil
 	c.tagToolsRunner = nil
 	clear(c.pools)
@@ -242,7 +240,6 @@ func (c *Container) ensureDispatcher() error {
 	matcherClient := c.GetMatcherClient()
 
 	c.tag = curation.NewTag(client, c.logger, matcherClient)
-	c.merges = curation.NewTagMerge(client, matcherClient, matcherClient, c.logger)
 	peopleSvc := service.NewPeople(client.Queries, c.logger)
 	peopleTypeSvc := service.NewPeopleType(client.Queries)
 	docTypeSvc := service.NewDocumentType(client.Queries)
@@ -275,7 +272,6 @@ func (c *Container) ensureDispatcher() error {
 			func() *config.Config { return c.cfg.Load() },
 			client,
 			c.tag,
-			c.merges,
 			c.GetTagToolsRunner(),
 			c.logger,
 		),

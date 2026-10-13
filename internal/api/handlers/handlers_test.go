@@ -23,7 +23,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
-	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -38,9 +37,7 @@ type handlerTestEnv struct {
 	client        *database.Client
 	logger        *log.Logger
 	engine        *search.Engine
-	matcherClient *matcher.MatcherClient
 	tagSvc        *curation.Tag
-	tagMerge      *curation.TagMerge
 	tagIdentity   *curation.TagIdentity
 	peopleSvc     *service.People
 	peopleTypeSvc *service.PeopleType
@@ -79,7 +76,6 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	fullResetDB(t, client.DB())
 	logger := testutil.NewTestLogger()
 	engine := search.NewEngine(logger, client)
-	matcherClient := matcher.NewMatcherClient("/nonexistent/matcher.sock", matcher.MaxMatchBodyBytes(4000))
 
 	tagSvc, _ := newMockTagService(client)
 	peopleSvc := service.NewPeople(client.Queries, logger)
@@ -95,7 +91,6 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	orphanedSvc := service.NewOrphaned(client.Queries, trashCfg, logger, workStore, batchSvc)
 	trashSvc := service.NewTrash(client, trashCfg, logger, orphanedSvc)
 
-	tagMerge := curation.NewTagMerge(client, matcherClient, testutil.NewMockEmbedder(), logger)
 	tagIdentity := curation.NewTagIdentity(client.Queries, workStore, batchSvc)
 
 	services := &service.CrudServices{
@@ -116,9 +111,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		client:        client,
 		logger:        logger,
 		engine:        engine,
-		matcherClient: matcherClient,
 		tagSvc:        tagSvc,
-		tagMerge:      tagMerge,
 		tagIdentity:   tagIdentity,
 		peopleSvc:     peopleSvc,
 		peopleTypeSvc: peopleTypeSvc,
@@ -2807,7 +2800,7 @@ func TestAddDocumentTag_ClearsOrphanMark(t *testing.T) {
 func TestListProvisional(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.logger)
 
 	// Create a tag and manually set promoted_at = NULL to make it provisional.
 	tagID := database.MustCreateTag(t, env.client.Queries, "prov-handler-tag")
@@ -2844,7 +2837,7 @@ func TestListProvisional(t *testing.T) {
 func TestListProvisionalIdentityHold(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "hold-anchor-tag")
 	candidateID := database.MustCreateTag(t, env.client.Queries, "hold-candidate-tag")
@@ -2891,7 +2884,7 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 func TestListProvisionalComposition(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.logger)
 
 	heldID := database.MustCreateTag(t, env.client.Queries, "world war 2")
 	degradedID := database.MustCreateTag(t, env.client.Queries, "degraded split compound")
@@ -2960,7 +2953,7 @@ func TestListProvisionalComposition(t *testing.T) {
 func TestListProvisionalFilters(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.logger)
 
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "prov-filter-doc")
 
@@ -3094,7 +3087,7 @@ func TestListProvisionalFilters(t *testing.T) {
 func TestPromoteTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.logger)
 
 	t.Run("promote provisional tag", func(t *testing.T) {
 		// Create a tag and set promoted_at = NULL to make it provisional.
@@ -3141,7 +3134,7 @@ func TestPromoteTag(t *testing.T) {
 
 func TestReevaluateIdentity(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTagHandler(env.tagSvc, env.tagMerge, env.tagIdentity, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.logger)
 
 	type reevaluateResponse struct {
 		BatchID       string `json:"batch_id"`

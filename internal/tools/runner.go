@@ -559,8 +559,8 @@ func (r *Runner) MatchTags(ctx context.Context, docId, input string) (*TagMatchR
 	return &TagMatchResult{Matches: tags}, nil
 }
 
-// RankTags ranks candidate tag names against the stored vocabulary,
-// returning per-query candidates and kept names.
+// RankTags ranks candidate tag names against the stored vocabulary, returning, per query, the ranked
+// candidates for the identity gate.
 func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error) {
 	if r.tagMatcher == nil {
 		return nil, fmt.Errorf("tag matcher not configured")
@@ -575,7 +575,7 @@ func (r *Runner) RankTags(ctx context.Context, docId string, queries []string) (
 		return r.tagMatcher.Rank(ctx, docId, queries)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("tag consolidation: %w", err)
+		return nil, fmt.Errorf("tag rank: %w", err)
 	}
 	return results, nil
 }

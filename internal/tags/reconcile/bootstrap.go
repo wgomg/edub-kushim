@@ -30,14 +30,17 @@ type parsedPair struct {
 	lastTime time.Time
 }
 
+// These parsers read archived kushim and hugot log formats, never the live path: the enricher stopped
+// emitting the consolidate and consolidation lines at R10, so only logs written before it match. The
+// live rank-failure line is now policy[vN]: keep "<query>" (reason=rank_unavailable).
 var (
 	// hugot.log (pre-Stage-0): hugot: consolidate "<query>" → <target> (<sim>)
 	reHugotConsolidate = regexp.MustCompile(`REQID=(\S+) hugot: consolidate "([^"]+)" → (.+) \((\d+\.\d+)\)$`)
 	// kushim.log (Stage 0→1 window): consolidate "<query>" → <target> (<sim>)
 	reKushimConsolidate = regexp.MustCompile(`REQID=(\S+) consolidate "([^"]+)" → (.+) \((\d+\.\d+)\)$`)
-	// kushim.log (Stage 1+): consolidation[vN]: keep "<query>" (sim=<s> reason=ambiguous_band [verdict=<v> cached=<b>])
+	// kushim.log (Stage 1 through R10): consolidation[vN]: keep "<query>" (sim=<s> reason=ambiguous_band [verdict=<v> cached=<b>])
 	reBandKeep = regexp.MustCompile(`REQID=(\S+) consolidation\[v\d+\]: keep "([^"]+)" \(sim=(\d+\.\d+) reason=ambiguous_band(?: verdict=(\w+)(?: cached=\w+)?)?\)$`)
-	// kushim.log (Stage 1+): consolidation[vN]: keep "<query>" (reason=rank_unavailable)
+	// kushim.log (Stage 1 through R10): consolidation[vN]: keep "<query>" (reason=rank_unavailable)
 	reRankUnavailableKeep = regexp.MustCompile(`REQID=(\S+) consolidation\[v\d+\]: keep "([^"]+)" \(reason=rank_unavailable\)$`)
 )
 

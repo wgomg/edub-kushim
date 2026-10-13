@@ -54,8 +54,8 @@ The subsystem reference pages describe the machinery as it operates:
 
 - **[matcher.md](matcher.md)** — the embedding matcher process: configuration, memory
   and CPU sizing, backends, operation.
-- **[consolidation.md](consolidation.md)** — consolidation end to end: replacement
-  policy, adjudication, merge review, reconciliation.
+- **[consolidation.md](consolidation.md)** — consolidation end to end: the identity
+  policy, adjudication, aliasing, reconciliation.
 
 ## How to read
 

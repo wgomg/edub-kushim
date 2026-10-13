@@ -9,6 +9,8 @@ const skipReasonLabels = {
 	rank_error: 'automatic judging failed this run — retried next run',
 	adjudication_error: 'automatic judging failed this run — retried next run',
 	confirmation_error: 'automatic judging failed this run — retried next run',
+	alias_error: 'applying the alias failed this run — retried next run',
+	alias_skip: 'the alias collapse no longer applied — skipped',
 	ambiguous: "the checker couldn't decide confidently — kept as-is, retried next run",
 	confirmation_ambiguous: "the checker couldn't decide confidently — kept as-is, retried next run",
 	confirmation_disagreement:
@@ -30,14 +32,14 @@ export function worklistTotal(worklist = {}) {
 }
 
 export function changedDecisions(report = {}) {
-	return (report?.flips?.to_merge ?? 0) + (report?.flips?.to_keep ?? 0);
+	return (report?.flips?.to_alias ?? 0) + (report?.flips?.to_keep ?? 0);
 }
 
 export function affectedDocuments(report = {}) {
 	return [
-		...(report?.planned_merges ?? []),
+		...(report?.planned_aliases ?? []),
 		...(report?.planned_keep_flips ?? []),
-		...(report?.merges ?? []),
+		...(report?.aliases ?? []),
 		...(report?.retag_entries ?? [])
 	].reduce((sum, entry) => sum + (entry?.reassigned ?? 0), 0);
 }

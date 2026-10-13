@@ -78,8 +78,8 @@ people. Tags are stored in a shared vocabulary and then used for several consume
   persistence (identity, similarity bands, adjudication); genuinely new names are born.
 - **Suggestion.** The vocabulary is embedded in a matcher store and injected into the
   generator prompt as candidate suggestions.
-- **Curation.** The tags page exposes the vocabulary, merge review, provisional-tag
-  review, and the blocklist; scheduled reconciliation re-examines decisions and sweeps
+- **Curation.** The tags page exposes the vocabulary, provisional-tag review, and
+  the blocklist; scheduled reconciliation re-examines decisions and sweeps
   stale rows.
 
 A tag is therefore not a display label only: it is the unit of the shared index and of the
@@ -553,7 +553,7 @@ automation is preferable, but because the generator produces tags at machine rat
 | Users suggest tags | the LLM proposes (emission) | In the reference model, most user activity is *applying* an existing vocabulary; invention is rare and deliberate. The LLM applies and invents in one gesture, so the pipeline must separate the two structurally: consolidation resolves emissions onto existing values (application); only the residue is an invention proposal. |
 | User votes | recurrence across documents | A regularity signal, not a preference signal; human use is not a vote (see §6.3). |
 | Moderator admission | judge verdict + promotion gate + review queue | The standard must be the definition's (dimension status), not the inherited dictionary standard (§2.4). |
-| Moderator aliasing/merge | consolidation + merge review + persisted dismissals | Already exists; under the definition it becomes standing work, not incident response (§6.4). |
+| Moderator aliasing | the identity pipeline and the sweep's alias disposition | Exists; under the definition it becomes standing work, not incident response (§6.4). |
 | Moderator bans | deleted-tag blocklist | A rejected name cannot be reborn. |
 | Tagging guidelines | the generation prompt and typed contract | The definition's language ("dimension", "decompose compounds") belongs in the guidelines the proposer reads. |
 | Approved vocabulary | the promoted tag store | Store membership is the system's notion of "accepted." |
@@ -587,9 +587,9 @@ Three curatorial duties follow from the definition and have no assigned machiner
 
 1. **Canonicalization** (one label per intent). The variant classes — singular/plural,
    orthographic, inverted, digit/word, mixed-language — are not incident-level merges;
-   they are a standing hygiene operation over the vocabulary. The merge-review and
-   consolidation machinery already provide the mechanics; what is missing is the standing
-   mandate.
+   they are a standing hygiene operation over the vocabulary. The identity pipeline and
+   the sweep's alias disposition already provide the mechanics; what is missing is the
+   standing mandate.
 2. **Composition review.** The compound classes — connector phrases, country
    adjectives, generic heads, device-plus-operation tags — are the inverse of admission:
    the worklist of existing tags whose extension analysis says "pre-coordinated

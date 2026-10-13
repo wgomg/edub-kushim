@@ -138,11 +138,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Deleted tag
 
-`ListAllDeletedTags` (`:many` — `name`, `kind`, `target_name`, newest first; the enricher and reconciler load this once per run as the blocklist), `ListDeletedTags` (`:many` — `name`, `kind`, `target_name`, `created_at` with an optional `name_prefix` filter, paged by `page_limit`/`page_offset`), `CountDeletedTags`, `UpsertDeletedTag` (`INSERT ... ON CONFLICT (name) DO UPDATE` — refreshes `kind`/`target_name`/`created_at`; written by tag delete and inside the merge transaction), `GetDeletedTag`, `DeleteDeletedTag`
-
-### Tag merge dismissal
-
-`ListTagMergeDismissals` (`:many` — `tag_a`, `tag_b`, `created_at`, newest first; loaded into a canonical-name set by every merge-suggestions scan), `UpsertTagMergeDismissal` (`:exec` — `INSERT ... ON CONFLICT (tag_a, tag_b) DO NOTHING`, so dismissing a pair twice is a no-op), `DeleteTagMergeDismissal` (`:execrows` — restore; zero rows when the pair was not dismissed)
+`ListAllDeletedTags` (`:many` — `name`, `kind`, newest first; the enricher and reconciler load this once per run as the blocklist), `ListDeletedTags` (`:many` — `name`, `kind`, `created_at` with an optional `name_prefix` filter, paged by `page_limit`/`page_offset`), `CountDeletedTags`, `UpsertDeletedTag` (`INSERT ... ON CONFLICT (name) DO UPDATE` — refreshes `kind`/`created_at`; written by tag delete), `GetDeletedTag`, `DeleteDeletedTag`
 
 ### Document type
 
@@ -182,7 +178,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Tag verdict event
 
-`InsertTagVerdictEvent` (`:execrows` — `ON CONFLICT (query, target, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING`, returns 0 when a concurrent worker already judged the pair fresh), `LatestTagVerdictsForPairs` (`DISTINCT ON (query, target)` latest verdict per pair at a given `policy_version`, served by `idx_tag_verdict_event_pair`), `TagPairEvidenceStats` (per-pair population and verdict aggregates across all policy versions — `COUNT(DISTINCT document_id)`, event count, and `same`/`variant`/`related` counts — restricted to the requested pair list; feeds the merge-suggestions scan)
+`InsertTagVerdictEvent` (`:execrows` — `ON CONFLICT (query, target, policy_version) WHERE verdict_model IS NOT NULL DO NOTHING`, returns 0 when a concurrent worker already judged the pair fresh), `LatestTagVerdictsForPairs` (`DISTINCT ON (query, target)` latest verdict per pair at a given `policy_version`, served by `idx_tag_verdict_event_pair`), `TagPairEvidenceStats` (per-pair population and verdict aggregates across all policy versions — `COUNT(DISTINCT document_id)`, event count, and `same`/`variant`/`related` counts — restricted to the requested pair list; backs `tags.Store.PairVerdictStats`, the reconciler's pair evidence)
 
 ### Tag identity event
 
@@ -190,7 +186,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Tag alias
 
-`InsertTagAlias` (`:execrows` — `ON CONFLICT (alias_name) DO NOTHING`, returns 0 when the alias already exists, in which case the caller adopts the existing row), `GetTagAliasByName` (`:one` — idempotence check and read path), `ResolveTagAliasNames` (`:many` — one joined query returning `alias_name` plus the canonical tag `name` for the requested names; backs the shared `tags.ResolveAliases` used by registration, suggestions, structured search and the enricher), `RetargetTagAliases` (`:execrows` — re-points a losing tag's own aliases onto the canonical, so alias chains never form)
+`InsertTagAlias` (`:execrows` — `ON CONFLICT (alias_name) DO NOTHING`, returns 0 when the alias already exists, in which case the caller adopts the existing row), `GetTagAliasByName` (`:one` — idempotence check and read path), `DeleteTagAliasByName` (`:execrows` — removes the alias row; zero rows when the name is not an alias, the withdraw step of a keep flip), `ResolveTagAliasNames` (`:many` — one joined query returning `alias_name` plus the canonical tag `name` for the requested names; backs the shared `tags.ResolveAliases` used by registration, suggestions, structured search and the enricher), `RetargetTagAliases` (`:execrows` — re-points a losing tag's own aliases onto the canonical, so alias chains never form)
 
 ### Tag quality event
 
@@ -308,8 +304,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `batch` — Batch processing units: `id`, `source`, `status` (queued/processing/completed/failed/cancelled), `created_at`
 - `batch_owner` — Batch ownership: `batch_id` (PK, FK to batch), `owner_id`, `pid` (`BIGINT`), `acquired_at`, `last_heartbeat`
 - `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path`, `file_size` (`BIGINT`), `original_type`, `detected_at`, `status` (pending/deleted/restored/reingested), `action_at`, `action_type`. CHECK constraints on `document_key_type`, `source_dir`, `status`, `action_type`.
-- `deleted_tag` — Tag blocklist: `name` (PK, canonical form), `kind` (`blocked`|`merged`, CHECK constrained), `target_name` (nullable, set for merged rows), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Written when an operator deletes a tag (`blocked`) or merges one away (`merged` + target) and read by the enricher/reconciler to keep enrichment from resurrecting the name.
-- `tag_merge_dismissal` — Merge-suggestion pairs the operator dismissed: `tag_a`, `tag_b` (canonical normalized names, PK over the pair, written with `CHECK (tag_a COLLATE "C" < tag_b COLLATE "C")` so the stored order matches the service's byte-order canonicalization), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Global across users; rows are never pruned, so a dismissed pair stays hidden by intent even across a delete-and-recreate of either name.
+- `deleted_tag` — Tag blocklist: `name` (PK, canonical form), `kind` (`blocked` only, CHECK constrained), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Written when an operator deletes a tag and read by the enricher/reconciler to keep enrichment from resurrecting the name.
 - `tag_verdict_event` — Append-only tag-adjudication verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `query`, `target`, `sim`, `verdict` (`same`/`variant`/`related`), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(query, target, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
 - `tag_quality_event` — Append-only tag-quality rubric verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `tag_name` (canonical form), `criteria` (JSONB — the judge's four rubric answers `subject_matter`, `not_person`, `atomic`, `not_form_genre` plus the optional `defer` abstention, with `dimension` stamped from the parts pass's shared verdict), `pass` (whether the decision admitted the name), `outcome` (nullable — `reject`/`defer`/`admit`, the recorded disposition; NULL on rows predating the column and on cache-applied copies of those), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(tag_name, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers; the newest row per name is the cache, so a re-emitted name resolves without an LLM call.
 - `tag_composition_event` — Append-only decomposition verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `candidate` (canonical form), `parts` JSONB (the validated segments for split rows and the segments applied alongside for keep rows; `[]` when a row has no parts, including `part_rejected` drops that keep the parts they resolved and keep rows pruned of every rejected part), `disposition` (`split`/`keep`/`drop`, CHECK constrained), `reason` (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`; the decision reasons `named_unit`, `named_unit_reconstructible`, `relational_keep`, `no_dimension`, `split_defer`, `conflicting_evidence`, `sample_disagreement`; or `part_rejected` when a split lost every admitted part and degrades to `drop`, or `partial_parts` when it lost some but not all and keeps the compound whole), `criteria_version` (the split criteria the verdict was read under), `model` (nullable — the split judge's model for fresh verdicts), `reconstructible` (nullable — the store reconstructibility signal recorded when the parts pass ran; NULL on rows with no parts reading), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. One row per judged compound per document, serving the composition review as evidence only; a store-present compound skips judgment only once a current-version row decides it, so a missing or degraded row means the compound is re-judged on the next emission.
@@ -422,7 +417,15 @@ unique fresh-row index mirroring the quality gate, and adds the nullable
 reconstructibility signal), and `00033_tag_split_verdict_provenance.sql`
 (drops `NOT NULL` from `tag_part_dimension_event.document_id` and
 `tag_compound_status_event.document_id`, so a verdict row written with no
-emitting document — a sweep-originated row — is storable). Goose tracks
+emitting document — a sweep-originated row — is storable),
+`00034_tag_phrase_fold.sql` (creates the append-only `tag_phrase_fold_event`
+residual phrase-context fold verdict table with the partial unique
+`idx_tag_phrase_fold_event_fresh_key` on
+`(phrase, part, anchor, criteria_version) WHERE verdict_model IS NOT NULL`),
+and `00035_retire_merge_review.sql` (drops the `tag_merge_dismissal` table,
+deletes the `deleted_tag` rows of kind `merged`, drops the
+`deleted_tag.target_name` column, and tightens the `deleted_tag` kind CHECK
+to `('blocked')`). Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

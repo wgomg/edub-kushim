@@ -12,7 +12,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
-	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -223,28 +222,9 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, e *jointEntry, storeTa
 		return 0, fmt.Errorf("tag %q no longer in store", e.name)
 	}
 
-	ranked, err := r.runner.RankTags(ctx, reconcileDocID, e.components)
-	if err != nil {
-		return 0, fmt.Errorf("rank components: %w", err)
-	}
-	if len(ranked) != len(e.components) {
-		return 0, fmt.Errorf("rank returned %d results for %d components", len(ranked), len(e.components))
-	}
-	for i := range ranked {
-		candidates := ranked[i].Candidates[:0]
-		for _, c := range ranked[i].Candidates {
-			if c.Tag != e.name {
-				candidates = append(candidates, c)
-			}
-		}
-		ranked[i].Candidates = candidates
-	}
-
-	decisions := policy.Evaluate(e.components, ranked)
-	outputs := make([]string, 0, len(decisions))
-	seen := make(map[string]bool, len(decisions))
-	for _, d := range decisions {
-		name := d.Output
+	outputs := make([]string, 0, len(e.components))
+	seen := make(map[string]bool, len(e.components))
+	for _, name := range e.components {
 		if name == "" || seen[name] || name == e.name {
 			continue
 		}
@@ -252,7 +232,7 @@ func (r *Reconciler) applyJointSplit(ctx context.Context, e *jointEntry, storeTa
 		outputs = append(outputs, name)
 	}
 	if len(outputs) == 0 {
-		return 0, fmt.Errorf("no valid components after consolidation")
+		return 0, fmt.Errorf("no valid components")
 	}
 
 	results, err := r.tag.Create(ctx, outputs)

@@ -782,13 +782,9 @@ func (m *mockTagMatcher) Rank(ctx context.Context, docId string, queries []strin
 	}
 	results := make([]matcher.RankResult, len(queries))
 	for i, q := range queries {
-		results[i] = matcher.RankResult{KeptName: q}
+		results[i] = matcher.RankResult{Candidates: []matcher.Candidate{{Tag: q}}}
 	}
 	return results, nil
-}
-
-func (m *mockTagMatcher) SimilarPairs(ctx context.Context) ([]matcher.SimilarPair, error) {
-	return nil, nil
 }
 
 func (m *mockTagMatcher) Close()       {}
@@ -815,7 +811,7 @@ func TestRankTags_TimeoutAppliesDeadline(t *testing.T) {
 					receivedCtx = ctx
 					results := make([]matcher.RankResult, len(queries))
 					for i, q := range queries {
-						results[i] = matcher.RankResult{KeptName: q}
+						results[i] = matcher.RankResult{Candidates: []matcher.Candidate{{Tag: q}}}
 					}
 					return results, nil
 				},
@@ -836,8 +832,8 @@ func TestRankTags_TimeoutAppliesDeadline(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			for i, q := range queries {
-				if results[i].KeptName != q {
-					t.Errorf("RankTags returned %v, want kept names %v", results, queries)
+				if len(results[i].Candidates) != 1 || results[i].Candidates[0].Tag != q {
+					t.Errorf("RankTags returned %v, want one candidate carrying each query %v", results, queries)
 				}
 			}
 			if _, ok := receivedCtx.Deadline(); ok != tt.wantDeadline {

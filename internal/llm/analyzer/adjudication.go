@@ -8,16 +8,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// TagPairEvidence is one pair the adjudicator decides: the two terms,
-// their similarity, the query's runner-up similarity, and the target's
-// nearest other store tag.
+// TagPairEvidence is one pair the adjudicator decides: the two terms. The terms are the pair's only
+// evidence — similarity selected the pair, it is never an input to the verdict.
 type TagPairEvidence struct {
-	Query             string
-	Target            string
-	Sim               float64
-	RunnerUpSim       float64
-	TargetRunnerUpTag string
-	TargetRunnerUpSim float64
+	Query  string
+	Target string
 }
 
 // TagVerdictResult is the adjudicator's answer for one pair: the verdict
@@ -41,9 +36,8 @@ const (
 // adjudication call.
 const AdjudicationSystemMessage = "You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote one value."
 
-// BuildAdjudicationPrompt renders the same-intent pairs for the judging
-// body: faithful-replacement framing, per-pair similarities, and
-// runner-up context.
+// BuildAdjudicationPrompt renders the same-intent pairs for the judging body: the faithful-replacement
+// framing and the two terms, with no similarity context.
 func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	var sb strings.Builder
 	sb.WriteString("For each pair below, decide whether the two terms denote one value: faithful replacement holds when either term can stand for the other without loss or change of meaning.\n")
@@ -58,13 +52,6 @@ func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 		fmt.Fprintf(&sb, "Pair %d:\n", i)
 		fmt.Fprintf(&sb, "  query: %q\n", p.Query)
 		fmt.Fprintf(&sb, "  target: %q\n", p.Target)
-		fmt.Fprintf(&sb, "  query-target embedding similarity: %.3f\n", p.Sim)
-		if p.RunnerUpSim > 0 {
-			fmt.Fprintf(&sb, "  query's runner-up similarity: %.3f\n", p.RunnerUpSim)
-		}
-		if p.TargetRunnerUpTag != "" {
-			fmt.Fprintf(&sb, "  target's nearest other store tag: %q (similarity %.3f)\n", p.TargetRunnerUpTag, p.TargetRunnerUpSim)
-		}
 		sb.WriteString("\n")
 	}
 	return sb.String()

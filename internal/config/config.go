@@ -415,20 +415,18 @@ type HugotConfig struct {
 	MemPattern     bool   `yaml:"-"`
 }
 
-// TagMatcherConfig is the semantic matching section: timeouts, the reduce
-// target and chunk size, the embedding model, the user-settable
-// suggestion-injection bar, and the similarity thresholds (filled at load
-// from the algebra's pinned values).
+// TagMatcherConfig is the semantic matching section: timeouts, the reduce target and chunk size, the
+// embedding model, the user-settable suggestion-injection bar, and the identity-candidate floor (filled
+// at load from the model's pinned values).
 type TagMatcherConfig struct {
-	Timeout                 int         `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	ReduceTargetWords       int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
-	ChunkSize               int         `mapstructure:"chunk_size" yaml:"chunk_size" json:"chunk_size"`
-	Hugot                   HugotConfig `mapstructure:"hugot" yaml:"hugot" json:"hugot"`
-	MinSuggestionSimilarity float64     `mapstructure:"min_suggestion_similarity" yaml:"min_suggestion_similarity" json:"min_suggestion_similarity"`
-	TopN                    int         `yaml:"-" json:"top_n"`
-	MinSimilarity           float64     `yaml:"-" json:"min_similarity"`
-	ConsolidationSimilarity float64     `yaml:"-" json:"consolidation_similarity"`
-	AutoReplaceSimilarity   float64     `yaml:"-" json:"auto_replace_similarity"`
+	Timeout                     int         `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	ReduceTargetWords           int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
+	ChunkSize                   int         `mapstructure:"chunk_size" yaml:"chunk_size" json:"chunk_size"`
+	Hugot                       HugotConfig `mapstructure:"hugot" yaml:"hugot" json:"hugot"`
+	MinSuggestionSimilarity     float64     `mapstructure:"min_suggestion_similarity" yaml:"min_suggestion_similarity" json:"min_suggestion_similarity"`
+	TopN                        int         `yaml:"-" json:"top_n"`
+	MinSimilarity               float64     `yaml:"-" json:"min_similarity"`
+	IdentityCandidateSimilarity float64     `yaml:"-" json:"identity_candidate_similarity"`
 }
 
 // ToolConfig is one external binary call: command and timeout.
@@ -928,8 +926,7 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	cfg.Enricher.TagMatcher.Hugot.ModelPath = filepath.Join(configDir, "tagmatcher", "hugot", "models", modelShortName)
 	cfg.Enricher.TagMatcher.TopN = 3 * cfg.Enricher.ContentAnalyzer.MaxTags
 	cfg.Enricher.TagMatcher.MinSimilarity = defaultMinSimilarity(modelShortName)
-	cfg.Enricher.TagMatcher.ConsolidationSimilarity = defaultConsolidationSimilarity(modelShortName)
-	cfg.Enricher.TagMatcher.AutoReplaceSimilarity = defaultAutoReplaceSimilarity(modelShortName)
+	cfg.Enricher.TagMatcher.IdentityCandidateSimilarity = defaultIdentityCandidateSimilarity(modelShortName)
 	// zero reads as unset: the model default re-applies, so kushim config
 	// --unset reverts
 	if cfg.Enricher.TagMatcher.MinSuggestionSimilarity == 0 {
@@ -1230,12 +1227,11 @@ func defaultMinSimilarity(modelShortName string) float64 {
 	}
 }
 
-// defaultConsolidationSimilarity returns the threshold for tag-name-to-tag-name
-// consolidation (post-LLM MatchEach). This must be higher than the document-to-tag
-// threshold because single tag names have much sparser semantic signal than full
-// document text. The values are tuned per model dimension: higher-dim models
-// produce tighter clusters and need a higher threshold.
-func defaultConsolidationSimilarity(modelShortName string) float64 {
+// defaultIdentityCandidateSimilarity returns the floor at or above which a stored tag reaches the identity
+// gate as a candidate neighbour. It must be higher than the document-to-tag threshold because single
+// tag names have much sparser semantic signal than full document text. The values are tuned per model
+// dimension: higher-dim models produce tighter clusters and need a higher floor.
+func defaultIdentityCandidateSimilarity(modelShortName string) float64 {
 	switch modelShortName {
 	case "bge-m3":
 		return 0.80 // 1024-dim; reduced from 0.82 due to SentencePiece tokenization variance
@@ -1245,23 +1241,6 @@ func defaultConsolidationSimilarity(modelShortName string) float64 {
 		return 0.70 // 384-dim, compressed distribution
 	default:
 		return 0.75
-	}
-}
-
-// defaultAutoReplaceSimilarity returns the similarity at or above which a
-// guard-free non-identity candidate replaces the emitted tag. Each value is the
-// model's consolidation default plus 0.15, the band width established for
-// bge-m3 (0.80 → 0.95) in the consolidation false-merges report.
-func defaultAutoReplaceSimilarity(modelShortName string) float64 {
-	switch modelShortName {
-	case "bge-m3":
-		return 0.95
-	case "all-mpnet-base-v2":
-		return 0.90
-	case "all-MiniLM-L6-v2":
-		return 0.85
-	default:
-		return 0.90
 	}
 }
 

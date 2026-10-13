@@ -713,7 +713,7 @@ for i := range 2 {
     adjudication leaves the claim pending — the candidate registers
     provisionally; a credit-exhaustion failure pauses the batch instead.
 12. **Tag admission decision** (`internal/tags/admission/adjudicator.go`, `Adjudicator.ApplyTagQuality`): only when
-    `enricher.tag_quality.enabled` is true. Novel tags — consolidated outputs
+    `enricher.tag_quality.enabled` is true. Novel tags — identity-planned outputs
     whose normalized names are absent from the vocabulary — are resolved by the
     pinned admission decision (`tags.DecideAdmission`) over their features: the
     rubric judge's answers (from the `tag_quality_event` cache or
