@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 )
 
 func TestHouseForm(t *testing.T) {
@@ -915,5 +917,152 @@ func TestCompositionStatesForNames(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Errorf("empty input = %v, want no states", empty)
+	}
+}
+
+// TestCanonicalLoser pins the shared J4 resolution every alias-application site reads: a judged direction
+// names the winner directly, and a tie — including a deterministic variant, which carries no direction —
+// falls to PreferCanonical rather than to a site-local copy of the rule.
+func TestCanonicalLoser(t *testing.T) {
+	cases := []struct {
+		name            string
+		direction, a, b string
+		wantWinner      string
+		wantLoser       string
+	}{
+		{
+			name:      "the judged direction names the target the winner",
+			direction: analyzer.TagDirectionTarget, a: "philosophy", b: "filosofia",
+			wantWinner: "filosofia", wantLoser: "philosophy",
+		},
+		{
+			name:      "the judged direction names the query the winner",
+			direction: analyzer.TagDirectionQuery, a: "philosophy", b: "filosofia",
+			wantWinner: "philosophy", wantLoser: "filosofia",
+		},
+		{
+			name: "a direction the direction step did not separate falls to the house form",
+			a:    "filosofia", b: "philosophy",
+			wantWinner: "philosophy", wantLoser: "filosofia",
+		},
+		{
+			name:      "an unrecognized direction is a tie too",
+			direction: "sideways", a: "filosofia", b: "philosophy",
+			wantWinner: "philosophy", wantLoser: "filosofia",
+		},
+		{
+			name: "a deterministic variant carries no direction and resolves through the tie-break",
+			a:    "decolonisation", b: "decolonization",
+			wantWinner: "decolonisation", wantLoser: "decolonization",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			winner, loser := CanonicalLoser(tc.direction, tc.a, tc.b)
+			if winner != tc.wantWinner || loser != tc.wantLoser {
+				t.Errorf("CanonicalLoser(%q, %q, %q) = (%q, %q), want (%q, %q)",
+					tc.direction, tc.a, tc.b, winner, loser, tc.wantWinner, tc.wantLoser)
+			}
+			if winner == loser {
+				t.Error("a pair must never resolve a name onto itself")
+			}
+		})
+	}
+
+	t.Run("a directionless pair agrees with PreferCanonical", func(t *testing.T) {
+		pairs := [][2]string{
+			{"filosofia", "philosophy"},
+			{"decolonisation", "decolonization"},
+			{"20th century", "19th century"},
+		}
+		for _, p := range pairs {
+			winner, loser := CanonicalLoser("", p[0], p[1])
+			if want := PreferCanonical(p[0], p[1]); winner != want {
+				t.Errorf("CanonicalLoser(\"\") = %q, PreferCanonical = %q: the tie must fall to the shared rule",
+					winner, want)
+			}
+			if loser == winner {
+				t.Errorf("pair %v resolved a name onto itself", p)
+			}
+		}
+	})
+}
+
+// TestCompositionReview pins the single-read seam behind the two journal views: one query returns both the
+// hold reasons and the states, and each view matches what its single-view wrapper returns for the same
+// input — a degraded keep appears as a hold and as a state judgment is still owed.
+func TestCompositionReview(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	q := client.Queries
+	docID := database.CreateUniqueDocument(t, q, "composition-review")
+
+	// a criteria version of this test's own keeps the rows out of every other read
+	const version = "review-test-v1"
+	seed := func(candidate, disposition, reason string) {
+		t.Helper()
+		if _, err := client.DB().ExecContext(ctx, `
+			INSERT INTO tag_composition_event
+			    (document_id, candidate, parts, disposition, reason, criteria_version)
+			VALUES ($1, $2, '[]'::jsonb, $3, $4, $5)`,
+			docID, candidate, disposition, reason, version); err != nil {
+			t.Fatalf("seed composition row for %q: %v", candidate, err)
+		}
+	}
+	seed("heldsplit", string(CompositionKeep), CompositionReasonSplitDefer)
+	seed("degraded", string(CompositionKeep), CompositionReasonJudgeUnavailable)
+	seed("decideddrop", string(CompositionDrop), CompositionReasonNoDimension)
+	seed("unrelated", string(CompositionKeep), CompositionReasonNamedUnit)
+
+	names := []string{"heldsplit", "degraded", "decideddrop", "unrelated", "unjudged"}
+	held, states, err := CompositionReview(ctx, q, names, version)
+	if err != nil {
+		t.Fatalf("CompositionReview: %v", err)
+	}
+
+	oneHeld, err := CompositionHeldNames(ctx, q, names, version)
+	if err != nil {
+		t.Fatalf("CompositionHeldNames: %v", err)
+	}
+	oneStates, err := CompositionStatesForNames(ctx, q, names, version)
+	if err != nil {
+		t.Fatalf("CompositionStatesForNames: %v", err)
+	}
+	if !reflect.DeepEqual(held, oneHeld) {
+		t.Errorf("held view = %v, want the single-view read %v", held, oneHeld)
+	}
+	if !reflect.DeepEqual(states, oneStates) {
+		t.Errorf("states view = %v, want the single-view read %v", states, oneStates)
+	}
+
+	if held["heldsplit"] != CompositionReasonSplitDefer {
+		t.Errorf("held[heldsplit] = %q, want the deferred-split hold", held["heldsplit"])
+	}
+	if held["degraded"] != CompositionReasonJudgeUnavailable {
+		t.Errorf("held[degraded] = %q, want the degraded-keep hold", held["degraded"])
+	}
+	if got, want := states["degraded"], (CompositionState{Disposition: CompositionKeep, Decided: false}); got != want {
+		t.Errorf("states[degraded] = %+v, want %+v: judgment is still owed", got, want)
+	}
+	if got, want := states["decideddrop"], (CompositionState{Disposition: CompositionDrop, Decided: true}); got != want {
+		t.Errorf("states[decideddrop] = %+v, want %+v", got, want)
+	}
+	if _, ok := states["unjudged"]; ok {
+		t.Errorf("states[unjudged] = %v, a compound with no row must stay absent", states["unjudged"])
+	}
+	if _, ok := held["unrelated"]; ok {
+		t.Errorf("held[unrelated] = %q, a clean keep is not a hold", held["unrelated"])
+	}
+
+	emptyHeld, emptyStates, err := CompositionReview(ctx, q, nil, version)
+	if err != nil {
+		t.Fatalf("CompositionReview(nil): %v", err)
+	}
+	if len(emptyHeld) != 0 || len(emptyStates) != 0 {
+		t.Errorf("empty input = (%v, %v), want two empty maps", emptyHeld, emptyStates)
 	}
 }

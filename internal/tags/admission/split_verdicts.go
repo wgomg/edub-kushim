@@ -24,7 +24,7 @@ const tagCompoundDeferStatus = "defer"
 // keyed by resolved value, and the compound pass's statuses keyed by candidate. Both are append-only and
 // version-filtered, so a re-run reads a prior verdict instead of re-judging; a fresh verdict persists, and a
 // concurrent writer's stored row wins with the disagreement flag set. One store serves the emission gate and
-// the stored-joint sweep, so both judge and persist the same rows under one failure policy: a transient
+// the stored-compound sweep, so both judge and persist the same rows under one failure policy: a transient
 // failure retries once, an incomplete reply salvages the entries it returned and defers only the missing
 // ones, every other non-credit failure leaves the verdicts absent, and credit exhaustion is the only error.
 type VerdictStore struct {

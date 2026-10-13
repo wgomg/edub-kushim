@@ -147,7 +147,7 @@ internal/
 │   │   ├── tagfilter.go    # NormalizeTags, FilterTags, TagFilter, SplitComponents
 │   │   ├── facets.go       # TagDetail + categories, ParseAnalysisResponse, SeparateFacets
 │   │   ├── adjudication.go # same-intent pair adjudication: prompt + parser
-│   │   ├── tag_split.go    # joint-tag split gate: prompt + parser
+│   │   ├── tag_split.go    # compound split gate: prompt + parser
 │   │   ├── tag_quality.go  # quality rubric judge: prompt + parser
 │   │   ├── tag_translation.go # language guard: translation prompt + parser
 │   │   ├── tag_phrase_fold.go # phrase-context fold judge: prompt + parser
@@ -213,10 +213,10 @@ internal/
 ├── static/                 # Embedded web UI (main app)
 │   └── fs.go               # Embedded SvelteKit build (build/ directory via //go:embed)
 ├── tags/                   # Tag subsystem (store, measurement, identity, policy, reconciliation)
-│   ├── store.go            # Store wrapper over tag queries (NewStore, PairNames, PairVerdictStats, CompoundIntersection)
+│   ├── store.go            # Store wrapper over tag queries (NewStore, PairNames, PairVerdictStats, CompoundIntersection, LatestWorklists)
 │   ├── measure.go          # Measurement pass (NewRunner, Report, WorklistCounts)
 │   ├── tagmeasure.go       # TagMeasureTaskHandler (forks `kushim tagmeasure --run`) + ForkAndExtractReport/ExtractReport
-│   ├── evidence.go         # Evidence records and JSON encoding (RuleSetVersion, Record, EncodeRows)
+│   ├── evidence.go         # Evidence records and JSON encoding/decoding (RuleSetVersion, Record, EncodeRows, DecodeRows)
 │   ├── identity.go         # Identity planning types (Disposition, AliasAction, Registration, Plan)
 │   ├── worklist.go         # Rule-set v1 worklist cuts (DeriveWorklists, Twin/Sibling/CompoundSplit)
 │   ├── algebra.go          # Extension algebra readings (Set, NewSet, MassOf, EvidenceState)
@@ -228,7 +228,7 @@ internal/
 │   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
 │   │   └── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
-│   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, joint-tag splits, deleted-tag policy, identity planning, tag-quality gating)
+│   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, compound decomposition incl. JudgeCompounds, deleted-tag policy, identity planning, tag-quality gating)
 │   │   ├── identity.go     # Canonical-form identity mechanics (house form, key equality, tie-break)
 │   │   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
 │   │   └── tagidentity.go  # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
@@ -239,10 +239,10 @@ internal/
 │       ├── worklist.go     # Worklist build (buildWorklist, bootstrap, category ordering)
 │       ├── evidence.go     # Evidence pass (re-rank, band adjudication, hysteresis confirmation)
 │       ├── apply.go        # Apply pass (alias/keep flips, verdict upsert)
-│       ├── sweeps.go       # Orphan, provisional and identity-evidence sweeps
+│       ├── sweeps.go       # Twin canonicalization, orphan, provisional and identity-evidence sweeps
 │       ├── tagreconcile.go # TagReconcileTaskHandler (reconciler run + batch lifecycle)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
-│       └── joint.go        # Joint-tag split scan and component adjudication
+│       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven)
 ├── task/                   # Generic task system
 │   ├── batch.go            # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
 │   ├── crud.go             # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)

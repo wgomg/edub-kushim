@@ -21,7 +21,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertTagCompositionEventParams struct {
-	DocumentID      int64
+	DocumentID      sql.NullInt64
 	Candidate       string
 	Parts           json.RawMessage
 	Disposition     string

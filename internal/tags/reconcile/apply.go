@@ -47,13 +47,14 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		if report.ReportOnly {
 			if flipToAlias {
 				report.Flips.ToAlias++
+				winner, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
 				report.PlannedAliases = append(report.PlannedAliases, PairEntry{
-					Query:      e.query,
-					Target:     e.target,
-					Reassigned: tagCounts[e.query],
+					Query:      loser,
+					Target:     winner,
+					Reassigned: tagCounts[loser],
 					Reason:     e.reason,
 				})
-				r.logger.Info("", "tag reconcile (report-only): would alias %q onto %q (%d documents)%s", e.query, e.target, tagCounts[e.query], reasonSuffix(e.reason))
+				r.logger.Info("", "tag reconcile (report-only): would alias %q onto %q (%d documents)%s", loser, winner, tagCounts[loser], reasonSuffix(e.reason))
 			} else {
 				plannedKeepFlips = append(plannedKeepFlips, e)
 			}
@@ -75,7 +76,8 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 			appliedFlip = true
 			aliasFlips = append(aliasFlips, e)
 			// the loser's full count is an upper bound on the batch's re-pointing
-			budget -= int(tagCounts[e.query])
+			_, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
+			budget -= int(tagCounts[loser])
 			continue
 		}
 
@@ -205,16 +207,18 @@ func (r *Reconciler) pairDocumentCounts(ctx context.Context, entries []*entry) (
 	return counts, nil
 }
 
-// applyAliasFlips collapses the confirmed pairs onto their targets in one alias plan: each loser's
+// applyAliasFlips collapses the confirmed pairs onto their winners in one alias plan: each loser's
 // assignments re-point, its own aliases re-target, its tag row is removed and the loser becomes an
 // alias row of the canonical — the names resolve and survive, never deleted and never blocklisted.
-// Actions the plan skipped are tallied under alias_skip and leave no verdict behind.
+// The winner is the canonical the judged direction names, and an action the plan skipped is tallied
+// under alias_skip and leaves no verdict behind.
 func (r *Reconciler) applyAliasFlips(ctx context.Context, entries []*entry, report *Report) {
 	actions := make([]tags.AliasAction, 0, len(entries))
 	for _, e := range entries {
+		winner, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
 		actions = append(actions, tags.AliasAction{
-			AliasName:         e.query,
-			Canonical:         e.target,
+			AliasName:         loser,
+			Canonical:         winner,
 			RemoveExistingTag: true,
 		})
 	}
@@ -231,14 +235,15 @@ func (r *Reconciler) applyAliasFlips(ctx context.Context, entries []*entry, repo
 			report.Skips["alias_skip"]++
 			continue
 		}
+		winner, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
 		report.Flips.ToAlias++
 		report.Aliases = append(report.Aliases, PairEntry{
-			Query:      e.query,
-			Target:     e.target,
+			Query:      loser,
+			Target:     winner,
 			Reassigned: outcomes[i].Reassigned,
 			Reason:     e.reason,
 		})
-		r.logger.Info("", "tag reconcile: aliased %q onto %q (%d documents)", e.query, e.target, outcomes[i].Reassigned)
+		r.logger.Info("", "tag reconcile: aliased %q onto %q (%d documents)", loser, winner, outcomes[i].Reassigned)
 		if err := r.upsertVerdict(ctx, e); err != nil {
 			r.logger.Error("", "tag reconcile: upsert verdict after alias %q → %q: %v", e.query, e.target, err)
 		}

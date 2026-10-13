@@ -162,7 +162,10 @@ it is skipped before judgment and never split.
   gate rejected), the criteria
   version,
   and the judge model (`NULL` for cached verdicts and the conjunction
-  fallback) — with a matching `tag split[...]` log line per candidate.
+  fallback) — with a matching `tag split[...]` log line per candidate. The
+  stored-compound sweep journals the same rows with a NULL document (migration
+  `00036`), so a decided hold binds promotion and a decided keep is skipped at
+  emission.
 - **Validation**: segments are first fold-resolved onto **promoted** store values through
   the attested seam fold (the generated WordNet pertainym table's adjective→noun pairs in
   WordNet sense order, or a pinned variant class the table does not cover; a multi-base
@@ -174,8 +177,10 @@ it is skipped before judgment and never split.
   between 2 and `tags.MaxCompoundWords` (3) valid **segments**; anything else keeps the
   compound as-is. Emissions are not count-capped.
 - **Retroactive cleanup**: the scheduled reconciliation task scans the store
-  for conjunction joints and splits them with document re-pointing — see
-  [Scheduled reconciliation](#scheduled-reconciliation).
+  for every stored compound and disposes it through the same composition
+  decision — splitting the ones the coarsest cover decomposes and leaving the
+  rest whole — and canonicalizes the near-identical labels the measurement
+  worklists propose. See [Scheduled reconciliation](#scheduled-reconciliation).
 
 ---
 
@@ -400,26 +405,35 @@ anti-oscillating:
   (a deleted tag — dead-target verdicts are invalidated so a cached `same`
   verdict can never resurrect a deleted name); and, for history the table
   never captured, pairs parsed from the daemon's rotated logs
-  (`hugot.log*`/`kushim.log*`, `.gz` rotations included). A joint-tag scan
-  (appended after the pair scans, same caps) detects store tags that join
-  concepts with a conjunction (`and`, `or`, `vs`, `vs.`, `versus`) and splits
-  them into their components.
+  (`hugot.log*`/`kushim.log*`, `.gz` rotations included). A stored-compound
+  scan (appended after the pair scans, same caps) takes every stored tag that
+  classifies as a compound and disposes it through the composition decision —
+  the same two-pass judgment the emission gate runs (`admission.JudgeCompounds`),
+  so a compound is judged alike whether it arrives by emission or by sweep. A
+  twin arm then works the measurement worklists' `≈` pairs: a pinned variant
+  class aliases mechanically with no judge call, and every other pair becomes
+  pending identity evidence the same run's identity sweep settles.
 - **How it flips:** each pair is re-evaluated through the current policy on a
   fresh rank; band survivors are re-adjudicated, and a verdict flip must be
   confirmed by a second, orientation-reversed adjudication before it applies.
   A `same` flip aliases the loser onto the canonical (the name resolves and
   survives); a `keep` flip withdraws the alias and re-creates the tag with only
-  the affected documents. A joint-tag split takes the cover's components,
-  creates them via `Tag.Create`, adds them to every document carrying the joint
-  tag (single set-based insert), and deletes the joint tag with a post-commit
-  store removal — idempotent and crash-tolerant (component
-  creation and document assignment are additive, deletion is last). Pair
-  entries whose query is itself a joint tag are dropped from the pair worklist
-  so a same-intent verdict can never resurrect a tag the split scan is deleting.
+  the affected documents. A compound split takes the cover's components,
+  creates them via `Tag.Create`, adds them to every document carrying the
+  compound tag (single set-based insert), and deletes the compound tag with a
+  post-commit store removal — idempotent and crash-tolerant (component
+  creation and document assignment are additive, deletion is last); a
+  `no_dimension` drop records its decision and leaves the stored tag standing,
+  because revoking a value's influence is the demotion duty, not the sweep's.
+  Pair entries whose query is itself a conjunction joint are dropped from the
+  pair worklist so a same-intent verdict can never resurrect a tag the
+  deterministic split is deleting.
 - **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the
-  provisional re-judge shares the `max_rejudge` budget. The first run is always
-  **report-only** (it lists would-be actions and touches nothing), regardless
-  of the `report_only` flag. The joint-tag scan shares both caps.
+  provisional re-judge and the twin arm share the `max_rejudge` budget, and the
+  compound scan and the twin aliases share the `max_retag` budget. The first run
+  is always **report-only** (it lists would-be actions and touches nothing),
+  regardless of the `report_only` flag. A failed hold, alias, settled, or mass
+  lookup aborts the twin arm for the run rather than degrading its safety gates.
 - **Provisional hygiene:** the same run re-checks provisional tags older than
   `provisional_grace_days` (default 30), oldest first. A stored verdict the
   decision re-derives as admit
@@ -440,13 +454,14 @@ anti-oscillating:
   they cannot be resurrected outside the restore
   flow.
 - **Report:** each run persists a full JSON report as its task result — worklist
-  counts (including the joint-tag category), judged/confirmed, flips,
-  planned/applied pair entries (each carrying the decision reason and whether
-  it creates a tag), planned/applied joint splits (query, components,
-  reassigned documents, reason), skip reasons, and the provisional-sweep
-  counts (`worklist`, `zero_assignment`, `promoted`, `rejudged`, `deferred`,
-  `no_judge`, `skipped`, `failed`) — surfaced in the web UI on
-  the task detail page and as a status strip on the tags page.
+  counts (the pair categories plus the `compounds` scan and the `twins` arm),
+  judged/confirmed, flips, planned/applied pair entries (each carrying the
+  decision reason and whether it creates a tag), planned/applied compound splits
+  (query, components, reassigned documents, reason), the twin counts and the
+  consumed measurement run's id and snapshot, skip reasons, and the
+  provisional-sweep counts (`worklist`, `zero_assignment`, `promoted`,
+  `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`) — surfaced in the web
+  UI on the task detail page and as a status strip on the tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
   without LLM calls or writes. The queue daemon warns when reconciliation is
   enabled without the adjudicator.

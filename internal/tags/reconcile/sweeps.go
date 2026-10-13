@@ -382,3 +382,237 @@ func verdictModelLabel(model sql.NullString) string {
 	}
 	return model.String
 }
+
+// sweepTwins works the canonicalization worklist the measurement substrate proposes (extension-algebra D1).
+// The rules dispose, never the measurement: a pinned variant class aliases to the PreferCanonical winner
+// with no judge call, and the rest become pending same-intent evidence the run's own identity sweep settles,
+// so a store-side pair is judged exactly as an emitted one. A loser aliases and is never deleted; held names
+// stay for review. A failed hold, alias, settled, or mass lookup aborts the arm rather than disabling the
+// gate, the pair list is bounded by MaxRejudge, and the alias documents by MaxRetag.
+func (r *Reconciler) sweepTwins(ctx context.Context, cfg *config.Config, report *Report, pairKeys map[string]struct{}) {
+	worklists, err := tags.NewStore(r.client.Queries).LatestWorklists(ctx)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: load measurement worklists: %v", err)
+		return
+	}
+	report.Measurement = &MeasurementRun{
+		RunID:      worklists.RunID.String(),
+		SnapshotAt: worklists.SnapshotAt,
+		Absent:     worklists.Absent,
+	}
+	report.Twins.Worklist = len(worklists.Worklists.Twins)
+	report.Worklist.Twins = report.Twins.Worklist
+	if worklists.Absent || len(worklists.Worklists.Twins) == 0 {
+		return
+	}
+
+	twins := worklists.Worklists.Twins
+	if len(twins) > cfg.Enricher.TagReconcile.MaxRejudge {
+		report.Capped += len(twins) - cfg.Enricher.TagReconcile.MaxRejudge
+		twins = twins[:cfg.Enricher.TagReconcile.MaxRejudge]
+	}
+
+	participantNames := make(map[string]struct{}, len(twins)*2)
+	for _, twin := range twins {
+		participantNames[twin.A] = struct{}{}
+		participantNames[twin.B] = struct{}{}
+	}
+	names := make([]string, 0, len(participantNames))
+	for name := range participantNames {
+		names = append(names, name)
+	}
+
+	// the run's own splits and flips may have removed rows since the snapshot, so read the live names fresh
+	allTags, err := r.tag.ListAll(ctx)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: twins: list store names failed: %v", err)
+		return
+	}
+	live := make(map[string]struct{}, len(allTags))
+	tagID := make(map[string]int64, len(allTags))
+	for _, t := range allTags {
+		live[t.Name] = struct{}{}
+		tagID[t.Name] = t.ID
+	}
+
+	// a failed lookup would silently disable the review gate in apply mode, so the arm aborts for the run
+	// instead of degrading to empty safety state
+	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: twins: identity hold lookup failed, arm skipped: %v", err)
+		return
+	}
+	aliases, err := tags.ResolveAliases(ctx, r.client.Queries, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: twins: alias lookup failed, arm skipped: %v", err)
+		return
+	}
+	settled, err := r.settledTwinPairs(ctx, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: twins: settled-pair lookup failed, arm skipped: %v", err)
+		return
+	}
+
+	seen := make(map[string]struct{}, len(twins))
+	var aliasActions []tags.AliasAction
+	var pendingRows []tags.EvidenceRow
+	for _, twin := range twins {
+		a, b := twin.A, twin.B
+		if _, ok := live[a]; !ok {
+			report.Twins.Skipped++
+			continue
+		}
+		if _, ok := live[b]; !ok {
+			report.Twins.Skipped++
+			continue
+		}
+		if _, ok := held[a]; ok {
+			report.Twins.Held++
+			continue
+		}
+		if _, ok := held[b]; ok {
+			report.Twins.Held++
+			continue
+		}
+		if textnorm.SplitJointTag(a) != nil || textnorm.SplitJointTag(b) != nil {
+			report.Twins.Skipped++
+			continue
+		}
+		if aliases[a] != "" || aliases[b] != "" {
+			report.Twins.Skipped++
+			continue
+		}
+		key := twinPairKey(a, b)
+		if _, ok := settled[key]; ok {
+			report.Twins.Settled++
+			continue
+		}
+		if _, ok := pairKeys[key]; ok {
+			report.Twins.Skipped++
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			report.Twins.Skipped++
+			continue
+		}
+		seen[key] = struct{}{}
+
+		if tags.VariantClass(a, b) != "" {
+			winner := tags.PreferCanonical(a, b)
+			loser := a
+			if winner == a {
+				loser = b
+			}
+			if report.ReportOnly {
+				report.PlannedAliases = append(report.PlannedAliases, PairEntry{Query: loser, Target: winner, Reason: "deterministic"})
+				report.Twins.Planned++
+				r.logger.Info("", "tag reconcile (report-only): would alias twin %q onto %q (deterministic variant)", loser, winner)
+				continue
+			}
+			aliasActions = append(aliasActions, tags.AliasAction{AliasName: loser, Canonical: winner, RemoveExistingTag: true})
+			continue
+		}
+
+		if report.ReportOnly {
+			report.Twins.Pending++
+			continue
+		}
+		pendingRows = append(pendingRows, tags.EvidenceRow{
+			Kind:      tags.IdentityKindSameIntent,
+			Candidate: a,
+			Partner:   b,
+		})
+	}
+
+	if len(aliasActions) > 0 {
+		aliasActions = r.boundTwinAliases(ctx, cfg, aliasActions, tagID, report)
+	}
+
+	if len(aliasActions) > 0 {
+		outcomes, err := r.tag.ApplyAliasPlan(ctx, aliasActions)
+		if err != nil {
+			r.logger.Error("", "tag reconcile: twins: alias plan failed for %d pairs: %v", len(aliasActions), err)
+			for range aliasActions {
+				report.Skips["alias_error"]++
+			}
+		} else {
+			for i, outcome := range outcomes {
+				if !outcome.Applied {
+					report.Skips["alias_skip"]++
+					continue
+				}
+				report.Twins.Mechanical++
+				report.Aliases = append(report.Aliases, PairEntry{Query: aliasActions[i].AliasName, Target: aliasActions[i].Canonical, Reassigned: outcome.Reassigned, Reason: "deterministic"})
+				r.logger.Info("", "tag reconcile: aliased twin %q onto %q (%d documents)", aliasActions[i].AliasName, aliasActions[i].Canonical, outcome.Reassigned)
+			}
+		}
+	}
+
+	if len(pendingRows) > 0 {
+		if err := r.tag.RecordIdentityEvidence(ctx, pendingRows); err != nil {
+			r.logger.Error("", "tag reconcile: twins: record %d pending pairs failed: %v", len(pendingRows), err)
+			report.Skips["identity_evidence_error"] += len(pendingRows)
+		} else {
+			report.Twins.Pending += len(pendingRows)
+		}
+	}
+}
+
+// boundTwinAliases truncates the twin alias actions to the run's document budget, using each loser's live
+// mass as the re-pointing estimate the pair arm also uses; a mass lookup failure drops the whole batch for
+// the run and the pairs past the budget are tallied under Capped.
+func (r *Reconciler) boundTwinAliases(ctx context.Context, cfg *config.Config, actions []tags.AliasAction, tagID map[string]int64, report *Report) []tags.AliasAction {
+	ids := make([]int64, 0, len(actions))
+	for _, action := range actions {
+		ids = append(ids, tagID[action.AliasName])
+	}
+	mass, err := tags.NewStore(r.client.Queries).LiveMass(ctx, ids)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: twins: live mass lookup failed, arm skipped: %v", err)
+		report.Skips["alias_error"] += len(actions)
+		return nil
+	}
+	budget := cfg.Enricher.TagReconcile.MaxRetag
+	var kept []tags.AliasAction
+	for i, action := range actions {
+		if budget <= 0 {
+			report.Capped += len(actions) - i
+			break
+		}
+		kept = append(kept, action)
+		budget -= int(mass[tagID[action.AliasName]])
+	}
+	return kept
+}
+
+// settledTwinPairs returns the orientation-free keys of the pairs already settled at the current rule-set
+// version, so the arm never re-proposes a pair the identity machinery has judged; a settled same-intent
+// verdict names the pair whichever way it was stored.
+func (r *Reconciler) settledTwinPairs(ctx context.Context, names []string) (map[string]struct{}, error) {
+	if len(names) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	rows, err := r.client.Queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+		Candidates:     names,
+	})
+	if err != nil {
+		return nil, err
+	}
+	settled := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row.Kind != tags.IdentityKindSameIntent || !row.Partner.Valid {
+			continue
+		}
+		settled[twinPairKey(row.Candidate, row.Partner.String)] = struct{}{}
+	}
+	return settled, nil
+}
+
+// twinPairKey is the orientation-free key for a candidate pair, so a lookup matches either stored order.
+func twinPairKey(a, b string) string {
+	if a > b {
+		a, b = b, a
+	}
+	return a + "\x00" + b
+}

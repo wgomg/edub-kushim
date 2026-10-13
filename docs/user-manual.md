@@ -1420,16 +1420,18 @@ Response `200`:
   "completed_at": "2024-03-19T10:30:12Z",
   "result": {
     "report_only": true,
-    "worklist": { "stale": 116, "unjudged": 3, "drifted": 0, "aged": 0, "joint": 2 },
+    "worklist": { "stale": 116, "unjudged": 3, "drifted": 0, "aged": 0, "compounds": 2, "twins": 4 },
     "judged": 5,
     "confirmed": 5,
     "flips": { "to_alias": 0, "to_keep": 5 },
     "planned_keep_flips": [
       { "query": "machine learning", "target": "ml", "reassigned": 12, "reason": "adjudicated", "creates_tag": true }
     ],
-    "planned_joint_splits": [
+    "planned_compound_splits": [
       { "query": "supply and demand", "components": ["supply", "demand"], "reassigned": 8, "reason": "adjudicated" }
     ],
+    "twins": { "worklist": 4, "settled": 1, "held": 0, "skipped": 2, "mechanical": 1, "planned": 0, "pending": 0 },
+    "measurement": { "run_id": "3f1c…", "snapshot_at": "2024-03-18T03:00:00Z" },
     "skips": { "below_floor": 38, "query_reborn": 51, "adjudication_error": 25 },
     "swept": 3
   }
@@ -1437,11 +1439,15 @@ Response `200`:
 ```
 
 - `result` is the raw `Report` JSON persisted as the task's result: worklist counts
-  (including the `joint` category for conjunction-joined tags), judged/confirmed,
+  (the four pair categories plus `compounds` for the stored-compound scan and
+  `twins` for the canonicalization arm), judged/confirmed,
   flips, planned/applied pair entries (`aliases`, `planned_aliases`, `planned_keep_flips`,
-  `retag_entries`, `invalidated_entries`), planned/applied joint splits
-  (`planned_joint_splits` / `joint_splits` — query, components, reassigned documents,
-  reason), skip reasons, the `swept` count of orphan tags deleted during the run
+  `retag_entries`, `invalidated_entries`), planned/applied compound splits
+  (`planned_compound_splits` / `compound_splits` — query, components, reassigned documents,
+  reason), the `twins` counts (the measurement worklist and how the arm resolved it:
+  `settled`, `held`, `skipped`, `mechanical`, `planned`, `pending`), the consumed
+  `measurement` run (`run_id`, `snapshot_at`), skip reasons, the `swept` count of orphan
+  tags deleted during the run
   (the would-be count in report-only runs), the `provisional` counts of the
   provisional-tag sweep (`worklist`, `zero_assignment`, `promoted`, `rejudged`,
   `deferred`, `no_judge`, `skipped`, `failed`), and the `capped` / `no_documents` /

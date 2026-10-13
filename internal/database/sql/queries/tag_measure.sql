@@ -50,3 +50,15 @@ FROM jsonb_to_recordset(@records::jsonb) AS r(
     state text,
     caveats text[]
 );
+
+-- name: LatestTagMeasurementRun :one
+SELECT run_id, snapshot_at, rule_set_version
+FROM tag_measurement
+ORDER BY snapshot_at DESC, id DESC
+LIMIT 1;
+
+-- name: TagMeasurementRecordsForRun :many
+SELECT operator, operands, numbers, state, caveats
+FROM tag_measurement
+WHERE run_id = @run_id
+ORDER BY id;

@@ -159,7 +159,7 @@ func TestSplitVerdictQueries(t *testing.T) {
 	}
 
 	reconcileYes := InsertTagCompositionEventParams{
-		DocumentID:      docID,
+		DocumentID:      sql.NullInt64{Int64: docID, Valid: true},
 		Candidate:       "recon yes",
 		Parts:           []byte(`[]`),
 		Disposition:     "keep",
@@ -223,7 +223,7 @@ func TestSplitVerdictQueries(t *testing.T) {
 
 // TestSplitVerdictQueries_NullDocumentID pins migration 00033's half of the provenance contract: both verdict
 // tables accept a NULL document_id — which is how a row written with no emitting document, such as one the
-// stored-joint sweep produces, is stored — and the reads the split gate works from still return those rows.
+// stored-compound sweep produces, is stored — and the reads the split gate works from still return those rows.
 func TestSplitVerdictQueries_NullDocumentID(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()

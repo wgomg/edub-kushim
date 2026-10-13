@@ -2,9 +2,11 @@ package tags
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
@@ -97,6 +99,27 @@ func EncodeRows(records []Record) (json.RawMessage, error) {
 		})
 	}
 	return json.Marshal(rows)
+}
+
+// DecodeRows reads a stored measurement run's rows back into records. JSON has one number type, so every
+// number arrives as a float64, which the worklist cuts read through numberFloat64 and numberInt64, and a
+// malformed payload fails with the row's index rather than reading as zero.
+func DecodeRows(rows []database.TagMeasurementRecordsForRunRow) ([]Record, error) {
+	records := make([]Record, 0, len(rows))
+	for i, row := range rows {
+		var numbers map[string]any
+		if err := json.Unmarshal(row.Numbers, &numbers); err != nil {
+			return nil, fmt.Errorf("decode measurement row %d numbers: %w", i, err)
+		}
+		records = append(records, Record{
+			Operator: Operator(row.Operator),
+			Operands: row.Operands,
+			Numbers:  numbers,
+			State:    EvidenceState(row.State),
+			Caveats:  row.Caveats,
+		})
+	}
+	return records, nil
 }
 
 func numberInt64(numbers map[string]any, key string) (int64, bool) {

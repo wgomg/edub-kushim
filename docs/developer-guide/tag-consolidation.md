@@ -463,10 +463,14 @@ run restores the steady rule. The handler
 (`internal/tags/reconcile/tagreconcile.go`) owns the batch lifecycle
 (`MarkBatchProcessing`/`FinalizeBatchStatus`), dedups on
 `tagreconcile:<UTC date>`, and reports a JSON `Report` — worklist counts per
-category, judged/confirmed, flips by direction, aliases with reassignment
+category (the four pair categories plus `compounds` for the stored-compound
+scan and `twins` for the canonicalization arm), judged/confirmed, flips by
+direction, aliases with reassignment
 counts, re-tags, invalidations, skip reasons — as the task result. The report
 also carries pair-level entries (`aliases`, `planned_aliases`,
-`planned_keep_flips`, `retag_entries`, `invalidated_entries`) plus `capped`,
+`planned_keep_flips`, `retag_entries`, `invalidated_entries`), compound splits
+(`compound_splits` / `planned_compound_splits`), the `twins` counts and the
+consumed `measurement` run (`run_id`, `snapshot_at`), plus `capped`,
 `no_documents`,
 `swept` (orphan tags deleted, or the would-be count in report-only runs),
 `provisional` (the provisional sweep's `worklist`, `zero_assignment`,
@@ -558,6 +562,35 @@ scan does not re-judge it. `verdict_model` carries the adjudicator model, the
 cached verdict was applied — the non-null marker is what the fresh-verdict scans
 require to treat the pair as settled. `max_retag` bounds re-pointed documents per
 run, with a first-pair carve-out (the budget is soft by at most one pair).
+
+**Stored-compound scan**: after the pair scans, the same run takes every stored
+tag that classifies as a compound (`tags.ClassifyShape` = `ShapeCompound`),
+excluding seeded periods, identity-held and composition-held names (both hold
+checks run before any verdict lookup, so a held name never spends a judge call),
+and compounds a current-version verdict already decided as a keep or a drop.
+The rest are judged through `Adjudicator.JudgeCompounds` — the same reading the
+emission gate runs, so a compound disposes identically on either path — and each
+decided compound journals one `tag_composition_event` row with a NULL document
+(`00036`), which is what makes a decided hold bind promotion and a decided keep
+the thing the emission path later skips. A decided split is applied from the
+persisted caches with no new judgment (crash/cap resume); a degraded
+`judge_unavailable` keep is not journalled, so an outage leaves the entry
+undecided for the next run. Only a split touches the store; a drop is recorded
+with its tag left standing. Pending-apply splits sort first, then the heaviest
+compounds, and the scan shares `max_rejudge`/`max_retag` with the other arms.
+
+**Twin canonicalization**: the same run reads the latest `tagmeasure` run's `≈`
+twin worklist (`tags.Store.LatestWorklists`, the newest run only) and resolves
+each pair: a pinned variant class aliases mechanically onto the
+`PreferCanonical` winner with no judge call, and every other pair becomes
+pending same-intent evidence the run's identity sweep settles. Pairs are skipped
+when a side is no longer a live tag, either side is identity-held, either is a
+conjunction the compound scan owns, the pair is already alias-linked or settled
+at the current rule-set version, or the pair is already in this run's band
+worklist; a failed hold, alias, settled, or mass lookup aborts the arm for the
+run rather than degrading its gates. The arm is bounded by `max_rejudge` (pairs)
+and `max_retag` (re-pointed documents) and applies its mechanical aliases in one
+batched plan. Report-only runs plan without writing.
 
 **Blocklist enforcement**: a query whose name is in the `deleted_tag`
 blocklist is skipped before the create — the flip is not applied and the skip
@@ -658,7 +691,10 @@ the reconciler's live counts, and the merge-review evidence all read through
   records: `≈` twin candidates (Jaccard ≥ 0.9 with both masses ≥ 3, gray band
   0.7–0.9), compound split proposals (both leftovers ≤ 0.1, gray to 0.25), and
   near-contained siblings (containment ≥ 0.8 with both masses ≥ 3, gray
-  0.6–0.8). The worklists are evidence for review; nothing acts on them.
+  0.6–0.8). The worklists are evidence: the reconciler's twin arm consumes the
+  `≈` pairs, the stored-compound scan covers stored compounds directly, and the
+  sibling readings stay review evidence — nothing is acted on at measurement
+  time.
 - **Running it**: `enricher.tag_measure.{enabled, interval, time}` schedules a
   `tagmeasure` task (disabled by default), and `kushim tagmeasure` runs the
   pass in the foreground under the maintenance lock, while
@@ -667,7 +703,8 @@ the reconciler's live counts, and the merge-review evidence all read through
   minutes-scale and serialize with every other blocking task.
 
 The pass measures; it never judges. Dispositions — promote, merge, split,
-delete — stay with the reconciler's worklists and the operator surfaces.
+delete — stay with the reconciler's arms (the stored-compound scan and the twin
+canonicalization arm) and the operator surfaces.
 
 ---
 

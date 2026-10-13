@@ -381,7 +381,7 @@ type TagAlias struct {
 
 type TagCompositionEvent struct {
 	ID              int64
-	DocumentID      int64
+	DocumentID      sql.NullInt64
 	Candidate       string
 	Parts           json.RawMessage
 	Disposition     string

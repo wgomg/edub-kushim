@@ -156,6 +156,12 @@ func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existin
 	return tags.AliasOutcome{Applied: true}, nil
 }
 
+// RecordIdentityEvidence is the reconcile sweep's write path for pending identity evidence: rows are
+// normalized and versioned exactly as the emission path's, so the two writers stay interchangeable.
+func (s *Tag) RecordIdentityEvidence(ctx context.Context, rows []tags.EvidenceRow) error {
+	return s.recordIdentityEvidence(ctx, s.client.Queries, rows)
+}
+
 func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, rows []tags.EvidenceRow) error {
 	for _, row := range rows {
 		candidate := textnorm.NormalizeTag(row.Candidate)

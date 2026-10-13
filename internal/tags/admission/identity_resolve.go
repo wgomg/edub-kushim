@@ -331,19 +331,7 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 		if !p.decided || p.verdict != types.TagVerdicts.Same {
 			continue
 		}
-		winner, loser := p.query, p.target
-		switch p.direction {
-		case analyzer.TagDirectionTarget:
-			winner, loser = p.target, p.query
-		case analyzer.TagDirectionQuery:
-			winner, loser = p.query, p.target
-		default:
-			if tags.PreferCanonical(p.query, p.target) == p.query {
-				winner, loser = p.query, p.target
-			} else {
-				winner, loser = p.target, p.query
-			}
-		}
+		winner, loser := tags.CanonicalLoser(p.direction, p.query, p.target)
 		winnerByLoser[loser] = winner
 	}
 	finalWinner := func(name string) string {

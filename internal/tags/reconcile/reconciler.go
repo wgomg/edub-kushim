@@ -1,6 +1,6 @@
 // Package reconcile is the tag store's scheduled maintenance: it sweeps the recorded verdict evidence
 // for stale, unjudged and drifted pairs, re-ranks and re-adjudicates what changed, and applies or plans
-// alias collapses, keep flips, joint splits and provisional-tag outcomes through the curation surface.
+// alias collapses, keep flips, compound splits and provisional-tag outcomes through the curation surface.
 // It is the scheduled reconciliation flow of docs/tags/consolidation.md, the machine-driven complement
 // of the human worklist review.
 package reconcile
@@ -25,7 +25,7 @@ import (
 )
 
 // Reconciler is the scheduled tag-store maintainer: it re-judges stale verdict evidence, flips decisions
-// whose evidence changed, plans and applies alias collapses and joint splits, and settles provisional
+// whose evidence changed, plans and applies alias collapses and compound splits, and settles provisional
 // tags, capped per run and report-only when configured.
 type Reconciler struct {
 	getConfig func() *config.Config
@@ -48,31 +48,53 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 	}
 }
 
-// Report summarizes one reconcile run: the worklist by category, the judged, confirmed and flipped counts,
-// the applied and planned alias collapses, keep flips, retags, invalidations and joint splits, and the
-// provisional-tag outcomes.
+// Report is the stored audit of one reconcile run. It is serialized as the task result and parsed by the web
+// UI, so its JSON vocabulary is a compatibility surface rather than free to rename.
 type Report struct {
-	ReportOnly          bool                      `json:"report_only"`
-	Worklist            WorklistCounts            `json:"worklist"`
-	Judged              int                       `json:"judged"`
-	Confirmed           int                       `json:"confirmed"`
-	Flips               FlipCounts                `json:"flips"`
-	Aliases             []PairEntry               `json:"aliases"`
-	Retags              int                       `json:"retags"`
-	Invalidated         int                       `json:"invalidated"`
-	Skips               map[string]int            `json:"skips"`
-	PlannedAliases      []PairEntry               `json:"planned_aliases,omitempty"`
-	PlannedKeepFlips    []PairEntry               `json:"planned_keep_flips,omitempty"`
-	RetagEntries        []PairEntry               `json:"retag_entries,omitempty"`
-	InvalidatedEntries  []PairEntry               `json:"invalidated_entries,omitempty"`
-	JointSplits         []JointSplitEntry         `json:"joint_splits,omitempty"`
-	PlannedJointSplits  []JointSplitEntry         `json:"planned_joint_splits,omitempty"`
-	Capped              int                       `json:"capped,omitempty"`
-	NoDocuments         int                       `json:"no_documents,omitempty"`
-	Swept               int                       `json:"swept,omitempty"`
-	AdjudicatorDisabled bool                      `json:"adjudicator_disabled,omitempty"`
-	Provisional         ProvisionalCounts         `json:"provisional"`
-	Identity            *admission.IdentityReport `json:"identity,omitempty"`
+	ReportOnly            bool                      `json:"report_only"`
+	Worklist              WorklistCounts            `json:"worklist"`
+	Judged                int                       `json:"judged"`
+	Confirmed             int                       `json:"confirmed"`
+	Flips                 FlipCounts                `json:"flips"`
+	Aliases               []PairEntry               `json:"aliases"`
+	Retags                int                       `json:"retags"`
+	Invalidated           int                       `json:"invalidated"`
+	Skips                 map[string]int            `json:"skips"`
+	PlannedAliases        []PairEntry               `json:"planned_aliases,omitempty"`
+	PlannedKeepFlips      []PairEntry               `json:"planned_keep_flips,omitempty"`
+	RetagEntries          []PairEntry               `json:"retag_entries,omitempty"`
+	InvalidatedEntries    []PairEntry               `json:"invalidated_entries,omitempty"`
+	CompoundSplits        []CompoundSplitEntry      `json:"compound_splits,omitempty"`
+	PlannedCompoundSplits []CompoundSplitEntry      `json:"planned_compound_splits,omitempty"`
+	Capped                int                       `json:"capped,omitempty"`
+	NoDocuments           int                       `json:"no_documents,omitempty"`
+	Swept                 int                       `json:"swept,omitempty"`
+	AdjudicatorDisabled   bool                      `json:"adjudicator_disabled,omitempty"`
+	Twins                 TwinCounts                `json:"twins"`
+	Measurement           *MeasurementRun           `json:"measurement,omitempty"`
+	Provisional           ProvisionalCounts         `json:"provisional"`
+	Identity              *admission.IdentityReport `json:"identity,omitempty"`
+}
+
+// TwinCounts is the twin arm's outcome tally for one run: the pairs the latest measurement run proposed and
+// how the arm resolved them. A proposed pair may be filtered out (Settled, Held, Skipped) rather than
+// resolved, so the counters describe dispositions and do not partition Worklist.
+type TwinCounts struct {
+	Worklist   int `json:"worklist"`
+	Settled    int `json:"settled"`
+	Held       int `json:"held"`
+	Skipped    int `json:"skipped"`
+	Mechanical int `json:"mechanical"`
+	Planned    int `json:"planned"`
+	Pending    int `json:"pending"`
+}
+
+// MeasurementRun identifies the measurement run the twin arm read, so a report can be traced to its input;
+// Absent records that the store has no run yet, where the twin worklist is empty by definition.
+type MeasurementRun struct {
+	RunID      string    `json:"run_id,omitempty"`
+	SnapshotAt time.Time `json:"snapshot_at,omitzero"`
+	Absent     bool      `json:"absent,omitempty"`
 }
 
 // ProvisionalCounts tallies what the run did with provisional tags:
@@ -89,20 +111,22 @@ type ProvisionalCounts struct {
 	Failed     int `json:"failed"`
 }
 
-// WorklistCounts counts the worklist entries by category (stale,
-// unjudged, drifted, aged) plus the joint-tag splits.
+// WorklistCounts sizes each arm the run fetched before any cap: the four pair re-check categories, the
+// stored compounds the sweep will consider, and the twin pairs the measurement run proposed. It feeds the
+// report's checked total; it is not itself what the run acted on.
 type WorklistCounts struct {
-	Stale    int `json:"stale"`
-	Unjudged int `json:"unjudged"`
-	Drifted  int `json:"drifted"`
-	Aged     int `json:"aged"`
-	Joint    int `json:"joint"`
+	Stale     int `json:"stale"`
+	Unjudged  int `json:"unjudged"`
+	Drifted   int `json:"drifted"`
+	Aged      int `json:"aged"`
+	Compounds int `json:"compounds"`
+	Twins     int `json:"twins"`
 }
 
-// JointSplitEntry is one planned or applied joint-tag split: the query,
-// its approved components, how many documents were reassigned, and the
-// reason when it was not applied.
-type JointSplitEntry struct {
+// CompoundSplitEntry is one stored-compound split in the report. Reassigned is the compound's current
+// document count when planned and the documents actually re-pointed when applied; Reason names the verdict
+// source (deterministic or adjudicated).
+type CompoundSplitEntry struct {
 	Query      string   `json:"query"`
 	Components []string `json:"components"`
 	Reassigned int64    `json:"reassigned"`
@@ -145,6 +169,7 @@ type entry struct {
 	freshSim     float64
 	freshVerdict types.TagVerdict
 	freshModel   string
+	direction    string
 	confirmed    bool
 	skipReason   string
 }
@@ -204,6 +229,16 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		}
 	}
 
+	// the store's live key set, built as the emission gate builds it, so both fans cover the same words
+	storeTagKeys, err := r.client.ListStoreTagKeys(ctx)
+	if err != nil {
+		return report, fmt.Errorf("list store tag keys: %w", err)
+	}
+	liveNames := make(map[string]struct{}, len(storeTagKeys))
+	for _, key := range storeTagKeys {
+		liveNames[tags.Key(key)] = struct{}{}
+	}
+
 	progress("worklist", "building worklist", 0)
 
 	worklist, invalidated, err := r.buildWorklist(ctx, cfg, storeTags, tagCounts, &report)
@@ -212,15 +247,21 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	}
 	report.Invalidated = invalidated
 
-	jointWorklist := r.buildJointWorklist(allTags, tagCounts)
-	report.Worklist.Joint = len(jointWorklist)
+	pairKeys := make(map[string]struct{}, len(worklist))
+	for _, entry := range worklist {
+		pairKeys[twinPairKey(entry.query, entry.target)] = struct{}{}
+	}
+
+	compoundWorklist := r.buildCompoundWorklist(ctx, allTags, tagCounts, &report)
+	report.Worklist.Compounds = len(compoundWorklist)
 
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		report.AdjudicatorDisabled = true
-		r.decideJointSplits(ctx, cfg, jointWorklist, promotedView)
-		r.planJointSplits(jointWorklist, &report)
-		r.logger.Info("", "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d joint tags detected (would split %d deterministically)",
-			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.Worklist.Joint, len(report.PlannedJointSplits))
+		r.decideCompoundSplits(ctx, cfg, compoundWorklist, promotedView, liveNames)
+		r.planCompoundSplits(compoundWorklist, &report)
+		r.sweepTwins(ctx, cfg, &report, pairKeys)
+		r.logger.Info("", "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d stored compounds (would split %d deterministically); %d twin pairs proposed",
+			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.Worklist.Compounds, len(report.PlannedCompoundSplits), report.Worklist.Twins)
 		return report, nil
 	}
 
@@ -228,24 +269,25 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		report.Capped = len(worklist) - cfg.Enricher.TagReconcile.MaxRejudge
 		worklist = worklist[:cfg.Enricher.TagReconcile.MaxRejudge]
 	}
-	if remaining := cfg.Enricher.TagReconcile.MaxRejudge - len(worklist); len(jointWorklist) > remaining {
-		report.Capped += len(jointWorklist) - remaining
-		jointWorklist = jointWorklist[:remaining]
+	if remaining := cfg.Enricher.TagReconcile.MaxRejudge - len(worklist); len(compoundWorklist) > remaining {
+		report.Capped += len(compoundWorklist) - remaining
+		compoundWorklist = compoundWorklist[:remaining]
 	}
 
 	progress("evidence", "ranking worklist pairs", 0)
 	r.evidencePass(ctx, cfg, worklist)
 
-	progress("splits", "adjudicating joint tags", 0)
-	r.decideJointSplits(ctx, cfg, jointWorklist, promotedView)
+	progress("splits", "disposing stored compounds", 0)
+	r.decideCompoundSplits(ctx, cfg, compoundWorklist, promotedView, liveNames)
 
 	progress("apply", "applying flips", 0)
 	r.applyPass(ctx, cfg, worklist, &report, tagCounts, blocklist)
 	if report.ReportOnly {
-		r.planJointSplits(jointWorklist, &report)
+		r.planCompoundSplits(compoundWorklist, &report)
 	} else {
-		r.applyJointSplits(ctx, cfg, jointWorklist, &report, storeTags)
+		r.applyCompoundSplits(ctx, cfg, compoundWorklist, &report, storeTags)
 	}
+	r.sweepTwins(ctx, cfg, &report, pairKeys)
 	r.sweepOrphanTags(ctx, cfg, &report)
 	r.sweepProvisionalTags(ctx, cfg, &report)
 	r.sweepIdentityEvidence(ctx, cfg, &report)
@@ -269,13 +311,13 @@ func (r *Reconciler) logSummary(report Report) {
 				created++
 			}
 		}
-		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d joint tags would split; %d skipped, %d over cap",
-			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedJointSplits), skipped, report.Capped)
+		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d stored compounds would split; %d twin pairs proposed (%d would alias); %d skipped, %d over cap",
+			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedCompoundSplits), report.Twins.Worklist, report.Twins.Planned, skipped, report.Capped)
 		return
 	}
 	documents := sumReassigned(report.Aliases) + sumReassigned(report.RetagEntries)
-	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d joint tags split; %d skipped, %d over cap",
-		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.JointSplits), skipped, report.Capped)
+	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d stored compounds split; %d twin pairs proposed (%d aliased); %d skipped, %d over cap",
+		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.CompoundSplits), report.Twins.Worklist, report.Twins.Mechanical, skipped, report.Capped)
 }
 
 func sumReassigned(entries []PairEntry) int64 {

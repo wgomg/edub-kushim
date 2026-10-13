@@ -152,6 +152,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 				}
 				e.freshVerdict = results[j].Verdict
 				e.freshModel = adjudicatorModel
+				e.direction = results[j].Direction
 				e.reason = "adjudicated"
 				salvaged++
 			}
@@ -162,6 +163,7 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 			e := judgedEntries[i:end][j]
 			e.freshVerdict = res.Verdict
 			e.freshModel = adjudicatorModel
+			e.direction = res.Direction
 			e.reason = "adjudicated"
 		}
 	}

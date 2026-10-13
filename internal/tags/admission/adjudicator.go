@@ -71,8 +71,7 @@ func NewAdjudicator(cfg *config.Config, logger *log.Logger, queries *database.Qu
 
 // PartVerdict is one resolved part value's verdict from the persisted cache or a fresh judge call: the
 // dimensional answer, whether the judge abstained, and whether a concurrent writer's stored row disagreed
-// with this sample. Exported so the stored-joint sweep folds the same persisted rows through
-// CompositionFeatures instead of re-implementing the fold.
+// with this sample. Exported as the vocabulary of the verdict store's parts reader.
 type PartVerdict struct {
 	Dimensional  bool
 	Deferred     bool
@@ -81,8 +80,8 @@ type PartVerdict struct {
 
 // CompoundVerdict is one compound candidate's verdict from the persisted cache or a fresh judge call: the
 // status, whether the judge abstained, the model behind a fresh call, whether it came from the cache, and
-// whether a concurrent writer's stored row disagreed with this sample. Exported so the stored-joint sweep
-// folds the same persisted rows through CompositionFeatures instead of re-implementing the fold.
+// whether a concurrent writer's stored row disagreed with this sample. Exported as the vocabulary of the
+// verdict store's compounds reader.
 type CompoundVerdict struct {
 	Status       analyzer.TagCompoundStatus
 	Deferred     bool
@@ -112,7 +111,7 @@ type CompoundVerdict struct {
 // the promoted tag names' Key→name view the fold resolution and the reconstructibility signal read — seam
 // fold resolution anchors only on promoted rows, and a resolved part is reconstructible only when it is
 // one. docId is the emitting document, stamped on fresh part and compound verdict rows (0 stores NULL
-// provenance, as the stored-joint sweep does). A non-nil error is returned when the provider account
+// provenance, as the stored-compound sweep does). A non-nil error is returned when the provider account
 // cannot pay or the adjudication-state lookup fails; every other failure degrades to keeping the
 // compounds. Without a configured adjudicator the conjunction grammar fallback stands: explicit
 // coordination splits mechanically and every other compound keeps whole under judge_unavailable.
@@ -183,12 +182,39 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 		return withAlongside(expanded, alongsideByCompound), rows, nil
 	}
 
+	rows, err := a.JudgeCompounds(ctx, candidates, storeKeys, promotedNames, filter, docId, reqID)
+	if err != nil {
+		return nil, nil, err
+	}
+	components := make(map[string][]string, len(candidates))
+	dropped := make(map[string]bool, len(candidates))
+	for _, row := range rows {
+		switch row.Disposition {
+		case tags.CompositionSplit:
+			components[row.Candidate] = row.Parts
+		case tags.CompositionDrop:
+			dropped[row.Candidate] = true
+		default:
+			if len(row.Parts) > 0 {
+				alongsideByCompound[row.Candidate] = row.Parts
+			}
+		}
+	}
+	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), rows, nil
+}
+
+// JudgeCompounds is the compound judgment the emission gate's DecomposeTags and the stored-compound sweep
+// share, so a candidate disposes identically on either path. It returns one criterion-versioned row per
+// candidate, in order: a split row's parts are its components, a keep row's are the parts applied alongside.
+// The rows carry no document — docId stamps only the fresh verdict rows the judgment writes (0 is the
+// sweep's document-less provenance) — and the emission path stamps each returned row's own document.
+func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, liveNames map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]tags.CompositionRow, error) {
 	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model, tags.PromotedKeys(promotedNames))
 	fans := make(map[string]Fan, len(candidates))
 	for _, candidate := range candidates {
-		fan, ferr := a.resolveFan(ctx, store, candidate, promotedNames, storeKeys, docId, reqID)
+		fan, ferr := a.resolveFan(ctx, store, candidate, promotedNames, liveNames, docId, reqID)
 		if ferr != nil {
-			return nil, nil, ferr
+			return nil, ferr
 		}
 		fans[candidate] = fan
 	}
@@ -208,31 +234,29 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 
 	partVerdicts, err := store.Parts(ctx, values, docId, reqID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// a segment the store already holds is a value by definition, so it reads dimensional and its cover
-	// span needs no parts verdict; a phrase-fold abstention is not seeded here — it is scoped to the fan
-	// that produced it, so it never holds an unrelated compound through the shared verdict map
+	// a segment the store already holds is a value by definition, so it reads dimensional and its cover span
+	// needs no parts verdict; a phrase-fold abstention is not seeded here — it is scoped to the fan that
+	// produced it, so it never holds an unrelated compound through the shared verdict map
 	orderedFans := make([]Fan, 0, len(candidates))
 	for _, candidate := range candidates {
 		orderedFans = append(orderedFans, fans[candidate])
 	}
-	SeedStoreValues(partVerdicts, orderedFans, storeKeys)
+	seedStoreValues(partVerdicts, orderedFans, liveNames)
 	compoundVerdicts, err := store.Compounds(ctx, candidates, docId, reqID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	components := make(map[string][]string, len(candidates))
-	dropped := make(map[string]bool, len(candidates))
 	rows := make([]tags.CompositionRow, 0, len(candidates))
 	for _, candidate := range candidates {
 		cv := compoundVerdicts[candidate]
 		fan := fans[candidate]
 		// the coarsest cover's segments when the fan has a full multi-segment cover, otherwise the flat
 		// resolved content the unit branch's deferred/unavailable reads consume
-		parts, coverComplete := CoverParts(fan, storeKeys, partVerdicts)
-		features := CompositionFeatures(parts, coverComplete, fan.DeferredSet(), partVerdicts, cv, promotedNames)
+		parts, coverComplete := coverParts(fan, liveNames, partVerdicts)
+		features := compositionFeatures(parts, coverComplete, fan.DeferredSet(), partVerdicts, cv, promotedNames)
 		decision := tags.DecideComposition(features)
 		reconstructible := features.Reconstructible
 		row := tags.CompositionRow{
@@ -253,13 +277,11 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 				row.Model = freshModel(cv)
 				break
 			}
-			components[candidate] = valid
 			row.Disposition = tags.CompositionSplit
 			row.Parts = valid
 			row.Reason, row.Model = splitSource(cv)
 			a.logger.Info(reqID, "tag split[%s]: split %q → %q", analyzer.TagSplitVersion, candidate, valid)
 		case tags.CompositionDrop:
-			dropped[candidate] = true
 			row.Disposition = tags.CompositionDrop
 			row.Reason = decision.Reason
 			row.Model = freshModel(cv)
@@ -268,15 +290,37 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			row.Disposition = tags.CompositionKeep
 			row.Reason = decision.Reason
 			row.Model = freshModel(cv)
-			if parts := alongsideCover(fan, storeKeys, partVerdicts, filter); len(parts) > 0 {
+			if parts := alongsideCover(fan, liveNames, partVerdicts, filter); len(parts) > 0 {
 				row.Parts = parts
-				alongsideByCompound[candidate] = parts
 			}
 			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=%t)", analyzer.TagSplitVersion, candidate, row.Reason, cv.Cached)
 		}
 		rows = append(rows, row)
 	}
-	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), rows, nil
+	return rows, nil
+}
+
+// ConjunctionComponents disposes of an explicit coordination compound with no adjudicator: it splits on the
+// joint-tag grammar, folds each segment onto its store anchor, and validates the survivors under the
+// component bounds, returning the validated components or nil when the name is not an explicit coordination
+// or the survivors are malformed. The emission gate's conjunction fallback and the stored-compound sweep
+// share it, so an adjudicator-free store decomposes a conjunction identically on both paths.
+func ConjunctionComponents(candidate string, promotedNames map[string]string, liveNames map[string]struct{}, filter *analyzer.TagFilter) []string {
+	segments := textnorm.SplitJointTag(candidate)
+	if segments == nil {
+		return nil
+	}
+	parts := analyzer.NormalizeTags(segments)
+	for i, part := range parts {
+		if anchor := tags.AnchoredFold(part, promotedNames, liveNames); anchor != "" && anchor != part {
+			parts[i] = anchor
+		}
+	}
+	valid := analyzer.SplitComponents(parts, filter)
+	if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
+		return nil
+	}
+	return valid
 }
 
 // conjunctionSplits is the no-adjudicator fallback: explicit coordination splits mechanically through the
@@ -288,22 +332,15 @@ func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedName
 	rows := make([]tags.CompositionRow, 0, len(candidates))
 	for _, candidate := range candidates {
 		row := tags.CompositionRow{Candidate: candidate, CriteriaVersion: analyzer.TagSplitVersion}
-		segments := textnorm.SplitJointTag(candidate)
-		if segments == nil {
+		if textnorm.SplitJointTag(candidate) == nil {
 			row.Disposition = tags.CompositionKeep
 			row.Reason = tags.CompositionReasonJudgeUnavailable
 			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=false)", analyzer.TagSplitVersion, candidate, row.Reason)
 			rows = append(rows, row)
 			continue
 		}
-		parts := analyzer.NormalizeTags(segments)
-		for i, part := range parts {
-			if anchor := tags.AnchoredFold(part, promotedNames, liveNames); anchor != "" && anchor != part {
-				parts[i] = anchor
-			}
-		}
-		valid := analyzer.SplitComponents(parts, filter)
-		if len(valid) < 2 || len(valid) > tags.MaxCompoundWords {
+		valid := ConjunctionComponents(candidate, promotedNames, liveNames, filter)
+		if valid == nil {
 			row.Disposition = tags.CompositionKeep
 			row.Reason = tags.CompositionReasonInvalidComponents
 			a.logger.Info(reqID, "tag split[%s]: keep %q (reason=%s cached=false)", analyzer.TagSplitVersion, candidate, row.Reason)
@@ -320,7 +357,7 @@ func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedName
 	return expandCandidates(names, components, dropped), rows, nil
 }
 
-// CompositionFeatures folds the two passes' verdicts into the decision's feature set: the compound status
+// compositionFeatures folds the two passes' verdicts into the decision's feature set: the compound status
 // (or the abstention), the parts' dimensional reading, the judge-outage flag a missing verdict sets, the
 // cross-sample disagreement either pass observed, and the reconstructibility signal — every cover segment
 // dimensional and every resolved cover segment a promoted store label (the established-value proxy the fold
@@ -328,9 +365,8 @@ func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedName
 // multi-segment cover: when it does, the combination branch owns the decision and the parts
 // are the cover's segments; when it does not, the unit branch owns it and parts carries the flat resolved
 // content for the deferred/unavailable reads. deferred carries the candidate's own phrase-fold abstentions,
-// so a hold stays scoped to the phrase that abstained. Shared by the emission gate and the stored-joint
-// sweep so both dispose the same persisted rows identically.
-func CompositionFeatures(parts []string, coverComplete bool, deferred map[string]bool, verdicts map[string]PartVerdict, cv CompoundVerdict, promotedNames map[string]string) tags.CompositionFeatures {
+// so a hold stays scoped to the phrase that abstained.
+func compositionFeatures(parts []string, coverComplete bool, deferred map[string]bool, verdicts map[string]PartVerdict, cv CompoundVerdict, promotedNames map[string]string) tags.CompositionFeatures {
 	var f tags.CompositionFeatures
 	switch {
 	case cv.Deferred:
@@ -417,8 +453,7 @@ func expandCandidates(names []string, components map[string][]string, dropped ma
 
 // Fan is one candidate's decomposition fan: its content words, the applied form of every fan segment (a
 // content word or a contiguous bigram; a segment is absent when it is a dropped time designation), and the
-// content words whose phrase-context fold abstained. The emission gate and the reconcile sweep build and
-// consume it through the shared helpers below, so the prospective and retrospective readings agree.
+// content words whose phrase-context fold abstained.
 type Fan struct {
 	Content  []string
 	Resolved map[string]string
@@ -437,14 +472,6 @@ func (f Fan) DeferredSet() map[string]bool {
 		set[word] = true
 	}
 	return set
-}
-
-// WithDeferred returns the fan with its phrase-context abstentions set, so a caller that applied folds
-// outside the gate (the reconcile sweep) can carry them without the deferred slice being part of the public
-// shape.
-func (f Fan) WithDeferred(deferred []string) Fan {
-	f.deferred = deferred
-	return f
 }
 
 // Resolve adapts the fan to the cover scan: a fan span resolves to its applied name when the store already
@@ -482,14 +509,13 @@ func (f Fan) FlatResolved() []string {
 	return out
 }
 
-// ResolveContentSingles resolves a candidate's content words through the deterministic time-designation gate
+// resolveContentSingles resolves a candidate's content words through the deterministic time-designation gate
 // and the attested seam fold, returning the content words with their position-aligned resolved singles: a
 // time-designation word the live view does not hold is emptied, a mechanically folded word carries its
 // anchor, and every other word is itself. Handing back both slices keeps a caller from re-deriving the
-// content words just to index the singles. The emission gate and the stored-joint sweep share it, so both
-// build the decomposition fan over the same words. liveNames is the live store key set, promotedNames the
-// promoted store view the fold anchors on.
-func ResolveContentSingles(candidate string, promotedNames map[string]string, liveNames map[string]struct{}) (content, singles []string) {
+// content words just to index the singles. liveNames is the live store key set, promotedNames the promoted
+// store view the fold anchors on.
+func resolveContentSingles(candidate string, promotedNames map[string]string, liveNames map[string]struct{}) (content, singles []string) {
 	content = tags.DeriveParts(candidate)
 	singles = make([]string, len(content))
 	for i, word := range content {
@@ -504,12 +530,11 @@ func ResolveContentSingles(candidate string, promotedNames map[string]string, li
 	return content, singles
 }
 
-// BuildFan builds the fan resolution from position-aligned resolved singles: a bigram is literal (the
+// buildFan builds the fan resolution from position-aligned resolved singles: a bigram is literal (the
 // attestation table is single-token) and present only when both its words resolved and the bigram is not a
 // time designation the store lacks. A nil or short singles slice leaves the matching content words
-// unresolved, so a caller with no resolutions passes nil. Shared by the emission gate and the reconcile
-// sweep.
-func BuildFan(content, singles []string, liveNames map[string]struct{}) Fan {
+// unresolved, so a caller with no resolutions passes nil.
+func buildFan(content, singles []string, liveNames map[string]struct{}) Fan {
 	resolved := make(map[string]string, len(content)*2)
 	for i, word := range content {
 		if i < len(singles) && singles[i] != "" {
@@ -529,11 +554,10 @@ func BuildFan(content, singles []string, liveNames map[string]struct{}) Fan {
 	return Fan{Content: content, Resolved: resolved}
 }
 
-// PhraseFoldKeys returns the residual phrase-context fold keys a candidate's words raise: every content word
+// phraseFoldKeys returns the residual phrase-context fold keys a candidate's words raise: every content word
 // whose own single is unresolved (not time-dropped, not mechanically folded) and whose primary-sense base is
-// not live while another attested base is. The emission gate and the reconcile sweep ask the judge through
-// this one rule, so they never diverge on which words need the question.
-func PhraseFoldKeys(content, singles []string, phrase string, liveNames map[string]struct{}) []PhraseFoldKey {
+// not live while another attested base is.
+func phraseFoldKeys(content, singles []string, phrase string, liveNames map[string]struct{}) []PhraseFoldKey {
 	var keys []PhraseFoldKey
 	for i, word := range content {
 		if i >= len(singles) || singles[i] == "" || singles[i] != word {
@@ -546,12 +570,11 @@ func PhraseFoldKeys(content, singles []string, phrase string, liveNames map[stri
 	return keys
 }
 
-// ApplyPhraseFolds completes a fan's singles with its residual phrase-context folds: a word the caller left
+// applyPhraseFolds completes a fan's singles with its residual phrase-context folds: a word the caller left
 // unresolved is folded onto its anchor on a confirmed answer, and an abstention (or an ambiguity across
 // several live bases) leaves it unresolved and reports it deferred, so the compound holds for review instead
-// of landing on a wrong tag. The returned singles and deferred words are what the caller's fan carries. The
-// emission gate and the reconcile sweep apply through this one rule, so their fans agree.
-func ApplyPhraseFolds(content, singles []string, phrase string, verdicts map[PhraseFoldKey]PhraseFoldVerdict, liveNames map[string]struct{}) (resolved, deferred []string) {
+// of landing on a wrong tag. The returned singles and deferred words are what the caller's fan carries.
+func applyPhraseFolds(content, singles []string, phrase string, verdicts map[PhraseFoldKey]PhraseFoldVerdict, liveNames map[string]struct{}) (resolved, deferred []string) {
 	resolved = singles
 	for i, word := range content {
 		if i >= len(resolved) || resolved[i] == "" || resolved[i] != word {
@@ -575,10 +598,9 @@ func ApplyPhraseFolds(content, singles []string, phrase string, verdicts map[Phr
 	return resolved, deferred
 }
 
-// SeedStoreValues marks every resolved segment the store already holds as dimensional in the parts-verdict
-// map: a store value is a value by definition, so its cover span needs no parts verdict. The gate and the
-// sweep seed through this one rule, so their cover scans read the same verdicts.
-func SeedStoreValues(verdicts map[string]PartVerdict, fans []Fan, storeKeys map[string]struct{}) {
+// seedStoreValues marks every resolved segment the store already holds as dimensional in the parts-verdict
+// map: a store value is a value by definition, so its cover span needs no parts verdict.
+func seedStoreValues(verdicts map[string]PartVerdict, fans []Fan, storeKeys map[string]struct{}) {
 	for _, fan := range fans {
 		for _, resolved := range fan.Resolved {
 			if resolved == "" {
@@ -594,11 +616,10 @@ func SeedStoreValues(verdicts map[string]PartVerdict, fans []Fan, storeKeys map[
 	}
 }
 
-// CoverParts returns the segments the composition decision reads for a fan: the coarsest cover's segments
+// coverParts returns the segments the composition decision reads for a fan: the coarsest cover's segments
 // when the fan has a full multi-segment cover, otherwise the fan's flat resolved content for the unit
-// branch's deferred/unavailable reads. The boolean reports whether a full cover exists. The gate and the
-// sweep dispose a candidate by this one reading.
-func CoverParts(fan Fan, storeKeys map[string]struct{}, verdicts map[string]PartVerdict) (parts []string, coverComplete bool) {
+// branch's deferred/unavailable reads. The boolean reports whether a full cover exists.
+func coverParts(fan Fan, storeKeys map[string]struct{}, verdicts map[string]PartVerdict) (parts []string, coverComplete bool) {
 	cover := tags.GreedyCover(fan.Content, fan.Resolve(storeKeys, verdicts), false)
 	if len(cover) >= 2 {
 		return cover, true
@@ -611,22 +632,22 @@ func CoverParts(fan Fan, storeKeys map[string]struct{}, verdicts map[string]Part
 // and an abstention defers it so the compound holds for review. Returns a non-nil error only for credit
 // exhaustion.
 func (a *Adjudicator) resolveFan(ctx context.Context, store *VerdictStore, candidate string, promotedNames map[string]string, liveNames map[string]struct{}, docId int64, reqID string) (Fan, error) {
-	content, singles := ResolveContentSingles(candidate, promotedNames, liveNames)
+	content, singles := resolveContentSingles(candidate, promotedNames, liveNames)
 	if tags.IsPeriodClass(tags.HouseForm(candidate)) {
 		// a period is valid by fiat and does not decompose: its fan carries no resolved segments
-		return BuildFan(content, nil, liveNames), nil
+		return buildFan(content, nil, liveNames), nil
 	}
 	phrase := tags.HouseForm(candidate)
-	keys := PhraseFoldKeys(content, singles, phrase, liveNames)
+	keys := phraseFoldKeys(content, singles, phrase, liveNames)
 	var deferred []string
 	if len(keys) > 0 {
 		verdicts, err := store.PhraseFolds(ctx, keys, docId, reqID)
 		if err != nil {
 			return Fan{}, err
 		}
-		singles, deferred = ApplyPhraseFolds(content, singles, phrase, verdicts, liveNames)
+		singles, deferred = applyPhraseFolds(content, singles, phrase, verdicts, liveNames)
 	}
-	fan := BuildFan(content, singles, liveNames)
+	fan := buildFan(content, singles, liveNames)
 	fan.deferred = deferred
 	return fan, nil
 }
@@ -653,8 +674,8 @@ func (a *Adjudicator) storedCoverage(ctx context.Context, skipped []string, prom
 	seenValues := make(map[string]bool)
 	var values []string
 	for _, name := range skipped {
-		content, singles := ResolveContentSingles(name, promotedNames, liveNames)
-		fan := BuildFan(content, singles, liveNames)
+		content, singles := resolveContentSingles(name, promotedNames, liveNames)
+		fan := buildFan(content, singles, liveNames)
 		fans[name] = fan
 		for _, seg := range tags.DeriveSegments(name) {
 			resolved := fan.Resolved[seg]
@@ -720,7 +741,8 @@ func withAlongside(names []string, alongsideByCompound map[string][]string) []st
 }
 
 // splitSource names a split decision's verdict source and the model that judged it: a cached compound
-// verdict has no fresh call behind it and no model; a fresh judge call carries its model.
+// verdict has no fresh call behind it and no model; a fresh judge call carries its model. Exported so the
+// stored-compound sweep records the same verdict source the emission gate does.
 func splitSource(cv CompoundVerdict) (reason, model string) {
 	if cv.Cached {
 		return tags.CompositionReasonCached, ""
@@ -729,7 +751,7 @@ func splitSource(cv CompoundVerdict) (reason, model string) {
 }
 
 // freshModel is the model a composition row records: the judge's model for a fresh verdict, empty for a
-// cached one.
+// cached one. Exported so the stored-compound sweep records the same model the emission gate does.
 func freshModel(cv CompoundVerdict) string {
 	if cv.Cached {
 		return ""

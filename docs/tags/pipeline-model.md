@@ -277,13 +277,13 @@ system already has, how far it matches the model, and what the delta is.
 | **S1 Emission** | Typed generation contract, subject-matter rule, choose-or-justify, two negatives, dimension language and compound decomposition (`analyzer/prompt.go`); suggestions injected from the store | Partial | Coverage wording pending; the dictionary-standard selection language is retired |
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate (persons, form/genre) + the deterministic time-designation gate (`internal/enrichment/enricher.go`) | Aligned | Places and works are ordinary subject candidates; untyped emissions degrade to string heuristics (accepted) |
 | **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, alias disposition, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; the disposition is not yet a standing mandate |
-| **S4 Atomicity (P4)** | General compound decomposition at emission over the in-order segment fan, disposed by the coarsest cover (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + stored-joint worklist (`reconcile/joint.go`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
+| **S4 Atomicity (P4)** | General compound decomposition at emission over the in-order segment fan, disposed by the coarsest cover (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + the stored-compound scan (`reconcile/compounds.go`, judged through `Adjudicator.JudgeCompounds`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
 | **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + the 10-live-document floor (`tags.DecidePromotion`, `tags.RecurrenceFloor`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
 | **S8 Retrieval** | Multi-tag AND filter (`internal/database/structured_search.go`, `tagsAnd`) | Aligned · Absent (completeness) | Coverage of dimensions is audited nowhere |
-| **D1 Canonicalization** | Adjudicator and reconciler (the confirmed flips alias) | Absent as a standing duty | A detector by extension equality is missing |
-| **D2 Composition review** | — (the observed catalogs are the first worklist) | Absent | No retrospective composition review |
+| **D1 Canonicalization** | Adjudicator and reconciler — the reconciler's twin arm consumes the measurement `≈` worklists and the confirmed flips alias | Landed as a standing duty | Gray bands and sibling readings stay evidence-only |
+| **D2 Composition review** | Reconciler's stored-compound scan over every stored compound, disposed through the composition decision | Landed as a standing duty | Part-value/mass evidence still absent |
 | **D3 Completeness** | — (the prompt bounds tag count, not coverage) | Absent | The load-bearing adoption risk (definition §7.3) |
 | **D4 Measurement substrate** | Document counts (`CountLiveTagDocumentsByTagIDs`), embedding similarities, pair verdict stats (`TagPairEvidenceStats`) | Partial | No per-value extension algebra |
 | **D5 Review surfaces** | Provisional review queue, blocklist, reconciliation report | Partial | Labels accrue under the old standard; usage is not a signal (definition §6.3) |
@@ -336,8 +336,11 @@ phrase as a named unit, a composition, or a phrase with no retrievable dimension
 folded into `tags.DecideComposition`, which disposes by the coarsest in-order cover over
 the fan; without one only conjunction joints (`and`,
 `or`, `vs`, `versus` — `textnorm.SplitJointTag`) split mechanically while other
-compounds pass whole. The reconciler re-uses the conjunction detector for stored
-tags and disposes them through the same decision. P4 is wider than
+compounds pass whole. The reconciler re-uses the same decision for stored
+tags — `Adjudicator.JudgeCompounds` judges every stored compound, not only
+conjunctions, so a compound disposes identically at emission and in the sweep —
+and its twin arm canonicalizes the near-identical labels the measurement
+worklists propose. P4 is wider than
 conjunctions and is a set test, not a surface one. One asymmetry matters for any plan:
 at emission time a novel compound has no extension and its parts may not exist as
 values, so the true test is not available prospectively — the report's

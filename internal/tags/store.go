@@ -2,6 +2,8 @@ package tags
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -150,6 +152,42 @@ func (s *Store) CompoundIntersections(ctx context.Context, compoundIDs, partIDs 
 		}
 	}
 	return out, nil
+}
+
+// WorklistSnapshot is one measurement run's derived worklists. Absent separates "no run yet" from "a run
+// with empty worklists" — both leave Worklists empty, so only Absent marks zero-data operation.
+type WorklistSnapshot struct {
+	RunID      uuid.UUID
+	SnapshotAt time.Time
+	Absent     bool
+	Worklists  Worklists
+}
+
+// LatestWorklists derives the review worklists from the latest measurement run under the current cuts. The
+// cuts are consumer-side (extension-algebra §4), so a rule-set bump re-derives an old run's raw numbers
+// instead of invalidating them. A store with no run returns an absent snapshot and no error: zero data is a
+// normal state, not a failure.
+func (s *Store) LatestWorklists(ctx context.Context) (*WorklistSnapshot, error) {
+	run, err := s.q.LatestTagMeasurementRun(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &WorklistSnapshot{Absent: true}, nil
+		}
+		return nil, fmt.Errorf("latest tag measurement run: %w", err)
+	}
+	rows, err := s.q.TagMeasurementRecordsForRun(ctx, run.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("tag measurement records: %w", err)
+	}
+	records, err := DecodeRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &WorklistSnapshot{
+		RunID:      run.RunID,
+		SnapshotAt: run.SnapshotAt,
+		Worklists:  DeriveWorklists(records),
+	}, nil
 }
 
 const insertChunk = 2000

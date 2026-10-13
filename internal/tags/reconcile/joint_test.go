@@ -11,24 +11,20 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
-// jointSweepConfig returns the configuration decideJointSplits reads: the adjudicator on or off, and the
-// component bound the existing SplitComponents validation checks against.
+// jointSweepConfig returns the only configuration decideCompoundSplits reads: whether the adjudicator is on.
 func jointSweepConfig(adjudicatorEnabled bool) *config.Config {
 	return &config.Config{Enricher: config.EnricherConfig{
 		TagAdjudicator: config.TagAdjudicatorConfig{Enabled: adjudicatorEnabled},
-		ContentAnalyzer: config.ContentAnalyzerConfig{
-			MinTags: 3,
-			MaxTags: 5,
-		},
 	}}
 }
 
 // entryNamed returns the worklist entry for a candidate, failing the test when the worklist dropped it.
-func entryNamed(t *testing.T, entries []*jointEntry, name string) *jointEntry {
+func entryNamed(t *testing.T, entries []*compoundEntry, name string) *compoundEntry {
 	t.Helper()
 	for _, e := range entries {
 		if e.name == name {
@@ -39,17 +35,17 @@ func entryNamed(t *testing.T, entries []*jointEntry, name string) *jointEntry {
 	return nil
 }
 
-// TestDecideJointSplits_DeterministicWithoutAdjudicator covers the sweep's degraded path: with the adjudicator
-// off, only explicit coordination splits — mechanically, from the segments the worklist derived — and a name
-// whose segments all filter away is reported rather than silently split.
-func TestDecideJointSplits_DeterministicWithoutAdjudicator(t *testing.T) {
+// TestDecideCompoundSplits_DeterministicWithoutAdjudicator covers the sweep's degraded path: with the
+// adjudicator off, only explicit coordination splits — mechanically, from the matched conjunction segments —
+// and a name whose segments all filter away is reported rather than silently split.
+func TestDecideCompoundSplits_DeterministicWithoutAdjudicator(t *testing.T) {
 	r := &Reconciler{logger: testutil.NewTestLogger()}
-	entries := []*jointEntry{
-		{name: "supply and demand", segments: []string{"supply", "demand"}},
-		{name: "and", segments: []string{"and"}},
+	entries := []*compoundEntry{
+		{name: "supply and demand"},
+		{name: "one two three four and five six seven eight"},
 	}
 
-	r.decideJointSplits(context.Background(), jointSweepConfig(false), entries, nil)
+	r.decideCompoundSplits(context.Background(), jointSweepConfig(false), entries, nil, nil)
 
 	split, invalid := entries[0], entries[1]
 	if !split.split {
@@ -72,11 +68,11 @@ func TestDecideJointSplits_DeterministicWithoutAdjudicator(t *testing.T) {
 	}
 }
 
-// TestDecideJointSplits_DisposesThroughDecision pins the sweep's arm of the composition decision: verdicts
-// read from the persisted caches are folded through admission.CompositionFeatures and disposed by
-// tags.DecideComposition, so a composition whose parts are dimensional splits and a named unit whose parts are
-// not dimensional keeps with the decision reason as the report's skip reason.
-func TestDecideJointSplits_DisposesThroughDecision(t *testing.T) {
+// TestDecideCompoundSplits_DisposesThroughDecision pins the sweep's arm of the composition decision: verdicts
+// read from the persisted caches dispose through the same admission judgment the emission gate uses, so a
+// composition whose parts are dimensional splits and a named unit whose parts are not dimensional keeps with
+// the decision reason as the report's skip reason.
+func TestDecideCompoundSplits_DisposesThroughDecision(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
@@ -92,6 +88,7 @@ func TestDecideJointSplits_DisposesThroughDecision(t *testing.T) {
 
 	r := &Reconciler{
 		client: client,
+		tag:    curation.NewTag(client, testutil.NewTestLogger(), testutil.NewMockEmbedder()),
 		runner: &tools.Runner{},
 		logger: testutil.NewTestLogger(),
 	}
@@ -99,12 +96,12 @@ func TestDecideJointSplits_DisposesThroughDecision(t *testing.T) {
 		{ID: 1, Name: "supply and demand"},
 		{ID: 2, Name: "rock and roll"},
 	}
-	entries := r.buildJointWorklist(allTags, nil)
+	entries := r.buildCompoundWorklist(ctx, allTags, nil, &Report{Skips: map[string]int{}})
 	if len(entries) != 2 {
-		t.Fatalf("worklist = %d entries, want the two joint names", len(entries))
+		t.Fatalf("worklist = %d entries, want the two compound names", len(entries))
 	}
 
-	r.decideJointSplits(ctx, jointSweepConfig(true), entries, nil)
+	r.decideCompoundSplits(ctx, jointSweepConfig(true), entries, nil, nil)
 
 	split := entryNamed(t, entries, "supply and demand")
 	if !split.split {

@@ -1498,7 +1498,7 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
 	if err := a.queries.InsertTagCompositionEvent(context.Background(), database.InsertTagCompositionEventParams{
-		DocumentID:      docID,
+		DocumentID:      sql.NullInt64{Int64: docID, Valid: true},
 		Candidate:       tags.StoredName("machine learning"),
 		Parts:           json.RawMessage("[]"),
 		Disposition:     string(tags.CompositionKeep),
@@ -1538,7 +1538,7 @@ func TestDecomposeTags_StoreExistingReJudgedUntilDecided(t *testing.T) {
 			seed: func(t *testing.T, a *Adjudicator, docID int64) {
 				t.Helper()
 				if err := a.queries.InsertTagCompositionEvent(context.Background(), database.InsertTagCompositionEventParams{
-					DocumentID:      docID,
+					DocumentID:      sql.NullInt64{Int64: docID, Valid: true},
 					Candidate:       tags.StoredName("machine learning"),
 					Parts:           json.RawMessage("[]"),
 					Disposition:     string(tags.CompositionKeep),
@@ -1586,7 +1586,7 @@ func TestDecomposeTags_StoreExistingKeepAppliesCachedParts(t *testing.T) {
 	ctx := context.Background()
 
 	if err := a.queries.InsertTagCompositionEvent(ctx, database.InsertTagCompositionEventParams{
-		DocumentID:      docID,
+		DocumentID:      sql.NullInt64{Int64: docID, Valid: true},
 		Candidate:       tags.StoredName("machine learning"),
 		Parts:           json.RawMessage("[]"),
 		Disposition:     string(tags.CompositionKeep),
@@ -2476,6 +2476,107 @@ func TestOutputByInput(t *testing.T) {
 			got := OutputByInput(tt.plan)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("OutputByInput() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestJudgeCompounds_RowContract pins the shared judgment seam the emission gate's DecomposeTags and the
+// stored-compound sweep both read: one row per candidate in candidate order, a split row carrying its
+// components, a keep row carrying the parts applied alongside, and no document on the rows — the emission
+// path stamps its own document, the sweep's stay NULL.
+func TestJudgeCompounds_RowContract(t *testing.T) {
+	ctx := context.Background()
+	filter := analyzer.NewTagFilter(nil, nil, nil)
+
+	t.Run("a split row carries its components", func(t *testing.T) {
+		a, _ := newSplitAdjudicator(t, &mockAdjudicator{
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+		}, nil)
+
+		rows, err := a.JudgeCompounds(ctx, []string{"machine learning"}, nil, nil, filter, 0, "")
+		if err != nil {
+			t.Fatalf("JudgeCompounds: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("rows = %d, want 1", len(rows))
+		}
+		row := rows[0]
+		if row.Candidate != "machine learning" {
+			t.Errorf("Candidate = %q, want the candidate as asked", row.Candidate)
+		}
+		if row.Disposition != tags.CompositionSplit {
+			t.Errorf("Disposition = %s, want split", row.Disposition)
+		}
+		if !reflect.DeepEqual(row.Parts, []string{"machine", "learning"}) {
+			t.Errorf("Parts = %v, want the split's components", row.Parts)
+		}
+		if row.CriteriaVersion != analyzer.TagSplitVersion {
+			t.Errorf("CriteriaVersion = %q, want %q", row.CriteriaVersion, analyzer.TagSplitVersion)
+		}
+		if row.DocumentID != 0 {
+			t.Errorf("DocumentID = %d, want 0: the rows carry no document", row.DocumentID)
+		}
+		if row.Reconstructible == nil {
+			t.Error("Reconstructible is nil; the journal distinguishes an absent reading from a computed false")
+		}
+	})
+
+	t.Run("a keep row carries the parts applied alongside, and rows follow candidate order", func(t *testing.T) {
+		a, _ := newSplitAdjudicator(t, &mockAdjudicator{
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundNoDimension),
+		}, nil)
+		candidates := []string{"machine learning", "mexican revolution"}
+		wantAlongside := [][]string{{"machine", "learning"}, {"mexican", "revolution"}}
+
+		rows, err := a.JudgeCompounds(ctx, candidates, nil, nil, filter, 0, "")
+		if err != nil {
+			t.Fatalf("JudgeCompounds: %v", err)
+		}
+		if len(rows) != len(candidates) {
+			t.Fatalf("rows = %d, want one per candidate", len(rows))
+		}
+		for i, row := range rows {
+			if row.Candidate != candidates[i] {
+				t.Errorf("rows[%d].Candidate = %q, want %q: the sweep reads rows by position", i, row.Candidate, candidates[i])
+			}
+			if row.Disposition != tags.CompositionKeep {
+				t.Errorf("rows[%d].Disposition = %s, want keep", i, row.Disposition)
+			}
+			if !reflect.DeepEqual(row.Parts, wantAlongside[i]) {
+				t.Errorf("rows[%d].Parts = %v, want the parts applied alongside %v", i, row.Parts, wantAlongside[i])
+			}
+			if row.DocumentID != 0 {
+				t.Errorf("rows[%d].DocumentID = %d, want 0", i, row.DocumentID)
+			}
+		}
+	})
+}
+
+// TestConjunctionComponents pins the adjudicator-free decomposition the emission fallback and the sweep
+// share: only an explicit coordination splits, each segment folds onto its store anchor, and a name whose
+// survivors fail the component bounds reports nil rather than splitting into junk.
+func TestConjunctionComponents(t *testing.T) {
+	filter := analyzer.NewTagFilter(nil, nil, nil)
+	promotedNames := tags.StoreNames([]string{"chile", "revolution"})
+	liveNames := map[string]struct{}{"chile": {}, "revolution": {}}
+
+	cases := []struct {
+		name      string
+		candidate string
+		want      []string
+	}{
+		{"a conjunction folds each segment onto its store anchor", "chilean and revolution", []string{"chile", "revolution"}},
+		{"a plain compound is not a coordination", "russian history", nil},
+		{"survivors over the component bound report nil", "one two three four and five six seven eight", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ConjunctionComponents(tc.candidate, promotedNames, liveNames, filter)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ConjunctionComponents(%q) = %v, want %v", tc.candidate, got, tc.want)
 			}
 		})
 	}

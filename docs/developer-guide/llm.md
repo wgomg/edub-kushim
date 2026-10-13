@@ -115,7 +115,7 @@ type AnalysisResult struct {
   `BuildTagCompoundPrompt` and parsed by `ParseTagCompoundResponse` (an entry
   outside the trichotomy is missing; a truncated reply carries its entries
   alongside `*IncompleteReplyError`). Used by the enricher's decomposition step
-  and the reconciliation joint sweep under the same toggle.
+  and the reconciliation compound sweep under the same toggle.
 - `JudgeTagIdentity` — answers the three binary canonical-form criteria for a
   flagged candidate (`fold_to_base`, `fold_preserves_denotation`,
   `conventional_form`) with a temperature-0 request built from

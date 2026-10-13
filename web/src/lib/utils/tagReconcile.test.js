@@ -115,6 +115,10 @@ describe('worklistTotal', () => {
 	it('handles missing fields', () => {
 		expect(worklistTotal({ stale: 5 })).toBe(5);
 	});
+
+	it('includes the compound scan and twin arms', () => {
+		expect(worklistTotal({ stale: 1, compounds: 2, twins: 3 })).toBe(6);
+	});
 });
 
 describe('changedDecisions', () => {

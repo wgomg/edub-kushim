@@ -271,8 +271,14 @@ func TestEntryReasonField(t *testing.T) {
 	}
 }
 
-func TestBuildJointWorklist(t *testing.T) {
-	r := &Reconciler{logger: testutil.NewTestLogger()}
+func TestBuildCompoundWorklist(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+	r := &Reconciler{client: client, logger: testutil.NewTestLogger()}
 	allTags := []database.Tag{
 		{ID: 1, Name: "supply and demand"},
 		{ID: 2, Name: "physics"},
@@ -286,47 +292,49 @@ func TestBuildJointWorklist(t *testing.T) {
 		"rock or roll":            3,
 	}
 
-	entries := r.buildJointWorklist(allTags, tagCounts)
+	entries := r.buildCompoundWorklist(ctx, allTags, tagCounts, &Report{Skips: map[string]int{}})
 
 	if len(entries) != 3 {
 		t.Fatalf("len(entries) = %d, want 3", len(entries))
 	}
 
-	// sorted by name
-	if entries[0].name != "capitalism vs socialism" {
-		t.Errorf("[0].name = %q, want capitalism vs socialism", entries[0].name)
+	// ordered by live mass descending
+	if entries[0].name != "supply and demand" {
+		t.Errorf("[0].name = %q, want supply and demand", entries[0].name)
 	}
-	if entries[1].name != "rock or roll" {
-		t.Errorf("[1].name = %q, want rock or roll", entries[1].name)
+	if entries[1].name != "capitalism vs socialism" {
+		t.Errorf("[1].name = %q, want capitalism vs socialism", entries[1].name)
 	}
-	if entries[2].name != "supply and demand" {
-		t.Errorf("[2].name = %q, want supply and demand", entries[2].name)
-	}
-
-	if entries[2].docCount != 10 {
-		t.Errorf("[2].docCount = %d, want 10", entries[2].docCount)
-	}
-	if entries[0].docCount != 5 {
-		t.Errorf("[0].docCount = %d, want 5", entries[0].docCount)
-	}
-	if entries[1].docCount != 3 {
-		t.Errorf("[1].docCount = %d, want 3", entries[1].docCount)
+	if entries[2].name != "rock or roll" {
+		t.Errorf("[2].name = %q, want rock or roll", entries[2].name)
 	}
 
-	if entries[2].segments[0] != "supply" || entries[2].segments[1] != "demand" {
-		t.Errorf("[2].segments = %v, want [supply demand]", entries[2].segments)
+	if entries[0].docCount != 10 {
+		t.Errorf("[0].docCount = %d, want 10", entries[0].docCount)
+	}
+	if entries[1].docCount != 5 {
+		t.Errorf("[1].docCount = %d, want 5", entries[1].docCount)
+	}
+	if entries[2].docCount != 3 {
+		t.Errorf("[2].docCount = %d, want 3", entries[2].docCount)
 	}
 }
 
-func TestBuildJointWorklist_NoJointTags(t *testing.T) {
-	r := &Reconciler{logger: testutil.NewTestLogger()}
+func TestBuildCompoundWorklist_IncludesEveryCompound(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+	r := &Reconciler{client: client, logger: testutil.NewTestLogger()}
 	allTags := []database.Tag{
 		{ID: 1, Name: "physics"},
 		{ID: 2, Name: "machine learning"},
 	}
-	entries := r.buildJointWorklist(allTags, nil)
-	if len(entries) != 0 {
-		t.Errorf("len(entries) = %d, want 0", len(entries))
+	entries := r.buildCompoundWorklist(ctx, allTags, nil, &Report{Skips: map[string]int{}})
+	if len(entries) != 1 || entries[0].name != "machine learning" {
+		t.Errorf("entries = %v, want the non-conjunction compound machine learning", entries)
 	}
 }
 

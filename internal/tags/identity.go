@@ -12,6 +12,7 @@ import (
 	"github.com/blevesearch/snowballstem"
 	"github.com/blevesearch/snowballstem/english"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 )
 
@@ -576,17 +577,14 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 	return held, nil
 }
 
-// CompositionHeldNames maps each held compound candidate to the reason its latest composition verdict
-// withheld promotion: a deferred split, conflicts between the parts and compound passes, cross-sample
-// disagreement, the reconstructible named-unit gray class, the combination-branch relational keep, or a
-// degraded keep whose judge never answered (no promotion without a decision; docs/tags/atomicity.md
-// §3.5). Only rows carrying criteriaVersion count, so a criteria-version bump clears stale holds. Names
-// are normalized to the store's name recipe (StoredName), matching the journal's keys and the sibling
-// state read. Unheld candidates are absent from the result; empty input returns an empty map.
-func CompositionHeldNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, error) {
+// CompositionReview reads each named candidate's latest composition journal row under criteriaVersion once
+// and returns both views the stored-compound sweep consults: the hold reasons keyed like
+// CompositionHeldNames and the states keyed like CompositionStatesForNames. A caller needing both views pays
+// one journal read instead of two.
+func CompositionReview(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, map[string]CompositionState, error) {
 	normalized := distinctNames(names, StoredName)
 	if len(normalized) == 0 {
-		return map[string]string{}, nil
+		return map[string]string{}, map[string]CompositionState{}, nil
 	}
 
 	rows, err := q.LatestCompositionReasonsForNames(ctx, database.LatestCompositionReasonsForNamesParams{
@@ -594,15 +592,33 @@ func CompositionHeldNames(ctx context.Context, q *database.Queries, names []stri
 		Candidates:      normalized,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	held := make(map[string]string, len(rows))
+	states := make(map[string]CompositionState, len(rows))
 	for _, row := range rows {
 		if compositionHolds(row.Reason) {
 			held[row.Candidate] = row.Reason
 		}
+		states[row.Candidate] = CompositionState{
+			Disposition: CompositionDisposition(row.Disposition),
+			Decided:     row.Reason != CompositionReasonJudgeUnavailable,
+		}
 	}
-	return held, nil
+	return held, states, nil
+}
+
+// CompositionHeldNames maps each held compound candidate to the reason its latest composition verdict
+// withheld promotion: a deferred split, conflicts between the parts and compound passes, cross-sample
+// disagreement, the reconstructible named-unit gray class, the combination-branch relational keep, or a
+// degraded keep whose judge never answered (no promotion without a decision; docs/tags/atomicity.md
+// §3.5). Only rows carrying criteriaVersion count, so a criteria-version bump clears stale holds. Names
+// are normalized to the store's name recipe (StoredName), matching the journal's keys and the sibling
+// state read. It is one view of CompositionReview. Unheld candidates are absent from the result; empty
+// input returns an empty map.
+func CompositionHeldNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, error) {
+	held, _, err := CompositionReview(ctx, q, names, criteriaVersion)
+	return held, err
 }
 
 // CompositionState is one compound candidate's latest persisted composition state under a criteria
@@ -618,29 +634,11 @@ type CompositionState struct {
 // criteriaVersion: it is the version-filtered read the store-existing skip consults, so a compound is
 // skipped as an application only when a decision actually exists, and a compound carrying no row or only
 // a degraded keep stays a candidate for judgment. Names are normalized to the store's name recipe
-// (StoredName), matching the journal's keys; candidates without a row are absent from the result, and
-// empty input returns an empty map.
+// (StoredName), matching the journal's keys; it is one view of CompositionReview, and candidates without a
+// row are absent from the result (empty input returns an empty map).
 func CompositionStatesForNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]CompositionState, error) {
-	normalized := distinctNames(names, StoredName)
-	if len(normalized) == 0 {
-		return map[string]CompositionState{}, nil
-	}
-
-	rows, err := q.LatestCompositionReasonsForNames(ctx, database.LatestCompositionReasonsForNamesParams{
-		CriteriaVersion: criteriaVersion,
-		Candidates:      normalized,
-	})
-	if err != nil {
-		return nil, err
-	}
-	states := make(map[string]CompositionState, len(rows))
-	for _, row := range rows {
-		states[row.Candidate] = CompositionState{
-			Disposition: CompositionDisposition(row.Disposition),
-			Decided:     row.Reason != CompositionReasonJudgeUnavailable,
-		}
-	}
-	return states, nil
+	_, states, err := CompositionReview(ctx, q, names, criteriaVersion)
+	return states, err
 }
 
 // ProposedFold proposes the lemma-folded form of a name, or "" when the
@@ -933,6 +931,23 @@ func PreferCanonical(a, b string) string {
 		return b
 	}
 	return TieBreak(a, b)
+}
+
+// CanonicalLoser resolves a same-intent pair's canonical label (winner) and its alias (loser) under J4: the
+// judged direction names the winner directly, and a tie — including every deterministic resolution, which
+// carries no direction — falls to PreferCanonical. Every alias-application site reads this one rule, so a
+// change to J4 is made once.
+func CanonicalLoser(direction, query, target string) (winner, loser string) {
+	switch direction {
+	case analyzer.TagDirectionTarget:
+		return target, query
+	case analyzer.TagDirectionQuery:
+		return query, target
+	}
+	if PreferCanonical(query, target) == query {
+		return query, target
+	}
+	return target, query
 }
 
 // tokenEnglish reports whether one token is English for the language signal: a numeric ordinal is

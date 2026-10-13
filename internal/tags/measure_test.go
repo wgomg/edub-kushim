@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -203,4 +204,66 @@ func sumCounts(counts map[string]int) int {
 		total += n
 	}
 	return total
+}
+
+// TestLatestWorklists pins the sweep's read of the measurement substrate: an empty journal is an absent
+// marker rather than an error, and only the newest run's records are derived — an older run whose twins
+// already clear the gray floor must not leak into the worklists.
+func TestLatestWorklists(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	// the reset clears the store tables but leaves the append-only journal, and this test owns its own runs
+	if _, err := client.DB().ExecContext(ctx, "DELETE FROM tag_measurement"); err != nil {
+		t.Fatalf("clear measurement journal: %v", err)
+	}
+	store := NewStore(client.Queries)
+
+	absent, err := store.LatestWorklists(ctx)
+	if err != nil {
+		t.Fatalf("LatestWorklists on an empty journal: %v", err)
+	}
+	if !absent.Absent {
+		t.Error("Absent = false on a store with no measurement run")
+	}
+	if len(absent.Worklists.Twins) != 0 {
+		t.Errorf("Twins = %v, want none", absent.Worklists.Twins)
+	}
+
+	older := uuid.New()
+	if err := store.InsertRecords(ctx, older, time.Now().Add(-time.Hour), RuleSetVersion, []Record{{
+		Operator: OperatorOverlap,
+		Operands: []string{"gray a", "gray b"},
+		Numbers:  map[string]any{NumberJaccard: 0.8, NumberMassA: int64(4), NumberMassB: int64(4)},
+		State:    StateSufficient,
+	}}); err != nil {
+		t.Fatalf("insert older run: %v", err)
+	}
+	newest := uuid.New()
+	if err := store.InsertRecords(ctx, newest, time.Now(), RuleSetVersion, []Record{{
+		Operator: OperatorOverlap,
+		Operands: []string{"firm a", "firm b"},
+		Numbers:  map[string]any{NumberJaccard: 0.95, NumberMassA: int64(4), NumberMassB: int64(5)},
+		State:    StateSufficient,
+	}}); err != nil {
+		t.Fatalf("insert newest run: %v", err)
+	}
+
+	snap, err := store.LatestWorklists(ctx)
+	if err != nil {
+		t.Fatalf("LatestWorklists: %v", err)
+	}
+	if snap.Absent {
+		t.Fatal("Absent = true after a run exists")
+	}
+	if snap.RunID != newest {
+		t.Errorf("RunID = %s, want the newest run %s", snap.RunID, newest)
+	}
+	if len(snap.Worklists.Twins) != 1 || snap.Worklists.Twins[0].A != "firm a" {
+		t.Errorf("Twins = %+v, want only the newest run's twin", snap.Worklists.Twins)
+	}
 }

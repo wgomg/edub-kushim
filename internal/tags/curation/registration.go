@@ -278,6 +278,12 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	return results, newNames, nil
 }
 
+// RecordCompositionEvidence is the reconcile sweep's write path for decomposition verdicts: rows are
+// normalized and keyed exactly as the emission path's, so the two writers stay interchangeable.
+func (s *Tag) RecordCompositionEvidence(ctx context.Context, rows []tags.CompositionRow) error {
+	return s.recordCompositionEvidence(ctx, s.client.Queries, rows)
+}
+
 // recordCompositionEvidence writes the plan's decomposition verdicts as evidence rows, keying candidate
 // and part names by the stored name so the promotion hold and the review surface, which look a compound
 // up by its store tag name, can match it. The reconstructibility signal is written only when the caller
@@ -306,8 +312,13 @@ func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries
 		if row.Reconstructible != nil {
 			reconstructible = sql.NullBool{Bool: *row.Reconstructible, Valid: true}
 		}
+		// the sweep decides compounds with no emitting document; a zero id records NULL, not a fabricated one
+		var documentID sql.NullInt64
+		if row.DocumentID != 0 {
+			documentID = sql.NullInt64{Int64: row.DocumentID, Valid: true}
+		}
 		if err := q.InsertTagCompositionEvent(ctx, database.InsertTagCompositionEventParams{
-			DocumentID:      row.DocumentID,
+			DocumentID:      documentID,
 			Candidate:       candidate,
 			Parts:           encoded,
 			Disposition:     string(row.Disposition),

@@ -2,7 +2,9 @@ export const worklistReasonLabels = {
 	stale: 'the decision was made under older rules',
 	unjudged: 'never actually reviewed by the tag adjudicator',
 	drifted: 'how documents use these tags has changed',
-	aged: 'not re-checked in over 90 days'
+	aged: 'not re-checked in over 90 days',
+	compounds: 'stored compounds to reconsider for decomposition',
+	twins: 'near-identical label pairs proposed by the measurement sweep'
 };
 
 const skipReasonLabels = {
@@ -17,7 +19,15 @@ const skipReasonLabels = {
 		"the checker couldn't decide confidently — kept as-is, retried next run",
 	below_floor: 'the tags are no longer similar enough to confuse',
 	query_reborn: 'the tag already exists — nothing left to do',
-	no_documents: 'the tag was restored, but no documents carried these tags'
+	no_documents: 'the tag was restored, but no documents carried these tags',
+	undecided_no_judge: 'no adjudicator is configured — the compound stays as it is',
+	decided: 'already decided — nothing to do',
+	identity_hold: 'held for review beside a live store value',
+	composition_hold: 'held for review',
+	period_store_application: 'a seeded period — applied whole by design',
+	split_invalid: 'the components did not validate — kept whole',
+	split_error: 'the split failed this run — retried next run',
+	identity_evidence_error: 'recording the candidate pair failed this run — retried next run'
 };
 
 const cappedLabel = 'run limit reached — remaining pairs wait for the next run';
@@ -27,7 +37,9 @@ export function worklistTotal(worklist = {}) {
 		(worklist?.stale ?? 0) +
 		(worklist?.unjudged ?? 0) +
 		(worklist?.drifted ?? 0) +
-		(worklist?.aged ?? 0)
+		(worklist?.aged ?? 0) +
+		(worklist?.compounds ?? 0) +
+		(worklist?.twins ?? 0)
 	);
 }
 

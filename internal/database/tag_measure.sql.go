@@ -45,6 +45,26 @@ func (q *Queries) InsertTagMeasurements(ctx context.Context, arg InsertTagMeasur
 	return err
 }
 
+const latestTagMeasurementRun = `-- name: LatestTagMeasurementRun :one
+SELECT run_id, snapshot_at, rule_set_version
+FROM tag_measurement
+ORDER BY snapshot_at DESC, id DESC
+LIMIT 1
+`
+
+type LatestTagMeasurementRunRow struct {
+	RunID          uuid.UUID
+	SnapshotAt     time.Time
+	RuleSetVersion string
+}
+
+func (q *Queries) LatestTagMeasurementRun(ctx context.Context) (LatestTagMeasurementRunRow, error) {
+	row := q.db.QueryRowContext(ctx, latestTagMeasurementRun)
+	var i LatestTagMeasurementRunRow
+	err := row.Scan(&i.RunID, &i.SnapshotAt, &i.RuleSetVersion)
+	return i, err
+}
+
 const listTagsForMeasure = `-- name: ListTagsForMeasure :many
 SELECT id, name, promoted_at FROM tag ORDER BY id
 `
@@ -176,6 +196,50 @@ func (q *Queries) TagLivePairOverlaps(ctx context.Context) ([]TagLivePairOverlap
 	for rows.Next() {
 		var i TagLivePairOverlapsRow
 		if err := rows.Scan(&i.TagA, &i.TagB, &i.DocumentCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const tagMeasurementRecordsForRun = `-- name: TagMeasurementRecordsForRun :many
+SELECT operator, operands, numbers, state, caveats
+FROM tag_measurement
+WHERE run_id = $1
+ORDER BY id
+`
+
+type TagMeasurementRecordsForRunRow struct {
+	Operator string
+	Operands []string
+	Numbers  json.RawMessage
+	State    string
+	Caveats  []string
+}
+
+func (q *Queries) TagMeasurementRecordsForRun(ctx context.Context, runID uuid.UUID) ([]TagMeasurementRecordsForRunRow, error) {
+	rows, err := q.db.QueryContext(ctx, tagMeasurementRecordsForRun, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TagMeasurementRecordsForRunRow
+	for rows.Next() {
+		var i TagMeasurementRecordsForRunRow
+		if err := rows.Scan(
+			&i.Operator,
+			pq.Array(&i.Operands),
+			&i.Numbers,
+			&i.State,
+			pq.Array(&i.Caveats),
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
