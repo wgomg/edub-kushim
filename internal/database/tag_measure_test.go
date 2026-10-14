@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func TestTagMeasureBatchAndTaskQueries(t *testing.T) {
@@ -18,7 +20,7 @@ func TestTagMeasureBatchAndTaskQueries(t *testing.T) {
 	if _, err := q.GetLastTagMeasureBatchCreatedAt(ctx); err != sql.ErrNoRows {
 		t.Fatalf("initial GetLastTagMeasureBatchCreatedAt: want ErrNoRows, got %v", err)
 	}
-	if n, err := q.CountQueuedConsumeBatches(ctx); err != nil || n != 0 {
+	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeBatchSourceValues()); err != nil || n != 0 {
 		t.Fatalf("initial queued consume batches = %d, %v", n, err)
 	}
 
@@ -38,10 +40,10 @@ func TestTagMeasureBatchAndTaskQueries(t *testing.T) {
 		t.Errorf("queued batch must not anchor the schedule: want ErrNoRows, got %v", err)
 	}
 
-	if n, err := q.CountQueuedConsumeBatches(ctx); err != nil || n != 0 {
+	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeBatchSourceValues()); err != nil || n != 0 {
 		t.Errorf("tagmeasure batch leaked into the consume slot: %d, %v", n, err)
 	}
-	if _, err := q.GetNextQueuedBatch(ctx); err != sql.ErrNoRows {
+	if _, err := q.GetNextQueuedBatch(ctx, types.NonConsumeBatchSourceValues()); err != sql.ErrNoRows {
 		t.Errorf("GetNextQueuedBatch: want ErrNoRows, got %v", err)
 	}
 

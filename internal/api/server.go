@@ -42,6 +42,7 @@ type Server struct {
 	services      *service.CrudServices
 	tag           *curation.Tag
 	tagIdentity   *curation.TagIdentity
+	tagAudit      *curation.TagAudit
 	configWatcher *config.Watcher
 	db            *sql.DB
 	client        *database.Client
@@ -106,6 +107,7 @@ func (s *Server) rebuild(client *database.Client) {
 
 	services.ReEnrich = service.NewReEnrich(client.Queries, workStore, services.Batch)
 	s.tagIdentity = curation.NewTagIdentity(client.Queries, workStore, services.Batch)
+	s.tagAudit = curation.NewTagAudit(client.Queries, workStore, services.Batch)
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	registry := task.NewRegistry()
@@ -125,7 +127,7 @@ func (s *Server) rebuild(client *database.Client) {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore, s.tag, s.tagIdentity)
+	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore, s.tag, s.tagIdentity, s.tagAudit)
 	handlers.RegisterStaticRoutes(mux, static.WebFS())
 
 	s.services = services
@@ -191,6 +193,7 @@ func registerRoutes(
 	workStore *task.Store,
 	tag *curation.Tag,
 	tagIdentity *curation.TagIdentity,
+	tagAudit *curation.TagAudit,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	engine := search.NewEngine(logger, client)
@@ -263,7 +266,7 @@ func registerRoutes(
 
 	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
 
-	tagHandler := handlers.NewTagHandler(tag, tagIdentity, logger)
+	tagHandler := handlers.NewTagHandler(tag, tagIdentity, tagAudit, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
 	mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(http.HandlerFunc(tagHandler.ListDeleted)))
 	mux.Handle("GET /api/v1/tags/provisional", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListProvisional)))
@@ -273,6 +276,11 @@ func registerRoutes(
 	mux.Handle("DELETE /api/v1/tags/{id}", RequireRole(editor...)(http.HandlerFunc(tagHandler.Delete)))
 	mux.Handle("DELETE /api/v1/tags/deleted/{name}", RequireRole(editor...)(http.HandlerFunc(tagHandler.RestoreDeleted)))
 	mux.Handle("POST /api/v1/tags/identity/reevaluate", RequireRole(editor...)(http.HandlerFunc(tagHandler.ReevaluateIdentity)))
+	mux.Handle("POST /api/v1/tags/audit/reevaluate", RequireRole(editor...)(http.HandlerFunc(tagHandler.ReevaluateAudit)))
+	mux.Handle("GET /api/v1/tags/audit/flags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListAuditFlags)))
+	mux.Handle("POST /api/v1/tags/audit/flags/apply", RequireRole(editor...)(http.HandlerFunc(tagHandler.ApplyAuditFlag)))
+	mux.Handle("POST /api/v1/tags/audit/flags/dismiss", RequireRole(editor...)(http.HandlerFunc(tagHandler.DismissAuditFlag)))
+	mux.Handle("POST /api/v1/tags/audit/flags/create-value", RequireRole(editor...)(http.HandlerFunc(tagHandler.CreateAuditValue)))
 	mux.Handle("POST /api/v1/tags/{id}/promote", RequireRole(editor...)(http.HandlerFunc(tagHandler.PromoteTag)))
 
 	peopleHandler := handlers.NewPeopleHandler(services, logger)

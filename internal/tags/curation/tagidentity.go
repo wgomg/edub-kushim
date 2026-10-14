@@ -44,8 +44,13 @@ func (s *TagIdentity) Enqueue(ctx context.Context) (batchID string, alreadyQueue
 	batchID = uuid.New().String()
 	taskID := uuid.New().String()
 
+	// A unique violation on the active-dedup index means another identity task already owns the slot (the
+	// count above lost a race); anything else is a real failure and must not be reported as already queued.
 	if _, err := s.taskCreator.CreateTask(ctx, types.Task.Type.TagIdentity, batchID, json.RawMessage("{}"), taskID, types.Task.Status.Pending, "tagidentity"); err != nil {
-		return "", true, nil
+		if errs.IsConstraint(err) {
+			return "", true, nil
+		}
+		return "", false, errs.FromDB(err, "create tag identity task")
 	}
 
 	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.TagIdentity, types.Batch.Status.Queued); err != nil {

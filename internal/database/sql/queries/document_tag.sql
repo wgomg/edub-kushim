@@ -76,3 +76,11 @@ JOIN document d ON d.id = dt.document_id
 WHERE d.deleted_at IS NULL
   AND (@tag_ids::bigint[] IS NULL OR dt.tag_id = ANY(@tag_ids::bigint[]))
 GROUP BY dt.tag_id;
+
+-- name: CountLiveTagDocumentsByNames :many
+SELECT t.name, COUNT(d.id) AS document_count
+FROM tag t
+LEFT JOIN document_tag dt ON dt.tag_id = t.id
+LEFT JOIN document d ON d.id = dt.document_id AND d.deleted_at IS NULL
+WHERE t.name = ANY(@tag_names::text[])
+GROUP BY t.name;

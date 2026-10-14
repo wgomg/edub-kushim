@@ -335,10 +335,10 @@ func TestReconcileConsumeSlotExclusion(t *testing.T) {
 	if _, err := q.db.ExecContext(ctx, "INSERT INTO batch (id, source, status) VALUES ('rc-b', 'tagreconcile', 'queued')"); err != nil {
 		t.Fatalf("insert tagreconcile batch: %v", err)
 	}
-	if n, err := q.CountQueuedConsumeBatches(ctx); err != nil || n != 0 {
+	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeBatchSourceValues()); err != nil || n != 0 {
 		t.Fatalf("tagreconcile batch counted as consume: n=%d %v", n, err)
 	}
-	if _, err := q.GetNextQueuedBatch(ctx); err != sql.ErrNoRows {
+	if _, err := q.GetNextQueuedBatch(ctx, types.NonConsumeBatchSourceValues()); err != sql.ErrNoRows {
 		t.Fatalf("GetNextQueuedBatch must not return tagreconcile batch, got %v", err)
 	}
 }

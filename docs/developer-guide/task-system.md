@@ -53,10 +53,10 @@ The cast of characters:
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
 | consume command | `internal/ops/consume/consume.go` | runs one batch |
 
-The ten task types (declared in `internal/types`, registered in
+The eleven task types (declared in `internal/types`, registered in
 `internal/ops/container/container.go`): `consume`, `enrich`, `thumbnail`,
 `config`, `backup`, `mirror`, `tagreconcile`, `thumbbackfill`, `tagmeasure`,
-`tagidentity`.
+`tagidentity`, `tagaudit`.
 
 ---
 
@@ -596,7 +596,7 @@ Two sweeps recover from dead workers, both driven by the **attempts budget**
 `processing` longer than that, so a slow-but-alive task isn't touched). The
 age transitions below apply to the gated class only (consume, enrich,
 thumbnail); blocking-class tasks (backup, mirror, tagreconcile,
-thumbbackfill, tagmeasure, tagidentity) are swept by ownership-gated variants instead:
+thumbbackfill, tagmeasure, tagidentity, tagaudit) are swept by ownership-gated variants instead:
 
 ```sql
 -- name: QuarantineStaleProcessingTasks :execrows
@@ -768,7 +768,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   documents mid-backup. Which types claim gated is declared once in the
   registry (`types.TaskType.IsLockGated()`: consume, enrich, thumbnail);
   blocking types that acquire the lock (`IsBlocking()`: backup, mirror,
-  tagreconcile, thumbbackfill, tagmeasure, tagidentity) and config claim ungated.
+  tagreconcile, thumbbackfill, tagmeasure, tagidentity, tagaudit) and config claim ungated.
 - **Claim-time acquisition**: a blocking task acquires the lock
   **inside the claim transaction**
   (`Store.claimBlockingNextPending`, `internal/task/store.go`):
@@ -823,7 +823,7 @@ heartbeat that refreshes `backup_lock.started_at` every 5 minutes
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
 shared `database.StartMaintenanceLockHeartbeat` helper *before*
 `WaitForTaskDrain` returns, so the drain-wait itself is covered too; the
-backup, tagreconcile, tagmeasure and tagidentity handlers get that sequence —
+backup, tagreconcile, tagmeasure, tagidentity and tagaudit handlers get that sequence —
 heartbeat, drain, body, batch finalize — from the shared `task.RunBlocking`
 lifecycle (`internal/task/handler.go`), which composes `database.HoldMaintenanceLock`
 around the body; the thumbbackfill wrapper starts
@@ -855,6 +855,16 @@ failed) that becomes the task result. Unlike `tagmeasure` there is no manual
 foreground mode and no schedule: the review surface's reevaluate action
 enqueues it, its pool runs unconditionally, and the reconciliation's identity
 sweep covers claims nobody triggers.
+
+The **tagaudit** task (`internal/tags/admission/tagaudit.go`) follows the same
+drain + heartbeat + fork shape as `tagmeasure`: claimed with the lock held,
+drained via `WaitForTaskDrain`, heartbeat across the run, then forks
+`kushim tagaudit --run <batch-id>`; the child runs the coverage-verification
+pass (`admission.AuditRunner`) and prints the `tagaudit-report: <json>` line
+(sweep, sampled/flagged counts, coverage tallies by class, fills/flags/
+proposals, judge call counts, pending coverage) that becomes the task result.
+Its pool is gated on `enricher.tag_audit.enabled` (the schedule is disabled by
+default) and the manual `kushim tagaudit` run bypasses the queue.
 
 The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) and the
 **thumbbackfill** task (`internal/documents/consumption/thumbnail_backfill.go`, a thin

@@ -31,6 +31,7 @@ const (
 	BatchSourceTagreconcile    BatchSource = "tagreconcile"
 	BatchSourceTagmeasure      BatchSource = "tagmeasure"
 	BatchSourceTagidentity     BatchSource = "tagidentity"
+	BatchSourceTagaudit        BatchSource = "tagaudit"
 )
 
 func (e *BatchSource) Scan(src interface{}) error {
@@ -217,6 +218,7 @@ const (
 	TaskTypeThumbbackfill TaskType = "thumbbackfill"
 	TaskTypeTagmeasure    TaskType = "tagmeasure"
 	TaskTypeTagidentity   TaskType = "tagidentity"
+	TaskTypeTagaudit      TaskType = "tagaudit"
 )
 
 func (e *TaskType) Scan(src interface{}) error {
@@ -379,6 +381,16 @@ type TagAlias struct {
 	CreatedAt      time.Time
 }
 
+type TagAuditRegister struct {
+	DocumentID int64
+	AuditCount int64
+}
+
+type TagAuditSweep struct {
+	ID         int16
+	SweepCount int64
+}
+
 type TagCompositionEvent struct {
 	ID              int64
 	DocumentID      sql.NullInt64
@@ -401,6 +413,23 @@ type TagCompoundStatusEvent struct {
 	VerdictModel         sql.NullString
 	SplitCriteriaVersion string
 	VerdictAt            time.Time
+}
+
+type TagCoverageEvent struct {
+	ID              int64
+	DocumentID      int64
+	TagName         string
+	Class           string
+	Source          string
+	Verdict         json.RawMessage
+	VerdictModel    sql.NullString
+	TextHash        string
+	CriteriaVersion string
+	Action          string
+	ReviewOutcome   sql.NullString
+	Provisional     bool
+	RuleSetVersion  string
+	CreatedAt       time.Time
 }
 
 type TagIdentityEvent struct {

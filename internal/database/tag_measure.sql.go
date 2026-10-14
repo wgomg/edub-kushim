@@ -45,22 +45,28 @@ func (q *Queries) InsertTagMeasurements(ctx context.Context, arg InsertTagMeasur
 	return err
 }
 
-const latestTagMeasurementRun = `-- name: LatestTagMeasurementRun :one
+const latestTagWorklistRun = `-- name: LatestTagWorklistRun :one
 SELECT run_id, snapshot_at, rule_set_version
-FROM tag_measurement
+FROM tag_measurement r
+WHERE EXISTS (
+    SELECT 1 FROM tag_measurement x
+    WHERE x.run_id = r.run_id AND x.operator <> 'coverage'
+)
 ORDER BY snapshot_at DESC, id DESC
 LIMIT 1
 `
 
-type LatestTagMeasurementRunRow struct {
+type LatestTagWorklistRunRow struct {
 	RunID          uuid.UUID
 	SnapshotAt     time.Time
 	RuleSetVersion string
 }
 
-func (q *Queries) LatestTagMeasurementRun(ctx context.Context) (LatestTagMeasurementRunRow, error) {
-	row := q.db.QueryRowContext(ctx, latestTagMeasurementRun)
-	var i LatestTagMeasurementRunRow
+// The latest run that produced measurement rows. A run of only coverage rows belongs to the completeness
+// audit, not a measurement sweep, so it never becomes the worklist run.
+func (q *Queries) LatestTagWorklistRun(ctx context.Context) (LatestTagWorklistRunRow, error) {
+	row := q.db.QueryRowContext(ctx, latestTagWorklistRun)
+	var i LatestTagWorklistRunRow
 	err := row.Scan(&i.RunID, &i.SnapshotAt, &i.RuleSetVersion)
 	return i, err
 }

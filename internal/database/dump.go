@@ -298,7 +298,11 @@ func writeIdentityRestore(ctx context.Context, tx *sql.Tx, tableName string, w i
 func getTableNames(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT tablename FROM pg_catalog.pg_tables
-		WHERE schemaname = 'public' AND tablename NOT IN ('goose_db_version', 'backup_lock')
+		WHERE schemaname = 'public'
+		  -- goose_db_version is dumped separately; backup_lock and tag_audit_sweep hold a singleton row
+		  -- their migration seeds itself, so dumping the row too would collide on the primary key when the
+		  -- restore replays the migration
+		  AND tablename NOT IN ('goose_db_version', 'backup_lock', 'tag_audit_sweep')
 		ORDER BY tablename
 	`)
 	if err != nil {

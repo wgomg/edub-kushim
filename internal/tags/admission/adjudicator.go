@@ -6,6 +6,14 @@
 // the identity resolver's alias applications through curation. The rules
 // it enforces are pinned in tags/policy; the contracts are specified in
 // docs/tags/consolidation.md.
+//
+// It also hosts the completeness coverage audit (AuditRunner and its task
+// handler), a standalone verification pass rather than an admission
+// decision. It lives here because it reads the emission gate's fan
+// resolution and shares the judged-call machinery and event journaling,
+// but it runs to completion instead of returning a decision, and it writes
+// coverage events, the sweep register, and document-tag fills directly.
+// Its contract is specified in docs/tags/completeness.md.
 package admission
 
 import (
@@ -509,31 +517,10 @@ func (f Fan) FlatResolved() []string {
 	return out
 }
 
-// resolveContentSingles resolves a candidate's content words through the deterministic time-designation gate
-// and the attested seam fold, returning the content words with their position-aligned resolved singles: a
-// time-designation word the live view does not hold is emptied, a mechanically folded word carries its
-// anchor, and every other word is itself. Handing back both slices keeps a caller from re-deriving the
-// content words just to index the singles. liveNames is the live store key set, promotedNames the promoted
-// store view the fold anchors on.
-func resolveContentSingles(candidate string, promotedNames map[string]string, liveNames map[string]struct{}) (content, singles []string) {
-	content = tags.DeriveParts(candidate)
-	singles = make([]string, len(content))
-	for i, word := range content {
-		if tags.IsTimeDesignationDrop(word, liveNames) {
-			continue
-		}
-		singles[i] = word
-		if anchor := tags.AnchoredFold(word, promotedNames, liveNames); anchor != "" && anchor != word {
-			singles[i] = anchor
-		}
-	}
-	return content, singles
-}
-
-// buildFan builds the fan resolution from position-aligned resolved singles: a bigram is literal (the
-// attestation table is single-token) and present only when both its words resolved and the bigram is not a
-// time designation the store lacks. A nil or short singles slice leaves the matching content words
-// unresolved, so a caller with no resolutions passes nil.
+// buildFan builds the fan resolution from position-aligned resolved singles (tags.ResolvedContent): a word
+// carries its single, and every bigram the shared seam accepts (tags.ResolvedBigrams) is literal. A nil or
+// short singles slice leaves the matching content words unresolved, so a caller with no resolutions passes
+// nil.
 func buildFan(content, singles []string, liveNames map[string]struct{}) Fan {
 	resolved := make(map[string]string, len(content)*2)
 	for i, word := range content {
@@ -541,14 +528,7 @@ func buildFan(content, singles []string, liveNames map[string]struct{}) Fan {
 			resolved[word] = singles[i]
 		}
 	}
-	for i := 0; i+1 < len(content); i++ {
-		if i+1 >= len(singles) || singles[i] == "" || singles[i+1] == "" {
-			continue
-		}
-		bigram := content[i] + " " + content[i+1]
-		if tags.IsTimeDesignationDrop(bigram, liveNames) {
-			continue
-		}
+	for _, bigram := range tags.ResolvedBigrams(content, singles, liveNames) {
 		resolved[bigram] = bigram
 	}
 	return Fan{Content: content, Resolved: resolved}
@@ -632,7 +612,7 @@ func coverParts(fan Fan, storeKeys map[string]struct{}, verdicts map[string]Part
 // and an abstention defers it so the compound holds for review. Returns a non-nil error only for credit
 // exhaustion.
 func (a *Adjudicator) resolveFan(ctx context.Context, store *VerdictStore, candidate string, promotedNames map[string]string, liveNames map[string]struct{}, docId int64, reqID string) (Fan, error) {
-	content, singles := resolveContentSingles(candidate, promotedNames, liveNames)
+	content, singles := tags.ResolvedContent(candidate, promotedNames, liveNames)
 	if tags.IsPeriodClass(tags.HouseForm(candidate)) {
 		// a period is valid by fiat and does not decompose: its fan carries no resolved segments
 		return buildFan(content, nil, liveNames), nil
@@ -674,7 +654,7 @@ func (a *Adjudicator) storedCoverage(ctx context.Context, skipped []string, prom
 	seenValues := make(map[string]bool)
 	var values []string
 	for _, name := range skipped {
-		content, singles := resolveContentSingles(name, promotedNames, liveNames)
+		content, singles := tags.ResolvedContent(name, promotedNames, liveNames)
 		fan := buildFan(content, singles, liveNames)
 		fans[name] = fan
 		for _, seg := range tags.DeriveSegments(name) {

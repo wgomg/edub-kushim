@@ -158,6 +158,10 @@ func (m *mockContentAnalyzer) JudgeTagTranslations(_ context.Context, _ []string
 	return nil, nil
 }
 
+func (m *mockContentAnalyzer) JudgeTagAudit(_ context.Context, _ string, _ []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+	return nil, nil
+}
+
 func (m *mockContentAnalyzer) JudgeTagPhraseFolds(_ context.Context, _ []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
 	return nil, nil
 }

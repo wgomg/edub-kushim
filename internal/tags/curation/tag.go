@@ -30,6 +30,10 @@ const DeletedTagKindBlocked = "blocked"
 // DocumentTagSourceEnrich marks document tag rows created by the enrichment pipeline.
 const DocumentTagSourceEnrich = "enrich"
 
+// DocumentTagSourceAudit marks document tag rows attached by the completeness audit's fills: an
+// evidence-recorded, reversible attachment that a re-enrichment does not clear.
+const DocumentTagSourceAudit = "audit"
+
 // Tag is the tag store's read, write and administration surface: CRUD,
 // planned registrations, aliases, deleted tags, promotion, and the sync
 // that keeps the matcher's embedding store aligned with the tags table.

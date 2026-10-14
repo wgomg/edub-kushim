@@ -658,6 +658,17 @@ func (r *Runner) JudgeTagTranslations(ctx context.Context, values []string) ([]a
 	})
 }
 
+// JudgeTagAudit asks the LLM adjudicator whether each flagged dimension is a subject the document is about
+// — the completeness audit's applicability call. Returns an error when no adjudicator was configured.
+func (r *Runner) JudgeTagAudit(ctx context.Context, text string, candidates []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
+	}
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagAuditResult, error) {
+		return r.tagAdjudicator.JudgeTagAudit(ctx, text, candidates)
+	})
+}
+
 // JudgeTagPhraseFolds asks the LLM adjudicator whether each part, in the context of its phrase, denotes
 // the candidate anchor value — the residual phrase-context fold. Returns an error when no
 // adjudicator was configured.

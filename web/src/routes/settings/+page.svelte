@@ -40,6 +40,7 @@
 		ensureMirrorBlock();
 		ensureTagReconcileBlock();
 		ensureTagMeasureBlock();
+		ensureTagAuditBlock();
 		ensureTagAdjudicatorBlock();
 		ensureTagQualityBlock();
 		ensureContentAnalyzerTags();
@@ -111,6 +112,17 @@
 			enabled: false,
 			interval: 7,
 			time: '03:00'
+		};
+	}
+
+	function ensureTagAuditBlock() {
+		if (!cfg) return;
+		if (!cfg.enricher) cfg.enricher = {};
+		if (cfg.enricher.tag_audit) return;
+		cfg.enricher.tag_audit = {
+			enabled: false,
+			interval: 7,
+			time: '04:00'
 		};
 	}
 
@@ -272,6 +284,9 @@
 			'enricher.tag_measure.enabled': cfg.enricher.tag_measure.enabled,
 			'enricher.tag_measure.interval': Number(cfg.enricher.tag_measure.interval),
 			'enricher.tag_measure.time': cfg.enricher.tag_measure.time,
+			'enricher.tag_audit.enabled': cfg.enricher.tag_audit.enabled,
+			'enricher.tag_audit.interval': Number(cfg.enricher.tag_audit.interval),
+			'enricher.tag_audit.time': cfg.enricher.tag_audit.time,
 			'storage.consumption_dir': cfg.storage.consumption_dir,
 			'storage.storage_dir': cfg.storage.storage_dir,
 			'storage.migration_mode': cfg.storage.migration_mode,

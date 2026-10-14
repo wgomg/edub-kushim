@@ -95,6 +95,7 @@ const (
 	OperatorReconstructibility Operator = "reconstructibility"
 	OperatorPartCoverage       Operator = "part_coverage"
 	OperatorComplement         Operator = "complement"
+	OperatorCoverage           Operator = "coverage"
 )
 
 // MassReading is a tag's document-set mass.

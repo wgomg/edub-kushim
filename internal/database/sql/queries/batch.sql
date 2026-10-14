@@ -72,16 +72,15 @@ ORDER BY created_at LIMIT 1;
 SELECT * FROM batch WHERE id = $1;
 
 -- name: CountQueuedConsumeBatches :one
--- Same exclusion list as GetNextQueuedBatch: config/backup/mirror/tagreconcile/tagmeasure/tagidentity
--- batches own their lifecycle in their handlers and never occupy a consume slot.
+-- The non-consume sources (which own their lifecycle in their handlers and never occupy a consume slot) are
+-- owned by the registry and passed in, so this list cannot drift from types.NonConsumeBatchSources.
 SELECT COUNT(*) FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure', 'tagidentity');
+WHERE status = 'queued' AND source::text <> ALL(@non_consume_sources::text[]);
 
 -- name: GetNextQueuedBatch :one
--- config/backup/mirror/tagreconcile/tagmeasure/tagidentity batches own their
--- lifecycle in their handlers and must not be forked as consume workers.
+-- See CountQueuedConsumeBatches: the non-consume exclusion is passed in from the registry, not enumerated.
 SELECT * FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure', 'tagidentity')
+WHERE status = 'queued' AND source::text <> ALL(@non_consume_sources::text[])
 ORDER BY created_at LIMIT 1;
 
 -- name: DeleteBatch :exec
@@ -196,6 +195,16 @@ WHERE source = 'tagmeasure' AND status IN ('queued', 'processing');
 -- name: GetLastTagMeasureBatchCreatedAt :one
 SELECT created_at FROM batch
 WHERE source = 'tagmeasure' AND status = 'completed'
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: CountActiveTagAuditBatches :one
+SELECT COUNT(*) FROM batch
+WHERE source = 'tagaudit' AND status IN ('queued', 'processing');
+
+-- name: GetLastTagAuditBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'tagaudit' AND status = 'completed'
 ORDER BY created_at DESC
 LIMIT 1;
 

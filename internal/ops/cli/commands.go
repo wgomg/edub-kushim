@@ -117,6 +117,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Adjudicate pending tag identity evidence and apply its dispositions",
 			Handler:     tagIdentityHandler,
 		},
+		"tagaudit": {
+			Name:        "tagaudit",
+			Description: "Audit document coverage against the tag vocabulary, verifying and repairing application recall",
+			Handler:     tagAuditHandler,
+		},
 	},
 	"server": {
 		"version": {

@@ -211,6 +211,10 @@ func (r *suggestionRecorder) JudgeTagTranslations(context.Context, []string) ([]
 	return nil, nil
 }
 
+func (r *suggestionRecorder) JudgeTagAudit(context.Context, string, []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+	return nil, nil
+}
+
 func (r *suggestionRecorder) JudgeTagPhraseFolds(context.Context, []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
 	return nil, nil
 }

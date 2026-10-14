@@ -79,7 +79,7 @@ internal/
   service/                  business logic over database queries (Batch, Tag, People, ...)
   service/crud.go           shared aggregate struct (CrudServices)
   static/                   embedded SvelteKit build
-  tags/                     tag store, measurement, policy, reconciliation + the tagmeasure handler
+  tags/                     tag store, measurement, coverage audit, policy, reconciliation + the tagmeasure/tagidentity/tagaudit handlers
   task/                     task engine: registry, dispatcher, runner, worker pool, RunBlocking
   testutil/                 shared test helpers and mocks
   tools/                    the tool adapter layer + composition root (Runner)

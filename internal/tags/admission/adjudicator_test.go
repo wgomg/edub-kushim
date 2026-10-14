@@ -464,6 +464,10 @@ func (m *mockAdjudicator) JudgeTagTranslations(ctx context.Context, values []str
 	return nil, nil
 }
 
+func (m *mockAdjudicator) JudgeTagAudit(context.Context, string, []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+	return nil, nil
+}
+
 func (m *mockAdjudicator) JudgeTagPhraseFolds(ctx context.Context, candidates []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
 	m.phraseFoldCall++
 	if m.phraseFoldFn != nil {

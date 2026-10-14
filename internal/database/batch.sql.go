@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -54,6 +55,18 @@ func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const countActiveTagAuditBatches = `-- name: CountActiveTagAuditBatches :one
+SELECT COUNT(*) FROM batch
+WHERE source = 'tagaudit' AND status IN ('queued', 'processing')
+`
+
+func (q *Queries) CountActiveTagAuditBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveTagAuditBatches)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countActiveTagIdentityBatches = `-- name: CountActiveTagIdentityBatches :one
@@ -129,13 +142,13 @@ func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
 
 const countQueuedConsumeBatches = `-- name: CountQueuedConsumeBatches :one
 SELECT COUNT(*) FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure', 'tagidentity')
+WHERE status = 'queued' AND source::text <> ALL($1::text[])
 `
 
-// Same exclusion list as GetNextQueuedBatch: config/backup/mirror/tagreconcile/tagmeasure/tagidentity
-// batches own their lifecycle in their handlers and never occupy a consume slot.
-func (q *Queries) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches)
+// The non-consume sources (which own their lifecycle in their handlers and never occupy a consume slot) are
+// owned by the registry and passed in, so this list cannot drift from types.NonConsumeBatchSources.
+func (q *Queries) CountQueuedConsumeBatches(ctx context.Context, nonConsumeSources []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches, pq.Array(nonConsumeSources))
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -211,6 +224,20 @@ func (q *Queries) GetBatchOwner(ctx context.Context, batchID string) (BatchOwner
 	return i, err
 }
 
+const getLastTagAuditBatchCreatedAt = `-- name: GetLastTagAuditBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'tagaudit' AND status = 'completed'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastTagAuditBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastTagAuditBatchCreatedAt)
+	var created_at sql.NullTime
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const getLastTagMeasureBatchCreatedAt = `-- name: GetLastTagMeasureBatchCreatedAt :one
 SELECT created_at FROM batch
 WHERE source = 'tagmeasure' AND status = 'completed'
@@ -276,14 +303,13 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 
 const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
 SELECT id, source, status, created_at FROM batch
-WHERE status = 'queued' AND source NOT IN ('config', 'backup', 'mirror', 'tagreconcile', 'tagmeasure', 'tagidentity')
+WHERE status = 'queued' AND source::text <> ALL($1::text[])
 ORDER BY created_at LIMIT 1
 `
 
-// config/backup/mirror/tagreconcile/tagmeasure/tagidentity batches own their
-// lifecycle in their handlers and must not be forked as consume workers.
-func (q *Queries) GetNextQueuedBatch(ctx context.Context) (Batch, error) {
-	row := q.db.QueryRowContext(ctx, getNextQueuedBatch)
+// See CountQueuedConsumeBatches: the non-consume exclusion is passed in from the registry, not enumerated.
+func (q *Queries) GetNextQueuedBatch(ctx context.Context, nonConsumeSources []string) (Batch, error) {
+	row := q.db.QueryRowContext(ctx, getNextQueuedBatch, pq.Array(nonConsumeSources))
 	var i Batch
 	err := row.Scan(
 		&i.ID,

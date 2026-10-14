@@ -177,6 +177,7 @@ internal/
 │   │   ├── mirror.go       # `kushim mirror` command (rsync --delete, waits for the backup lock)
 │   │   ├── search.go       # Search command (CLI)
 │   │   ├── storage.go      # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
+│   │   ├── tagaudit.go    # `kushim tagaudit [--run <batch-id>]` coverage-audit child
 │   │   ├── tagidentity.go  # `kushim tagidentity --run <batch-id>` identity-adjudication child
 │   │   ├── tagmeasure.go   # `kushim tagmeasure [--run <batch-id>]` measurement child
 │   │   ├── task.go         # Task commands (list, status, retry)
@@ -222,16 +223,20 @@ internal/
 │   ├── algebra.go          # Extension algebra readings (Set, NewSet, MassOf, EvidenceState)
 │   ├── extension.go        # Read-only tag-store snapshot (NewSnapshot, Tag, Pair, AliasResolver, SelfAliasResolver)
 │   ├── atomicity.go        # Compound shape classification (ClassifyShape, DeriveParts, MaxCompoundWords)
+│   ├── completeness.go     # Coverage classes and derivations (CoverageClass/CoverageSource/CoverageAction, CoverageRecord, ResolvedContent/ResolvedSegments/CoversDimension/PendingCoverageSegments, TwinPartner)
 │   ├── curation/           # Tag vocabulary services (operator and adapter-visible tag operations)
 │   │   ├── tag.go          # Tag service (NewTag, query delegates, rename/delete/promote, deleted-tag records, embedder integration)
 │   │   ├── registration.go # Planned tag registration (Create/CreateAndUnblock, PlanRegistration, CreatePlannedTx)
 │   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
-│   │   └── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
+│   │   ├── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
+│   │   └── tagaudit.go     # TagAudit service (NewTagAudit — enqueues the coverage-audit runs, serves the coverage review surface)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
 │   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, compound decomposition incl. JudgeCompounds, deleted-tag policy, identity planning, tag-quality gating)
 │   │   ├── identity.go     # Canonical-form identity mechanics (house form, key equality, tie-break)
 │   │   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
-│   │   └── tagidentity.go  # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
+│   │   ├── audit.go        # AuditRunner (NewAuditRunner — the coverage-verification pass: sweep worklist, trigger/lexical narrowing, judged applicability, dispositions, pending-coverage accounting)
+│   │   ├── tagidentity.go  # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
+│   │   └── tagaudit.go     # TagAuditTaskHandler (forks `kushim tagaudit --run`)
 │   ├── policy/             # Pure candidate generation (identity + band subjects)
 │   │   └── policy.go       # Evaluate, Decision, Version — no logging, no config, no I/O
 │   └── reconcile/          # Scheduled re-adjudication

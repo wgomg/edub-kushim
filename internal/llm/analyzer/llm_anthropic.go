@@ -406,6 +406,11 @@ func (l *LlmAnthropic) JudgeTagTranslations(ctx context.Context, values []string
 	return judgedAnthropic(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), judgedOutputBudget, ParseTagTranslationResponse)
 }
 
+// JudgeTagAudit decides the flagged dimensions' applicability through the Anthropic API.
+func (l *LlmAnthropic) JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error) {
+	return judgedAnthropic(ctx, l, TagAuditSystemMessage, BuildTagAuditPrompt(text, candidates), "tag audit judge", len(candidates), judgedOutputBudget, ParseTagAuditResponse)
+}
+
 // JudgeTagPhraseFolds answers the residual phrase-context fold questions through the Anthropic API.
 func (l *LlmAnthropic) JudgeTagPhraseFolds(ctx context.Context, candidates []TagPhraseFoldCandidate) ([]TagPhraseFoldResult, error) {
 	return judgedAnthropic(ctx, l, TagPhraseFoldSystemMessage, BuildTagPhraseFoldPrompt(candidates), "tag phrase fold judge", len(candidates), judgedOutputBudget, ParseTagPhraseFoldResponse)

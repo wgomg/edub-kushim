@@ -338,6 +338,16 @@ type TagMeasureConfig struct {
 	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
 }
 
+// TagAuditConfig is the scheduled completeness audit section: enablement, schedule, and the per-run sample
+// size. The sample size is the calibration lever; the trigger similarity is a pinned constant, not a user
+// setting.
+type TagAuditConfig struct {
+	Enabled    bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Interval   float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time       string  `mapstructure:"time" yaml:"time" json:"time"`
+	SampleSize int     `mapstructure:"sample_size" yaml:"sample_size" json:"sample_size"`
+}
+
 // EnricherConfig is the enrichment pipeline section: worker count and the
 // tool and judged-step settings.
 type EnricherConfig struct {
@@ -349,6 +359,7 @@ type EnricherConfig struct {
 	TagQuality      TagQualityConfig      `mapstructure:"tag_quality" yaml:"tag_quality" json:"tag_quality"`
 	TagReconcile    TagReconcileConfig    `mapstructure:"tag_reconcile" yaml:"tag_reconcile" json:"tag_reconcile"`
 	TagMeasure      TagMeasureConfig      `mapstructure:"tag_measure" yaml:"tag_measure" json:"tag_measure"`
+	TagAudit        TagAuditConfig        `mapstructure:"tag_audit" yaml:"tag_audit" json:"tag_audit"`
 }
 
 // ResolvedAdjudicatorLlm returns the adjudicator's model, falling back to
@@ -725,6 +736,12 @@ func DefaultConfig(configDir string) *Config {
 				Interval: 7,
 				Time:     "03:00",
 			},
+			TagAudit: TagAuditConfig{
+				Enabled:    false,
+				Interval:   7,
+				Time:       "04:00",
+				SampleSize: 25,
+			},
 		},
 	}
 }
@@ -905,6 +922,18 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if _, err := parseHHMM(cfg.Enricher.TagMeasure.Time, false); err != nil {
 		return fmt.Errorf("enricher.tag_measure.time: %w", err)
+	}
+	if cfg.Enricher.TagAudit.Interval <= 0 {
+		cfg.Enricher.TagAudit.Interval = 7
+	}
+	if cfg.Enricher.TagAudit.Time == "" {
+		cfg.Enricher.TagAudit.Time = "04:00"
+	}
+	if _, err := parseHHMM(cfg.Enricher.TagAudit.Time, false); err != nil {
+		return fmt.Errorf("enricher.tag_audit.time: %w", err)
+	}
+	if cfg.Enricher.TagAudit.SampleSize <= 0 {
+		cfg.Enricher.TagAudit.SampleSize = 25
 	}
 	if cfg.Enricher.TagQuality.Enabled {
 		q := cfg.ResolvedQualityLlm()

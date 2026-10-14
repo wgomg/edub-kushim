@@ -44,6 +44,7 @@ var Batch = struct {
 		TagReconcile    BatchSource
 		TagMeasure      BatchSource
 		TagIdentity     BatchSource
+		TagAudit        BatchSource
 	}
 	Status struct {
 		Queued     BatchStatus
@@ -68,6 +69,7 @@ var Batch = struct {
 		TagReconcile    BatchSource
 		TagMeasure      BatchSource
 		TagIdentity     BatchSource
+		TagAudit        BatchSource
 	}{
 		CLI:             "cli",
 		API:             "api",
@@ -82,6 +84,7 @@ var Batch = struct {
 		TagReconcile:    "tagreconcile",
 		TagMeasure:      "tagmeasure",
 		TagIdentity:     "tagidentity",
+		TagAudit:        "tagaudit",
 	},
 	Status: struct {
 		Queued     BatchStatus
@@ -114,6 +117,7 @@ var Task = struct {
 		ThumbBackfill TaskType
 		TagMeasure    TaskType
 		TagIdentity   TaskType
+		TagAudit      TaskType
 	}
 	Status struct {
 		Pending    TaskStatus
@@ -136,6 +140,7 @@ var Task = struct {
 		ThumbBackfill TaskType
 		TagMeasure    TaskType
 		TagIdentity   TaskType
+		TagAudit      TaskType
 	}{
 		Consume:       "consume",
 		Enrich:        "enrich",
@@ -147,6 +152,7 @@ var Task = struct {
 		ThumbBackfill: "thumbbackfill",
 		TagMeasure:    "tagmeasure",
 		TagIdentity:   "tagidentity",
+		TagAudit:      "tagaudit",
 	},
 	Status: struct {
 		Pending    TaskStatus
@@ -287,6 +293,16 @@ func BlockingTaskTypes() []TaskType { return slices.Clone(blockingTaskTypes) }
 // in their handlers and never occupy a consume slot.
 func NonConsumeBatchSources() []BatchSource { return slices.Clone(nonConsumeBatchSources) }
 
+// NonConsumeBatchSourceValues is NonConsumeBatchSources in plain string form, for the queued-batch
+// exclusion queries: the same registry list backs both, so the exclusion cannot drift from the sources.
+func NonConsumeBatchSourceValues() []string {
+	values := make([]string, len(nonConsumeBatchSources))
+	for i, src := range nonConsumeBatchSources {
+		values[i] = string(src)
+	}
+	return values
+}
+
 var allBatchSources = []BatchSource{
 	Batch.Source.CLI,
 	Batch.Source.API,
@@ -301,6 +317,7 @@ var allBatchSources = []BatchSource{
 	Batch.Source.TagReconcile,
 	Batch.Source.TagMeasure,
 	Batch.Source.TagIdentity,
+	Batch.Source.TagAudit,
 }
 
 var nonConsumeBatchSources = []BatchSource{
@@ -310,6 +327,7 @@ var nonConsumeBatchSources = []BatchSource{
 	Batch.Source.TagReconcile,
 	Batch.Source.TagMeasure,
 	Batch.Source.TagIdentity,
+	Batch.Source.TagAudit,
 }
 
 var allBatchStatuses = []BatchStatus{
@@ -332,6 +350,7 @@ var allTaskTypes = []TaskType{
 	Task.Type.ThumbBackfill,
 	Task.Type.TagMeasure,
 	Task.Type.TagIdentity,
+	Task.Type.TagAudit,
 }
 
 var blockingTaskTypes = []TaskType{
@@ -341,6 +360,7 @@ var blockingTaskTypes = []TaskType{
 	Task.Type.ThumbBackfill,
 	Task.Type.TagMeasure,
 	Task.Type.TagIdentity,
+	Task.Type.TagAudit,
 }
 
 var lockGatedTaskTypes = []TaskType{

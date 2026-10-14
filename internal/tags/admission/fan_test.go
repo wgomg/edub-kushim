@@ -45,7 +45,7 @@ func TestResolveContentSingles(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			content, singles := resolveContentSingles(tc.candidate, tc.promoted, tc.live)
+			content, singles := tags.ResolvedContent(tc.candidate, tc.promoted, tc.live)
 			if !reflect.DeepEqual(content, tags.DeriveParts(tc.candidate)) {
 				t.Errorf("content = %v, want DeriveParts(%q) = %v", content, tc.candidate, tags.DeriveParts(tc.candidate))
 			}

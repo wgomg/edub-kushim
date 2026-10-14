@@ -28,16 +28,18 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 }
 
 // TagHandler is the tag API: CRUD, provisional promotion and its quality verdicts, deleted-tag records,
-// and the identity reevaluation trigger backed by curation.
+// the identity reevaluation trigger, and the completeness audit trigger and coverage review surface,
+// backed by curation.
 type TagHandler struct {
 	tag      *curation.Tag
 	identity *curation.TagIdentity
+	audit    *curation.TagAudit
 	logger   *log.Logger
 }
 
 // NewTagHandler wires the tag handler to the curation services.
-func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, logger *log.Logger) *TagHandler {
-	return &TagHandler{tag: tag, identity: identity, logger: logger}
+func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, audit *curation.TagAudit, logger *log.Logger) *TagHandler {
+	return &TagHandler{tag: tag, identity: identity, audit: audit, logger: logger}
 }
 
 // List serves the paged tag listing with a name-prefix search and
@@ -407,6 +409,125 @@ func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// ReevaluateAudit enqueues a fresh completeness audit for the vocabulary.
+func (h *TagHandler) ReevaluateAudit(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	batchID, alreadyQueued, err := h.audit.Enqueue(ctx)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "enqueue tag audit run", err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"batch_id":       batchID,
+		"already_queued": alreadyQueued,
+	})
+}
+
+// ListAuditFlags serves the paged open coverage flags.
+func (h *TagHandler) ListAuditFlags(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	pb := GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	limit := pb.GetInt64("limit", 50, 1, 100)
+	offset := pb.GetInt64("offset", 0, 0, 100000)
+
+	flags, total, err := h.audit.ListFlags(ctx, int32(limit), int32(offset))
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "list coverage flags", err)
+		return
+	}
+
+	responses := make([]CoverageFlagResponse, len(flags))
+	for i, f := range flags {
+		responses[i] = CoverageFlagResponse{
+			ID:            f.ID,
+			DocumentID:    f.DocumentID,
+			DocumentTitle: f.DocumentTitle,
+			TagName:       f.TagName,
+			Class:         f.Class,
+			Source:        f.Source,
+			Provisional:   f.Provisional,
+			CreatedAt:     f.CreatedAt,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, CoverageFlagListResponse{Results: responses, Total: total})
+}
+
+// ApplyAuditFlag confirms a coverage flag, attaching the dimension to the document.
+func (h *TagHandler) ApplyAuditFlag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	var req CoverageFlagActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.audit.ApplyFlag(ctx, req.DocumentID, req.TagName); err != nil {
+		writeServiceError(w, h.logger, reqID, "apply coverage flag", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DismissAuditFlag records the operator's not-applies outcome for a coverage flag.
+func (h *TagHandler) DismissAuditFlag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	var req CoverageFlagActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.audit.DismissFlag(ctx, req.DocumentID, req.TagName); err != nil {
+		writeServiceError(w, h.logger, reqID, "dismiss coverage flag", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CreateAuditValue registers a missing flagged dimension through the normal tag-creation path: the value
+// is born provisionally with pending identity evidence, and the fill lands on a later audit pass.
+func (h *TagHandler) CreateAuditValue(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	var req CreateAuditValueRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	name := stripTags(strings.TrimSpace(req.TagName))
+	if name == "" {
+		http.Error(w, "Tag name is required", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.tag.CreateAndUnblock(ctx, []string{name}); err != nil {
+		if isMatcherUnavailable(err) {
+			matcherUnavailableResponse(w)
+			return
+		}
+		writeServiceError(w, h.logger, reqID, "create audited value", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ListDeleted serves the paged deleted-tag records.
 func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -534,6 +655,36 @@ type ProvisionalTagListResponse struct {
 // CreateTagRequest is the body of POST /api/v1/tags.
 type CreateTagRequest struct {
 	Name string `json:"name"`
+}
+
+// CoverageFlagResponse is one open coverage flag as the API shows it.
+type CoverageFlagResponse struct {
+	ID            int64     `json:"id"`
+	DocumentID    int64     `json:"document_id"`
+	DocumentTitle string    `json:"document_title"`
+	TagName       string    `json:"tag_name"`
+	Class         string    `json:"class"`
+	Source        string    `json:"source"`
+	Provisional   bool      `json:"provisional"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// CoverageFlagListResponse is one page of open coverage flags.
+type CoverageFlagListResponse struct {
+	Results []CoverageFlagResponse `json:"results"`
+	Total   int64                  `json:"total"`
+}
+
+// CoverageFlagActionRequest is the body of the coverage flag apply and dismiss actions.
+type CoverageFlagActionRequest struct {
+	DocumentID int64  `json:"document_id"`
+	TagName    string `json:"tag_name"`
+}
+
+// CreateAuditValueRequest is the body of the coverage create-value action: it names the missing dimension to
+// register and carries no document, since the value is a vocabulary addition.
+type CreateAuditValueRequest struct {
+	TagName string `json:"tag_name"`
 }
 
 // UpdateTagRequest is the body of a tag rename.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -108,11 +109,12 @@ func TestTagIdentityEnqueue(t *testing.T) {
 		testutil.AssertEqual(t, len(batchMock.calls), 0, "no new batch while a batch is active")
 	})
 
-	t.Run("task creation failure reports already queued without a batch", func(t *testing.T) {
+	t.Run("a duplicate active task reports already queued without a batch", func(t *testing.T) {
 		client := newTagIdentityTestClient(t)
 		taskMock := &recordingTaskCreator{
 			createFn: func(types.TaskType, string, json.RawMessage, string, types.TaskStatus, string) (string, error) {
-				return "", errors.New("dedup key in use")
+				// the active-dedup index rejects the second task for the slot the count above lost a race to
+				return "", &pgconn.PgError{Code: "23505", Message: `duplicate key value violates unique constraint "idx_task_dedup"`}
 			},
 		}
 		batchMock := &recordingBatchCreator{}
@@ -124,6 +126,21 @@ func TestTagIdentityEnqueue(t *testing.T) {
 		if batchID != "" {
 			t.Errorf("batch ID = %q, want empty", batchID)
 		}
+		testutil.AssertEqual(t, len(batchMock.calls), 0, "no batch without a task")
+	})
+
+	t.Run("a task creation failure is reported, not swallowed", func(t *testing.T) {
+		client := newTagIdentityTestClient(t)
+		taskMock := &recordingTaskCreator{
+			createFn: func(types.TaskType, string, json.RawMessage, string, types.TaskStatus, string) (string, error) {
+				return "", errors.New("connection lost")
+			},
+		}
+		batchMock := &recordingBatchCreator{}
+		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
+
+		_, _, err := svc.Enqueue(context.Background())
+		testutil.AssertError(t, err, "a real failure must not be reported as already queued")
 		testutil.AssertEqual(t, len(batchMock.calls), 0, "no batch without a task")
 	})
 

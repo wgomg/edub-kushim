@@ -51,9 +51,15 @@ FROM jsonb_to_recordset(@records::jsonb) AS r(
     caveats text[]
 );
 
--- name: LatestTagMeasurementRun :one
+-- name: LatestTagWorklistRun :one
+-- The latest run that produced measurement rows. A run of only coverage rows belongs to the completeness
+-- audit, not a measurement sweep, so it never becomes the worklist run.
 SELECT run_id, snapshot_at, rule_set_version
-FROM tag_measurement
+FROM tag_measurement r
+WHERE EXISTS (
+    SELECT 1 FROM tag_measurement x
+    WHERE x.run_id = r.run_id AND x.operator <> 'coverage'
+)
 ORDER BY snapshot_at DESC, id DESC
 LIMIT 1;
 

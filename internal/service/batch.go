@@ -70,6 +70,10 @@ type Batch struct {
 // report them as orphaned.
 var nonConsumeSources = types.NonConsumeBatchSources()
 
+// nonConsumeSourceValues is the registry-owned non-consume set as plain strings for the queued-batch
+// exclusion queries, so the registry stays the single owner of which sources never occupy a consume slot.
+var nonConsumeSourceValues = types.NonConsumeBatchSourceValues()
+
 // NewBatch wires the batch service; maxRetries bounds the task-store
 // claim-contention retries.
 func NewBatch(client *database.Client, maxRetries int) *Batch {
@@ -410,7 +414,7 @@ func (s *Batch) ListPausedBatches(ctx context.Context) ([]string, error) {
 
 // CountQueuedConsumeBatches counts queued consume batches.
 func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountQueuedConsumeBatches(ctx)
+	count, err := s.queries.CountQueuedConsumeBatches(ctx, nonConsumeSourceValues)
 	if err != nil {
 		return 0, errs.FromDB(err, "count queued consume batches")
 	}
@@ -420,7 +424,7 @@ func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
 // GetNextQueuedBatch claims the next queued consume batch in creation
 // order; sql.ErrNoRows when the queue is empty.
 func (s *Batch) GetNextQueuedBatch(ctx context.Context) (database.Batch, error) {
-	b, err := s.queries.GetNextQueuedBatch(ctx)
+	b, err := s.queries.GetNextQueuedBatch(ctx, nonConsumeSourceValues)
 	if err != nil {
 		return database.Batch{}, errs.FromDB(err, "get next queued batch")
 	}

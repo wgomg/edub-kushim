@@ -165,15 +165,16 @@ type WorklistSnapshot struct {
 
 // LatestWorklists derives the review worklists from the latest measurement run under the current cuts. The
 // cuts are consumer-side (extension-algebra §4), so a rule-set bump re-derives an old run's raw numbers
-// instead of invalidating them. A store with no run returns an absent snapshot and no error: zero data is a
-// normal state, not a failure.
+// instead of invalidating them. Only runs that produced measurement operators count — the completeness
+// audit writes coverage-only runs into the shared substrate, and those never become the worklist run. A
+// store with no run returns an absent snapshot and no error: zero data is a normal state, not a failure.
 func (s *Store) LatestWorklists(ctx context.Context) (*WorklistSnapshot, error) {
-	run, err := s.q.LatestTagMeasurementRun(ctx)
+	run, err := s.q.LatestTagWorklistRun(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return &WorklistSnapshot{Absent: true}, nil
 		}
-		return nil, fmt.Errorf("latest tag measurement run: %w", err)
+		return nil, fmt.Errorf("latest tag worklist run: %w", err)
 	}
 	rows, err := s.q.TagMeasurementRecordsForRun(ctx, run.RunID)
 	if err != nil {

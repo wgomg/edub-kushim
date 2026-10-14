@@ -8,6 +8,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import TagReconcileStrip from '$lib/components/tags/TagReconcileStrip.svelte';
 	import ProvisionalReview from '$lib/components/tags/ProvisionalReview.svelte';
+	import CoverageReview from '$lib/components/tags/CoverageReview.svelte';
 	import DeletedTags from '$lib/components/tags/DeletedTags.svelte';
 	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
@@ -16,7 +17,7 @@
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
 
-	const TABS = ['vocabulary', 'provisional', 'deleted'];
+	const TABS = ['vocabulary', 'provisional', 'coverage', 'deleted'];
 
 	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip
 	// stick flush under the topbar instead of leaving a 24px band over the panel
@@ -244,6 +245,17 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 			Deleted
 			{#if counts.deleted}<span class={tabBadge}>{formatNumber(counts.deleted)}</span>{/if}
 		</button>
+		<button
+			id="tab-coverage"
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'coverage'}
+			aria-controls="panel-coverage"
+			onclick={() => selectTab('coverage')}
+			class={tabClass('coverage')}
+		>
+			Coverage
+		</button>
 	{/if}
 </div>
 
@@ -296,6 +308,10 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 {:else if activeTab === 'deleted'}
 	<div id="panel-deleted" role="tabpanel" aria-labelledby="tab-deleted">
 		<DeletedTags refreshKey={deletedRefreshKey} onchanged={onReviewChanged} />
+	</div>
+{:else if activeTab === 'coverage'}
+	<div id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage">
+		<CoverageReview onchanged={onReviewChanged} />
 	</div>
 {/if}
 

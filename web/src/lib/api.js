@@ -274,7 +274,32 @@ export const api = {
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
-		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' })
+		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' }),
+		reevaluateAudit: () => requestRaw('/api/v1/tags/audit/reevaluate', { method: 'POST' }),
+		auditFlags: (limit = 50, offset = 0) => {
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+			return request(`/api/v1/tags/audit/flags?${params.toString()}`).then(
+				(data) => data ?? { results: [], total: 0 }
+			);
+		},
+		applyAuditFlag: (body) =>
+			requestRaw('/api/v1/tags/audit/flags/apply', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		dismissAuditFlag: (body) =>
+			requestRaw('/api/v1/tags/audit/flags/dismiss', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+		createAuditValue: (body) =>
+			requestRaw('/api/v1/tags/audit/flags/create-value', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			})
 	},
 
 	people: {

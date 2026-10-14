@@ -6,7 +6,7 @@ The process layer is split by role: the verb table and the `kushim` verbs live i
 
 ### Globals
 
-`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `restore`, `migrate`, `tagmeasure`, `tagidentity`. The `consume`, `queue`, and `setup` entries delegate to `consume.Run`, `queue.Run`, and `setup.RunSetup` respectively.
+`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `restore`, `migrate`, `tagmeasure`, `tagidentity`, `tagaudit`. The `consume`, `queue`, and `setup` entries delegate to `consume.Run`, `queue.Run`, and `setup.RunSetup` respectively.
 
 > **Note**: The `edub` binary has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -77,7 +77,7 @@ The process layer is split by role: the verb table and the `kushim` verbs live i
     - `GetMatcherClient() *matcher.MatcherClient` — Lazily builds the RPC client over the socket, capping request bodies at the configured reduce-target size
     - `GetTagToolsRunner() *tools.Runner` — Lazily builds the `textreducer`, `contentanalyzer` and `tagmatcher` tools over the matcher client
     - `GetDispatcher() (*task.Dispatcher, error)` — Lazily creates the dispatcher together with the runner, store and tag services, so `GetDispatcher`, `GetRunner` and `GetTagService` work in any call order. Builds the curation tag service (`Tag` wired through the matcher client) and `Enricher` with the matcher.
-    - `GetRunner() (*task.Runner, error)` — Builds the runner over the dispatcher and registers every task handler (consume, enrich, thumbnail, thumbbackfill, config, backup, mirror, tagreconcile, tagmeasure, tagidentity)
+    - `GetRunner() (*task.Runner, error)` — Builds the runner over the dispatcher and registers every task handler (consume, enrich, thumbnail, thumbbackfill, config, backup, mirror, tagreconcile, tagmeasure, tagidentity, tagaudit)
     - `SetRunnerOwnerID(id) error` — Per-process batch owner UUID
     - `GetPool(taskType) (*task.Pool, error)` — Returns (or lazily creates) the pool for a task type from the `poolSpecs` table (worker count and poll interval per type)
     - `GetSearchEngine() (*search.Engine, error)`
@@ -196,7 +196,7 @@ The daemon's Postgres `LISTEN` goroutine lives in the same package (`notify.go`)
   - **Safety timer** — A 30-second timer guarantees consumption runs at least once every 30s, even if a notification is dropped (connection blip, reconnection). Resets on each notification-driven consumption.
   - **Housekeeping ticker** — A 5-second ticker that drives the config reload/reconnect, the per-task pool ensures and schedules, the empty-batch sweep, and stale reclamation. Runs:
     - **Stale batch reclamation** — Lists batch owners with stale heartbeats (>15s) and active tasks, signals SIGTERM to the owner PID (if the process is still alive), quarantines tasks at or above `consumer.reclaim.max_retries` (default 3) to `failed`, resets remaining processing→pending with an incremented attempt counter, re-queues the batch, deletes the stale owner row. Gated by `consumer.reclaim.enabled` (default `true`); when `false`, stale batches remain in `processing` state and are not resumed.
-    - **Stale task reclamation** — An age-based sweep (`reclaimStaleTasks`) that resets individual `processing` tasks back to `pending` (or `failed` if at max retries) when their `started_at` exceeds `consumer.reclaim.stale_task_after` (default 600s). Blocking-class tasks (backup, mirror, tagreconcile, thumbbackfill, tagmeasure, tagidentity) are swept only when the maintenance lock is not held fresh by their own claim (30-minute freshness window, 5-minute heartbeat), so a live holder is never reset nor robbed of its lock. Gated by `consumer.reclaim.enabled` and rate-limited to at most once per `max(60s, stale_task_after/10)` so the sweep does not run on every 5s tick.
+    - **Stale task reclamation** — An age-based sweep (`reclaimStaleTasks`) that resets individual `processing` tasks back to `pending` (or `failed` if at max retries) when their `started_at` exceeds `consumer.reclaim.stale_task_after` (default 600s). Blocking-class tasks (backup, mirror, tagreconcile, thumbbackfill, tagmeasure, tagidentity, tagaudit) are swept only when the maintenance lock is not held fresh by their own claim (30-minute freshness window, 5-minute heartbeat), so a live holder is never reset nor robbed of its lock. Gated by `consumer.reclaim.enabled` and rate-limited to at most once per `max(60s, stale_task_after/10)` so the sweep does not run on every 5s tick.
     - **Empty queued batch sweep** — `sweepEmptyQueuedBatches` marks `failed` any `queued` batch older than 10 minutes that has zero tasks (`ListEmptyQueuedBatches`). Such batches are never finalized by a handler and would otherwise block the polling gate capacity check forever.
 - `sweepEmptyQueuedBatches(ctx, client, logger) error` — Fails queued batches that never received a task (no task rows, older than 10 minutes). Defense in depth against zombie batches left by enqueue failures or config saves with nothing to do.
 - `reclaimStaleBatches(ctx, cfg, client, batchSvc, logger) error` — Iterates stale batch owners, signals SIGTERM to the owner PID (if alive), quarantines tasks at or above `consumer.reclaim.max_retries` to `failed`, resets remaining processing→pending with incremented attempt counter, re-queues, deletes owner. Only called from `daemon.reclaimStale` when `consumer.reclaim.enabled` is `true`.
@@ -229,6 +229,8 @@ The daemon likewise starts a **mirror pool** (1 worker, 60s poll interval) when 
 The daemon also runs a **tagmeasure pool** (1 worker, 5s poll interval) while `enricher.tag_measure.enabled` is set — stopped when disabled, because manual `kushim tagmeasure` runs bypass the queue entirely. It executes scheduled measurement tasks via `TagMeasureTaskHandler`, which drains in-flight tasks, heartbeats the lock, and forks `kushim tagmeasure --run <batch-id>`, capturing the child's printed report line as the task result.
 
 The **tagidentity pool** (1 worker, 5s poll interval, always running) executes triggered identity-adjudication batches via `TagIdentityTaskHandler`, which drains in-flight tasks, heartbeats the lock, and forks `kushim tagidentity --run <batch-id>`, capturing the child's `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/failed) as the task result. The trigger is the review surface's reevaluate action; batches are deduplicated while a run is active, and the run completes with zero work when the adjudicator is disabled.
+
+The **tagaudit pool** (1 worker, 5s poll interval) runs while `enricher.tag_audit.enabled` is set — stopped when disabled, because manual `kushim tagaudit` runs bypass the queue. It executes scheduled coverage-audit tasks via `TagAuditTaskHandler`, which drains in-flight tasks, heartbeats the lock, and forks `kushim tagaudit --run <batch-id>`, capturing the child's `tagaudit-report: <json>` line (sweep, sampled/flagged counts, coverage tallies by class, fills/flags/proposals, judge call counts, pending coverage) as the task result; the same anchored scheduler (tag-audit spec, anchored on the last completed `tagaudit` batch, dedup key `tagaudit`) enqueues the runs.
 
 ---
 
@@ -282,6 +284,14 @@ The **tagidentity pool** (1 worker, 5s poll interval, always running) executes t
 
 - `tagMeasureHandler(c, args) error` — `kushim tagmeasure [--run <batch-id>]`. Without flags it runs the pass in the foreground under the maintenance lock: `database.HoldMaintenanceLock` acquires the NULL-token lock (waiting for a scheduled run to finish), heartbeats it every 5 minutes, and drains in-flight tasks via `WaitForTaskDrain`; the returned release function frees the lock. Then it logs the run's opening line (`tag measure run starting: N tags in store`), runs the pass (one REPEATABLE READ transaction over `internal/tags`, appending the evidence records with a fresh `run_id`) and prints the report line. With `--run <batch-id>` it is the scheduled fork's execution mode: no lock and no drain (the claiming parent holds the tokenized lock and already drained), same opening line, pass, and printed report.
 - `printTagMeasureReport(c, report, batchID) error` — Marshals the run summary (per-operator counts, skip accounting, worklist sizes, versions) and prints it as the `tagmeasure-report: <json>` line the queue handler captures, with the human-readable summary going to the log.
+
+---
+
+## `tagaudit.go`
+
+### Functions
+
+- `runTagAuditPass(c, batchID) error` — `kushim tagaudit [--run <batch-id>]`. Without a batch id it is a manual run: it takes the container's tag-tools runner (`GetTagToolsRunner`) and runs the coverage pass under the maintenance lock (`database.HoldMaintenanceLock`, NULL-token, waiting for a running pass to finish). With `--run <batch-id>` it is the scheduled fork's execution mode: it validates the batch id but takes no lock (the claiming parent holds the tokenized lock and already drained), so the batch id only labels the run while the run id stays fresh. Both modes build `admission.NewAuditRunner`, run the pass, and print the report line the queue handler captures.
 
 ---
 

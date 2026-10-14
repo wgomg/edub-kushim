@@ -308,6 +308,24 @@ func (q *Queries) GetDocumentBySHA512Checksum(ctx context.Context, sha512Checksu
 	return i, err
 }
 
+const getDocumentContentForAudit = `-- name: GetDocumentContentForAudit :one
+SELECT text_content, text_hash, word_count FROM document
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetDocumentContentForAuditRow struct {
+	TextContent sql.NullString
+	TextHash    sql.NullString
+	WordCount   int32
+}
+
+func (q *Queries) GetDocumentContentForAudit(ctx context.Context, id int64) (GetDocumentContentForAuditRow, error) {
+	row := q.db.QueryRowContext(ctx, getDocumentContentForAudit, id)
+	var i GetDocumentContentForAuditRow
+	err := row.Scan(&i.TextContent, &i.TextHash, &i.WordCount)
+	return i, err
+}
+
 const getDocumentIDsByDocumentIDs = `-- name: GetDocumentIDsByDocumentIDs :many
 SELECT document_id, id FROM document
 WHERE document_id = ANY($1::text[])
@@ -815,6 +833,43 @@ func (q *Queries) ListDocumentsWithoutThumbnailsByBatch(ctx context.Context, bat
 	for rows.Next() {
 		var i ListDocumentsWithoutThumbnailsByBatchRow
 		if err := rows.Scan(&i.DocumentID, &i.StoragePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveDocumentCompoundTags = `-- name: ListLiveDocumentCompoundTags :many
+SELECT dt.document_id, t.name AS tag_name
+FROM document_tag dt
+JOIN tag t ON t.id = dt.tag_id
+JOIN document d ON d.id = dt.document_id
+WHERE d.deleted_at IS NULL AND t.name LIKE '% %'
+ORDER BY dt.document_id, t.name
+`
+
+type ListLiveDocumentCompoundTagsRow struct {
+	DocumentID int64
+	TagName    string
+}
+
+func (q *Queries) ListLiveDocumentCompoundTags(ctx context.Context) ([]ListLiveDocumentCompoundTagsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveDocumentCompoundTags)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveDocumentCompoundTagsRow
+	for rows.Next() {
+		var i ListLiveDocumentCompoundTagsRow
+		if err := rows.Scan(&i.DocumentID, &i.TagName); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

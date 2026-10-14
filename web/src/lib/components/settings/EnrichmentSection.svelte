@@ -852,6 +852,40 @@
 		</Card>
 
 		<Card
+			title="Coverage audit"
+			name="tag completeness coverage audit"
+			description="Periodically audits document coverage, verifying applicable dimensions and filling the confirmed gaps."
+		>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div class="sm:col-span-2">
+					<Switch
+						id="tag-audit-enabled"
+						bind:checked={cfg.enricher.tag_audit.enabled}
+						label="Schedule coverage audit runs"
+					/>
+				</div>
+				<UnitField
+					id="tag-audit-interval"
+					label="Interval"
+					unit="days"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					bind:value={cfg.enricher.tag_audit.interval}
+				/>
+				<UnitField
+					id="tag-audit-time"
+					label="Preferred time"
+					mono
+					placeholder="04:00"
+					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+					hint="HH:MM, 24-hour."
+					bind:value={cfg.enricher.tag_audit.time}
+				/>
+			</div>
+		</Card>
+
+		<Card
 			title="Enrichment workers"
 			name="enricher workers parallel"
 			description="Parallel documents moving through this stage."

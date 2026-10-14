@@ -763,6 +763,34 @@ invoked by the `tagidentity` task the review surface enqueues through
 endpoint is the trigger and the scheduled reconciliation's identity sweep is the
 standing backstop, so claims nobody triggers still resolve.
 
+### `kushim tagaudit`
+
+Audit document coverage against the tag vocabulary: a sample of documents plus
+the below-floor ones is drawn from the sweep register, the matcher suggests
+dimensions the document is about but does not carry, an optional applicability
+judge confirms the gaps, confirmed gaps are filled (attached under the canonical
+label), gray calls are flagged for review, and the durable coverage classes
+(`explicit`, `pending_split`, `pending_canonicalization`, `missing`, `gray`,
+`pending_coverage`) are recorded. A document is audited at most once per sweep;
+when every live document has been drawn the sweep counter advances and they
+become eligible again. Every run is evidence: the per-dimension coverage counts
+are recorded in the measurement substrate, and flags surface in the **Coverage**
+tab of the tags page.
+
+```bash
+kushim tagaudit                # manual run under the maintenance lock
+kushim tagaudit --run <batch-id>  # the scheduled fork's execution mode
+```
+
+The manual run takes the maintenance lock and waits for any running pass to
+finish; `--run <batch-id>` is how the queue daemon executes a scheduled run — it
+takes no lock (the claiming task holds it and already drained) and the batch id
+only labels the run. The run requires the applicability judge (`enricher.tag_adjudicator`);
+without it, or when the matcher is unavailable, no reading is taken and the
+documents stay eligible for the next run. Scheduling (`enricher.tag_audit`) is
+disabled by default; enabling it starts the queue pool that executes scheduled
+runs, and `POST /api/v1/tags/audit/reevaluate` enqueues a run on demand.
+
 ### `kushim restore`
 
 Restore database and storage from a backup archive. The archived configuration is preserved as `config.yaml.restored`, not applied.
@@ -1558,6 +1586,59 @@ Response `202`:
   processing: the call is then a no-op and `batch_id` is empty.
 - Claims also resolve automatically on the scheduled reconciliation's identity
   sweep, so this endpoint is the on-demand path, not a requirement.
+
+### Coverage audit
+
+Audit document coverage against the vocabulary; these endpoints back the
+**Coverage** tab of the tags page. They are editor/admin only except the flag
+list, which is viewer and above.
+
+```
+POST /api/v1/tags/audit/reevaluate
+```
+
+Enqueues a coverage-audit run. Response `202`:
+
+```json
+{ "batch_id": "3f0f…", "already_queued": false }
+```
+
+- `already_queued` is `true` when a `tagaudit` run is still queued or
+  processing: the call is then a no-op and `batch_id` is empty.
+- The queue executes the run only while `enricher.tag_audit.enabled` is set;
+  `kushim tagaudit` runs it manually regardless.
+
+```
+GET /api/v1/tags/audit/flags?limit=50&offset=0
+```
+
+Lists the open coverage flags — the latest event of each document/dimension pair
+whose action is still a flag or a proposal awaiting a review outcome — newest
+first. Response `200`:
+
+```json
+{ "results": [{ "id": 1, "document_id": 12, "document_title": "…", "tag_name": "russia", "class": "gray", "source": "trigger", "provisional": false, "created_at": "2026-10-14T00:00:00Z" }], "total": 1 }
+```
+
+```
+POST /api/v1/tags/audit/flags/apply
+POST /api/v1/tags/audit/flags/dismiss
+```
+
+Apply attaches the flagged dimension to the document (source `audit`) and
+records the `applied` outcome; dismiss records the `not_applies` outcome, which
+is authoritative — the next run does not re-flag the pair while the document
+text is unchanged. Both take `{ "document_id": 12, "tag_name": "russia" }` and
+return `204`.
+
+```
+POST /api/v1/tags/audit/flags/create-value
+```
+
+Registers a missing flagged name provisionally through the normal tag-creation
+path (pending identity evidence); the fill lands on a later run once the value
+exists. Takes `{ "tag_name": "…" }` — no document, since the value is a
+vocabulary addition — and returns `204`.
 
 ### Saved Searches
 
@@ -2356,7 +2437,7 @@ Object with `count` (total active tasks across all task types, uncapped) and `ta
 | `tasks`       | `array`  | Active tasks, capped at 25, ordered processing-first then oldest-queued                                                |
 | `tasks[].task_id` | `string` | Task UUID                                                                                                          |
 | `tasks[].batch_id` | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                     |
-| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, or `thumbbackfill`                                                            |
+| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, or `thumbbackfill`                                                            |
 | `tasks[].file_name` | `string` | File name from the payload, if any                                                                                 |
 | `tasks[].status` | `string` | `pending`, `processing`, or `waiting`                                                                              |
 | `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
@@ -2502,11 +2583,11 @@ Report](#tag-reconciliation-report). List endpoints and other task types omit it
 (`POST /api/v1/consume`), `upload` (`POST /api/v1/consume/upload`),
 `polling` (daemon inbox scan), `reenrich`, `orphaned-restore`,
 `thumbbackfill`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`,
-`tagidentity`. The
+`tagidentity`, `tagaudit`. The
 vocabulary is a closed Postgres enum (`batch_source`), mirrored by the Go
 registry in `internal/types`. `owner_state` (`"none"`,
 `"live"`, `"stale"`) is included when set. Batches with source
-`config`/`backup`/`mirror`/`tagreconcile`/`tagmeasure`/`tagidentity` never report `orphaned: true` —
+`config`/`backup`/`mirror`/`tagreconcile`/`tagmeasure`/`tagidentity`/`tagaudit` never report `orphaned: true` —
 they have no `batch_owner` row by design (their handlers own the lifecycle).
 
 ---
@@ -2678,6 +2759,12 @@ enricher:
   #   interval: 7                # days between runs
   #   time: "03:00"              # preferred time of day (HH:MM)
 
+  # tag_audit:                   # scheduled tag coverage audit (verify and repair application recall)
+  #   enabled: false             # disabled by default
+  #   interval: 7                # days between runs
+  #   time: "04:00"              # preferred time of day (HH:MM)
+  #   sample_size: 25            # documents sampled per run (plus the below-floor flagged set; the sweep register bounds each)
+
 backup:
   # enabled: true
   # path: /var/backups                  # fallback directory (also used by manual CLI)
@@ -2750,6 +2837,7 @@ mirror:
 | `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (disposed through the composition decision when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored verdict the decision re-derives as admit plus ≥10 live documents promotes the name immediately, defer and reject verdicts stay queued for the review surface on the tags page, verdict-less names are re-judged under the `max_rejudge` cap and promoted when admitted (report-only runs list the would-be promotions and verdicts). After the provisional sweep it resolves pending identity evidence under the same `max_rejudge` budget: candidate criteria are judged, same-intent losers become aliases of their winners, and confirmed folds are applied. Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only |
 
 | `enricher.tag_measure`         | Scheduled tag extension measurement: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `03:00`). The queue daemon enqueues a `tagmeasure` task when due (anchored on the most recent completed run); the pass reads one REPEATABLE READ snapshot and appends versioned evidence records (`tag_measurement`) for per-value mass, pairwise overlap with Jaccard/overlap/containment coefficients, compound reconstructibility against mechanically derived parts, and part coverage, plus the derived composition-review worklists (`≈` twin candidates, compound split proposals, near-contained siblings) as evidence only — nothing is promoted, merged, split, or deleted. `kushim tagmeasure` runs the pass in the foreground under the maintenance lock |
+| `enricher.tag_audit`           | Scheduled tag coverage audit: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `04:00`), `sample_size` (documents sampled per run, default `25`; `≤ 0` resets to the default). When enabled, the queue daemon enqueues a `tagaudit` task when due (anchored on the most recent completed run) and runs its pool; the pass draws a sample plus the below-floor documents from the sweep register, suggests dimensions the document is about but does not carry (matcher trigger, then lexical narrowing), confirms them with the applicability judge, fills the confirmed gaps, and records the durable coverage classes plus per-dimension coverage counts. A document is audited at most once per sweep. `kushim tagaudit` runs the pass in the foreground under the maintenance lock, and `POST /api/v1/tags/audit/reevaluate` enqueues a run on demand (executed only while the schedule is enabled). The trigger bar is a pinned constant, not a setting |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
 > takes effect at the closest upcoming occurrence of the new timing; if that

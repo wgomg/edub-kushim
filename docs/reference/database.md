@@ -432,7 +432,24 @@ from `tag_composition_event.document_id`, so the stored-compound sweep can
 journal a decision with no emitting document), and
 `00037_tag_measurement_snapshot_index.sql` (adds
 `idx_tag_measurement_snapshot` on `tag_measurement (snapshot_at DESC, id DESC)`
-so the reconciler's latest-run read is index-first). Goose tracks
+so the reconciler's latest-run read is index-first), and
+`00038_tag_audit.sql` (adds `tagaudit` to the `task_type` and `batch_source`
+enums, widens the `tag_measurement.operator` CHECK with `coverage`, and creates
+the coverage-audit tables: `tag_coverage_event` — the append-only per
+(document, dimension) coverage reading with `class`, `source`, `verdict`,
+nullable `verdict_model`, `text_hash`, `criteria_version`, `action`,
+`review_outcome`, `provisional` and `rule_set_version` CHECKs, plus
+`idx_tag_coverage_event_fresh` (partial unique on
+`(document_id, tag_name, text_hash, criteria_version) WHERE verdict_model IS NOT NULL`,
+the judged-verdict cache), `idx_tag_coverage_event_open` (partial on
+`(created_at DESC) WHERE action IN ('flag','proposal') AND review_outcome IS NULL`,
+serving the review list), `idx_tag_coverage_event_class`,
+`idx_tag_coverage_event_document` and `idx_tag_coverage_event_tag` — and the
+sweep register: `tag_audit_register` (per-document `audit_count`, cascading on
+document delete) and the `tag_audit_sweep` singleton seeded at `sweep_count = 0`).
+`tag_audit_sweep` is a migration-seeded singleton, so like `backup_lock` it is
+excluded from the schema-and-data dump and re-created by the migration replay on
+restore. Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

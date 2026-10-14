@@ -77,6 +77,7 @@ var poolSpecs = map[types.TaskType]poolSpec{
 	types.Task.Type.TagReconcile:  {workers: singleWorker, interval: 60 * time.Second},
 	types.Task.Type.TagMeasure:    {workers: singleWorker, interval: 5 * time.Second},
 	types.Task.Type.TagIdentity:   {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.TagAudit:      {workers: singleWorker, interval: 5 * time.Second},
 }
 
 // NewContainer builds a container without a database; the DB attaches
@@ -280,6 +281,7 @@ func (c *Container) ensureDispatcher() error {
 	))
 	registry.Register(types.Task.Type.TagMeasure, tags.NewTagMeasureTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.TagIdentity, admission.NewTagIdentityTaskHandler(client.Queries, c.logger))
+	registry.Register(types.Task.Type.TagAudit, admission.NewTagAuditTaskHandler(client.Queries, c.logger))
 
 	c.dispatcher = task.NewDispatcher(store, registry)
 	c.runner = task.NewRunner(store, registry, c.logger)

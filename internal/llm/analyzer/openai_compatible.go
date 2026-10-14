@@ -527,6 +527,11 @@ func (l *LlmOpenAiCompatible) JudgeTagTranslations(ctx context.Context, values [
 	return judgedOpenAI(ctx, l, TagTranslationSystemMessage, BuildTagTranslationPrompt(values), "tag translation", len(values), judgedOutputBudget, ParseTagTranslationResponse)
 }
 
+// JudgeTagAudit decides the flagged dimensions' applicability through the compatible API.
+func (l *LlmOpenAiCompatible) JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error) {
+	return judgedOpenAI(ctx, l, TagAuditSystemMessage, BuildTagAuditPrompt(text, candidates), "tag audit judge", len(candidates), judgedOutputBudget, ParseTagAuditResponse)
+}
+
 // JudgeTagPhraseFolds answers the residual phrase-context fold questions through the compatible API.
 func (l *LlmOpenAiCompatible) JudgeTagPhraseFolds(ctx context.Context, candidates []TagPhraseFoldCandidate) ([]TagPhraseFoldResult, error) {
 	return judgedOpenAI(ctx, l, TagPhraseFoldSystemMessage, BuildTagPhraseFoldPrompt(candidates), "tag phrase fold judge", len(candidates), judgedOutputBudget, ParseTagPhraseFoldResponse)

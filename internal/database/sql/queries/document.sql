@@ -204,3 +204,15 @@ WHERE document_id = ANY($1::text[]);
 -- name: GetDocumentTextForTagQuality :one
 SELECT text_content, word_count FROM document
 WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetDocumentContentForAudit :one
+SELECT text_content, text_hash, word_count FROM document
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: ListLiveDocumentCompoundTags :many
+SELECT dt.document_id, t.name AS tag_name
+FROM document_tag dt
+JOIN tag t ON t.id = dt.tag_id
+JOIN document d ON d.id = dt.document_id
+WHERE d.deleted_at IS NULL AND t.name LIKE '% %'
+ORDER BY dt.document_id, t.name;

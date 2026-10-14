@@ -62,6 +62,10 @@ type ContentAnalyzer interface {
 	// JudgeTagTranslations returns each value's English canonical form, or the value unchanged when it is
 	// already English: the language guard's judged translation.
 	JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
+	// JudgeTagAudit decides whether each flagged dimension is a subject the document is about — the
+	// completeness audit's applicability call, reading about-ness from the document and abstaining when it
+	// is unclear.
+	JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error)
 	// JudgeTagPhraseFolds decides whether each part, in the context of its phrase, denotes the candidate
 	// anchor value: the residual phrase-context fold the seam asks when a multi-base part's primary-sense
 	// base is not live while another attested base is.
