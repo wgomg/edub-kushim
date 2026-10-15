@@ -557,7 +557,7 @@ automation is preferable, but because the generator produces tags at machine rat
 | Moderator bans | deleted-tag blocklist | A rejected name cannot be reborn. |
 | Tagging guidelines | the generation prompt and typed contract | The definition's language ("dimension", "decompose compounds") belongs in the guidelines the proposer reads. |
 | Approved vocabulary | the promoted tag store | Store membership is the system's notion of "accepted." |
-| Vocabulary fluidity (rename, alias, retire) | one-way promotion today | The definition argues for revisable influence; see §6.5. |
+| Vocabulary fluidity (rename, alias, retire) | promotion, demotion, and aliasing | Influence is revisable: promotion and demotion move a value into and out of the store, and same-intent losers alias onto the canonical (§6.5). |
 
 ### 6.3 Two limits of the voting analogy
 
@@ -610,9 +610,9 @@ labels are canonicalized, combinations are retired as they decompose into their 
 The reference model reflects this — its vocabulary is fluid by design; moderators rename,
 alias, merge, and retire continuously.
 
-The current system's conservatism — quarantine gates influence, promotion is one-way —
-was justified by the premise that a wrongly born tag is *permanent pollution*. Under the
-definition, that premise splits:
+The conservatism this model replaces — quarantine gates influence, promotion was
+one-way — rested on the premise that a wrongly born tag is *permanent pollution*.
+Under the definition, that premise splits:
 
 - **Existence** of a label on documents stays (a document's labels remain coherent; the
   blocklist handles names that must never return).

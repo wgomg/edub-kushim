@@ -475,6 +475,9 @@ consumed `measurement` run (`run_id`, `snapshot_at`), plus `capped`,
 `swept` (orphan tags deleted, or the would-be count in report-only runs),
 `provisional` (the provisional sweep's `worklist`, `zero_assignment`,
 `promoted`, `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`),
+`demotion` (the demotion arm's `worklist`, `mass_decay`, `no_dimension`,
+`rejudged`, `demoted`, `held`, `no_judge`, `skipped`, `failed`, plus the
+demoted/planned entries naming each value and its reason),
 `identity` (the identity sweep's `pending`, `resolved`, `folded`, `aliased`,
 `deferred`, `failed`), and `adjudicator_disabled`; report-only keep-flip
 document counts come from a
@@ -575,8 +578,9 @@ decided compound journals one `tag_composition_event` row with a NULL document
 the thing the emission path later skips. A decided split is applied from the
 persisted caches with no new judgment (crash/cap resume); a degraded
 `judge_unavailable` keep is not journalled, so an outage leaves the entry
-undecided for the next run. Only a split touches the store; a drop is recorded
-with its tag left standing. Pending-apply splits sort first, then the heaviest
+undecided for the next run. Only a split touches the store immediately; a decided
+drop demotes the standing tag through the demotion arm, which withdraws its
+influence while the row and its assignments stay. Pending-apply splits sort first, then the heaviest
 compounds, and the scan shares `max_rejudge`/`max_retag` with the other arms.
 
 **Twin canonicalization**: the same run reads the latest `tagmeasure` run's `≈`
@@ -592,6 +596,21 @@ run rather than degrading its gates. The arm is bounded by `max_rejudge` (pairs)
 and `max_retag` (re-pointed documents) and applies its mechanical aliases in one
 batched plan. Report-only runs plan without writing.
 
+**Demotion**: the same run withdraws the standing of promoted values the current
+rules no longer back. The worklist is every promoted row with `NOT seeded`;
+identity-held and composition-held names are left for review, a value whose live
+mass fell below the promotion floor is demoted with reason `mass_decay`, and a
+value with no current-version quality verdict is re-judged through the same step
+the provisional sweep uses (`rejudgeStoredName`) — a fresh reject or defer demotes
+with the decision's reason, an admit leaves it promoted. A value that already
+carries a current-version verdict is respected as it stands, so an operator
+promotion survives until the next criteria bump. Revocations and re-judgments draw
+on one per-run bound (`max_rejudge`), the deferral counted under `capped`; a missing
+judge or a failed lookup leaves the value promoted. Each demotion goes through
+`Tag.Demote`, which clears `promoted_at`, records `demoted_at`/`demoted_reason`, and
+removes the name from the embedding store. Report-only runs plan the would-be
+demotions and touch nothing.
+
 **Blocklist enforcement**: a query whose name is in the `deleted_tag`
 blocklist is skipped before the create — the flip is not applied and the skip
 is logged, but the pair still gets its fresh verdict so it is not re-judged.
@@ -606,7 +625,7 @@ removes from the embedding store) tags whose mark is older than
 `enricher.tag_reconcile.dead_tag_grace_days` (default 7). Every assignment
 path clears the assigned tags' marks (`ClearOrphanTagMarksByTagIDs`) so the
 grace window reflects real last usage rather than the last reconcile
-observation. The list/delete queries re-check `NOT EXISTS (document_tag)`, so
+observation. Seeded values are exempt from the marks and the delete, so the shipped inventory never ages out. The list/delete queries re-check `NOT EXISTS (document_tag)`, so
 a tag re-assigned mid-run is never deleted. Report-only runs refresh the marks
 inside a transaction that is always rolled back, so the reported `swept` count
 predicts what the next apply would delete.

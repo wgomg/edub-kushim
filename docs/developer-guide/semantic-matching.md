@@ -168,7 +168,9 @@ from the `tag` table:
    all-names fallback vocabulary. Promotion adds the name incrementally
    (`curation.Tag.AddToStore` after the promotion check); a re-run of
    `BuildTagCache` after a restart converges the store with the table either
-   way.
+   way. Demotion is the inverse: it clears `promoted_at`, records
+   `demoted_at`/`demoted_reason`, and calls `RemoveFromStore`, so the same restart
+   rebuild drops the name too.
 2. Embeds them **verbatim** — no per-key transformation. Tag names are
    already canonical: `curation.Tag.Create`/`Update` normalize every name
    through `textnorm.NormalizeTag` (`internal/textnorm/tagname.go`) before it
@@ -495,14 +497,14 @@ skipped). A name promotes when both hold:
 `PromoteTags` sets `promoted_at = now()` under `WHERE promoted_at IS NULL`, so
 concurrent promotions are idempotent, and the promoted names enter the store
 via `AddToStore` only after the commit (`tagquality[v6]: promote %q
-(docs=%d reason=%s rule_set=decision-v6 floor=10)`). Deferred and rejected
+(docs=%d reason=%s rule_set=decision-v7 floor=10)`) . Deferred and rejected
 provisionals never promote here —
 they wait for review — and neither do held names: an identity-held name (a
 refused fold beside a live store value, derived from the latest
 `base_form`/`fold_gate` evidence) or a composition-held name (the latest
 composition verdict at the current split criteria version defers, conflicts,
-disagrees, is a reconstructible named unit, is a relational keep, or is a
-degraded judge_unavailable keep). Each skips the candidate with a
+disagrees, is a reconstructible named unit, is a relational keep, is a degraded
+judge_unavailable keep, or is a decided drop). Each skips the candidate with a
 DEBUG (`identity hold %q (anchor=%q) — left for review` / `composition hold %q
 (reason=%s) — left for review`).
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not

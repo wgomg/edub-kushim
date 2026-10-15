@@ -323,7 +323,9 @@ The enrichment pipeline:
    is promoted inline — inside the persist transaction — when the admission
    decision admits it and it has assignments on ≥10 distinct live documents
    (trashed carriers do not count); provisionals already in the store are
-   decided from their cached verdict row. Promotion is one-way, and a
+   decided from their cached verdict row. Influence is revocable: a promoted value
+   that stops qualifying is demoted — its standing and store membership are
+   withdrawn while the row, its assignments, and the demotion record stay — and a
    verdict-less provisional (judge outage) is never re-judged in flight — a
    name in the tag table is not novel, so the judge does not see it again.
    Those names are resolved later by the scheduled tag reconciliation, whose
@@ -335,7 +337,7 @@ The enrichment pipeline:
    beside a live store value — and a composition-held name — its latest
    composition verdict under the current split criteria version defers,
    conflicts, disagrees, is a reconstructible named unit, is a relational
-   keep, or is a degraded `judge_unavailable` keep — are likewise
+   keep, is a degraded `judge_unavailable` keep, or is a decided drop — are likewise
    provisional and blocked from inline and sweep promotion until an operator
    resolves them or a later verdict decides them; the degraded keep is
    re-judged on the next emission until then. With the layer off, births are trusted as before.

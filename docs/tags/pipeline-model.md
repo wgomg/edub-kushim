@@ -279,7 +279,7 @@ system already has, how far it matches the model, and what the delta is.
 | **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, alias disposition, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; the disposition is not yet a standing mandate |
 | **S4 Atomicity (P4)** | General compound decomposition at emission over the in-order segment fan, disposed by the coarsest cover (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + the stored-compound scan (`reconcile/compounds.go`, judged through `Adjudicator.JudgeCompounds`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
 | **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + the 10-live-document floor (`tags.DecidePromotion`, `tags.RecurrenceFloor`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
-| **S6 Lifecycle** | `promoted_at` quarantine/promotion, store trust boundary, sweep, blocklist | Aligned (birth/influence) · Absent (demotion) | Promotion is one-way today; demotion policy decided (definition §8.4), not implemented |
+| **S6 Lifecycle** | `promoted_at` quarantine/promotion and `demoted_at`/`demoted_reason` demotion, the seeded exemption (`tag.seeded`), store trust boundary, sweep, blocklist | Aligned | — |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
 | **S8 Retrieval** | Multi-tag AND filter (`internal/database/structured_search.go`, `tagsAnd`) | Aligned · Absent (completeness) | Coverage of dimensions is audited nowhere |
 | **D1 Canonicalization** | Adjudicator and reconciler — the reconciler's twin arm consumes the measurement `≈` worklists and the confirmed flips alias | Landed as a standing duty | Gray bands and sibling readings stay evidence-only |
@@ -370,13 +370,16 @@ precursors of the optional fitted form (definition §8.10, staged). Labels now
 accrue under the definition's criteria, satisfying the label-hygiene
 precondition of definition §6.6.
 
-**S6 — lifecycle.** Implemented as the model wants for birth and influence: a label
-exists and is searchable from birth; provisional values are excluded from every
-injection point (store built from promoted names only, promoted-names fallback,
-identity and gate subjects); promotion is inline plus swept; judge failure degrades to
-provisional; the blocklist prevents rebirth. The gap is demotion: influence is granted
-one-way, and the only demotion ever executed was the one-off `00026` promotion
-correction — the revocable-influence principle (definition §6.5) has no lifecycle.
+**S6 — lifecycle.** Implemented as the model wants: a label exists and is searchable
+from birth; provisional values are excluded from every injection point (store built
+from promoted names only, promoted-names fallback, identity and gate subjects);
+promotion is inline plus swept; influence is revocable — a promoted value loses its
+standing and store membership, keeping its row, its assignments, and a
+`demoted_at`/`demoted_reason` record, when its live mass falls below the floor, when a
+fresh re-judge under the current criteria rejects or defers it, when the sweep decides
+a stored compound names no dimension, or by an operator action; seeded values are
+exempt from every demotion path and from the dead-tag sweep; judge failure degrades to
+provisional; the blocklist prevents rebirth.
 
 **S7–S8.** S7 matches the model's influence boundary exactly. S8 is the intersection
 algebra already `tagsAnd` in the structured search; what is missing is the completeness
@@ -419,13 +422,10 @@ Ordered by what unlocks the rest, not by effort:
    compound-class worklists and extension-based checks. Needs D4; its outputs act
    through decompositions, which `atomicity.md` specifies generally and the runtime
    covers at emission today.
-6. **S6 · demotion — policy decided (2026-09-20); not implemented.** Triggers are
-   supersession and the scheduled rule-reapplication sweep; revocation is
-   influence-only, with existence, assignments, and history intact (definition §8.4).
-7. **S5 · decision over features with abstention — staged (definition §8.10, decided).**
+6. **S5 · decision over features with abstention — staged (definition §8.10, decided).**
    Needs the set-predicate features (1) and the re-criteria (3); the operating mode is a
    pinned rule set, with a fitted refinement only where labels accrue (D5).
-8. **Cross-cutting decisions — closed.** Corpus relativity, canonical-form policy,
+7. **Cross-cutting decisions — closed.** Corpus relativity, canonical-form policy,
    axis grouping, preference channel, and thresholds are decided or calibration-owned
    (definition §8.3, §8.6–§8.9); none remain.
 
@@ -449,9 +449,11 @@ Ordered by what unlocks the rest, not by effort:
    Same-intent labels alias to the canonical one
    (`canonical-form-and-identity.md`); the review surface's reject path remains
    for names that must never return.
-6. **One-way promotion vs demotion — resolved (2026-09-20): demotion is policy.**
-   Triggers are supersession and the scheduled rule-reapplication sweep; revocation is
-   influence-only (definition §8.4).
+6. **One-way promotion vs demotion — resolved: demotion is live.** A promoted value
+   loses its standing and store membership — keeping its existence and assignments and
+   recording why — on mass decay below the floor, on a fresh reject/defer under the
+   current criteria, on a decided no-dimension drop, or by an operator action; seeded
+   values are exempt (definition §8.4).
 7. **Quarantine × canonicalization** — provisional values are not consolidation targets
    by design, so variant emissions birth sibling provisionals (accepted churn); under D1
    this interaction needs revisiting.

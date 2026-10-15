@@ -1393,7 +1393,7 @@ GET /api/v1/people-types
 GET /api/v1/document-types
 ```
 
-Response `200` — `PersonListResponse` envelope: `{ "results": [{ "id": 1, "name": "…", "document_count": N }], "total": N }` (people-types and document-types add `description`).
+Response `200` — `PersonListResponse` envelope: `{ "results": [{ "id": 1, "name": "…", "document_count": N, "promoted": true, "seeded": false }], "total": N }` for tags (`promoted` reports standing, `seeded` reports operator-owned inventory); people-types and document-types add `description`.
 
 ### Deleted Tags
 
@@ -1478,7 +1478,10 @@ Response `200`:
   tags deleted during the run
   (the would-be count in report-only runs), the `provisional` counts of the
   provisional-tag sweep (`worklist`, `zero_assignment`, `promoted`, `rejudged`,
-  `deferred`, `no_judge`, `skipped`, `failed`), and the `capped` / `no_documents` /
+  `deferred`, `no_judge`, `skipped`, `failed`), the `demotion` block (counts
+  `worklist`, `mass_decay`, `no_dimension`, `rejudged`, `demoted`, `held`, `no_judge`,
+  `skipped`, `failed`, plus the `demoted` / `planned_demotions` entries naming each value
+  and reason), and the `capped` / `no_documents` /
   `adjudicator_disabled` markers. Pair-level fields appear only when the run recorded
   them (a run with no flips has no `planned_keep_flips`). Each pair entry carries
   `reason` (the policy guard that decided it, or `adjudicated` for LLM-judged pairs)
@@ -1537,8 +1540,9 @@ Response `200`:
 - `pending_identity` is the number of unresolved canonical-identity claims referencing the tag (as the flagged candidate or as the partner); when it is nonzero the queue shows an "identity pending" badge.
 - `pending_identity_total` is the envelope-level count of unresolved identity claims across the whole queue; the "Reevaluate identity" trigger shows while it is nonzero, so filters and pagination cannot hide it.
 - `identity_hold` is the store value whose fold the identity gate refused for this tag; when present the queue shows an "identity hold → <anchor>" pill and the tag is blocked from inline and sweep promotion until an operator resolves it. It is omitted for names without a hold.
-- `composition_hold` is the reason the tag's latest composition verdict under the current split criteria version withholds promotion (`split_defer`, `conflicting_evidence`, `sample_disagreement`, `named_unit_reconstructible`, `relational_keep`, or `judge_unavailable`); when present the queue shows a "split hold → <reason>" pill and the tag is blocked from inline and sweep promotion until an operator resolves it or a later verdict decides it. It is omitted for names without a hold.
+- `composition_hold` is the reason the tag's latest composition verdict under the current split criteria version withholds promotion (`split_defer`, `conflicting_evidence`, `sample_disagreement`, `named_unit_reconstructible`, `relational_keep`, `judge_unavailable`, or a decided drop — `no_dimension` or `part_rejected`); when present the queue shows a "split hold → <reason>" pill and the tag is blocked from inline and sweep promotion until an operator resolves it or a later verdict decides it. It is omitted for names without a hold.
 - `composition_reason` is the reason on the tag's most recent decomposition event, whatever its criteria version; a degraded `judge_unavailable` keep (no judge was available, so the compound was kept whole) shows a "composition → judge_unavailable" pill only when no hold is present, and is re-judged on the next emission while undecided. It is omitted for names with no composition event.
+- `demoted_at` / `demoted_reason` carry the revocation record of a value whose standing was withdrawn and which returned to the queue (`mass_decay`, a fresh `corroborated_failures`/`judge_defer` re-judge, a decided `no_dimension`/`part_rejected` drop, or `operator`); the queue shows a "demoted → <reason>" pill. Omitted for names born provisional.
 - `model` is omitted for cache-applied verdicts, which carry a stored decision without a judging model.
 - `outcome` is the recorded disposition (`reject`/`defer`/`admit`); it is omitted on rows predating the outcome column, and the queue then labels the verdict from the rubric.
 - `limit` defaults to 50 (1–100); `offset` defaults to 0 (negative values clamp to 0).
@@ -1563,6 +1567,25 @@ blocklist; the tags page exposes both actions in its "New tags" tab, together
 with the rubric/verdict filter bar and the pager. The tab keeps its state in
 the URL (`prov_page`, `prov_criteria`, `prov_verdict`), so a filtered view can
 be linked and survives a reload.
+
+### Demote a Tag
+
+Withdraws a tag's standing in the vocabulary and its embedding-store membership —
+the same demotion the scheduled reconciliation sweep applies. The tag's row and its
+document assignments stay, and the reason is recorded, so the value keeps appearing
+in the review queue and can be promoted again. Editor/admin only.
+
+```
+POST /api/v1/tags/{id}/demote
+```
+
+- `204` — the tag was promoted and is now demoted, logged as `tagquality[v6]: demote "<name>" (reason=operator rule_set=decision-v7)`.
+- `409`, body `Seeded values cannot be demoted` — the tag is seeded inventory, which no demotion path removes.
+- `409`, body `Tag is not promoted` — the tag is already provisional.
+- `404` — no tag with that id.
+- `400` — the id is not a number.
+
+The tags page's vocabulary tab carries a Demote action on promoted, non-seeded rows.
 
 ### Reevaluate Pending Tag Identity
 

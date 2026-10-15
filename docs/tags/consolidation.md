@@ -321,19 +321,23 @@ they are attached to the document and searchable from birth, but
 so it is never suggested, never a consolidation target, and never part of the
 all-names fallback vocabulary (`BuildTagCache` embeds promoted tags only, and
 the enricher composes its fallback and consolidation sets from the promoted
-subset). Promotion is inline, one-way, and runs inside the persist
+subset). Promotion is inline and runs inside the persist
 transaction: a provisional name the admission decision admits — its emission
 decision, or the cached verdict row mapped through the same decision for
 names the judge skipped — with assignments on at least ten distinct **live**
 documents
 (trashed carriers are not evidence, in this check and in the reconciliation
 sweep alike) gets `promoted_at = now()` and enters the store after the commit.
-The `document_tag` primary key makes the count distinct-document, so a single
+Influence is revocable: a promoted value that stops qualifying is demoted (see
+the reconciliation sweep and the operator demotion action), which clears
+`promoted_at`, records the reason, and removes the name from the store while the
+row and its assignments stay. The `document_tag` primary key makes the count
+distinct-document, so a single
 document re-enriching itself cannot promote a name. An identity-held name — a
 fold the gate refused beside a live store value — and a composition-held name —
-the latest composition verdict at the current split criteria version defers,
-conflicts, disagrees, is a reconstructible named unit, is a relational keep, or
-is a degraded `judge_unavailable` keep — are skipped by both the inline check and
+the latest composition verdict at the current split criteria version is a decided
+drop, a defer, a conflict, a disagreement, a reconstructible named unit, a
+relational keep, or a degraded `judge_unavailable` keep — are skipped by both the inline check and
 the sweep until an operator resolves them or a later verdict decides them.
 
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not
@@ -423,14 +427,17 @@ anti-oscillating:
   compound tag (single set-based insert), and deletes the compound tag with a
   post-commit store removal — idempotent and crash-tolerant (component
   creation and document assignment are additive, deletion is last); a
-  `no_dimension` drop records its decision and leaves the stored tag standing,
-  because revoking a value's influence is the demotion duty, not the sweep's.
+   `no_dimension` drop records its decision and demotes the stored tag — its
+   standing is withdrawn through the demotion action, leaving the row and its
+   assignments in place.
   Pair entries whose query is itself a conjunction joint are dropped from the
   pair worklist so a same-intent verdict can never resurrect a tag the
   deterministic split is deleting.
 - **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the
-  provisional re-judge and the twin arm share the `max_rejudge` budget, and the
-  compound scan and the twin aliases share the `max_retag` budget. The first run
+  provisional re-judge and the twin arm share the `max_rejudge` budget, the
+  compound scan and the twin aliases share the `max_retag` budget, and the
+  demotion arm's revocations draw on the same per-run bound as its re-judgments,
+  the deferral counted as capped. The first run
   is always **report-only** (it lists would-be actions and touches nothing),
   regardless of the `report_only` flag. A failed hold, alias, settled, or mass
   lookup aborts the twin arm for the run rather than degrading its safety gates.
@@ -446,10 +453,20 @@ anti-oscillating:
   with no live document text, or a failed lookup/write is counted
   (`no_judge`/`skipped`/`failed`) without failing the run. Report-only runs
   count would-promote/would-re-judge and touch nothing.
+- **Demotion:** the same run withdraws the standing of promoted values the current
+  rules no longer back — a value whose live mass fell below the promotion floor
+  (trashed carriers do not count), or one whose stale verdict re-judges to reject or
+  defer — and demotes the stored compounds whose latest composition verdict is a
+  decided drop. A value carrying a current-version verdict is respected as it stands,
+  so an operator promotion survives until the next criteria bump; seeded values never
+  enter the worklist, and identity- or composition-held names, a missing judge, and a
+  failed lookup leave the value promoted. Report-only runs plan the would-be demotions
+  and touch nothing.
 - **Dead-tag hygiene:** the same run sweeps zero-assignment tags — a tag whose
   `orphaned_since` mark is older than `dead_tag_grace_days` (default 7) is
   deleted and removed from the embedding store, and every assignment path
-  clears the mark so the window tracks real last usage. Names blocked by an
+  clears the mark so the window tracks real last usage. Seeded values are
+  exempt, so the shipped inventory never ages out. Names blocked by an
   operator are skipped by the keep-flip path (and dropped by enrichment), so
   they cannot be resurrected outside the restore
   flow.
@@ -460,8 +477,11 @@ anti-oscillating:
   (query, components, reassigned documents, reason), the twin counts and the
   consumed measurement run's id and snapshot, skip reasons, and the
   provisional-sweep counts (`worklist`, `zero_assignment`, `promoted`,
-  `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`) — surfaced in the web
-  UI on the task detail page and as a status strip on the tags page.
+  `rejudged`, `deferred`, `no_judge`, `skipped`, `failed`), and the demotion
+  block (counts by trigger — `worklist`, `mass_decay`, `no_dimension`,
+  `rejudged`, `demoted`, `held`, `no_judge`, `skipped`, `failed` — with the
+  demoted and planned entries naming each value and its reason) — surfaced in the
+  web UI on the task detail page and as a status strip on the tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
   without LLM calls or writes. The queue daemon warns when reconciliation is
   enabled without the adjudicator.

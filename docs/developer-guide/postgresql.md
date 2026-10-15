@@ -228,9 +228,9 @@ same way.
 
 The seeds are the canonical idempotency pattern: `INSERT ... VALUES (…),
 (…), … ON CONFLICT (name) DO NOTHING`, safe to run on every boot (they are,
-via `InitializeSchema`). `seed-tags.sql` carries 402 values and re-promotes
-only rows still provisional (`ON CONFLICT (name) DO UPDATE SET promoted_at =
-now() WHERE tag.promoted_at IS NULL`), giving each row a distinct `created_at`
+via `InitializeSchema`). `seed-tags.sql` carries 402 values and marks them
+operator-owned (`seeded`), re-promoting only rows still provisional
+(`ON CONFLICT (name) DO UPDATE SET seeded = true, promoted_at = coalesce(tag.promoted_at, now()) WHERE NOT tag.seeded OR tag.promoted_at IS NULL`), giving each row a distinct `created_at`
 so tag listings order deterministically; `seed-tag-aliases.sql` carries 39
 aliases and skips any alias whose name is already a tag row; 9 document types
 and 15 people types round out the seeds.
