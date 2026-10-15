@@ -462,6 +462,53 @@ func (h *TagHandler) ReevaluateAudit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListSiblings serves the latest measurement run's near-contained tag pairs for review. Containment carries
+// no automatic action, so the endpoint is read-only: nothing merges, holds, or demotes from these readings.
+func (h *TagHandler) ListSiblings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	pb := GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	limit := pb.GetInt64("limit", 50, 1, 100)
+	offset := pb.GetInt64("offset", 0, 0, 100000)
+
+	snapshot, err := h.tag.ListSiblings(ctx)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "list sibling readings", err)
+		return
+	}
+
+	readings := snapshot.Readings
+	total := int64(len(readings))
+	start := min(int(offset), len(readings))
+	end := min(start+int(limit), len(readings))
+	page := readings[start:end]
+
+	responses := make([]SiblingReadingResponse, len(page))
+	for i, s := range page {
+		responses[i] = SiblingReadingResponse{
+			A:           s.A,
+			B:           s.B,
+			Containment: s.Containment,
+			MassA:       s.MassA,
+			MassB:       s.MassB,
+			Gray:        s.Gray,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, SiblingListResponse{
+		RunID:      snapshot.RunID,
+		SnapshotAt: snapshot.SnapshotAt,
+		Absent:     snapshot.Absent,
+		Results:    responses,
+		Total:      total,
+	})
+}
+
 // ListAuditFlags serves the paged open coverage flags.
 func (h *TagHandler) ListAuditFlags(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -710,6 +757,27 @@ type CoverageFlagResponse struct {
 type CoverageFlagListResponse struct {
 	Results []CoverageFlagResponse `json:"results"`
 	Total   int64                  `json:"total"`
+}
+
+// SiblingReadingResponse is one near-contained tag pair, A holding nearly all of B's documents: containment
+// is the fraction of B's live documents that A also holds, and the masses are those live document counts.
+type SiblingReadingResponse struct {
+	A           string  `json:"a"`
+	B           string  `json:"b"`
+	Containment float64 `json:"containment"`
+	MassA       int64   `json:"mass_a"`
+	MassB       int64   `json:"mass_b"`
+	Gray        bool    `json:"gray"`
+}
+
+// SiblingListResponse is the latest measurement run's containment readings with the run identity they came
+// from; Absent marks the zero-data state where no measurement run exists yet.
+type SiblingListResponse struct {
+	RunID      string                   `json:"run_id,omitempty"`
+	SnapshotAt time.Time                `json:"snapshot_at,omitzero"`
+	Absent     bool                     `json:"absent"`
+	Results    []SiblingReadingResponse `json:"results"`
+	Total      int64                    `json:"total"`
 }
 
 // CoverageFlagActionRequest is the body of the coverage flag apply and dismiss actions.

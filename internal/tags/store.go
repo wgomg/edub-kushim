@@ -154,6 +154,126 @@ func (s *Store) CompoundIntersections(ctx context.Context, compoundIDs, partIDs 
 	return out, nil
 }
 
+// ReconstructibilityBatch reads how far each compound is its parts' product over the live store, one reading
+// per cover keyed by the compound as given. Names resolve through the store's own recipe (StoredName), and
+// covers naming one store compound are measured once and share the reading, so a pair of spellings that
+// house-form alike neither doubles the intersection counts nor disposes two ways. The live masses and the
+// parts' intersections come from two batched queries, so the cost is three round trips per batch rather than
+// per cover. A cover the store cannot measure — a name it does not hold, or a thin or empty extension —
+// yields no reading, which callers treat as no evidence and answer from their own fallback.
+func (s *Store) ReconstructibilityBatch(ctx context.Context, compounds []string, parts [][]string) (map[string]ReconstructibilityReading, error) {
+	readings := make(map[string]ReconstructibilityReading, len(compounds))
+	names := make([]string, 0, len(compounds))
+	seen := make(map[string]bool, len(compounds))
+	for i, compound := range compounds {
+		key := StoredName(compound)
+		if !seen[key] {
+			seen[key] = true
+			names = append(names, key)
+		}
+		for _, part := range parts[i] {
+			key := StoredName(part)
+			if !seen[key] {
+				seen[key] = true
+				names = append(names, key)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return readings, nil
+	}
+	rows, err := s.q.ListTagIDsByNames(ctx, names)
+	if err != nil {
+		return nil, fmt.Errorf("load reconstructibility names: %w", err)
+	}
+	ids := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		ids[row.Name] = row.ID
+	}
+
+	measured := make(map[int64]bool, len(compounds))
+	massIDs := make([]int64, 0, len(compounds))
+	compoundIDs := make([]int64, 0, len(compounds))
+	partIDs := make([]int64, 0, len(compounds))
+	for i, compound := range compounds {
+		id, ok := ids[StoredName(compound)]
+		if !ok || len(parts[i]) == 0 || measured[id] {
+			continue
+		}
+		pairs := make([]int64, 0, len(parts[i]))
+		for _, part := range parts[i] {
+			partID, ok := ids[StoredName(part)]
+			if !ok {
+				pairs = nil
+				break
+			}
+			pairs = append(pairs, partID)
+		}
+		if pairs == nil {
+			continue
+		}
+		measured[id] = true
+		massIDs = append(massIDs, id)
+		for _, partID := range pairs {
+			compoundIDs = append(compoundIDs, id)
+			partIDs = append(partIDs, partID)
+		}
+	}
+	mass, err := s.LiveMass(ctx, massIDs)
+	if err != nil {
+		return nil, err
+	}
+	intersections, err := s.CompoundIntersections(ctx, compoundIDs, partIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i, compound := range compounds {
+		id, ok := ids[StoredName(compound)]
+		if !ok || !measured[id] {
+			continue
+		}
+		intersection := intersections[id]
+		readings[compound] = NewReconstructibilityReading(compound, parts[i], mass[id],
+			intersection.PartsIntersection, intersection.Both)
+	}
+	return readings, nil
+}
+
+// SiblingWorklist reads the latest measurement run's containment worklist: only the overlap records are
+// loaded and only the containment worklist is kept, so the cost tracks the run's co-occurring pairs instead
+// of every operator and worklist. The snapshot's other worklists stay empty.
+func (s *Store) SiblingWorklist(ctx context.Context) (*WorklistSnapshot, error) {
+	run, err := s.q.LatestTagWorklistRun(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &WorklistSnapshot{Absent: true}, nil
+		}
+		return nil, fmt.Errorf("latest tag worklist run: %w", err)
+	}
+	rows, err := s.q.TagMeasurementRecordsForRun(ctx, database.TagMeasurementRecordsForRunParams{
+		RunID:    run.RunID,
+		Operator: sql.NullString{String: string(OperatorOverlap), Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tag overlap records: %w", err)
+	}
+	records, err := DecodeRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	// the query carried only overlap records, so every row feeds the pair cut; only the containment worklist
+	// is kept here
+	var derived Worklists
+	for _, record := range records {
+		derived.addOverlap(record)
+	}
+	return &WorklistSnapshot{
+		RunID:      run.RunID,
+		SnapshotAt: run.SnapshotAt,
+		Worklists:  Worklists{Siblings: derived.Siblings},
+	}, nil
+}
+
 // WorklistSnapshot is one measurement run's derived worklists. Absent separates "no run yet" from "a run
 // with empty worklists" — both leave Worklists empty, so only Absent marks zero-data operation.
 type WorklistSnapshot struct {
@@ -176,7 +296,7 @@ func (s *Store) LatestWorklists(ctx context.Context) (*WorklistSnapshot, error) 
 		}
 		return nil, fmt.Errorf("latest tag worklist run: %w", err)
 	}
-	rows, err := s.q.TagMeasurementRecordsForRun(ctx, run.RunID)
+	rows, err := s.q.TagMeasurementRecordsForRun(ctx, database.TagMeasurementRecordsForRunParams{RunID: run.RunID})
 	if err != nil {
 		return nil, fmt.Errorf("tag measurement records: %w", err)
 	}

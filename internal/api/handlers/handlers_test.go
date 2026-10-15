@@ -3225,3 +3225,63 @@ func TestReevaluateIdentity(t *testing.T) {
 		testutil.AssertEqual(t, resp.BatchID, "", "no second batch")
 	})
 }
+
+func TestTagSiblingsEndpoint(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	if _, err := env.client.DB().ExecContext(ctx, "DELETE FROM tag_measurement"); err != nil {
+		t.Fatalf("clear measurement journal: %v", err)
+	}
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+
+	type reading struct {
+		A    string `json:"a"`
+		B    string `json:"b"`
+		Gray bool   `json:"gray"`
+	}
+	type listing struct {
+		Absent  bool      `json:"absent"`
+		Total   int64     `json:"total"`
+		Results []reading `json:"results"`
+	}
+	get := func(path string) listing {
+		t.Helper()
+		w := rec()
+		h.ListSiblings(w, req(t, "GET", path, nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+		var page listing
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&page), "decode response")
+		return page
+	}
+
+	absent := get("/api/v1/tags/siblings?limit=50&offset=0")
+	testutil.AssertEqual(t, absent.Absent, true, "absent before any run")
+	testutil.AssertEqual(t, absent.Total, int64(0), "total before any run")
+	testutil.AssertEqual(t, len(absent.Results), 0, "results before any run")
+
+	records := make([]tags.Record, 0, 3)
+	for _, suffix := range []string{"1", "2", "3"} {
+		records = append(records, tags.Record{
+			Operator: tags.OperatorOverlap,
+			Operands: []string{"broad topic", "inner " + suffix},
+			Numbers: map[string]any{
+				tags.NumberJaccard:      0.2,
+				tags.NumberContainmentA: 0.1,
+				tags.NumberContainmentB: 0.7,
+				tags.NumberMassA:        int64(6),
+				tags.NumberMassB:        int64(4),
+			},
+			State: tags.StateSufficient,
+		})
+	}
+	if err := tags.NewStore(env.client.Queries).InsertRecords(ctx, uuid.New(), time.Now(), tags.RuleSetVersion, records); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+
+	page := get("/api/v1/tags/siblings?limit=1&offset=1")
+	testutil.AssertEqual(t, page.Absent, false, "run present")
+	testutil.AssertEqual(t, page.Total, int64(3), "total counts every pair in the run")
+	testutil.AssertEqual(t, len(page.Results), 1, "one pair per page")
+	testutil.AssertEqual(t, page.Results[0].B, "inner 2", "the second pair leads the page")
+	testutil.AssertEqual(t, page.Results[0].Gray, true, "the pair carries its review band")
+}

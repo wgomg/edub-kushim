@@ -158,6 +158,11 @@ func TestDecideComposition(t *testing.T) {
 			CompositionDecision{Disposition: CompositionSplit},
 		},
 		{
+			"a far-from-intersection composition holds as a relational keep instead of splitting",
+			CompositionFeatures{CompoundComposition: true, PartsDimensional: true, FarFromIntersection: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonRelationalKeep, Hold: true},
+		},
+		{
 			"reconstructibility does not divert the composition branch",
 			CompositionFeatures{CompoundComposition: true, PartsDimensional: true, Reconstructible: true},
 			CompositionDecision{Disposition: CompositionSplit},

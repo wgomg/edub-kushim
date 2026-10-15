@@ -74,9 +74,19 @@ type Report struct {
 	Swept                 int                       `json:"swept,omitempty"`
 	AdjudicatorDisabled   bool                      `json:"adjudicator_disabled,omitempty"`
 	Twins                 TwinCounts                `json:"twins"`
+	Siblings              SiblingCounts             `json:"siblings"`
 	Measurement           *MeasurementRun           `json:"measurement,omitempty"`
 	Provisional           ProvisionalCounts         `json:"provisional"`
 	Identity              *admission.IdentityReport `json:"identity,omitempty"`
+}
+
+// SiblingCounts tallies the containment worklist for the run report: how many pairs want a human's eye and
+// how many stand as evidence. Containment has no automatic action, so the counts are the whole of the arm's
+// output — nothing merges, holds, or demotes.
+type SiblingCounts struct {
+	Worklist int `json:"worklist"`
+	Gray     int `json:"gray"`
+	Firm     int `json:"firm"`
 }
 
 // TwinCounts is the twin arm's outcome tally for one run: the pairs the latest measurement run proposed and
@@ -336,14 +346,14 @@ func (r *Reconciler) logSummary(report Report) {
 				created++
 			}
 		}
-		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d stored compounds would split; %d twin pairs proposed (%d would alias); %d demotions would revoke influence (%d below the floor, %d decided drops, %d re-judged); %d skipped, %d over cap",
-			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedCompoundSplits), report.Twins.Worklist, report.Twins.Planned,
+		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d stored compounds would split; %d twin pairs proposed (%d would alias); %d sibling pairs for review; %d demotions would revoke influence (%d below the floor, %d decided drops, %d re-judged); %d skipped, %d over cap",
+			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedCompoundSplits), report.Twins.Worklist, report.Twins.Planned, report.Siblings.Worklist,
 			report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged, skipped, report.Capped)
 		return
 	}
 	documents := sumReassigned(report.Aliases) + sumReassigned(report.RetagEntries)
-	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d stored compounds split; %d twin pairs proposed (%d aliased); %d demotions revoked influence (%d below the floor, %d decided drops, %d re-judged), %d held for review; %d skipped, %d over cap",
-		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.CompoundSplits), report.Twins.Worklist, report.Twins.Mechanical,
+	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d stored compounds split; %d twin pairs proposed (%d aliased); %d sibling pairs for review; %d demotions revoked influence (%d below the floor, %d decided drops, %d re-judged), %d held for review; %d skipped, %d over cap",
+		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.CompoundSplits), report.Twins.Worklist, report.Twins.Mechanical, report.Siblings.Worklist,
 		report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged, report.Demotion.Held, skipped, report.Capped)
 }
 

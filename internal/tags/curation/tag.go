@@ -7,6 +7,8 @@ package curation
 
 import (
 	"context"
+	"sort"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
@@ -501,4 +503,32 @@ func (s *Tag) encodeAndAddBatch(ctx context.Context, names []string) {
 	if err := s.embedder.AddToStore(ctx, names); err != nil {
 		s.logger.Error("", "tag service: add to store: %v", err)
 	}
+}
+
+// SiblingSnapshot is the latest measurement run's containment readings with the run identity they came from;
+// Absent marks the zero-data state (no measurement run yet), where the list is empty by definition rather
+// than a store with no siblings.
+type SiblingSnapshot struct {
+	RunID      string
+	SnapshotAt time.Time
+	Absent     bool
+	Readings   []tags.Sibling
+}
+
+// ListSiblings returns the latest measurement run's containment readings for the review surface, the review
+// band first so the pairs a human should weigh come before the firm ones. Only the run's overlap records are
+// read and, under the current cuts, nothing is written.
+func (s *Tag) ListSiblings(ctx context.Context) (SiblingSnapshot, error) {
+	snap, err := tags.NewStore(s.client.Queries).SiblingWorklist(ctx)
+	if err != nil {
+		return SiblingSnapshot{}, errs.FromDB(err, "list sibling readings")
+	}
+
+	out := SiblingSnapshot{Absent: snap.Absent, Readings: snap.Worklists.Siblings}
+	if !snap.Absent {
+		out.RunID = snap.RunID.String()
+		out.SnapshotAt = snap.SnapshotAt
+	}
+	sort.SliceStable(out.Readings, func(i, j int) bool { return out.Readings[i].Gray && !out.Readings[j].Gray })
+	return out, nil
 }

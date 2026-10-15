@@ -479,7 +479,9 @@ consumed `measurement` run (`run_id`, `snapshot_at`), plus `capped`,
 `rejudged`, `demoted`, `held`, `no_judge`, `skipped`, `failed`, plus the
 demoted/planned entries naming each value and its reason),
 `identity` (the identity sweep's `pending`, `resolved`, `folded`, `aliased`,
-`deferred`, `failed`), and `adjudicator_disabled`; report-only keep-flip
+`deferred`, `failed`), `siblings` (the containment worklist's `worklist`,
+`gray`, `firm` counts — evidence only, nothing acts on a containment reading),
+and `adjudicator_disabled`; report-only keep-flip
 document counts come from a
 single batched `TagPairEvidenceStats` call (a stats failure keeps every
 planned entry with zero documents instead of dropping it), and no-document
@@ -572,9 +574,16 @@ excluding seeded periods, identity-held and composition-held names (both hold
 checks run before any verdict lookup, so a held name never spends a judge call),
 and compounds a current-version verdict already decided as a keep or a drop.
 The rest are judged through `Adjudicator.JudgeCompounds` — the same reading the
-emission gate runs, so a compound disposes identically on either path — and each
+emission gate runs, so a compound disposes identically on either path. The
+judgment reads the substrate reconstructibility of every judged cover (the
+compound's live mass and its parts' live intersection, resolved through the
+store's own name recipe) and feeds it to the composition decision, so a judged
+composition the reading places far from its intersection keeps whole as a
+relational keep instead of splitting, while a firm or gray reading lets the
+promoted-parts proxy stand down. Each
 decided compound journals one `tag_composition_event` row with a NULL document
-(`00036`), which is what makes a decided hold bind promotion and a decided keep
+(`00036`) whose `reading` column records that evidence (which source answered —
+substrate, proxy, or none — with the band and the numbers), which is what makes a decided hold bind promotion and a decided keep
 the thing the emission path later skips. A decided split is applied from the
 persisted caches with no new judgment (crash/cap resume); a degraded
 `judge_unavailable` keep is not journalled, so an outage leaves the entry
@@ -706,14 +715,16 @@ the reconciler's live counts, and the merge-review evidence all read through
   snapshot instant, the rule-set version, the operator, the operands, the raw
   numbers, an evidence state (`sufficient`/`insufficient` — empty extensions
   and empty intersections support no reading), and caveats.
+- **The live reads** — the decision does not wait for a run: `Store.ReconstructibilityBatch` resolves a batch of judged covers against the live store (names through the store's own recipe, one live-mass and one intersection query per batch) and returns a reading per cover, or nothing where the store cannot measure it. `Store.LatestWorklists` and `Store.SiblingWorklist` derive the persisted worklists for the reconciler and the review surface (the latter reading only the run's overlap records).
 - **Rule-set v1** derives the composition-review worklists from the persisted
   records: `≈` twin candidates (Jaccard ≥ 0.9 with both masses ≥ 3, gray band
   0.7–0.9), compound split proposals (both leftovers ≤ 0.1, gray to 0.25), and
   near-contained siblings (containment ≥ 0.8 with both masses ≥ 3, gray
-  0.6–0.8). The worklists are evidence: the reconciler's twin arm consumes the
-  `≈` pairs, the stored-compound scan covers stored compounds directly, and the
-  sibling readings stay review evidence — nothing is acted on at measurement
-  time.
+  0.6–0.8), each sibling pair ordered broader tag first. The worklists are
+  evidence: the reconciler's twin arm consumes the `≈` pairs, the stored-compound
+  scan covers stored compounds directly, and the sibling readings surface
+  read-only on the tags page's Overlap tab (`GET /api/v1/tags/siblings`) —
+  nothing is acted on at measurement time.
 - **Running it**: `enricher.tag_measure.{enabled, interval, time}` schedules a
   `tagmeasure` task (disabled by default), and `kushim tagmeasure` runs the
   pass in the foreground under the maintenance lock, while

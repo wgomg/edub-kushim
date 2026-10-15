@@ -10,6 +10,9 @@ SELECT * FROM tag WHERE name = $1 FOR UPDATE;
 -- name: GetTagByName :one
 SELECT * FROM tag WHERE name = $1;
 
+-- name: ListTagIDsByNames :many
+SELECT id, name FROM tag WHERE name = ANY(@names::text[]);
+
 -- name: ListTags :many
 SELECT * FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 

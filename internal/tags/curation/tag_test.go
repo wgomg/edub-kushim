@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -905,4 +907,59 @@ func TestTag_ApplyAliasPlan_StoresNormalizedName(t *testing.T) {
 	alias, err := client.Queries.GetTagAliasByName(ctx, "boundary loser")
 	testutil.AssertNoError(t, err, "alias stored under the normalized name")
 	testutil.AssertEqual(t, alias.CanonicalTagID, canonicalID, "alias target")
+}
+
+func TestListSiblings(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+	if _, err := client.DB().ExecContext(ctx, "DELETE FROM tag_measurement"); err != nil {
+		t.Fatalf("clear measurement journal: %v", err)
+	}
+
+	absent, err := svc.ListSiblings(ctx)
+	testutil.AssertNoError(t, err, "list before any run")
+	testutil.AssertEqual(t, absent.Absent, true, "absent before any run")
+	testutil.AssertEqual(t, len(absent.Readings), 0, "no readings before any run")
+
+	runID := uuid.New()
+	records := []tags.Record{
+		{
+			Operator: tags.OperatorOverlap,
+			Operands: []string{"broad topic", "inner a"},
+			Numbers: map[string]any{
+				tags.NumberJaccard:      0.2,
+				tags.NumberContainmentA: 0.1,
+				tags.NumberContainmentB: 0.85,
+				tags.NumberMassA:        int64(6),
+				tags.NumberMassB:        int64(3),
+			},
+			State: tags.StateSufficient,
+		},
+		{
+			Operator: tags.OperatorOverlap,
+			Operands: []string{"broad topic", "inner b"},
+			Numbers: map[string]any{
+				tags.NumberJaccard:      0.2,
+				tags.NumberContainmentA: 0.1,
+				tags.NumberContainmentB: 0.7,
+				tags.NumberMassA:        int64(6),
+				tags.NumberMassB:        int64(4),
+			},
+			State: tags.StateSufficient,
+		},
+	}
+	if err := tags.NewStore(client.Queries).InsertRecords(ctx, runID, time.Now(), tags.RuleSetVersion, records); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+
+	snapshot, err := svc.ListSiblings(ctx)
+	testutil.AssertNoError(t, err, "list after a run")
+	testutil.AssertEqual(t, snapshot.Absent, false, "run present")
+	testutil.AssertEqual(t, snapshot.RunID, runID.String(), "run identity")
+	testutil.AssertEqual(t, len(snapshot.Readings), 2, "both pairs read")
+	testutil.AssertEqual(t, snapshot.Readings[0].Gray, true, "the firm record was inserted first, the gray pair leads anyway")
+	testutil.AssertEqual(t, snapshot.Readings[0].B, "inner b", "the contained tag stays second")
+	testutil.AssertEqual(t, snapshot.Readings[0].Containment, 0.7, "the contained ratio is carried")
+	testutil.AssertEqual(t, snapshot.Readings[0].MassA, int64(6), "the container's mass follows its name")
+	testutil.AssertEqual(t, snapshot.Readings[1].Gray, false, "the firm pair follows")
 }

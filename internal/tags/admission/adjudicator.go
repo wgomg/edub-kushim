@@ -215,9 +215,12 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 // share, so a candidate disposes identically on either path. It returns one criterion-versioned row per
 // candidate, in order: a split row's parts are its components, a keep row's are the parts applied alongside.
 // The rows carry no document — docId stamps only the fresh verdict rows the judgment writes (0 is the
-// sweep's document-less provenance) — and the emission path stamps each returned row's own document.
+// sweep's document-less provenance) — and the emission path stamps each returned row's own document. The
+// parts test reads the substrate's reconstructibility over each judged cover; a compound the store does not
+// hold has no extension, so the prospective ladder's promoted-parts proxy answers for it.
 func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, liveNames map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]tags.CompositionRow, error) {
 	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model, tags.PromotedKeys(promotedNames))
+	substrate := tags.NewStore(a.queries)
 	fans := make(map[string]Fan, len(candidates))
 	for _, candidate := range candidates {
 		fan, ferr := a.resolveFan(ctx, store, candidate, promotedNames, liveNames, docId, reqID)
@@ -257,20 +260,45 @@ func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, l
 		return nil, err
 	}
 
-	rows := make([]tags.CompositionRow, 0, len(candidates))
-	for _, candidate := range candidates {
-		cv := compoundVerdicts[candidate]
-		fan := fans[candidate]
+	// resolve every judged cover once and read the substrate's reconstructibility in one batched pass, so the
+	// judgment issues three queries per batch rather than a handful per candidate
+	covers := make([][]string, len(candidates))
+	coverComplete := make([]bool, len(candidates))
+	compounds := make([]string, 0, len(candidates))
+	coverPartsList := make([][]string, 0, len(candidates))
+	for i, candidate := range candidates {
 		// the coarsest cover's segments when the fan has a full multi-segment cover, otherwise the flat
 		// resolved content the unit branch's deferred/unavailable reads consume
-		parts, coverComplete := coverParts(fan, liveNames, partVerdicts)
-		features := compositionFeatures(parts, coverComplete, fan.DeferredSet(), partVerdicts, cv, promotedNames)
+		covers[i], coverComplete[i] = coverParts(fans[candidate], liveNames, partVerdicts)
+		if coverComplete[i] && len(covers[i]) > 0 {
+			compounds = append(compounds, candidate)
+			coverPartsList = append(coverPartsList, covers[i])
+		}
+	}
+	readings, rerr := substrate.ReconstructibilityBatch(ctx, compounds, coverPartsList)
+	if rerr != nil {
+		// evidence that cannot be read is not evidence: the proxy answers rather than the batch failing
+		a.logger.Warn(reqID, "tag split[%s]: reconstructibility batch failed: %v", analyzer.TagSplitVersion, rerr)
+		readings = nil
+	}
+
+	rows := make([]tags.CompositionRow, 0, len(candidates))
+	for i, candidate := range candidates {
+		cv := compoundVerdicts[candidate]
+		fan := fans[candidate]
+		parts := covers[i]
+		var reading tags.ReconstructibilityReading
+		if readings != nil {
+			reading = readings[candidate]
+		}
+		features, readingRecord := compositionFeatures(parts, coverComplete[i], fan.DeferredSet(), partVerdicts, cv, promotedNames, reading)
 		decision := tags.DecideComposition(features)
 		reconstructible := features.Reconstructible
 		row := tags.CompositionRow{
 			Candidate:       candidate,
 			CriteriaVersion: analyzer.TagSplitVersion,
 			Reconstructible: &reconstructible,
+			Reading:         readingRecord,
 		}
 		switch decision.Disposition {
 		case tags.CompositionSplit:
@@ -365,16 +393,11 @@ func (a *Adjudicator) conjunctionSplits(names, candidates []string, promotedName
 	return expandCandidates(names, components, dropped), rows, nil
 }
 
-// compositionFeatures folds the two passes' verdicts into the decision's feature set: the compound status
-// (or the abstention), the parts' dimensional reading, the judge-outage flag a missing verdict sets, the
-// cross-sample disagreement either pass observed, and the reconstructibility signal — every cover segment
-// dimensional and every resolved cover segment a promoted store label (the established-value proxy the fold
-// anchor already receives). coverComplete reports whether the candidate's content sequence has a full,
-// multi-segment cover: when it does, the combination branch owns the decision and the parts
-// are the cover's segments; when it does not, the unit branch owns it and parts carries the flat resolved
-// content for the deferred/unavailable reads. deferred carries the candidate's own phrase-fold abstentions,
-// so a hold stays scoped to the phrase that abstained.
-func compositionFeatures(parts []string, coverComplete bool, deferred map[string]bool, verdicts map[string]PartVerdict, cv CompoundVerdict, promotedNames map[string]string) tags.CompositionFeatures {
+// compositionFeatures derives a candidate's decision features and its composition row's audit evidence. The
+// promoted-parts proxy answers only where the store cannot measure the cover — a compound with no extension
+// still disposes on the prospective ladder — and a phrase-fold abstention holds only the phrase that
+// abstained, not an unrelated compound.
+func compositionFeatures(parts []string, coverComplete bool, deferred map[string]bool, verdicts map[string]PartVerdict, cv CompoundVerdict, promotedNames map[string]string, reading tags.ReconstructibilityReading) (tags.CompositionFeatures, *tags.CompositionReading) {
 	var f tags.CompositionFeatures
 	switch {
 	case cv.Deferred:
@@ -417,15 +440,35 @@ func compositionFeatures(parts []string, coverComplete bool, deferred map[string
 			allDimensional = false
 		}
 	}
+	readingRecord := &tags.CompositionReading{Source: tags.ReconstructibilitySourceAbsent}
 	if allDimensional {
 		f.PartsDimensional = true
-		f.Reconstructible = tags.AllPartsPromoted(parts, promotedNames)
+		if reading.State == tags.StateSufficient {
+			band := tags.ClassifyReconstructibility(reading.State, reading.ExcessRatio, reading.DeficitRatio)
+			f.Reconstructible = band == tags.ReconstructibilityFirm || band == tags.ReconstructibilityGray
+			f.FarFromIntersection = band == tags.ReconstructibilityFar
+			readingRecord = &tags.CompositionReading{
+				Source:            tags.ReconstructibilitySourceSubstrate,
+				Band:              string(band),
+				State:             string(reading.State),
+				Mass:              reading.CompoundMass,
+				PartsIntersection: reading.PartsIntersection,
+				Both:              reading.Both,
+				Excess:            reading.Excess,
+				Deficit:           reading.Deficit,
+				ExcessRatio:       reading.ExcessRatio,
+				DeficitRatio:      reading.DeficitRatio,
+			}
+		} else {
+			f.Reconstructible = tags.AllPartsPromoted(parts, promotedNames)
+			readingRecord = &tags.CompositionReading{Source: tags.ReconstructibilitySourceProxy}
+		}
 	}
 	if !coverComplete && !f.PartsDeferred && !f.JudgeUnavailable && len(parts) > 0 {
 		// no full multi-segment cover: the unit branch owns the decision
 		f.PartsNotDimensional = true
 	}
-	return f
+	return f, readingRecord
 }
 
 // expandCandidates applies the split expansions and drops to the tag list in place, deduplicating; split

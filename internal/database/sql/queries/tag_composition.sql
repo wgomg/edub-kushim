@@ -1,7 +1,7 @@
 -- name: InsertTagCompositionEvent :exec
 INSERT INTO tag_composition_event
-    (document_id, candidate, parts, disposition, reason, criteria_version, model, reconstructible)
-VALUES (@document_id, @candidate, @parts, @disposition, @reason, @criteria_version, @model, @reconstructible);
+    (document_id, candidate, parts, disposition, reason, criteria_version, model, reconstructible, reading)
+VALUES (@document_id, @candidate, @parts, @disposition, @reason, @criteria_version, @model, @reconstructible, COALESCE(@reading, '{}'::jsonb));
 
 -- name: LatestCompositionReasonsForNames :many
 SELECT DISTINCT ON (candidate) candidate, disposition, reason

@@ -169,12 +169,11 @@ func compositionHolds(reason string) bool {
 	return false
 }
 
-// CompositionRow is one decomposition verdict over a judged compound: the document it belongs to, the
-// candidate, the validated components for split rows and the applied-alongside parts for keep rows (empty
-// otherwise), the disposition, the verdict source or decision reason, the split criteria version the
-// verdict was read under, and the split judge's model for fresh verdicts. Reconstructible records the
-// store signal the decision read when the parts pass ran (all parts dimensional and every resolved part
-// key holding live mass); it is nil when no parts verdict or store reading exists.
+// CompositionRow is one decomposition verdict over a judged compound. Parts means by disposition: a split's
+// validated components, a keep's applied-alongside parts, empty otherwise. Reconstructible is the signal the
+// parts test read — the substrate reading's firm or gray band when sufficient, the promoted-parts proxy
+// otherwise — and is nil when no parts verdict exists; Reading keeps the evidence behind it, so a held or
+// diverted compound is auditable from its row alone.
 type CompositionRow struct {
 	DocumentID      int64
 	Candidate       string
@@ -184,7 +183,32 @@ type CompositionRow struct {
 	CriteriaVersion string
 	Model           string
 	Reconstructible *bool
+	Reading         *CompositionReading
 }
+
+// CompositionReading is the reconstructibility evidence behind one composition row: the substrate's numbers
+// when a sufficient reading decided the parts test, or just which fallback answered, so the decision stays
+// auditable without the measurement run that would re-derive it.
+type CompositionReading struct {
+	Source            string  `json:"source"`
+	Band              string  `json:"band,omitempty"`
+	State             string  `json:"state,omitempty"`
+	Mass              int64   `json:"mass,omitempty"`
+	PartsIntersection int64   `json:"parts_intersection,omitempty"`
+	Both              int64   `json:"both,omitempty"`
+	Excess            int64   `json:"excess,omitempty"`
+	Deficit           int64   `json:"deficit,omitempty"`
+	ExcessRatio       float64 `json:"excess_ratio,omitempty"`
+	DeficitRatio      float64 `json:"deficit_ratio,omitempty"`
+}
+
+// Source names what answered a composition row's parts test — the substrate reading, the promoted-parts
+// proxy, or nothing — so an audited row distinguishes a real reading from a fallback.
+const (
+	ReconstructibilitySourceSubstrate = "substrate"
+	ReconstructibilitySourceProxy     = "proxy"
+	ReconstructibilitySourceAbsent    = "absent"
+)
 
 // Plan is the deterministic identity plan for a batch of candidate
 // names: registrations, alias writes, the evidence rows the judging

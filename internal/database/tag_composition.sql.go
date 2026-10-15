@@ -16,8 +16,8 @@ import (
 
 const insertTagCompositionEvent = `-- name: InsertTagCompositionEvent :exec
 INSERT INTO tag_composition_event
-    (document_id, candidate, parts, disposition, reason, criteria_version, model, reconstructible)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    (document_id, candidate, parts, disposition, reason, criteria_version, model, reconstructible, reading)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, '{}'::jsonb))
 `
 
 type InsertTagCompositionEventParams struct {
@@ -29,6 +29,7 @@ type InsertTagCompositionEventParams struct {
 	CriteriaVersion string
 	Model           sql.NullString
 	Reconstructible sql.NullBool
+	Reading         interface{}
 }
 
 func (q *Queries) InsertTagCompositionEvent(ctx context.Context, arg InsertTagCompositionEventParams) error {
@@ -41,6 +42,7 @@ func (q *Queries) InsertTagCompositionEvent(ctx context.Context, arg InsertTagCo
 		arg.CriteriaVersion,
 		arg.Model,
 		arg.Reconstructible,
+		arg.Reading,
 	)
 	return err
 }

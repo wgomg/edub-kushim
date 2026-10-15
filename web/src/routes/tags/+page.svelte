@@ -9,6 +9,7 @@
 	import TagReconcileStrip from '$lib/components/tags/TagReconcileStrip.svelte';
 	import ProvisionalReview from '$lib/components/tags/ProvisionalReview.svelte';
 	import CoverageReview from '$lib/components/tags/CoverageReview.svelte';
+	import SiblingReview from '$lib/components/tags/SiblingReview.svelte';
 	import DeletedTags from '$lib/components/tags/DeletedTags.svelte';
 	import { EDIT_ICON, DELETE_ICON, DEMOTE_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
@@ -17,7 +18,7 @@
 	import { api } from '$lib/api';
 	import * as authStore from '$lib/stores/authStore.js';
 
-	const TABS = ['vocabulary', 'provisional', 'coverage', 'deleted'];
+	const TABS = ['vocabulary', 'provisional', 'coverage', 'siblings', 'deleted'];
 
 	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip
 	// stick flush under the topbar instead of leaving a 24px band over the panel
@@ -285,6 +286,17 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 		>
 			Coverage
 		</button>
+		<button
+			id="tab-siblings"
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'siblings'}
+			aria-controls="panel-siblings"
+			onclick={() => selectTab('siblings')}
+			class={tabClass('siblings')}
+		>
+			Overlap
+		</button>
 	{/if}
 </div>
 
@@ -341,6 +353,10 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 {:else if activeTab === 'coverage'}
 	<div id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage">
 		<CoverageReview onchanged={onReviewChanged} />
+	</div>
+{:else if activeTab === 'siblings'}
+	<div id="panel-siblings" role="tabpanel" aria-labelledby="tab-siblings">
+		<SiblingReview />
 	</div>
 {/if}
 

@@ -1459,6 +1459,7 @@ Response `200`:
       { "query": "supply and demand", "components": ["supply", "demand"], "reassigned": 8, "reason": "adjudicated" }
     ],
     "twins": { "worklist": 4, "settled": 1, "held": 0, "skipped": 2, "mechanical": 1, "planned": 0, "pending": 0 },
+    "siblings": { "worklist": 4, "gray": 1, "firm": 3 },
     "measurement": { "run_id": "3f1c…", "snapshot_at": "2024-03-18T03:00:00Z" },
     "skips": { "below_floor": 38, "query_reborn": 51, "adjudication_error": 25 },
     "swept": 3
@@ -1481,13 +1482,47 @@ Response `200`:
   `deferred`, `no_judge`, `skipped`, `failed`), the `demotion` block (counts
   `worklist`, `mass_decay`, `no_dimension`, `rejudged`, `demoted`, `held`, `no_judge`,
   `skipped`, `failed`, plus the `demoted` / `planned_demotions` entries naming each value
-  and reason), and the `capped` / `no_documents` /
+  and reason), the `siblings` counts of the containment worklist (`worklist`, `gray`,
+  `firm` — the overlapping tag pairs the review surface lists, nothing acted on), and the
+  `capped` / `no_documents` /
   `adjudicator_disabled` markers. Pair-level fields appear only when the run recorded
   them (a run with no flips has no `planned_keep_flips`). Each pair entry carries
   `reason` (the policy guard that decided it, or `adjudicated` for LLM-judged pairs)
   and `creates_tag` (true when a keep flip creates the query tag; always present in
   new reports).
 - `404` — no completed `tagreconcile` run exists yet.
+
+### Overlapping Tags
+
+Lists the containment readings of the latest measurement run: tag pairs whose document
+sets nearly overlap, the review band first. Read-only — the endpoint only touches
+Postgres (never the matcher), a containment reading never merges, holds, or demotes a
+pair, and a narrower tag inside a broader one is often legitimate on its own. The tags
+page shows the same list in its "Overlap" tab.
+
+```
+GET /api/v1/tags/siblings?limit=50&offset=0
+```
+
+Response `200`:
+
+```json
+{
+  "run_id": "3f1c2e7a-9d41-4c8e-b0a2-6f7d1e2b3c4d",
+  "snapshot_at": "2024-03-18T03:00:00Z",
+  "absent": false,
+  "results": [
+    { "a": "broad topic", "b": "narrow topic", "containment": 0.9, "mass_a": 9, "mass_b": 4, "gray": false }
+  ],
+  "total": 1
+}
+```
+
+- `a` is the broader tag and `b` the tag it nearly contains, so the pair reads `a ⊇ b`; `containment` is the fraction of `b`'s live documents that also carry `a`.
+- `gray` — `true` marks the review band (the pair worth a human's look), `false` a firm near-containment listed for reference.
+- `mass_a` / `mass_b` — the live document counts of each tag.
+- `absent` — `true`, with an empty `results`, when no measurement run exists yet; it distinguishes zero data from a run that proposed no overlapping pairs.
+- `total` counts every pair in the run, independent of the page; `limit` defaults to `50` (1–100) and `offset` to `0` (negative values clamp to 0). Viewer-readable.
 
 ### Provisional Tag Review Queue
 

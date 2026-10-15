@@ -106,11 +106,10 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 	}
 }
 
-// CompositionFeatures is one compound candidate's evidence for the split gate: the parts pass and the
-// compound pass answers, the abstention and outage flags the fold sets, the store reconstructibility signal,
-// and cross-sample disagreement. The fold sets exactly one of PartsDimensional and PartsNotDimensional, and
-// exactly one compound status, or the deferred and unavailable flags; a feature the caller cannot establish
-// stays false, and the switch's fail-safe branch disposes of any combination the rule set does not recognize.
+// CompositionFeatures is one compound candidate's evidence for the split gate. The fold sets exactly one of
+// PartsDimensional and PartsNotDimensional and exactly one compound status — or the deferred and unavailable
+// flags — and a feature the fold cannot establish stays false, so an unrecognized combination reaches the
+// switch's fail-safe branch rather than a wrong disposition.
 type CompositionFeatures struct {
 	PartsDimensional    bool
 	PartsNotDimensional bool
@@ -120,7 +119,12 @@ type CompositionFeatures struct {
 	CompoundNoDimension bool
 	CompoundDeferred    bool
 	JudgeUnavailable    bool
-	Reconstructible     bool
+	// Reconstructible marks that the parts reconstruct the compound: the substrate reading's firm or gray
+	// band when one is sufficient, the promoted-parts proxy when none exists.
+	Reconstructible bool
+	// FarFromIntersection marks the substrate reading's far band: the compound selects more (or less) than
+	// its parts' intersection, so it is not their product.
+	FarFromIntersection bool
 	SampleDisagreement  bool
 }
 
@@ -145,11 +149,14 @@ type CompositionDecision struct {
 // an unavailable judge keeps the compound undecided (the persisted reason holds it from promotion until a
 // later verdict); an abstention defers under split_defer; then the parts test selects the branch — all
 // parts dimensional means the combination branch, a failing part means the unit branch — and the compound
-// reading disposes within it. In the combination branch a composition reading splits, a no-dimension
-// reading conflicts to review, and a named_unit reading is a held gray keep with its parts applied
-// alongside (reconstructible when every part is a promoted store value, relational_keep otherwise). In the
-// unit branch a named_unit reading keeps whole and a composition reading conflicts to review. An
-// unrecognized combination falls to the fail-safe split_defer hold.
+// reading disposes within it. In the combination branch a composition reading splits, unless a sufficient
+// reconstruction reading lands far from the intersection: the whole is then not its parts' product and the
+// compound holds as relational_keep for review (atomicity §3.3 step B's far leg). A no-dimension reading
+// conflicts to review, and a named_unit reading is a held gray keep with its parts applied alongside —
+// named_unit_reconstructible when the reading is firm or gray (or, with no reading established, every part
+// is a promoted store value), relational_keep otherwise. In the unit branch a named_unit reading keeps
+// whole and a composition reading conflicts to review. An unrecognized combination falls to the fail-safe
+// split_defer hold.
 func DecideComposition(f CompositionFeatures) CompositionDecision {
 	var decision CompositionDecision
 	switch {
@@ -159,6 +166,8 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonJudgeUnavailable}
 	case f.CompoundDeferred || f.PartsDeferred:
 		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonSplitDefer}
+	case f.PartsDimensional && f.CompoundComposition && f.FarFromIntersection:
+		decision = CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonRelationalKeep}
 	case f.PartsDimensional && f.CompoundComposition:
 		decision = CompositionDecision{Disposition: CompositionSplit}
 	case f.PartsDimensional && f.CompoundNoDimension:

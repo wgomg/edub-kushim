@@ -1,8 +1,9 @@
 package tags
 
-// The v1 worklist cuts are provisional: calibration replaces the constants
-// and advances RuleSetVersion. The cuts stay consumer-side so
-// recalibration never invalidates raw records.
+// The v1 worklist cuts are provisional: calibration replaces the constants and advances RuleSetVersion.
+// The reconstructibility cuts are also inputs to the sweep's composition decision, so recalibrating them
+// advances the measurement RuleSetVersion and bumps TagSplitVersion in the same versioned event. The cuts
+// stay consumer-side, so a recalibration re-derives an old run's raw numbers instead of invalidating them.
 const (
 	TwinJaccardCut        = 0.9
 	TwinJaccardGrayFloor  = 0.7
@@ -13,6 +14,34 @@ const (
 	SiblingGrayFloor      = 0.6
 	SiblingMinMass        = 3
 )
+
+// ReconstructibilityBand is a compound's reconstructibility under the pinned cuts: firm is the tight
+// intersection the parts reconstruct, gray sits in the review band between the firm and gray cuts, far says
+// the whole is not its parts' product, and insufficient (a thin or empty extension) supports no band at all.
+type ReconstructibilityBand string
+
+// The band values the decision and the worklist cut classify a reading into.
+const (
+	ReconstructibilityInsufficient ReconstructibilityBand = "insufficient"
+	ReconstructibilityFar          ReconstructibilityBand = "far"
+	ReconstructibilityGray         ReconstructibilityBand = "gray"
+	ReconstructibilityFirm         ReconstructibilityBand = "firm"
+)
+
+// ClassifyReconstructibility is the one owner of the band rule: the decision asks it about a live reading
+// and the worklist derivation about a stored record, so both agree on where firm ends and review begins.
+func ClassifyReconstructibility(state EvidenceState, excessRatio, deficitRatio float64) ReconstructibilityBand {
+	if state != StateSufficient {
+		return ReconstructibilityInsufficient
+	}
+	if excessRatio > CompoundGrayCut || deficitRatio > CompoundGrayCut {
+		return ReconstructibilityFar
+	}
+	if excessRatio > CompoundSplitCut || deficitRatio > CompoundSplitCut {
+		return ReconstructibilityGray
+	}
+	return ReconstructibilityFirm
+}
 
 // Twin is a pair of tags whose document sets are near-identical: Jaccard
 // at or above the gray floor with both masses at or above the minimum.
@@ -38,13 +67,15 @@ type CompoundSplit struct {
 	Gray         bool
 }
 
-// Sibling is a containment pair: one tag's document set nearly contains
-// the other's, at or above the sibling gray floor with both masses at or
-// above SiblingMinMass. Gray marks the review-needed band below
+// Sibling is a containment pair: A's document set nearly contains B's, at or above the sibling gray floor
+// with both masses at or above SiblingMinMass. A is the broader (container) tag and B the narrower one, so
+// Containment is the fraction of B's documents that A also holds. Gray marks the review band below
 // SiblingContainmentCut.
 type Sibling struct {
 	A, B        string
 	Containment float64
+	MassA       int64
+	MassB       int64
 	Gray        bool
 }
 
@@ -100,10 +131,20 @@ func (w *Worklists) addOverlap(r Record) {
 	containmentB, _ := numberFloat64(r.Numbers, NumberContainmentB)
 	containment := max(containmentA, containmentB)
 	if containment >= SiblingGrayFloor && massA >= SiblingMinMass && massB >= SiblingMinMass {
+		// containment_a is the fraction of a's documents that also carry b, so the larger ratio belongs to
+		// the contained tag; order the pair container first and carry each mass with its own name
+		container, contained := r.Operands[0], r.Operands[1]
+		containerMass, containedMass := massA, massB
+		if containmentA > containmentB {
+			container, contained = r.Operands[1], r.Operands[0]
+			containerMass, containedMass = massB, massA
+		}
 		w.Siblings = append(w.Siblings, Sibling{
-			A:           r.Operands[0],
-			B:           r.Operands[1],
+			A:           container,
+			B:           contained,
 			Containment: containment,
+			MassA:       containerMass,
+			MassB:       containedMass,
 			Gray:        containment < SiblingContainmentCut,
 		})
 	}
@@ -118,7 +159,8 @@ func (w *Worklists) addReconstructibility(r Record) {
 	if !okExcess || !okDeficit {
 		return
 	}
-	if excess > CompoundGrayCut || deficit > CompoundGrayCut {
+	band := ClassifyReconstructibility(r.State, excess, deficit)
+	if band != ReconstructibilityFirm && band != ReconstructibilityGray {
 		return
 	}
 	var parts []string
@@ -130,6 +172,6 @@ func (w *Worklists) addReconstructibility(r Record) {
 		Parts:        parts,
 		ExcessRatio:  excess,
 		DeficitRatio: deficit,
-		Gray:         excess > CompoundSplitCut || deficit > CompoundSplitCut,
+		Gray:         band == ReconstructibilityGray,
 	})
 }

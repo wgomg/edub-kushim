@@ -41,6 +41,7 @@
 	const notActedTotal = $derived(notActed.reduce((sum, group) => sum + group.count, 0));
 	const demotions = $derived(demotedValues(report));
 	const demotionCounts = $derived(demotionCountGroups(report));
+	const siblings = $derived(report?.siblings ?? {});
 
 	const runDate = $derived(completedAt ? new Date(completedAt).toLocaleString() : '—');
 
@@ -91,6 +92,14 @@
 		{#if demotionCounts.length > 0}
 			<p class="mt-1 text-xs text-parchment-500">
 				Demotions: {demotionCounts.map((group) => `${group.count} ${group.label}`).join('; ')}.
+			</p>
+		{/if}
+
+		{#if (siblings?.worklist ?? 0) > 0}
+			<p class="mt-1 text-xs text-parchment-500">
+				Overlapping tags: {siblings.worklist}
+				{plural(siblings.worklist, 'pair', 'pairs')} ({siblings.gray ?? 0} need review,
+				{siblings.firm ?? 0} for reference).
 			</p>
 		{/if}
 

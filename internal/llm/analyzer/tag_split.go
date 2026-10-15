@@ -158,9 +158,11 @@ func (s TagCompoundStatus) Valid() bool {
 // seeded period is a store application, an unseeded time designation is dropped on the emission and parts
 // paths, and composition rows record the resolved applied part names. v7 fans the decomposition over in-order
 // contiguous segments and disposes by the coarsest cover: a full multi-segment cover selects the combination
-// branch, and any failing segment keeps the compound whole with its survivors alongside. The judge's criteria
-// text is unchanged throughout.
-const TagSplitVersion = "v7"
+// branch, and any failing segment keeps the compound whole with its survivors alongside. v8 feeds the
+// retrospective reconstructibility reading into the decision: the sweep computes the substrate's reading
+// over each judged cover, the far band holds a judged composition whole as relational_keep, and composition
+// rows record the reading behind the decision. The judge's criteria text is unchanged throughout.
+const TagSplitVersion = "v8"
 
 // TagCompoundSystemMessage is the system prompt of the compound pass.
 const TagCompoundSystemMessage = "You are a tag-taxonomy classifier. Decide what a compound phrase denotes."

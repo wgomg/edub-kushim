@@ -312,6 +312,15 @@ func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries
 		if row.Reconstructible != nil {
 			reconstructible = sql.NullBool{Bool: *row.Reconstructible, Valid: true}
 		}
+		// an absent reading records the empty object, so a row always says the decision ran with no evidence
+		reading := json.RawMessage("{}")
+		if row.Reading != nil {
+			encoded, err := json.Marshal(row.Reading)
+			if err != nil {
+				return fmt.Errorf("encode tag composition reading %s: %w", candidate, err)
+			}
+			reading = encoded
+		}
 		// the sweep decides compounds with no emitting document; a zero id records NULL, not a fabricated one
 		var documentID sql.NullInt64
 		if row.DocumentID != 0 {
@@ -326,6 +335,7 @@ func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries
 			CriteriaVersion: row.CriteriaVersion,
 			Model:           model,
 			Reconstructible: reconstructible,
+			Reading:         reading,
 		}); err != nil {
 			return errs.FromDB(err, "insert tag composition event "+candidate)
 		}

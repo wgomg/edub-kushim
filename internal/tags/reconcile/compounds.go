@@ -114,8 +114,9 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 	return entries
 }
 
-// Stored compounds are read through the emission gate so a verdict binds identically in both places; only a
-// split or a drop acts, and a drop belongs to demotion.
+// Stored compounds are judged through the same entry point the emission gate uses, so a verdict binds
+// identically on either path — including the substrate reading the judgment consults. Only a split acts here;
+// a decided drop belongs to demotion.
 func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Config, entries []*compoundEntry, promotedNames map[string]string, liveNames map[string]struct{}) {
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		componentFilter := analyzer.NewTagFilter(nil, nil, nil)

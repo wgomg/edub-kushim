@@ -651,6 +651,38 @@ func (q *Queries) ListStoreTagKeys(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listTagIDsByNames = `-- name: ListTagIDsByNames :many
+SELECT id, name FROM tag WHERE name = ANY($1::text[])
+`
+
+type ListTagIDsByNamesRow struct {
+	ID   int64
+	Name string
+}
+
+func (q *Queries) ListTagIDsByNames(ctx context.Context, names []string) ([]ListTagIDsByNamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTagIDsByNames, pq.Array(names))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTagIDsByNamesRow
+	for rows.Next() {
+		var i ListTagIDsByNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTags = `-- name: ListTags :many
 SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `

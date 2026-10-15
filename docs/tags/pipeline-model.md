@@ -276,17 +276,17 @@ system already has, how far it matches the model, and what the delta is.
 |---|---|---|---|
 | **S1 Emission** | Typed generation contract, subject-matter rule, choose-or-justify, two negatives, dimension language and compound decomposition (`analyzer/prompt.go`); suggestions injected from the store | Partial | Coverage wording pending; the dictionary-standard selection language is retired |
 | **S2 Facet ownership (P1)** | `SeparateFacets` category gate (persons, form/genre) + the deterministic time-designation gate (`internal/enrichment/enricher.go`) | Aligned | Places and works are ordinary subject candidates; untyped emissions degrade to string heuristics (accepted) |
-| **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, alias disposition, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector; the disposition is not yet a standing mandate |
-| **S4 Atomicity (P4)** | General compound decomposition at emission over the in-order segment fan, disposed by the coarsest cover (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + the stored-compound scan (`reconcile/compounds.go`, judged through `Adjudicator.JudgeCompounds`) | Partial | No part-value/mass evidence; prospective vs retrospective test |
-| **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + the 10-live-document floor (`tags.DecidePromotion`, `tags.RecurrenceFloor`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the features (the P4 extension test is not a feature yet); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
+| **S3 Canonicality (P3)** | Consolidation policy gates/bands (`policy`), LLM adjudicator + verdict cache, alias disposition, reconciler | Partial | Similarity band misses the variant classes; no extension-equality detector |
+| **S4 Atomicity (P4)** | General compound decomposition at emission over the in-order segment fan, disposed by the coarsest cover (`Adjudicator.DecomposeTags`, `analyzer` split gate — one `tag_composition_event` verdict row per judged compound) + the stored-compound scan (`reconcile/compounds.go`, judged through `Adjudicator.JudgeCompounds`), both disposing through `tags.DecideComposition` over the parts, compound, and substrate reconstructibility features | Landed | The band cuts are provisional, calibration-owned (§7 item 9) |
+| **S5 Admission decision** | Rubric judge + verdict cache; pinned decision over the judge answers plus deterministic signals (`tags.DecideAdmission`); promotion = admitted + the 10-live-document floor (`tags.DecidePromotion`, `tags.RecurrenceFloor`) | Landed (pinned decision) · Absent (fitting) | No set predicates among the admission features (the P4 extension test feeds the composition decision); the optional fitted form (calibration, distilled filter) is unshipped — the decision runs pinned and label-free; the repeat-disagreement rule is unshipped |
 | **S6 Lifecycle** | `promoted_at` quarantine/promotion and `demoted_at`/`demoted_reason` demotion, the seeded exemption (`tag.seeded`), store trust boundary, sweep, blocklist | Aligned | — |
 | **S7 Vocabulary services** | Promoted-only store (`BuildTagCache`), suggestions, consolidation targets, promoted-names fallback | Aligned | — |
-| **S8 Retrieval** | Multi-tag AND filter (`internal/database/structured_search.go`, `tagsAnd`) | Aligned · Absent (completeness) | Coverage of dimensions is audited nowhere |
-| **D1 Canonicalization** | Adjudicator and reconciler — the reconciler's twin arm consumes the measurement `≈` worklists and the confirmed flips alias | Landed as a standing duty | Gray bands and sibling readings stay evidence-only |
-| **D2 Composition review** | Reconciler's stored-compound scan over every stored compound, disposed through the composition decision | Landed as a standing duty | Part-value/mass evidence still absent |
-| **D3 Completeness** | — (the prompt bounds tag count, not coverage) | Absent | The load-bearing adoption risk (definition §7.3) |
-| **D4 Measurement substrate** | Document counts (`CountLiveTagDocumentsByTagIDs`), embedding similarities, pair verdict stats (`TagPairEvidenceStats`) | Partial | No per-value extension algebra |
-| **D5 Review surfaces** | Provisional review queue, blocklist, reconciliation report | Partial | Labels accrue under the old standard; usage is not a signal (definition §6.3) |
+| **S8 Retrieval** | Multi-tag AND filter (`internal/database/structured_search.go`, `tagsAnd`) and the coverage audit that measures dimension coverage (`GET /api/v1/tags/audit/flags`, the tags page's Coverage tab) | Aligned | — |
+| **D1 Canonicalization** | Adjudicator and reconciler — the reconciler's twin arm consumes the measurement `≈` worklists and the confirmed flips alias | Landed as a standing duty | Gray bands stay evidence-only; the containment readings surface read-only on the Overlap tab |
+| **D2 Composition review** | Reconciler's stored-compound scan over every stored compound, disposed through the composition decision over the substrate reconstructibility reading (live mass and the parts' intersection) | Landed as a standing duty | The band cuts are provisional, calibration-owned |
+| **D3 Completeness** | The scheduled coverage audit (`kushim tagaudit`, `internal/tags/admission/audit.go`) and its review surface (`GET /api/v1/tags/audit/flags`, `apply`, `dismiss`, `create-value`; the tags page's Coverage tab) | Landed | The emission-side contract wording ("every applicable dimension") is pending (S1) |
+| **D4 Measurement substrate** | The measurement run (`tag_measurement`, `RuleSetVersion`) computing the extension operators — live mass, pair overlap (`jaccard`, `containment_a/b`), equality, containment, reconstructibility (excess and deficit against the parts' intersection), part coverage, complement, and coverage — read live by the decision (`Store.ReconstructibilityBatch`) and per run for the worklists (`Store.LatestWorklists`, `Store.SiblingWorklist`); embedding similarities and pair verdict stats supply the other features | Landed | — |
+| **D5 Review surfaces** | Provisional review queue, blocklist, reconciliation report, coverage audit flags, and the overlap review readings | Partial | Labels accrue from review verdicts; usage is not a signal (definition §6.3) |
 
 ### 6.2 Stage notes
 
@@ -341,12 +341,15 @@ tags — `Adjudicator.JudgeCompounds` judges every stored compound, not only
 conjunctions, so a compound disposes identically at emission and in the sweep —
 and its twin arm canonicalizes the near-identical labels the measurement
 worklists propose. P4 is wider than
-conjunctions and is a set test, not a surface one. One asymmetry matters for any plan:
-at emission time a novel compound has no extension and its parts may not exist as
-values, so the true test is not available prospectively — the report's
-reconstructibility test is a retrospective instrument, and the runtime can only
-approximate it. “No blanket mechanical splitting” remains the rule for the no-judge
-path; the adjudicated path approximates P4 per candidate.
+conjunctions and is a set test, not a surface one. The decision reads the
+substrate: where the store holds the compound, its live extension against the
+judged cover's parts decides the reconstructibility signal — the firm and gray
+bands reconstruct it, and the far band marks the whole as not their product, so a
+judged composition keeps whole as a relational keep instead of splitting — while
+a compound born in a document has no extension yet and disposes on the
+prospective ladder (the promoted-parts proxy, with the parts judged for
+dimension). “No blanket mechanical splitting” remains the rule for the no-judge
+path.
 
 **S5 — admission.** The mechanics are the rubric judge (`subject_matter`,
 `not_person`, `atomic`, `not_form_genre`, plus the optional `defer`
@@ -362,13 +365,14 @@ pre-coordinated compounds and document-specific coinages become rejects,
 corpus-valid values (repair-corpus terms) become admissible, and `defer`
 gives the judge an explicit abstention. `tags.DecidePromotion` keeps the
 definition's P2 recurrence floor — an admitted name with ≥ 10 live documents —
-so mass is a floor, not a feature of the decision. The remaining gaps are the
-set predicates among the features (the P4 extension test is not a feature yet)
-and the fitted refinement: the designed repeat-disagreement rule and the
-label-gated stages (conformal calibration; distilled filter) are unshipped
-precursors of the optional fitted form (definition §8.10, staged). Labels now
-accrue under the definition's criteria, satisfying the label-hygiene
-precondition of definition §6.6.
+so mass is a floor, not a feature of the decision. The remaining gap is the
+set predicates: admission decides over its judge answers, the owned `dimension`
+verdict, and the emission's deterministic signals, while the P4 extension test's
+reach is the composition decision. The fitted refinement is unshipped: the
+designed repeat-disagreement rule and the label-gated stages (conformal
+calibration; distilled filter) anticipate the optional fitted form (definition
+§8.10, staged). Labels accrue under the definition's criteria, satisfying the
+label-hygiene precondition of definition §6.6.
 
 **S6 — lifecycle.** Implemented as the model wants: a label exists and is searchable
 from birth; provisional values are excluded from every injection point (store built
@@ -382,52 +386,45 @@ exempt from every demotion path and from the dead-tag sweep; judge failure degra
 provisional; the blocklist prevents rebirth.
 
 **S7–S8.** S7 matches the model's influence boundary exactly. S8 is the intersection
-algebra already `tagsAnd` in the structured search; what is missing is the completeness
-precondition — nothing measures whether a document carries the dimensions applicable to
-it, and the prompt's `min_tags` floor is a count, not coverage.
+algebra already `tagsAnd` in the structured search, and the completeness
+precondition it needs is measured: the scheduled coverage audit (`kushim
+tagaudit`) samples the sweep register, fills confirmed gaps, and records a
+coverage class per reading, while the emission contract's coverage wording is
+still pending.
 
-**Duties.** D1 has the merge/alias mechanics but no standing detector and no extension
-evidence; D2 has nothing beyond the observed class catalogs; D3 has nothing at all —
-and the definition ranks it with admission as a duty, not an optimization. D4 is partial:
-document counts give mass approximately, embedding similarity gives relatedness, and
-`TagPairEvidenceStats` gives adjudicated-pair document overlap — but there is no per-value
-extension algebra (mass beyond counts, intersection-vs-extension comparison, part
-coverage, containment/redundancy measures). D5 is partial: the provisional queue yields
-binary labels, but they are labels about the old standard; usage is not read as a
-signal (definition §6.3).
+**Duties.** D1 runs as a standing duty — the twin arm consumes the measurement
+`≈` worklists and aliases the resolved pairs — while the canonicality signal
+still comes from judged verdicts and the pinned variant classes rather than the
+P3 extension-equality detector. D2 runs: the stored-compound scan disposes every
+stored compound through the composition decision over the substrate
+reconstructibility reading. D3 runs as the coverage audit plus its review
+surface, with the emission contract's coverage wording pending. D4 is the
+measured substrate: the extension operators — mass, overlap with both
+containment ratios, reconstructibility's excess and deficit, part coverage,
+complement, and coverage — are computed per value and per pair, persisted per
+run, and read live by the decision, with embedding similarity and pair verdict
+stats remaining the neighbours' evidence. D5 is partial: the provisional queue,
+the coverage flags, and the overlap readings yield review labels, and usage is
+not read as a signal (definition §6.3).
 
-### 6.3 Lacking mechanisms, ranked
+### 6.3 Remaining gaps, ranked
 
 Ordered by what unlocks the rest, not by effort:
 
-1. **D4 · extension algebra** — the keystone. Every set predicate (P2–P5), the audit
-   worklists, the canonicality detector, and the decision layer's structured features
-   need per-value extensions and set comparisons the system does not compute. Partial
-   ingredients exist; no reusable measurement layer does. The atomicity slice is
-   specified in `atomicity.md` and the substrate itself is specified in
-   `extension-algebra.md`. Extensions decide when observations exist; the
-   zero-data composition of the same predicates is the standing requirement of §7 item
-   11.
-2. **D3 · completeness** — second because the retrieval promise fails silently without
-   it: a half-applied dimension makes intersections under-return and the searcher
-   concludes the content does not exist. The mechanics and the operational definition
-   of “applicable dimensions” are specified in `completeness.md`.
-3. **Re-criteria of S1 and S5** — the live layers enforce the diagnosed dictionary
-   standard; the reject class flips. Mechanically cheap, but it invalidates cached
-   verdicts and the label pool, so it must be sequenced deliberately.
-4. **D1 · canonicalization as a standing duty** — birth-time shaping and identity are
-   specified in `canonical-form-and-identity.md`; the store-side detector
-   (extension equality) is what is missing.
-5. **D2 · composition review — no axis expectations (definition §8.7, decided).** The
-   compound-class worklists and extension-based checks. Needs D4; its outputs act
-   through decompositions, which `atomicity.md` specifies generally and the runtime
-   covers at emission today.
-6. **S5 · decision over features with abstention — staged (definition §8.10, decided).**
-   Needs the set-predicate features (1) and the re-criteria (3); the operating mode is a
-   pinned rule set, with a fitted refinement only where labels accrue (D5).
-7. **Cross-cutting decisions — closed.** Corpus relativity, canonical-form policy,
-   axis grouping, preference channel, and thresholds are decided or calibration-owned
-   (definition §8.3, §8.6–§8.9); none remain.
+1. **S1 · coverage wording** — the contract's instruction that every applicable
+   dimension is emitted. It is the producer-side half of completeness; the audit half
+   runs (`completeness.md`).
+2. **Cut calibration** — the worklist and band cuts are provisional v1 constants; the
+   thresholds are calibration-owned (definition §8.9), and a cut change is a
+   measurement-version event (re-derivation, plus a `TagSplitVersion` bump when the
+   reconstructibility cuts move).
+3. **The fitted refinement (S5, D5)** — optional and label-gated: a calibrated band or a
+   distilled filter where labels accrue; the pinned rule sets run with zero labels until
+   then (definition §8.10).
+4. **P3 canonicality from extensions (D1)** — the same-intent path resolves by judged
+   verdicts and the pinned deterministic variant classes, with the `≈` worklist ranking
+   candidates; the store-side extension-equality detector is not the canonicality signal
+   (definition §4.3 P3; §6.4 item 4).
 
 ### 6.4 Conflicts needing explicit reconciliation
 
@@ -438,7 +435,7 @@ Ordered by what unlocks the rest, not by effort:
 2. **Conjunction-only splitting vs P4 — resolved (2026-09-20): the restriction is
    retired.** General decomposition is live at emission (adjudicated; the conjunction
    grammar split remains the no-judge fallback and the stored-tag worklist), and the
-   wider fan stays retrospective until the composition review lands.
+   wider fan disposes retrospectively through the stored-compound scan.
 3. **Recurrence as gate vs weak prior — resolved (2026-09-20): the gate is retired.**
    The staged decision (§6.6) reads mass and the judge verdict as features; recurrence
    stops being read as quality evidence.

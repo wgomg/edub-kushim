@@ -148,3 +148,65 @@ func TestDeriveWorklists_CompoundCarriesParts(t *testing.T) {
 		t.Errorf("Parts = %v, want [history china]", got)
 	}
 }
+
+func TestClassifyReconstructibility(t *testing.T) {
+	cases := []struct {
+		name    string
+		state   EvidenceState
+		excess  float64
+		deficit float64
+		want    ReconstructibilityBand
+	}{
+		{"an insufficient extension supports no band", StateInsufficient, 0, 0, ReconstructibilityInsufficient},
+		{"an excess beyond the gray cut is far", StateSufficient, CompoundGrayCut + 0.05, 0, ReconstructibilityFar},
+		{"a deficit beyond the gray cut is far", StateSufficient, 0, CompoundGrayCut + 0.05, ReconstructibilityFar},
+		{"an excess at the gray cut still reviews", StateSufficient, CompoundGrayCut, 0, ReconstructibilityGray},
+		{"an excess above the split cut reviews", StateSufficient, CompoundSplitCut + 0.05, 0, ReconstructibilityGray},
+		{"an excess at the split cut is firm", StateSufficient, CompoundSplitCut, 0.05, ReconstructibilityFirm},
+		{"a tight intersection on both ratios is firm", StateSufficient, 0, 0, ReconstructibilityFirm},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyReconstructibility(tc.state, tc.excess, tc.deficit)
+			if got != tc.want {
+				t.Errorf("ClassifyReconstructibility(%v, %v, %v) = %q, want %q",
+					tc.state, tc.excess, tc.deficit, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeriveWorklists_SiblingDirection(t *testing.T) {
+	cases := []struct {
+		name         string
+		containmentA float64
+		containmentB float64
+		massA        int64
+		massB        int64
+		wantA        string
+		wantB        string
+		wantMassA    int64
+		wantMassB    int64
+		wantGray     bool
+	}{
+		{"the broader tag leads when the second operand contains the first", 0.9, 0.2, 4, 9, "b", "a", 9, 4, false},
+		{"the broader tag leads when the first operand contains the second", 0.2, 0.85, 9, 4, "a", "b", 9, 4, false},
+		{"equal containment keeps operand order and marks the review band", 0.7, 0.7, 5, 5, "a", "b", 5, 5, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := DeriveWorklists([]Record{overlapRecord("a", "b", 0.5, tc.containmentA, tc.containmentB, tc.massA, tc.massB)})
+			if len(w.Siblings) != 1 {
+				t.Fatalf("Siblings = %d, want 1", len(w.Siblings))
+			}
+			got := w.Siblings[0]
+			if got.A != tc.wantA || got.B != tc.wantB || got.MassA != tc.wantMassA || got.MassB != tc.wantMassB || got.Gray != tc.wantGray {
+				t.Errorf("Sibling = {%s ⊇ %s masses %d/%d gray=%t}, want {%s ⊇ %s masses %d/%d gray=%t}",
+					got.A, got.B, got.MassA, got.MassB, got.Gray,
+					tc.wantA, tc.wantB, tc.wantMassA, tc.wantMassB, tc.wantGray)
+			}
+		})
+	}
+}

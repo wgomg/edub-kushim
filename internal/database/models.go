@@ -405,6 +405,7 @@ type TagCompositionEvent struct {
 	Model           sql.NullString
 	CreatedAt       time.Time
 	Reconstructible sql.NullBool
+	Reading         json.RawMessage
 }
 
 type TagCompoundStatusEvent struct {

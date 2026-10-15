@@ -300,7 +300,13 @@ export const api = {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)
-			})
+			}),
+		siblings: (limit = 50, offset = 0) => {
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+			return request(`/api/v1/tags/siblings?${params.toString()}`).then(
+				(data) => data ?? { results: [], total: 0 }
+			);
+		}
 	},
 
 	people: {

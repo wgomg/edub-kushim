@@ -218,9 +218,14 @@ func (q *Queries) TagLivePairOverlaps(ctx context.Context) ([]TagLivePairOverlap
 const tagMeasurementRecordsForRun = `-- name: TagMeasurementRecordsForRun :many
 SELECT operator, operands, numbers, state, caveats
 FROM tag_measurement
-WHERE run_id = $1
+WHERE run_id = $1 AND ($2::text IS NULL OR operator = $2)
 ORDER BY id
 `
+
+type TagMeasurementRecordsForRunParams struct {
+	RunID    uuid.UUID
+	Operator sql.NullString
+}
 
 type TagMeasurementRecordsForRunRow struct {
 	Operator string
@@ -230,8 +235,10 @@ type TagMeasurementRecordsForRunRow struct {
 	Caveats  []string
 }
 
-func (q *Queries) TagMeasurementRecordsForRun(ctx context.Context, runID uuid.UUID) ([]TagMeasurementRecordsForRunRow, error) {
-	rows, err := q.db.QueryContext(ctx, tagMeasurementRecordsForRun, runID)
+// All of a run's records, or one operator's rows when the operator is given, so a consumer that needs a
+// single worklist decodes only those records.
+func (q *Queries) TagMeasurementRecordsForRun(ctx context.Context, arg TagMeasurementRecordsForRunParams) ([]TagMeasurementRecordsForRunRow, error) {
+	rows, err := q.db.QueryContext(ctx, tagMeasurementRecordsForRun, arg.RunID, arg.Operator)
 	if err != nil {
 		return nil, err
 	}

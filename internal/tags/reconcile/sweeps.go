@@ -552,6 +552,14 @@ func (r *Reconciler) sweepTwins(ctx context.Context, cfg *config.Config, report 
 	}
 	report.Twins.Worklist = len(worklists.Worklists.Twins)
 	report.Worklist.Twins = report.Twins.Worklist
+	report.Siblings = SiblingCounts{Worklist: len(worklists.Worklists.Siblings)}
+	for _, sibling := range worklists.Worklists.Siblings {
+		if sibling.Gray {
+			report.Siblings.Gray++
+		} else {
+			report.Siblings.Firm++
+		}
+	}
 	if worklists.Absent || len(worklists.Worklists.Twins) == 0 {
 		return
 	}

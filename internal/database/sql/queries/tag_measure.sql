@@ -64,7 +64,9 @@ ORDER BY snapshot_at DESC, id DESC
 LIMIT 1;
 
 -- name: TagMeasurementRecordsForRun :many
+-- All of a run's records, or one operator's rows when the operator is given, so a consumer that needs a
+-- single worklist decodes only those records.
 SELECT operator, operands, numbers, state, caveats
 FROM tag_measurement
-WHERE run_id = @run_id
+WHERE run_id = @run_id AND (sqlc.narg('operator')::text IS NULL OR operator = sqlc.narg('operator'))
 ORDER BY id;
