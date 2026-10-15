@@ -293,7 +293,7 @@ bumps the constant so older rows never apply. The current constants:
   dimensional question per fan segment (a content word or a contiguous bigram),
   judged in its ordinary standalone sense, with lexicalized derivations and
   gerunds standing and abstract field nouns admitted.
-- `analyzer.TagSplitVersion` (`v7`) — the split gate's compound pass: the
+- `analyzer.TagSplitVersion` (`v8`) — the split gate's compound pass: the
   context-free `named_unit`/`composition`/`no_dimension` trichotomy plus an
   abstention, and the `criteria_version` every composition row carries. The
   version also pins what a row means: the branch-first decision order (a
@@ -303,13 +303,25 @@ bumps the constant so older rows never apply. The current constants:
   recording their resolved applied names, the all-parts-rejected degradation to
   `partial_parts`, the seed-bounded time policy (a seeded period is a store
   application; an unseeded time designation is dropped on the emission and parts
-  paths), and the in-order segment fan disposed by the coarsest cover.
+  paths), the in-order segment fan disposed by the coarsest cover, and the
+  retrospective reconstructibility reading the sweep feeds into the decision —
+  the substrate's reading over each judged cover, with the far band holding a
+  judged composition whole as `relational_keep` and the row's `reading` column
+  recording the evidence behind the decision (a cover the store cannot measure
+  falls back to the promoted-parts proxy).
 - `analyzer.TagTranslationVersion` (`v1`) — the language guard's translation
   pass: one value's English canonical form, or the value unchanged when it is
   already English, with an abstention.
 - `analyzer.TagPhraseFoldVersion` (`v1`) — the seam's residual phrase-context
   fold: whether a part, in the context of its phrase, denotes a candidate anchor
   store value, with an abstention.
+- `analyzer.TagAuditVersion` (`v1`) — the completeness audit's applicability
+  question and prompt; the coverage verdict cache is keyed by the document text
+  hash and this version, so a criteria change re-audits.
+
+The identity judge is the one exception in form: its criteria ride
+`IdentityRuleSetVersion` alongside the birth-time rules, which that constant pins
+together (`canonical-form-and-identity.md`).
 
 ---
 

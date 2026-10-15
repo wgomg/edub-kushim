@@ -341,6 +341,13 @@ The enrichment pipeline:
    provisional and blocked from inline and sweep promotion until an operator
    resolves them or a later verdict decides them; the degraded keep is
    re-judged on the next emission until then. With the layer off, births are trusted as before.
+   The composition decision — the emission split gate and the reconciler's stored-compound
+   scan — reads the measurement substrate: over each judged cover the store's own
+   reconstructibility reading decides, and a composition the reading places far from its
+   parts' intersection keeps whole as a relational keep instead of splitting, with the
+   promoted-parts proxy answering where the store cannot measure. The containment
+   readings surface read-only on the tags page's Overlap tab
+   (`GET /api/v1/tags/siblings`), with no automatic merge.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,
    and the per-tag assignments run in one database transaction per document
    (`tag.CreatePlannedTx` on the transaction handle, with the quality gate as its

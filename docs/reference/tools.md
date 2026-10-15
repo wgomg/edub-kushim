@@ -145,15 +145,38 @@ Both `Analyze()` and `AnalyzeDocType()` call `checkContentTooLarge` with their c
 
 ---
 
+## `internal/llm/analyzer/tag_quality.go`
+
+The quality judge's document-scoped rubric: whether a candidate tag is a reusable dimension for the shared vocabulary. The answers are the admission decision's features, not a verdict.
+
+### Constants
+
+- `TagQualityVersion` (exported) — `"v6"`; pins the quality judge's rubric, prompt, and the policy version of its cached rows (`tag_quality_event`). v4 narrowed the document snippet to the subject-matter question; v5 made the parts pass the single owner of the dimension question (the gate stamps the parts verdict as the row's dimension feature); v6 removed the place and work components from question 2 — places are ordinary values, works are ordinary candidates — leaving the person question under the wire key `not_person` and retiring the whitelisted-place hint. Cache lookup is version-filtered, so older rows are superseded evidence. A criteria or prompt change bumps it.
+- `TagQualitySystemMessage` (exported) — `"You are a tag-quality judge. Decide whether each candidate tag is a reusable dimension for a shared document vocabulary."`
+
+### Types
+
+- `TagQualityCandidate` — `Index int`, `Term string`, `Category string`; one candidate.
+- `TagQualityResult` — `Index int`, `SubjectMatter`, `Dimension`, `NotPerson`, `Atomic`, `NotFormGenre bool`, `Defer bool` (the abstention); `Criteria()` returns the persisted wire shape.
+- `TagQualityCriteria` — pointer fields telling an omitted key from an explicit `false`; `Complete()` requires the four judge-owned criteria (the dimension answer is optional — the parts pass owns it), `Result()` reads them back with a missing dimension as a failing signal, and `String()` renders them for the audit log.
+- `IncompleteReplyError` — the judged parsers' shared incompleteness type (`Missing []int`, defined here, returned by every judged parser), with `MissingSet()` for membership tests.
+
+### Functions
+
+- `BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string` — the rubric: question 1 (`subject_matter`) reads the document snippet, questions 2–4 (`not_person`, `atomic`, `not_form_genre`) are answered on the tag as a store-global dimension, and an unsettled tag defers rather than guessing.
+- `ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error)` — parses `{"tags":[{"index":0,"subject_matter":true,...},...]}` with the shared envelope tolerances. An entry lacking any judge-owned criterion is missing — a zero-valued result must never read as an all-criteria-false rejection — and a truncated reply returns `*IncompleteReplyError` alongside the entries it did read.
+
+---
+
 ## `internal/llm/analyzer/tag_split.go`
 
 The split gate's two context-free judged contracts: the **parts pass** asks whether each value, on its own, is a subject a searcher would filter by, and the **compound pass** reads what a compound phrase denotes. Both answer sets feed `tags.DecideComposition`.
 
 ### Constants
 
-- `TagPartDimensionVersion` (exported) — `"v3"`; pins the parts pass's criteria and the policy version of its cached rows (`tag_part_dimension_event`), the single value-keyed dimension verdict the quality gate also reads. A criteria or prompt change bumps it so an older generation's verdicts never apply.
+- `TagPartDimensionVersion` (exported) — `"v4"`; pins the parts pass's criteria and the policy version of its cached rows (`tag_part_dimension_event`), the single value-keyed dimension verdict the quality gate also reads. v4 fans the pass over the decomposition's in-order segments (a content word or a contiguous bigram) rather than single content words, so the input class changes and older verdicts never apply. A criteria or prompt change bumps it so an older generation's verdicts never apply.
 - `TagPartSystemMessage` (exported) — `"You are a tag-dimension classifier. Decide whether each value, on its own, is a subject a searcher would filter by."`
-- `TagSplitVersion` (exported) — `"v5"`; pins the compound pass's criteria, the policy version of the compound rows (`tag_compound_status_event`), and every `tag_composition_event` row's `criteria_version`. The version also pins what a composition row means (the branch-first decision order, the attested seam folds feeding the features, and the parts-alongside keep rows; v5 adds the deterministic period class and the all-parts-rejected degradation with `partial_parts` keeps). A criteria or prompt change bumps it so an older generation's verdicts never apply.
+- `TagSplitVersion` (exported) — `"v8"`; pins the compound pass's criteria, the policy version of the compound rows (`tag_compound_status_event`), and every `tag_composition_event` row's `criteria_version`. The version also pins what a composition row means (the branch-first decision order, the attested seam folds feeding the features, and the parts-alongside keep rows; v5 narrows the degradation to all-parts-rejected, v6 adds the seed-bounded time policy and the resolved applied part names, v7 fans the decomposition over in-order segments disposed by the coarsest cover, and v8 feeds the retrospective reconstructibility reading into the decision — the far band holds a judged composition whole as `relational_keep` and rows record the reading). A criteria or prompt change bumps it so an older generation's verdicts never apply.
 - `TagCompoundSystemMessage` (exported) — `"You are a tag-taxonomy classifier. Decide what a compound phrase denotes."`
 
 ### Types
@@ -222,6 +245,28 @@ The seam's residual phrase-context fold contract: whether a word, as it is used 
 
 - `TagIdentityCandidate` — `Index int`, `Term string`, `ProposedFold string` (the mechanically proposed fold, empty when none). Fed to `JudgeTagIdentity`'s prompt.
 - `TagIdentityResult` — `Index int`, `FoldToBase`, `FoldPreservesDenotation`, `ConventionalForm bool` (the three binary criteria); `CriteriaRecord(proposedFold)` is the persisted evidence payload.
+
+---
+
+## `internal/llm/analyzer/tag_audit.go`
+
+The completeness audit's judged applicability question: whether a flagged dimension is a subject the document is about. The answer is evidence — the audit's disposition reads it.
+
+### Constants
+
+- `TagAuditVersion` (exported) — `"v1"`; pins the applicability criteria and prompt. The coverage verdict cache is keyed by the document's content hash and this version, so re-auditing unchanged text reads its verdict instead of re-judging. A criteria or prompt change bumps it.
+- `TagAuditSystemMessage` (exported) — `"You are a tag-completeness judge. Decide whether each candidate dimension is a subject the document is about."`
+
+### Types
+
+- `TagAuditCandidate` — `Index int`, `Term string`; one flagged dimension.
+- `TagAuditResult` — `Index int`, `Applies bool`, `Defer bool` (the abstention); `Criteria()` returns the persisted wire shape.
+- `TagAuditCriteria` — `Applies *bool`, `Defer *bool`; pointer fields tell an omitted key from an explicit `false`. `Complete()` requires the applies answer, and `Result()` reports false when it is missing, so a truncated entry never reads as a not-applies rejection.
+
+### Functions
+
+- `BuildTagAuditPrompt(text string, candidates []TagAuditCandidate) string` — the applicability question over the document and the flagged dimensions: about-ness, not mention — a passing reference is not about-ness; uncertainty defers to review.
+- `ParseTagAuditResponse(content string, n int) ([]TagAuditResult, error)` — parses `{"tags":[{"index":0,"applies":true,"defer":false},...]}` with the shared envelope tolerances; an entry lacking the applies answer is missing and a truncated reply returns `*IncompleteReplyError` alongside the entries it did read.
 
 ---
 

@@ -152,6 +152,7 @@ internal/
 │   │   ├── tag_translation.go # language guard: translation prompt + parser
 │   │   ├── tag_phrase_fold.go # phrase-context fold judge: prompt + parser
 │   │   ├── tag_identity.go # canonical-form judge: prompt + parser
+│   │   ├── tag_audit.go    # completeness audit: applicability prompt + parser
 │   │   ├── text.go         # estimateTokens, cleanCodeBlock, ContainsNonLatin
 │   │   ├── openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)
 │   │   └── llm_anthropic.go # Anthropic Messages API with capability flags
@@ -214,24 +215,25 @@ internal/
 ├── static/                 # Embedded web UI (main app)
 │   └── fs.go               # Embedded SvelteKit build (build/ directory via //go:embed)
 ├── tags/                   # Tag subsystem (store, measurement, identity, policy, reconciliation)
-│   ├── store.go            # Store wrapper over tag queries (NewStore, PairNames, PairVerdictStats, CompoundIntersection, LatestWorklists)
+│   ├── store.go            # Store wrapper over tag queries (NewStore, LiveMass, CompoundIntersections, PairNames, PairVerdictStats, LatestWorklists, ReconstructibilityBatch, SiblingWorklist)
 │   ├── measure.go          # Measurement pass (NewRunner, Report, WorklistCounts)
 │   ├── tagmeasure.go       # TagMeasureTaskHandler (forks `kushim tagmeasure --run`) + ForkAndExtractReport/ExtractReport
 │   ├── evidence.go         # Evidence records and JSON encoding/decoding (RuleSetVersion, Record, EncodeRows, DecodeRows)
-│   ├── identity.go         # Identity planning types (Disposition, AliasAction, Registration, Plan)
-│   ├── worklist.go         # Rule-set v1 worklist cuts (DeriveWorklists, Twin/Sibling/CompoundSplit)
+│   ├── identity.go         # Identity rules and planning (IdentityRuleSetVersion, HouseForm, VariantClass, Plan/PlanDeterministic, Disposition, AliasAction, Registration, CompositionRow/CompositionReading)
+│   ├── decision.go         # Pinned decision rule sets (DecideAdmission, DecideComposition, DecidePromotion, DecideMassDemotion, DecisionRuleSetVersion, RecurrenceFloor)
+│   ├── worklist.go         # Rule-set v1 worklist cuts and reconstructibility bands (DeriveWorklists, Twin/Sibling/CompoundSplit, ClassifyReconstructibility)
 │   ├── algebra.go          # Extension algebra readings (Set, NewSet, MassOf, EvidenceState)
 │   ├── extension.go        # Read-only tag-store snapshot (NewSnapshot, Tag, Pair, AliasResolver, SelfAliasResolver)
 │   ├── atomicity.go        # Compound shape classification (ClassifyShape, DeriveParts, MaxCompoundWords)
 │   ├── completeness.go     # Coverage classes and derivations (CoverageClass/CoverageSource/CoverageAction, CoverageRecord, ResolvedContent/ResolvedSegments/CoversDimension/PendingCoverageSegments, TwinPartner)
 │   ├── curation/           # Tag vocabulary services (operator and adapter-visible tag operations)
-│   │   ├── tag.go          # Tag service (NewTag, query delegates, rename/delete/promote, deleted-tag records, embedder integration)
+│   │   ├── tag.go          # Tag service (NewTag, query delegates, rename/delete/promote/demote, deleted-tag records, the read-only overlap surface's ListSiblings/SiblingSnapshot, embedder integration)
 │   │   ├── registration.go # Planned tag registration (Create/CreateAndUnblock, PlanRegistration, CreatePlannedTx)
 │   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
 │   │   ├── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
 │   │   └── tagaudit.go     # TagAudit service (NewTagAudit — enqueues the coverage-audit runs, serves the coverage review surface)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
-│   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, compound decomposition incl. JudgeCompounds, deleted-tag policy, identity planning, tag-quality gating)
+│   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, compound decomposition incl. JudgeCompounds over the substrate reading, deleted-tag policy, identity planning, tag-quality gating)
 │   │   ├── identity.go     # Canonical-form identity mechanics (house form, key equality, tie-break)
 │   │   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
 │   │   ├── audit.go        # AuditRunner (NewAuditRunner — the coverage-verification pass: sweep worklist, trigger/lexical narrowing, judged applicability, dispositions, pending-coverage accounting)
@@ -247,7 +249,7 @@ internal/
 │       ├── sweeps.go       # Twin canonicalization, orphan, provisional and identity-evidence sweeps
 │       ├── tagreconcile.go # TagReconcileTaskHandler (reconciler run + batch lifecycle)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
-│       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven)
+│       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
 │   ├── batch.go            # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
 │   ├── crud.go             # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
@@ -397,6 +399,7 @@ The system uses two linked binaries with **worker forking**:
 - [Task System](task-system.md) — Pool, dispatcher, CRUD, task handlers
 - [Database](database.md) — Schema, queries, tsvector
 - [Search](search.md) — Search engine, structured search, autocomplete
+- [Tags](tags.md) — Tag subsystem: measurement substrate, identity, decisions, store reads
 - [Tools](tools.md) — Adapter framework for all processing tools
 - [Config & Utils](config-and-utils.md) — Configuration, cache, logging, utilities
 - [Frontend](frontend.md) — SvelteKit UI and build system

@@ -195,9 +195,10 @@ land.
    cheaply: counts, LLM booleans, or both.
 4. **Order-test policy** — how many reorderings, exact question wording, and its place in
    the fallback order.
-5. **Relational-keep detection** — how "the relation recurs as a subject" is judged:
-   family counts where observations exist, the model's reading and review otherwise
-   (prospective-first).
+5. **Relational-keep detection — settled (2026-10-15).** A judged composition whose
+   substrate reconstructibility reading places it far from its parts' intersection keeps
+   whole as a `relational_keep` (§3.3 step B, §3.4); a cover the store cannot measure
+   falls back to the promoted-parts proxy.
 6. **Missing-part creation** — when a split requires a part that does not exist, how the
    value is admitted and how documents acquire it (completeness interplay, specified in
    `completeness.md` §3.4).

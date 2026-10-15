@@ -101,11 +101,12 @@ admin and emission registration paths
   resolves `same` with no direction, so M4 picks the canonical label. Plural and
   other inflections, mixed-language spellings, and morphological or function-word
   inversions stay with the pair judge.
-- **Version**: `IdentityRuleSetVersion = "v8"` is stamped on every alias row and
+- **Version**: `IdentityRuleSetVersion = "v10"` is stamped on every alias row and
   identity-evidence row. It pins the mechanical fold proposals — the
   plural/lemma fold, the store-anchored derivational adjective transforms, and the
   bounded morphographic proposal — the store-anchored rejection hold, the
-  pair judge's criteria text, the deterministic variant-class table (including the
+  pair judge's criteria text (with the similarity context dropped, so the two terms are
+  the gate's only evidence), the deterministic variant-class table (including the
   `-our`/`-or` spelling pair), the birth-time canonical direction (sense-fit, then
   the house form/language, then the M4 tie-break), and the
   split-seam fold source (promoted-only anchors over the generated attested
