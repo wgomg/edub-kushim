@@ -731,7 +731,7 @@ catalog/derivation, add it to every switch statement.
 - **Tag names are canonical before they reach the store** — `textnorm.NormalizeTag`
   (`internal/textnorm/tagname.go`) runs at every tag-name write site: the DB save
   chokepoints (`curation.Tag.Create`/`Update`), the plan application's tag and
-  verdict writes, alias writes, merge dismissals, and measurement operands;
+  verdict writes, alias writes, and measurement operands;
   the cache and the matcher use names
   verbatim, so store keys always equal DB names.
 - **The store is the tag universe.** Tags not in `entries` can never be

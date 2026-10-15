@@ -624,9 +624,8 @@ demotions and touch nothing.
 **Blocklist enforcement**: a query whose name is in the `deleted_tag`
 blocklist is skipped before the create — the flip is not applied and the skip
 is logged, but the pair still gets its fresh verdict so it is not re-judged.
-Blocked names are dropped by enrichment; merged names are rewritten to their
-merge target there. Only the operator restore path (and re-creating the tag
-through the operator create endpoint) clears a blocklist row.
+Blocked names are dropped by enrichment. Only the operator restore path (and
+re-creating the tag through the operator create endpoint) clears a blocklist row.
 
 **Orphan-tag sweep**: each run maintains `tag.orphaned_since` — marks are
 cleared for tags that currently hold documents (`ClearOrphanTagMarks`), then
@@ -695,7 +694,7 @@ daemon warns when reconciliation is enabled without the adjudicator.
 The measurement pass (`internal/tags`) is the substrate behind every "how much
 do these two names overlap" question in this subsystem. It also retired the
 duplicated SQL those questions used to run on: the enricher's promotion gate,
-the reconciler's live counts, and the merge-review evidence all read through
+the reconciler's live counts, and the pair-verdict aggregates all read through
 `tags.Store` now (`LiveMass` for live per-tag document counts,
 `PairVerdictStats` for the adjudication aggregates).
 
@@ -733,9 +732,9 @@ the reconciler's live counts, and the merge-review evidence all read through
   The pass holds the lock for its whole transaction, so runs are
   minutes-scale and serialize with every other blocking task.
 
-The pass measures; it never judges. Dispositions — promote, merge, split,
-delete — stay with the reconciler's arms (the stored-compound scan and the twin
-canonicalization arm) and the operator surfaces.
+The pass measures; it never judges. Dispositions — promote, demote, alias, split,
+delete — stay with the reconciler's arms (the stored-compound scan, the twin
+canonicalization arm, and the demotion arm) and the operator surfaces.
 
 ---
 
@@ -745,14 +744,14 @@ canonicalization arm) and the operator surfaces.
   disabled/unavailable/ambiguous, reconciliation disagreement — the emitted or
   stored state is kept, unresolved claims stay pending, and enrichment never
   blocks or fails on this subsystem.
-- **Wrong keeps are visible and mergeable; wrong replacements are silent and
+- **Wrong keeps are visible and correctable; wrong replacements are silent and
   permanent** — hence the asymmetric strictness: similarity never decides. The
   only paths that change a name are M1 style rewrites, M3 key equality, the
-  deterministic variant classes (M8), a fold confirmed by all three criteria, an
-  explicit `same` verdict (with direction), and an operator's merge.
-- **Merges are explicit operator actions**; the automatic path uses the alias
-  disposition instead, so a losing name stays resolvable through `tag_alias`
-  rather than being deleted outright.
+  deterministic variant classes (M8), a fold confirmed by all three criteria, and
+  an explicit `same` verdict (with direction).
+- **Same-intent resolution is an alias, never a deletion**: a losing name stays
+  resolvable through `tag_alias` instead of being deleted outright, and a later
+  `keep` re-judgment withdraws the alias.
 - **Bounded automation** — policy-version and rule-set-version pinning, the
   double-orientation confirmation, `max_rejudge`/`max_retag`, and the
   report-only first run.
