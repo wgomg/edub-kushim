@@ -8,6 +8,7 @@
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
 	import { documentsForTagHref, documentsLabel, formatNumber } from '$lib/utils/html.js';
+	import { demotionLabel } from '$lib/utils/tagReconcile.js';
 
 	const PAGE_SIZE = 50;
 
@@ -392,6 +393,11 @@
 							title="No split judge was available; the compound was kept whole and is re-judged when emitted again"
 						>
 							composition → judge_unavailable
+						</span>
+					{/if}
+					{#if tag.demoted_at}
+						<span class={pillWarn} title="This tag's standing was revoked; approve to restore it">
+							demoted → {demotionLabel(tag.demoted_reason)}
 						</span>
 					{/if}
 				</div>

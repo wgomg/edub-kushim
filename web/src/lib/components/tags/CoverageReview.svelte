@@ -139,8 +139,8 @@
 </div>
 
 <p class="mb-4 max-w-3xl text-[0.8125rem] text-parchment-500">
-	Documents whose applicable dimensions the audit found missing. Applying attaches the dimension to the
-	document; dismissing records that it does not apply.
+	Documents the coverage audit flagged for a missing tag. Apply adds the tag to the document;
+	Dismiss records that it does not apply.
 </p>
 
 <DataTable

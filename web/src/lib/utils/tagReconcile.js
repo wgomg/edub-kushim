@@ -25,10 +25,33 @@ const skipReasonLabels = {
 	identity_hold: 'held for review beside a live store value',
 	composition_hold: 'held for review',
 	period_store_application: 'a seeded period — applied whole by design',
+	seeded: 'a seeded value — operator-owned and never swept',
 	split_invalid: 'the components did not validate — kept whole',
 	split_error: 'the split failed this run — retried next run',
 	identity_evidence_error: 'recording the candidate pair failed this run — retried next run'
 };
+
+// One vocabulary for demotion triggers and outcomes, read both as a demoted value's reason label and as
+// the run tally's count labels, so a new trigger is named once
+export const demotionReasonLabels = {
+	worklist: 'checked',
+	demoted: 'revoked',
+	mass_decay: 'below the recurrence floor',
+	no_dimension: 'decided drops',
+	part_rejected: 'every part of it was rejected',
+	rejudged: 're-judged',
+	corroborated_failures: 'rejected by the current criteria',
+	judge_defer: 'deferred by the current criteria',
+	operator: 'an operator revocation',
+	held: 'held for review',
+	no_judge: 'kept without a judge',
+	skipped: 'skipped',
+	failed: 'failed'
+};
+
+export function demotionLabel(reason) {
+	return demotionReasonLabels[reason] ?? reason ?? 'influence revoked';
+}
 
 const cappedLabel = 'run limit reached — remaining pairs wait for the next run';
 
@@ -45,6 +68,17 @@ export function worklistTotal(worklist = {}) {
 
 export function changedDecisions(report = {}) {
 	return (report?.flips?.to_alias ?? 0) + (report?.flips?.to_keep ?? 0);
+}
+
+export function demotedValues(report = {}) {
+	return (report?.report_only ? report?.planned_demotions : report?.demoted) ?? [];
+}
+
+export function demotionCountGroups(report = {}) {
+	const counts = report?.demotion ?? {};
+	return Object.entries(demotionReasonLabels)
+		.filter(([key]) => (counts[key] ?? 0) > 0)
+		.map(([key, label]) => ({ label, count: counts[key] }));
 }
 
 export function affectedDocuments(report = {}) {

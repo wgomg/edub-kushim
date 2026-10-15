@@ -129,11 +129,11 @@ func TestFromDB(t *testing.T) {
 
 func TestPgErrorPredicates(t *testing.T) {
 	tests := []struct {
-		name        string
-		err         error
-		constraint  bool
-		foreign     bool
-		busy        bool
+		name       string
+		err        error
+		constraint bool
+		foreign    bool
+		busy       bool
 	}{
 		{
 			name:       "unique violation",

@@ -245,92 +245,95 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 	r.rejudgeProvisionalTags(ctx, cfg, rejudge, report)
 }
 
-func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Config, entries []*provisionalEntry, report *Report) {
+// errNoJudgeText marks a stored name with no live document text, which callers count as skipped, not failed.
+var errNoJudgeText = errors.New("no live document text")
+
+// rejudgeStoredName decides one stored name afresh under the current criteria from its first live document
+// and records the verdict, so the provisional sweep and the demotion arm judge identically. A name with no
+// live document text yields errNoJudgeText, and any other failure is returned for the caller to count.
+func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, tagID int64, name string) (tags.AdmissionDecision, string, error) {
 	const chunkSize = 150
 
+	docID, err := r.client.FirstDocumentIDForTag(ctx, tagID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			r.logger.Info("", "tag reconcile: tag %q has no live document — left for review", name)
+			return tags.AdmissionDecision{}, "", errNoJudgeText
+		}
+		return tags.AdmissionDecision{}, "", err
+	}
+	doc, err := r.client.GetDocumentTextForTagQuality(ctx, docID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			r.logger.Info("", "tag reconcile: tag %q has no live document text — left for review", name)
+			return tags.AdmissionDecision{}, "", errNoJudgeText
+		}
+		return tags.AdmissionDecision{}, "", err
+	}
+
+	reduced, err := r.runner.ReduceContent(ctx, doc.TextContent.String, chunkSize,
+		matcher.TargetWordCount(int(doc.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords))
+	if err != nil {
+		r.logger.Error("", "tag reconcile: reduce text for tag %q: %v", name, err)
+	}
+
+	candidates := []analyzer.TagQualityCandidate{{
+		Index:    0,
+		Term:     name,
+		Category: analyzer.TagCategoryOther,
+	}}
+	results, err := r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		results, err = r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
+	}
+	if err != nil {
+		return tags.AdmissionDecision{}, "", err
+	}
+	if len(results) != len(candidates) {
+		return tags.AdmissionDecision{}, "", fmt.Errorf("judge returned %d verdicts for %q", len(results), name)
+	}
+
+	res := results[0]
+	// the parts pass owns the dimension question: resolve its verdict for this name and stamp it, so a
+	// re-judged name is not decided on a fabricated false dimension; an absent or abstained verdict defers
+	partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model, nil)
+	dimension, abstain, verr := partStore.DimensionFeature(ctx, name, docID, "")
+	if verr != nil {
+		return tags.AdmissionDecision{}, "", verr
+	}
+	if abstain {
+		res.Defer = true
+	} else {
+		res.Dimension = dimension
+	}
+	criteria, err := json.Marshal(res.Criteria())
+	if err != nil {
+		return tags.AdmissionDecision{}, "", err
+	}
+	decision := tags.DecideAdmission(admission.JudgeFeatures(res, tags.AdmissionFeatures{}))
 	model := cfg.ResolvedQualityLlm().Model
+	storedCriteria, pass, finalModel, err := r.recordProvisionalVerdict(ctx, docID, name, criteria, decision.Outcome == tags.AdmissionAdmit, decision.Outcome.String(), model)
+	if err != nil {
+		return tags.AdmissionDecision{}, "", err
+	}
+	decision = admission.DecisionFromStored(storedCriteria, pass, tags.AdmissionFeatures{})
+	return decision, finalModel, nil
+}
+
+func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Config, entries []*provisionalEntry, report *Report) {
 	for _, e := range entries {
-		docID, err := r.client.FirstDocumentIDForTag(ctx, e.id)
+		decision, finalModel, err := r.rejudgeStoredName(ctx, cfg, e.id, e.name)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			if errors.Is(err, errNoJudgeText) {
 				report.Provisional.Skipped++
-				r.logger.Info("", "tag reconcile: provisional tag %q has no live document — left for review", e.name)
 				continue
 			}
-			r.logger.Error("", "tag reconcile: first document for provisional tag %q: %v", e.name, err)
-			report.Provisional.Failed++
-			continue
-		}
-		doc, err := r.client.GetDocumentTextForTagQuality(ctx, docID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				report.Provisional.Skipped++
-				r.logger.Info("", "tag reconcile: provisional tag %q has no live document text — left for review", e.name)
-				continue
-			}
-			r.logger.Error("", "tag reconcile: document text for provisional tag %q: %v", e.name, err)
-			report.Provisional.Failed++
-			continue
-		}
-
-		reduced, err := r.runner.ReduceContent(ctx, doc.TextContent.String, chunkSize,
-			matcher.TargetWordCount(int(doc.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords))
-		if err != nil {
-			r.logger.Error("", "tag reconcile: reduce text for provisional tag %q: %v", e.name, err)
-		}
-
-		candidates := []analyzer.TagQualityCandidate{{
-			Index:    0,
-			Term:     e.name,
-			Category: analyzer.TagCategoryOther,
-		}}
-		results, err := r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			results, err = r.runner.JudgeTagQuality(ctx, reduced.Text, candidates)
-		}
-		if err != nil {
 			r.logger.Warn("", "tag reconcile: judge provisional tag %q: %v", e.name, err)
-			report.Provisional.Failed++
-			continue
-		}
-		if len(results) != len(candidates) {
-			r.logger.Warn("", "tag reconcile: judge returned %d verdicts for provisional tag %q", len(results), e.name)
-			report.Provisional.Failed++
-			continue
-		}
-
-		res := results[0]
-		// the parts pass owns the dimension question: resolve its verdict for this name and
-		// stamp it, so a re-judged provisional tag is not decided on a fabricated false dimension. An
-		// absent or abstained verdict defers.
-		partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model, nil)
-		dimension, abstain, verr := partStore.DimensionFeature(ctx, e.name, docID, "")
-		if verr != nil {
-			r.logger.Warn("", "tag reconcile: parts verdict for provisional tag %q: %v", e.name, verr)
-			report.Provisional.Failed++
-			continue
-		}
-		if abstain {
-			res.Defer = true
-		} else {
-			res.Dimension = dimension
-		}
-		criteria, err := json.Marshal(res.Criteria())
-		if err != nil {
-			r.logger.Error("", "tag reconcile: marshal criteria for provisional tag %q: %v", e.name, err)
-			report.Provisional.Failed++
-			continue
-		}
-		decision := tags.DecideAdmission(admission.JudgeFeatures(res, tags.AdmissionFeatures{}))
-		storedCriteria, pass, finalModel, err := r.recordProvisionalVerdict(ctx, docID, e.name, criteria, decision.Outcome == tags.AdmissionAdmit, decision.Outcome.String(), model)
-		if err != nil {
-			r.logger.Error("", "tag reconcile: record provisional verdict for %q: %v", e.name, err)
 			report.Provisional.Failed++
 			continue
 		}
 		report.Provisional.Rejudged++
 
-		decision = admission.DecisionFromStored(storedCriteria, pass, tags.AdmissionFeatures{})
 		if promote, deferred := r.provisionalOutcome(e.name, decision, e.docs); !promote {
 			if deferred {
 				report.Provisional.Deferred++
@@ -345,6 +348,153 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 				e.name, e.docs, finalModel, tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
 		}
 	}
+}
+
+// sweepPromotedTags withdraws the standing of values the current rules no longer back: their live mass fell
+// below the recurrence floor, or a stale verdict re-judges to reject or defer. A current-version verdict is
+// respected as it stands, so an operator's promotion survives until the next criteria version; held names
+// and judge failures stay promoted.
+func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, report *Report) {
+	worklist, err := r.client.ListPromotedTagsForDemotion(ctx)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: list promoted tags for demotion: %v", err)
+		return
+	}
+	report.Demotion.Worklist = len(worklist)
+	if len(worklist) == 0 {
+		return
+	}
+
+	ids := make([]int64, len(worklist))
+	names := make([]string, len(worklist))
+	for i, t := range worklist {
+		ids[i] = t.ID
+		names[i] = t.Name
+	}
+
+	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: demotion identity hold lookup: %v", err)
+		return
+	}
+	compositionHeld, err := tags.CompositionHeldNames(ctx, r.client.Queries, names, analyzer.TagSplitVersion)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: demotion composition hold lookup: %v", err)
+		return
+	}
+
+	liveCounts, err := tags.NewStore(r.client.Queries).LiveMass(ctx, ids)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: count promoted tag live documents: %v", err)
+		return
+	}
+
+	events, err := r.tag.LatestQualityEventsForNames(ctx, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: promoted tag verdict lookup: %v", err)
+		return
+	}
+	verdicts := make(map[string]database.LatestTagQualityEventsForNamesRow, len(events))
+	for _, e := range events {
+		verdicts[e.TagName] = e
+	}
+
+	var massDecay []database.ListPromotedTagsForDemotionRow
+	var rejudge []database.ListPromotedTagsForDemotionRow
+	for _, t := range worklist {
+		if anchor, ok := held[t.Name]; ok {
+			report.Demotion.Held++
+			r.logger.Info("", "tag reconcile: demotion identity hold %q (anchor=%q) — left for review", t.Name, anchor)
+			continue
+		}
+		if reason, ok := compositionHeld[t.Name]; ok {
+			report.Demotion.Held++
+			r.logger.Info("", "tag reconcile: demotion composition hold %q (reason=%s) — left for review", t.Name, reason)
+			continue
+		}
+
+		if tags.DecideMassDemotion(liveCounts[t.ID]) {
+			massDecay = append(massDecay, t)
+			continue
+		}
+
+		if _, ok := verdicts[t.Name]; ok {
+			// a current-version verdict: the value stands as decided; only live mass can still demote it
+			continue
+		}
+		rejudge = append(rejudge, t)
+	}
+
+	// revocations and re-judgments draw on one per-run bound, so a bulk document purge cannot make a single
+	// run fire an unbounded burst of store RPCs; whatever the bound defers stays on the worklist for the next run
+	budget := cfg.Enricher.TagReconcile.MaxRejudge
+	if len(massDecay) > budget {
+		report.Capped += len(massDecay) - budget
+		massDecay = massDecay[:budget]
+	}
+	for _, t := range massDecay {
+		report.Demotion.MassDecay++
+		r.demote(ctx, report, t.ID, t.Name, tags.DemotionMassDecay)
+	}
+
+	if len(rejudge) == 0 {
+		return
+	}
+
+	remaining := max(budget-len(massDecay), 0)
+	if len(rejudge) > remaining {
+		report.Capped += len(rejudge) - remaining
+		rejudge = rejudge[:remaining]
+	}
+	if len(rejudge) == 0 {
+		return
+	}
+
+	if report.ReportOnly {
+		report.Demotion.Rejudged = len(rejudge)
+		r.logger.Info("", "tag reconcile (report-only): would re-judge %d promoted tags under the current criteria", len(rejudge))
+		return
+	}
+	if !r.runner.HasTagQualityJudge() {
+		report.Demotion.NoJudge = len(rejudge)
+		r.logger.Info("", "tag reconcile: tag quality judge is not configured — %d promoted tags keep their influence", len(rejudge))
+		return
+	}
+
+	for _, t := range rejudge {
+		decision, _, err := r.rejudgeStoredName(ctx, cfg, t.ID, t.Name)
+		if err != nil {
+			if errors.Is(err, errNoJudgeText) {
+				report.Demotion.Skipped++
+				continue
+			}
+			r.logger.Warn("", "tag reconcile: judge promoted tag %q: %v", t.Name, err)
+			report.Demotion.Failed++
+			continue
+		}
+		report.Demotion.Rejudged++
+		if decision.Outcome == tags.AdmissionAdmit {
+			continue
+		}
+		r.demote(ctx, report, t.ID, t.Name, decision.Reason)
+	}
+}
+
+func (r *Reconciler) demote(ctx context.Context, report *Report, id int64, name, reason string) {
+	if report.ReportOnly {
+		r.planDemotion(report, name, reason)
+		return
+	}
+	r.applyDemotion(ctx, id, name, reason, report)
+}
+
+// planDemotion records one demotion a report-only run would apply, so the planned list, the tally, and the
+// log line have a single owner instead of being repeated at each reporting call site.
+func (r *Reconciler) planDemotion(report *Report, name, reason string) {
+	report.Demotion.Demoted++
+	report.PlannedDemotions = append(report.PlannedDemotions, DemotionEntry{Name: name, Reason: reason})
+	r.logger.Info("", "tag reconcile (report-only): would demote %q (reason=%s rule_set=decision-%s)",
+		name, reason, tags.DecisionRuleSetVersion)
 }
 
 func (r *Reconciler) recordProvisionalVerdict(ctx context.Context, docID int64, name string, criteria json.RawMessage, pass bool, outcome string, model string) (json.RawMessage, bool, string, error) {

@@ -154,7 +154,7 @@ func TestQuarantineFile(t *testing.T) {
 		OriginalPath:    "originals/" + uuid + ".pdf",
 		SourceDir:       "originals",
 		FileSize:        100,
-		OriginalType:        "application/pdf",
+		OriginalType:    "application/pdf",
 	}
 
 	newPath, err := QuarantineFile(storageDir, info)

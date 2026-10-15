@@ -371,6 +371,9 @@ type Tag struct {
 	CreatedAt     sql.NullTime
 	OrphanedSince sql.NullTime
 	PromotedAt    sql.NullTime
+	DemotedAt     sql.NullTime
+	DemotedReason sql.NullString
+	Seeded        bool
 }
 
 type TagAlias struct {

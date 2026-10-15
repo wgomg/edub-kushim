@@ -95,6 +95,27 @@ func TestDecidePromotion(t *testing.T) {
 	}
 }
 
+func TestDecideMassDemotion(t *testing.T) {
+	cases := []struct {
+		name string
+		live int64
+		want bool
+	}{
+		{"zero mass demotes", 0, true},
+		{"one below the floor demotes", RecurrenceFloor - 1, true},
+		{"mass at the floor keeps standing", RecurrenceFloor, false},
+		{"mass above the floor keeps standing", RecurrenceFloor + 1, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DecideMassDemotion(tc.live); got != tc.want {
+				t.Errorf("DecideMassDemotion(%d) = %v, want %v", tc.live, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDecideComposition(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -142,9 +163,9 @@ func TestDecideComposition(t *testing.T) {
 			CompositionDecision{Disposition: CompositionSplit},
 		},
 		{
-			"a no_dimension verdict agreeing with the parts drops",
+			"a no_dimension verdict agreeing with the parts drops and holds promotion",
 			CompositionFeatures{CompoundNoDimension: true, PartsNotDimensional: true},
-			CompositionDecision{Disposition: CompositionDrop, Reason: CompositionReasonNoDimension},
+			CompositionDecision{Disposition: CompositionDrop, Reason: CompositionReasonNoDimension, Hold: true},
 		},
 		{
 			"a no_dimension verdict contradicting the parts goes to review",

@@ -794,7 +794,8 @@ func TestCompositionHeldNames(t *testing.T) {
 
 	now := time.Now()
 	// the read takes the latest row under one criteria version, so the seeds cover every reason that can
-	// hold, every reason that cannot, a candidate a newer verdict settles, and a hold written under another
+	// hold — including a decided drop, which withholds promotion until a criteria bump or an operator
+	// override — a candidate a newer verdict settles, and a hold written under another
 	// version that must stay invisible to this read; a degraded keep holds too — no promotion without a
 	// decision
 	seed("heldsplit", CompositionReasonSplitDefer, version, now)
@@ -823,6 +824,7 @@ func TestCompositionHeldNames(t *testing.T) {
 		"heldgray":       CompositionReasonNamedUnitReconstructible,
 		"heldrelational": CompositionReasonRelationalKeep,
 		"degraded":       CompositionReasonJudgeUnavailable,
+		"dropped":        CompositionReasonNoDimension,
 	}
 	if len(held) != len(want) {
 		t.Errorf("held = %v, want exactly %v", held, want)

@@ -100,8 +100,10 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		tagResponses := make([]TagResponse, len(tags))
 		for j, t := range tags {
 			tagResponses[j] = TagResponse{
-				ID:   t.ID,
-				Name: t.Name,
+				ID:       t.ID,
+				Name:     t.Name,
+				Promoted: t.PromotedAt.Valid,
+				Seeded:   t.Seeded,
 			}
 		}
 
@@ -179,8 +181,10 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	tagResponses := make([]TagResponse, len(tags))
 	for i, t := range tags {
 		tagResponses[i] = TagResponse{
-			ID:   t.ID,
-			Name: t.Name,
+			ID:       t.ID,
+			Name:     t.Name,
+			Promoted: t.PromotedAt.Valid,
+			Seeded:   t.Seeded,
 		}
 	}
 
@@ -333,8 +337,10 @@ func (h *DocumentHandler) SearchDocumentsStructured(w http.ResponseWriter, r *ht
 		tagResponses := make([]TagResponse, len(tags))
 		for j, t := range tags {
 			tagResponses[j] = TagResponse{
-				ID:   t.ID,
-				Name: t.Name,
+				ID:       t.ID,
+				Name:     t.Name,
+				Promoted: t.PromotedAt.Valid,
+				Seeded:   t.Seeded,
 			}
 		}
 
@@ -1141,12 +1147,15 @@ type PersonListResponse struct {
 	Total   int64            `json:"total"`
 }
 
-// TagResponse is a tag as attached to a document: id, name and the
-// document count the tag carries.
+// TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both
+// DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
+// operator-owned inventory the demote action must leave alone.
 type TagResponse struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	DocumentCount int64  `json:"document_count"`
+	Promoted      bool   `json:"promoted"`
+	Seeded        bool   `json:"seeded"`
 }
 
 // PersonResponse is a person as attached to a document, including the

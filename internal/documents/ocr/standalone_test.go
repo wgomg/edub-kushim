@@ -13,35 +13,35 @@ func TestWordPlacement(t *testing.T) {
 		wantBaselineDelta float64 // expected offset added to bottom
 	}{
 		{
-			name:           "valid metrics fill box height",
-			height:         12,
-			bottom:         50,
-			metrics:        fontMetrics{ascent: 1000, descent: -200},
-			wantFontSize:   10, // 12 * 1000 / 1200
-			wantBaselineDelta: 2, // -(-200)/1000 * 10
+			name:              "valid metrics fill box height",
+			height:            12,
+			bottom:            50,
+			metrics:           fontMetrics{ascent: 1000, descent: -200},
+			wantFontSize:      10, // 12 * 1000 / 1200
+			wantBaselineDelta: 2,  // -(-200)/1000 * 10
 		},
 		{
-			name:           "zero metrics falls back to heuristic",
-			height:         10,
-			bottom:         50,
-			metrics:        fontMetrics{},
-			wantFontSize:   8,  // 10 * 0.8
+			name:              "zero metrics falls back to heuristic",
+			height:            10,
+			bottom:            50,
+			metrics:           fontMetrics{},
+			wantFontSize:      8, // 10 * 0.8
 			wantBaselineDelta: 2, // 10 * 0.2
 		},
 		{
-			name:           "tiny box floors font size at 2",
-			height:         1,
-			bottom:         50,
-			metrics:        fontMetrics{ascent: 1000, descent: -200},
-			wantFontSize:   2,
+			name:              "tiny box floors font size at 2",
+			height:            1,
+			bottom:            50,
+			metrics:           fontMetrics{ascent: 1000, descent: -200},
+			wantFontSize:      2,
 			wantBaselineDelta: 0.4, // -(-200)/1000 * 2
 		},
 		{
-			name:           "zero descent leaves baseline at box bottom",
-			height:         12,
-			bottom:         50,
-			metrics:        fontMetrics{ascent: 1000, descent: 0},
-			wantFontSize:   12, // 12 * 1000 / 1000
+			name:              "zero descent leaves baseline at box bottom",
+			height:            12,
+			bottom:            50,
+			metrics:           fontMetrics{ascent: 1000, descent: 0},
+			wantFontSize:      12, // 12 * 1000 / 1000
 			wantBaselineDelta: 0,
 		},
 	}
@@ -62,9 +62,9 @@ func TestWordPlacement(t *testing.T) {
 
 func TestStretchScale(t *testing.T) {
 	tests := []struct {
-		name                string
-		boxWidth, natural   float64
-		want                float64
+		name              string
+		boxWidth, natural float64
+		want              float64
 	}{
 		{"in-range 150%", 30, 20, 150},
 		{"lower boundary 25% inclusive", 5, 20, 25},

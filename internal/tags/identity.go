@@ -154,16 +154,16 @@ const (
 	CompositionReasonPartialParts             = "partial_parts"
 )
 
-// compositionHolds reports whether a composition reason withholds the compound from automatic promotion
+// compositionHolds is the single definition of which composition reasons withhold a compound from promotion
 // until review or a criteria-version bump (docs/tags/atomicity.md §3.5): the cross-sample, conflict, and
-// deferred outcomes, the reconstructible and relational named-unit keeps, and a degraded keep whose judge
-// never answered. It is the single definition of the composition hold policy, read both when
-// DecideComposition stamps a decision and when the persisted-reason lookup rebuilds the hold set.
+// deferred outcomes, the reconstructible and relational named-unit keeps, a degraded keep no judge answered,
+// and a decided drop, which mass must not resurrect.
 func compositionHolds(reason string) bool {
 	switch reason {
 	case CompositionReasonSplitDefer, CompositionReasonConflictingEvidence,
 		CompositionReasonSampleDisagreement, CompositionReasonNamedUnitReconstructible,
-		CompositionReasonRelationalKeep, CompositionReasonJudgeUnavailable:
+		CompositionReasonRelationalKeep, CompositionReasonJudgeUnavailable,
+		CompositionReasonNoDimension, CompositionReasonPartRejected:
 		return true
 	}
 	return false

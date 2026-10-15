@@ -805,3 +805,177 @@ func TestSweepProvisionalTags_CompositionHold(t *testing.T) {
 		"read promoted state")
 	testutil.AssertEqual(t, isPromoted, false, "the held compound stays provisional")
 }
+
+func TestBuildCompoundWorklist_DecidedDropQueuesDemotion(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	r := &Reconciler{client: client, logger: testutil.NewTestLogger()}
+
+	database.MustCreateTag(t, client.Queries, "drop standing")
+	provisionalID := database.MustCreateTag(t, client.Queries, "drop pending")
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = now() WHERE name = 'drop standing'"); err != nil {
+		t.Fatalf("set standing: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = NULL WHERE id = $1", provisionalID); err != nil {
+		t.Fatalf("set provisional: %v", err)
+	}
+	// one decided no-dimension drop over both compounds, under the current criteria version
+	if _, err := client.DB().ExecContext(ctx, `
+		INSERT INTO tag_composition_event
+		    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+		VALUES (NULL, $1, '[]'::jsonb, 'drop', $2, $3, now()),
+		       (NULL, $4, '[]'::jsonb, 'drop', $2, $3, now())`,
+		tags.StoredName("drop standing"), tags.CompositionReasonNoDimension, analyzer.TagSplitVersion,
+		tags.StoredName("drop pending")); err != nil {
+		t.Fatalf("seed decided drops: %v", err)
+	}
+	allTags, err := client.Queries.ListAllTags(ctx)
+	testutil.AssertNoError(t, err, "list tags")
+
+	report := &Report{Skips: map[string]int{}}
+	entries := r.buildCompoundWorklist(ctx, allTags, nil, report)
+
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want only the decided drop that still stands", len(entries))
+	}
+	if entries[0].name != "drop standing" {
+		t.Errorf("entries[0].name = %q, want the promoted drop standing", entries[0].name)
+	}
+	if !entries[0].demote {
+		t.Error("a decided drop of a standing value queues a revocation")
+	}
+	testutil.AssertEqual(t, entries[0].reason, tags.CompositionReasonNoDimension, "the journal reason")
+	testutil.AssertEqual(t, report.Skips["decided"], 1, "the provisional drop has no standing to revoke")
+}
+
+func TestSweepPromotedTags_MassDecayDemotesAndSparesSeeded(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	// a promoted value with no live documents has decayed below the recurrence floor
+	decayed := database.MustCreateTag(t, client.Queries, "decayed standpoints")
+	// the seed inventory is operator-owned and never reaches the demotion arm
+	seeded := database.MustCreateTag(t, client.Queries, "seeded standpoints")
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = now() WHERE id = $1", decayed); err != nil {
+		t.Fatalf("set standing: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = now(), seeded = true WHERE id = $1", seeded); err != nil {
+		t.Fatalf("mark seeded: %v", err)
+	}
+
+	cfg := &config.Config{
+		Enricher: config.EnricherConfig{
+			TagReconcile: config.TagReconcileConfig{MaxRejudge: 10},
+		},
+	}
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		logger: logger,
+	}
+	report := &Report{}
+	r.sweepPromotedTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Demotion.Worklist, 1, "the seeded value never reaches the worklist")
+	testutil.AssertEqual(t, report.Demotion.MassDecay, 1, "mass decay trigger")
+	testutil.AssertEqual(t, report.Demotion.Demoted, 1, "the influence is revoked")
+
+	var promoted, demoted bool
+	var reason string
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			`SELECT promoted_at IS NOT NULL, demoted_at IS NOT NULL, coalesce(demoted_reason, '')
+			 FROM tag WHERE id = $1`, decayed).Scan(&promoted, &demoted, &reason),
+		"read the decayed row")
+	if promoted {
+		t.Error("the decayed value loses its standing")
+	}
+	if !demoted {
+		t.Error("the revocation is recorded on the row")
+	}
+	testutil.AssertEqual(t, reason, tags.DemotionMassDecay, "the row names the trigger")
+
+	var seededPromoted, seededDemoted bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL, demoted_at IS NOT NULL FROM tag WHERE id = $1",
+			seeded).Scan(&seededPromoted, &seededDemoted),
+		"read the seeded row")
+	if !seededPromoted || seededDemoted {
+		t.Error("the operator-owned value keeps its standing untouched")
+	}
+}
+
+func TestSweepPromotedTags_RunBoundIsSharedWithRejudge(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	// two decayed values and one whose mass still stands, under a one-unit bound
+	database.MustCreateTag(t, client.Queries, "decay standpoints one")
+	database.MustCreateTag(t, client.Queries, "decay standpoints two")
+	standing := database.MustCreateTag(t, client.Queries, "standing standpoints")
+	if _, err := client.DB().ExecContext(ctx, `UPDATE tag SET promoted_at = now()
+		WHERE name IN ('decay standpoints one', 'decay standpoints two', 'standing standpoints')`); err != nil {
+		t.Fatalf("set standing: %v", err)
+	}
+	for range tags.RecurrenceFloor {
+		docID := database.CreateUniqueDocument(t, client.Queries, "standing standpoints")
+		database.MustAddDocumentTag(t, client.Queries, docID, standing)
+	}
+
+	cfg := &config.Config{
+		Enricher: config.EnricherConfig{
+			TagReconcile: config.TagReconcileConfig{MaxRejudge: 1},
+		},
+	}
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		logger: logger,
+	}
+	report := &Report{}
+	r.sweepPromotedTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Demotion.MassDecay, 1, "the bound admits one revocation")
+	testutil.AssertEqual(t, report.Demotion.Demoted, 1, "one revocation applied")
+	testutil.AssertEqual(t, report.Capped, 2, "one revocation and one re-judge both wait for the next run")
+	testutil.AssertEqual(t, report.Demotion.Rejudged, 0, "no re-judge capacity remains this run")
+
+	var decayedCount int
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			`SELECT count(*) FROM tag
+			 WHERE name IN ('decay standpoints one', 'decay standpoints two') AND demoted_at IS NOT NULL`).Scan(&decayedCount),
+		"count demoted decayed rows")
+	testutil.AssertEqual(t, decayedCount, 1, "exactly one decayed value demoted")
+	var stillPromoted bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", standing).Scan(&stillPromoted),
+		"read the standing row")
+	testutil.AssertEqual(t, stillPromoted, true, "the value above the floor keeps its influence")
+}

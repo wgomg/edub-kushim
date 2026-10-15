@@ -3135,6 +3135,64 @@ func TestPromoteTag(t *testing.T) {
 	})
 }
 
+func TestDemoteTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+
+	demote := func(id string) *httptest.ResponseRecorder {
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/"+id+"/demote", nil)
+		r.SetPathValue("id", id)
+		h.DemoteTag(w, r)
+		return w
+	}
+
+	t.Run("demote a promoted tag", func(t *testing.T) {
+		tagID := database.MustCreateTag(t, env.client.Queries, "demote-handler-tag")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set standing")
+		testutil.AssertEqual(t, demote(fmt.Sprintf("%d", tagID)).Code, http.StatusNoContent, "status")
+
+		var promoted bool
+		testutil.AssertNoError(t,
+			env.client.DB().QueryRowContext(ctx,
+				"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", tagID).Scan(&promoted),
+			"read promoted state")
+		if promoted {
+			t.Error("the tag should have lost its standing")
+		}
+	})
+
+	t.Run("provisional tag returns 409", func(t *testing.T) {
+		tagID := database.MustCreateTag(t, env.client.Queries, "demote-handler-pending")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set provisional")
+		testutil.AssertEqual(t, demote(fmt.Sprintf("%d", tagID)).Code, http.StatusConflict, "status")
+	})
+
+	t.Run("seeded value returns 409", func(t *testing.T) {
+		tagID := database.MustCreateTag(t, env.client.Queries, "demote-handler-seeded")
+		_, err := env.client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = now(), seeded = true WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set standing and seeded")
+
+		w := demote(fmt.Sprintf("%d", tagID))
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+		if !strings.Contains(w.Body.String(), "Seeded values cannot be demoted") {
+			t.Errorf("body = %q, want the seeded refusal", w.Body.String())
+		}
+	})
+
+	t.Run("not found returns 404", func(t *testing.T) {
+		testutil.AssertEqual(t, demote("999999").Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("invalid id returns 400", func(t *testing.T) {
+		testutil.AssertEqual(t, demote("abc").Code, http.StatusBadRequest, "status")
+	})
+}
+
 func TestReevaluateIdentity(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)

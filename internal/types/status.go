@@ -48,3 +48,16 @@ const (
 	PromoteAlreadyPromoted
 	PromotePromoted
 )
+
+// DemoteStatus reports how a demotion request resolved. NotPromoted covers both a tag that was never
+// promoted and one already demoted, so repeating a demotion is a no-op rather than a failure; Seeded
+// reports a value the exemption keeps out of the demotion paths.
+type DemoteStatus int
+
+// The demote outcomes, in iota order.
+const (
+	DemoteNotFound DemoteStatus = iota
+	DemoteNotPromoted
+	DemoteSeeded
+	DemoteDemoted
+)

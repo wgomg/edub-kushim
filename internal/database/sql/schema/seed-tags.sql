@@ -1,5 +1,5 @@
-INSERT INTO tag (name, created_at, promoted_at)
-SELECT seed.name, now() + seed.ord * interval '1 microsecond', now()
+INSERT INTO tag (name, created_at, promoted_at, seeded)
+SELECT seed.name, now() + seed.ord * interval '1 microsecond', now(), true
 FROM (VALUES
     (1, 'python'),
     (2, 'javascript'),
@@ -424,5 +424,5 @@ FROM (VALUES
     (408, '20th century'),
     (409, '21st century')
 ) AS seed(ord, name)
-ON CONFLICT (name) DO UPDATE SET promoted_at = now()
-WHERE tag.promoted_at IS NULL;
+ON CONFLICT (name) DO UPDATE SET seeded = true, promoted_at = coalesce(tag.promoted_at, now())
+WHERE NOT tag.seeded OR tag.promoted_at IS NULL;

@@ -54,6 +54,15 @@ const (
 	ReasonAdmitted     = "admitted"
 )
 
+// The triggers that cost a value its standing (docs/tags/definition-and-faceted-retrieval.md §6.5, §8.4):
+// mass decay below the recurrence floor, or an operator. A verdict-driven demotion records the admission
+// decision's own reason (ReasonCorroborated, ReasonJudgeDefer) and a decided drop the composition reason it
+// was decided under, so a stored reason always names the evidence without a second vocabulary here.
+const (
+	DemotionMassDecay = "mass_decay"
+	DemotionOperator  = "operator"
+)
+
 // AdmissionDecision carries the disposition and the named reason that
 // drove it: one of this package's Reason* constants, or an interim path's
 // own reason.
@@ -171,16 +180,18 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 	return decision
 }
 
-// DecisionRuleSetVersion pins the admission and promotion rules; the promote log lines carry it so rule
-// changes are traceable. Nothing stores it: both rules are pure and re-run over stored criteria. v2 adds
-// not_form_genre to the feature set the pinned rules read; v3 rides the criteria-v3 generation — the
-// feature set and the pinned combination rules are unchanged, and the bump keeps the promote log's stamp
-// rule_set=decision-%s traceable to the judging generation. v4 rides the criteria-v4 generation the same
-// way. v5 rides the parts-v3/quality-v5 generation (the parts pass owning the dimension question and the
-// language guard), the feature set and the pinned combination rules unchanged. v6 rides the quality-v6
-// generation: the not_person_place_work feature becomes not_person (the place and work components leave the
-// rubric), the combination rules unchanged.
-const DecisionRuleSetVersion = "v6"
+// DecisionRuleSetVersion pins the admission, promotion, and demotion rules; the promote and demote log
+// lines carry it so rule changes are traceable. Nothing stores it: every rule is pure and re-runs over
+// stored criteria. v2 adds not_form_genre to the feature set the pinned rules read, and v3 rides the
+// criteria-v3 generation — the feature set and the pinned combination rules are unchanged, and the bump
+// keeps the promote log's stamp rule_set=decision-%s traceable to the judging generation. v4 rides the
+// criteria-v4 generation the same way. v5 rides the parts-v3/quality-v5 generation, the parts pass owning
+// the dimension question and the language guard, the feature set and the pinned combination rules stay
+// unchanged. v6 rides the quality-v6 generation: the not_person_place_work feature becomes not_person,
+// the place and work components leaving the rubric, the combination rules unchanged. v7 adds the demotion
+// rules to the set: a decayed live mass below RecurrenceFloor, a decided no-dimension drop, and a fresh
+// reject or defer under the current versions revoke influence, the admission rules unchanged.
+const DecisionRuleSetVersion = "v7"
 
 // RecurrenceFloor is the promotion minimum of
 // docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live
@@ -196,4 +207,11 @@ const RecurrenceFloor = 10
 // action.
 func DecidePromotion(outcome AdmissionOutcome, liveMass int64) bool {
 	return outcome == AdmissionAdmit && liveMass >= RecurrenceFloor
+}
+
+// DecideMassDemotion treats the recurrence floor as a standing condition (P2): a value whose live mass has
+// fallen below it is a pending candidate again, and a recovered mass re-admits it through the ordinary
+// promotion paths.
+func DecideMassDemotion(liveMass int64) bool {
+	return liveMass < RecurrenceFloor
 }

@@ -79,17 +79,17 @@ func TestDeleteNestedKey(t *testing.T) {
 		remains map[string]any
 	}{
 		{
-			name: "simple key exists",
-			m:    map[string]any{"a": 1},
-			key:  "a",
-			want: true,
+			name:    "simple key exists",
+			m:       map[string]any{"a": 1},
+			key:     "a",
+			want:    true,
 			remains: map[string]any{},
 		},
 		{
-			name: "simple key missing",
-			m:    map[string]any{"a": 1},
-			key:  "b",
-			want: false,
+			name:    "simple key missing",
+			m:       map[string]any{"a": 1},
+			key:     "b",
+			want:    false,
 			remains: map[string]any{"a": 1},
 		},
 		{
@@ -106,7 +106,7 @@ func TestDeleteNestedKey(t *testing.T) {
 			m: map[string]any{
 				"a": map[string]any{"b": 2},
 			},
-			key: "a.c",
+			key:  "a.c",
 			want: false,
 			remains: map[string]any{
 				"a": map[string]any{"b": 2},
@@ -137,10 +137,10 @@ func TestDeleteNestedKey(t *testing.T) {
 			remains: map[string]any{"a": "not-a-map"},
 		},
 		{
-			name: "empty map",
-			m:    map[string]any{},
-			key:  "a",
-			want: false,
+			name:    "empty map",
+			m:       map[string]any{},
+			key:     "a",
+			want:    false,
 			remains: map[string]any{},
 		},
 	}

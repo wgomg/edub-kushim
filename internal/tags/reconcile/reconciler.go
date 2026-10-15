@@ -66,6 +66,9 @@ type Report struct {
 	InvalidatedEntries    []PairEntry               `json:"invalidated_entries,omitempty"`
 	CompoundSplits        []CompoundSplitEntry      `json:"compound_splits,omitempty"`
 	PlannedCompoundSplits []CompoundSplitEntry      `json:"planned_compound_splits,omitempty"`
+	Demotion              DemotionCounts            `json:"demotion"`
+	Demoted               []DemotionEntry           `json:"demoted,omitempty"`
+	PlannedDemotions      []DemotionEntry           `json:"planned_demotions,omitempty"`
 	Capped                int                       `json:"capped,omitempty"`
 	NoDocuments           int                       `json:"no_documents,omitempty"`
 	Swept                 int                       `json:"swept,omitempty"`
@@ -131,6 +134,27 @@ type CompoundSplitEntry struct {
 	Components []string `json:"components"`
 	Reassigned int64    `json:"reassigned"`
 	Reason     string   `json:"reason,omitempty"`
+}
+
+// DemotionCounts reports the demotion arm's work and outcomes by trigger. The counts do not partition the
+// applied total — a held name is counted and skipped — so they describe dispositions, not a sum.
+type DemotionCounts struct {
+	Worklist    int `json:"worklist"`
+	MassDecay   int `json:"mass_decay"`
+	NoDimension int `json:"no_dimension"`
+	Rejudged    int `json:"rejudged"`
+	Demoted     int `json:"demoted"`
+	Held        int `json:"held"`
+	NoJudge     int `json:"no_judge"`
+	Skipped     int `json:"skipped"`
+	Failed      int `json:"failed"`
+}
+
+// DemotionEntry names a demoted value and the trigger behind it, or, in a report-only run, one that would
+// be demoted.
+type DemotionEntry struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // FlipCounts counts the evidence-driven direction flips: decisions that became aliases and keeps that
@@ -288,6 +312,7 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		r.applyCompoundSplits(ctx, cfg, compoundWorklist, &report, storeTags)
 	}
 	r.sweepTwins(ctx, cfg, &report, pairKeys)
+	r.sweepPromotedTags(ctx, cfg, &report)
 	r.sweepOrphanTags(ctx, cfg, &report)
 	r.sweepProvisionalTags(ctx, cfg, &report)
 	r.sweepIdentityEvidence(ctx, cfg, &report)
@@ -311,13 +336,15 @@ func (r *Reconciler) logSummary(report Report) {
 				created++
 			}
 		}
-		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d stored compounds would split; %d twin pairs proposed (%d would alias); %d skipped, %d over cap",
-			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedCompoundSplits), report.Twins.Worklist, report.Twins.Planned, skipped, report.Capped)
+		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d stored compounds would split; %d twin pairs proposed (%d would alias); %d demotions would revoke influence (%d below the floor, %d decided drops, %d re-judged); %d skipped, %d over cap",
+			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedCompoundSplits), report.Twins.Worklist, report.Twins.Planned,
+			report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged, skipped, report.Capped)
 		return
 	}
 	documents := sumReassigned(report.Aliases) + sumReassigned(report.RetagEntries)
-	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d stored compounds split; %d twin pairs proposed (%d aliased); %d skipped, %d over cap",
-		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.CompoundSplits), report.Twins.Worklist, report.Twins.Mechanical, skipped, report.Capped)
+	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d stored compounds split; %d twin pairs proposed (%d aliased); %d demotions revoked influence (%d below the floor, %d decided drops, %d re-judged), %d held for review; %d skipped, %d over cap",
+		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.CompoundSplits), report.Twins.Worklist, report.Twins.Mechanical,
+		report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged, report.Demotion.Held, skipped, report.Capped)
 }
 
 func sumReassigned(entries []PairEntry) int64 {

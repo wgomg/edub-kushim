@@ -10,7 +10,7 @@
 	import ProvisionalReview from '$lib/components/tags/ProvisionalReview.svelte';
 	import CoverageReview from '$lib/components/tags/CoverageReview.svelte';
 	import DeletedTags from '$lib/components/tags/DeletedTags.svelte';
-	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
+	import { EDIT_ICON, DELETE_ICON, DEMOTE_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
@@ -67,8 +67,12 @@
 				const safeName = escapeHtml(row.name);
 				const actionable =
 					'text-parchment-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+				const demote =
+					row.promoted && !row.seeded
+						? `${actionButton(DEMOTE_ICON, 'Demote', `${actionable} hover:text-amber-400`, { 'data-demote-tag': row.id, 'data-tag-name': safeName })}\n`
+						: '';
 				return `${actionButton(EDIT_ICON, 'Edit', `${actionable} hover:text-gold-500`, { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
-${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
+${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
 			}
 		}
 	];
@@ -165,12 +169,37 @@ ${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`,
 		refreshCounts();
 	}
 
+	async function handleDemote(tagId, tagName) {
+		const ok = await confirmStore.confirm({
+			title: 'Demote tag',
+			message: `Demote tag "${tagName}"? It keeps its documents but loses its standing in the vocabulary until it re-qualifies.`
+		});
+		if (!ok) return;
+		const result = await api.tags.demote(tagId);
+		if (result.ok) {
+			toastStore.success(`Demoted "${tagName}"`);
+		} else if (result.status === 409) {
+			toastStore.error(result.data?.error ?? 'Tag cannot be demoted');
+		} else {
+			toastStore.error('Failed to demote tag');
+		}
+		onReviewChanged();
+		refreshCounts();
+	}
+
 	function handlePageClick(e) {
 		const editBtn = e.target.closest('[data-edit-tag]');
 		if (editBtn) {
 			const id = parseInt(editBtn.getAttribute('data-edit-tag'));
 			const name = editBtn.getAttribute('data-tag-name');
 			openEdit(id, name);
+			return;
+		}
+		const demoteBtn = e.target.closest('[data-demote-tag]');
+		if (demoteBtn) {
+			const id = parseInt(demoteBtn.getAttribute('data-demote-tag'));
+			const name = demoteBtn.getAttribute('data-tag-name');
+			handleDemote(id, name);
 			return;
 		}
 		const deleteBtn = e.target.closest('[data-delete-tag]');

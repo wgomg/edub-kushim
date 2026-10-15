@@ -10,6 +10,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -72,7 +73,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded}
 			}
 		}
 	} else {
@@ -84,7 +85,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded}
 			}
 		}
 	}
@@ -314,6 +315,11 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				IdentityHold:      held[t.Name],
 				CompositionHold:   compositionHeld[t.Name],
 				CompositionReason: compositionReasons[t.Name],
+				DemotedReason:     t.DemotedReason.String,
+			}
+			if t.DemotedAt.Valid {
+				demotedAt := t.DemotedAt.Time
+				responses[i].DemotedAt = &demotedAt
 			}
 			if v, ok := verdicts[t.Name]; ok {
 				responses[i].Verdict = &v
@@ -387,6 +393,36 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case types.PromoteAlreadyPromoted:
 		http.Error(w, "Tag is already promoted", http.StatusConflict)
+	default:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	}
+}
+
+// DemoteTag withdraws a tag's standing at an operator's request.
+func (h *TagHandler) DemoteTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	_, status, err := h.tag.Demote(ctx, id, tags.DemotionOperator)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "demote tag", err)
+		return
+	}
+
+	switch status {
+	case types.DemoteDemoted:
+		w.WriteHeader(http.StatusNoContent)
+	case types.DemoteSeeded:
+		http.Error(w, "Seeded values cannot be demoted", http.StatusConflict)
+	case types.DemoteNotPromoted:
+		http.Error(w, "Tag is not promoted", http.StatusConflict)
 	default:
 		http.Error(w, "Tag not found", http.StatusNotFound)
 	}
@@ -628,9 +664,8 @@ type TagQualityVerdictInfo struct {
 	VerdictAt time.Time               `json:"verdict_at"`
 }
 
-// ProvisionalTagResponse is one provisional tag with its document count, creation time, latest quality
-// verdict, pending identity count, identity and composition promotion holds, and the latest composition
-// reason for a degraded keep.
+// ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
+// provisional.
 type ProvisionalTagResponse struct {
 	ID                int64                  `json:"id"`
 	Name              string                 `json:"name"`
@@ -641,6 +676,8 @@ type ProvisionalTagResponse struct {
 	IdentityHold      string                 `json:"identity_hold,omitempty"`
 	CompositionHold   string                 `json:"composition_hold,omitempty"`
 	CompositionReason string                 `json:"composition_reason,omitempty"`
+	DemotedAt         *time.Time             `json:"demoted_at,omitempty"`
+	DemotedReason     string                 `json:"demoted_reason,omitempty"`
 }
 
 // ProvisionalTagListResponse is one page of provisional tags: the

@@ -141,10 +141,10 @@ WantedBy=multi-user.target
 `
 
 	files := map[string]string{
-		"kushim-hugot.service":  hugotSvc,
-		"kushim-queue.service":  queueSvc,
-		"edub.service":          edubSvc,
-		"edub-kushim.target":    target,
+		"kushim-hugot.service": hugotSvc,
+		"kushim-queue.service": queueSvc,
+		"edub.service":         edubSvc,
+		"edub-kushim.target":   target,
 	}
 
 	for name, content := range files {

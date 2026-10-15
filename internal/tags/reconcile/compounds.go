@@ -22,14 +22,16 @@ type compoundEntry struct {
 	pendingApply bool // a split a prior run decided but did not apply: it needs applying, not judging
 	split        bool
 	components   []string
+	demote       bool // a decided drop whose influence still stands: revoke it, do not judge or split
 	reason       string
 	skipReason   string
 }
 
-// buildCompoundWorklist returns the compounds still owed a disposition, pending-apply splits first and then
-// by live mass, so a run cap only ever defers the lightest and least-used work.
+// Pending applications and decided drops lead the worklist so a run cap only ever defers the lightest
+// work; seeded values and held compounds never enter it.
 func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []database.Tag, tagCounts map[string]int64, report *Report) []*compoundEntry {
 	var names []string
+	promoted := make(map[string]bool, len(allTags))
 	for _, t := range allTags {
 		if tags.ClassifyShape(t.Name) != tags.ShapeCompound {
 			continue
@@ -38,7 +40,14 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 			report.Skips["period_store_application"]++
 			continue
 		}
+		if t.Seeded {
+			// only a seeded row that would otherwise reach the worklist counts, so the tally is not the
+			// constant size of the operator-owned seed inventory
+			report.Skips["seeded"]++
+			continue
+		}
 		names = append(names, t.Name)
+		promoted[t.Name] = t.PromotedAt.Valid
 	}
 	if len(names) == 0 {
 		return nil
@@ -63,19 +72,29 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 			r.logger.Debug("", "tag reconcile: compound %q is identity-held (anchor=%q) — left for review", name, anchor)
 			continue
 		}
+		state, ok := states[tags.StoredName(name)]
+		if ok && state.Decided && state.Disposition == tags.CompositionSplit {
+			// a split may still owe an application
+			entries = append(entries, &compoundEntry{name: name, docCount: tagCounts[name], pendingApply: true})
+			continue
+		}
+		if ok && state.Decided && state.Disposition == tags.CompositionDrop {
+			// a decided drop whose influence still stands: revoke it, not split it
+			// every drop reason is a hold reason, so the held map carries the demotion reason
+			if promoted[name] {
+				entries = append(entries, &compoundEntry{name: name, docCount: tagCounts[name], demote: true, reason: compositionHeld[name]})
+			} else {
+				report.Skips["decided"]++
+			}
+			continue
+		}
 		if reason, ok := compositionHeld[name]; ok {
 			report.Skips["composition_hold"]++
 			r.logger.Debug("", "tag reconcile: compound %q is composition-held (reason=%s) — left for review", name, reason)
 			continue
 		}
-		state, ok := states[tags.StoredName(name)]
 		if ok && state.Decided {
-			// a split may still owe an application; a keep or drop leaves the stored tag as it is
-			if state.Disposition == tags.CompositionSplit {
-				entries = append(entries, &compoundEntry{name: name, docCount: tagCounts[name], pendingApply: true})
-			} else {
-				report.Skips["decided"]++
-			}
+			report.Skips["decided"]++
 			continue
 		}
 		entries = append(entries, &compoundEntry{name: name, docCount: tagCounts[name]})
@@ -83,6 +102,9 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].pendingApply != entries[j].pendingApply {
 			return entries[i].pendingApply
+		}
+		if entries[i].demote != entries[j].demote {
+			return entries[i].demote
 		}
 		if entries[i].docCount != entries[j].docCount {
 			return entries[i].docCount > entries[j].docCount
@@ -92,16 +114,16 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 	return entries
 }
 
-// decideCompoundSplits disposes of the stored compounds through the admission gate's shared judgment
-// (admission.JudgeCompounds), so a compound is judged alike whether it arrives by emission or by sweep; the
-// journal row it writes is what lets a decided hold bind promotion and a decided keep be skipped later at
-// emission. Only a split touches the store — a drop is recorded with its tag left standing, revocation being
-// demotion's job — and without an adjudicator only the conjunction split stands, no other verdict being
-// reachable.
+// Stored compounds are read through the emission gate so a verdict binds identically in both places; only a
+// split or a drop acts, and a drop belongs to demotion.
 func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Config, entries []*compoundEntry, promotedNames map[string]string, liveNames map[string]struct{}) {
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		componentFilter := analyzer.NewTagFilter(nil, nil, nil)
 		for _, e := range entries {
+			if e.demote {
+				// a decided drop read from the journal: planned for demotion, never judged
+				continue
+			}
 			if textnorm.SplitJointTag(e.name) == nil {
 				e.skipReason = "undecided_no_judge"
 				continue
@@ -118,9 +140,17 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 		return
 	}
 
+	judged := make([]*compoundEntry, 0, len(entries))
 	candidates := make([]string, 0, len(entries))
 	for _, e := range entries {
+		if e.demote {
+			continue
+		}
+		judged = append(judged, e)
 		candidates = append(candidates, e.name)
+	}
+	if len(candidates) == 0 {
+		return
 	}
 	adjudicator := admission.NewAdjudicator(cfg, r.logger, r.client.Queries, r.runner)
 	rows, err := adjudicator.JudgeCompounds(ctx, candidates, liveNames, promotedNames, analyzer.NewTagFilter(nil, nil, nil), 0, "")
@@ -129,13 +159,17 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 		return
 	}
 	for i, row := range rows {
-		if row.Disposition == tags.CompositionSplit {
-			entries[i].split = true
-			entries[i].components = row.Parts
-			entries[i].reason = "adjudicated"
-			continue
+		switch row.Disposition {
+		case tags.CompositionSplit:
+			judged[i].split = true
+			judged[i].components = row.Parts
+			judged[i].reason = "adjudicated"
+		case tags.CompositionDrop:
+			judged[i].demote = true
+			judged[i].reason = row.Reason
+		default:
+			judged[i].skipReason = row.Reason
 		}
-		entries[i].skipReason = row.Reason
 	}
 	// a degraded keep is judgment still owed, not a verdict: journaling one would make the sweep's own hold
 	// filter skip the compound on every later run, so an outage leaves the entry undecided, as at emission
@@ -155,6 +189,11 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 
 func (r *Reconciler) planCompoundSplits(entries []*compoundEntry, report *Report) {
 	for _, e := range entries {
+		if e.demote {
+			report.Demotion.NoDimension++
+			r.planDemotion(report, e.name, e.reason)
+			continue
+		}
 		if !e.split {
 			if e.skipReason != "" {
 				report.Skips[e.skipReason]++
@@ -176,41 +215,59 @@ func (r *Reconciler) applyCompoundSplits(ctx context.Context, cfg *config.Config
 	budget := cfg.Enricher.TagReconcile.MaxRetag
 	applied := false
 
-	for i, e := range entries {
-		if !e.split {
+	for _, e := range entries {
+		switch {
+		case e.demote:
+			// demotions move no documents, so they never consume the re-tag budget
+			report.Demotion.NoDimension++
+			r.applyDemotion(ctx, storeTags[e.name].ID, e.name, e.reason, report)
+		case !e.split:
 			if e.skipReason != "" {
 				report.Skips[e.skipReason]++
 			}
-			continue
-		}
-		if budget <= 0 && applied {
-			for _, rest := range entries[i:] {
-				if rest.split {
-					report.Capped++
-				} else if rest.skipReason != "" {
-					report.Skips[rest.skipReason]++
-				}
+		case budget <= 0 && applied:
+			report.Capped++
+		default:
+			reassigned, err := r.applyCompoundSplit(ctx, e, storeTags)
+			if err != nil {
+				r.logger.Error("", "tag reconcile: split %q failed: %v", e.name, err)
+				report.Skips["split_error"]++
+				continue
 			}
-			break
+			applied = true
+			report.CompoundSplits = append(report.CompoundSplits, CompoundSplitEntry{
+				Query:      e.name,
+				Components: e.components,
+				Reassigned: reassigned,
+				Reason:     e.reason,
+			})
+			r.logger.Info("", "tag reconcile: split %q → %v (re-pointed %d documents)%s",
+				e.name, e.components, reassigned, reasonSuffix(e.reason))
+			budget -= int(reassigned)
 		}
-
-		reassigned, err := r.applyCompoundSplit(ctx, e, storeTags)
-		if err != nil {
-			r.logger.Error("", "tag reconcile: split %q failed: %v", e.name, err)
-			report.Skips["split_error"]++
-			continue
-		}
-		applied = true
-		report.CompoundSplits = append(report.CompoundSplits, CompoundSplitEntry{
-			Query:      e.name,
-			Components: e.components,
-			Reassigned: reassigned,
-			Reason:     e.reason,
-		})
-		r.logger.Info("", "tag reconcile: split %q → %v (re-pointed %d documents)%s",
-			e.name, e.components, reassigned, reasonSuffix(e.reason))
-		budget -= int(reassigned)
 	}
+}
+
+// One failed revocation is counted, not fatal, so a bad row cannot abort a run.
+func (r *Reconciler) applyDemotion(ctx context.Context, id int64, name, reason string, report *Report) {
+	if id == 0 {
+		report.Demotion.Skipped++
+		return
+	}
+	_, status, err := r.tag.Demote(ctx, id, reason)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: demote %q: %v", name, err)
+		report.Demotion.Failed++
+		return
+	}
+	if status != types.DemoteDemoted {
+		report.Demotion.Skipped++
+		return
+	}
+	report.Demotion.Demoted++
+	report.Demoted = append(report.Demoted, DemotionEntry{Name: name, Reason: reason})
+	r.logger.Info("", "tag reconcile: demoted %q (reason=%s rule_set=decision-%s)",
+		name, reason, tags.DecisionRuleSetVersion)
 }
 
 func (r *Reconciler) applyCompoundSplit(ctx context.Context, e *compoundEntry, storeTags map[string]database.Tag) (int64, error) {

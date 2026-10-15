@@ -417,6 +417,48 @@ func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Ta
 	return tag, types.PromotePromoted, nil
 }
 
+// Demote withdraws one value's standing so it no longer influences retrieval or consolidation. The value,
+// its documents, and its history stay, so promoting the same value again restores it. Seeded values, being
+// operator-owned inventory, are refused rather than demoted.
+func (s *Tag) Demote(ctx context.Context, id int64, reason string) (database.Tag, types.DemoteStatus, error) {
+	tag, err := s.Get(ctx, id)
+	if err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			return database.Tag{}, types.DemoteNotFound, nil
+		}
+		return database.Tag{}, types.DemoteNotFound, err
+	}
+	if !tag.PromotedAt.Valid {
+		return tag, types.DemoteNotPromoted, nil
+	}
+	if tag.Seeded {
+		return tag, types.DemoteSeeded, nil
+	}
+
+	demoted, err := s.client.Queries.DemoteTags(ctx, database.DemoteTagsParams{
+		TagIds: []int64{id},
+		Reason: reason,
+	})
+	if err != nil {
+		return tag, types.DemoteNotFound, errs.FromDB(err, "demote tag")
+	}
+	if demoted == 0 {
+		return tag, types.DemoteNotPromoted, nil
+	}
+
+	// store removal is best-effort like every other tag mutation: retry once to absorb a dropped write, then
+	// log; the next promote re-adds the name and a matcher restart rebuilds the store from the table, so
+	// even a persistent outage converges
+	if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
+		if retryErr := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); retryErr != nil {
+			s.logger.Error("", "tag service: remove demoted tag %q from store: %v", tag.Name, retryErr)
+		}
+	}
+	s.logger.Info("", "tagquality[%s]: demote %q (reason=%s rule_set=decision-%s)",
+		analyzer.TagQualityVersion, tag.Name, reason, tags.DecisionRuleSetVersion)
+	return tag, types.DemoteDemoted, nil
+}
+
 // ListDeleted pages the deleted-tag blocklist by name prefix with its
 // total count.
 func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int32) ([]database.DeletedTag, int64, error) {

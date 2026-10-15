@@ -592,7 +592,7 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		rstPayload := json.RawMessage(`{}`)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-t1", TaskType: "consume", Status: "processing",
-			Payload:  &rstPayload,
+			Payload: &rstPayload,
 			BatchID: sql.NullString{String: "rst-proc", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create processing task")
@@ -616,7 +616,7 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		rstQPayload := json.RawMessage(`{}`)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-q1", TaskType: "consume", Status: "processing",
-			Payload:  &rstQPayload,
+			Payload: &rstQPayload,
 			BatchID: sql.NullString{String: "rst-quar", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create processing task")
@@ -642,7 +642,7 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		rstM1Payload := json.RawMessage(`{}`)
 		id1, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-m1", TaskType: "consume", Status: "processing",
-			Payload:  &rstM1Payload,
+			Payload: &rstM1Payload,
 			BatchID: sql.NullString{String: "rst-mix", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create task 1")
@@ -651,7 +651,7 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		rstM2Payload := json.RawMessage(`{}`)
 		id2, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-m2", TaskType: "consume", Status: "processing",
-			Payload:  &rstM2Payload,
+			Payload: &rstM2Payload,
 			BatchID: sql.NullString{String: "rst-mix", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create task 2")

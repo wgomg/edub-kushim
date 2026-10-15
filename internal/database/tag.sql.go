@@ -140,6 +140,7 @@ const deleteOrphanTags = `-- name: DeleteOrphanTags :many
 DELETE FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < $1::timestamptz
+  AND NOT t.seeded
   AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
 RETURNING t.name
 `
@@ -176,6 +177,29 @@ func (q *Queries) DeleteTag(ctx context.Context, id int64) error {
 	return err
 }
 
+const demoteTags = `-- name: DemoteTags :execrows
+UPDATE tag SET
+    promoted_at = NULL,
+    demoted_at = now(),
+    demoted_reason = $1::text
+WHERE id = ANY($2::bigint[])
+  AND promoted_at IS NOT NULL
+  AND NOT seeded
+`
+
+type DemoteTagsParams struct {
+	Reason string
+	TagIds []int64
+}
+
+func (q *Queries) DemoteTags(ctx context.Context, arg DemoteTagsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, demoteTags, arg.Reason, pq.Array(arg.TagIds))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const firstDocumentIDForTag = `-- name: FirstDocumentIDForTag :one
 SELECT dt.document_id FROM document_tag dt
 JOIN document d ON d.id = dt.document_id
@@ -192,7 +216,7 @@ func (q *Queries) FirstDocumentIDForTag(ctx context.Context, tagID int64) (int64
 }
 
 const getTag = `-- name: GetTag :one
-SELECT id, name, created_at, orphaned_since, promoted_at FROM tag WHERE id = $1
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag WHERE id = $1
 `
 
 func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
@@ -204,12 +228,15 @@ func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
 		&i.CreatedAt,
 		&i.OrphanedSince,
 		&i.PromotedAt,
+		&i.DemotedAt,
+		&i.DemotedReason,
+		&i.Seeded,
 	)
 	return i, err
 }
 
 const getTagByName = `-- name: GetTagByName :one
-SELECT id, name, created_at, orphaned_since, promoted_at FROM tag WHERE name = $1
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag WHERE name = $1
 `
 
 func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
@@ -221,12 +248,15 @@ func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
 		&i.CreatedAt,
 		&i.OrphanedSince,
 		&i.PromotedAt,
+		&i.DemotedAt,
+		&i.DemotedReason,
+		&i.Seeded,
 	)
 	return i, err
 }
 
 const getTagForUpdate = `-- name: GetTagForUpdate :one
-SELECT id, name, created_at, orphaned_since, promoted_at FROM tag WHERE id = $1 FOR UPDATE
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
@@ -238,12 +268,15 @@ func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
 		&i.CreatedAt,
 		&i.OrphanedSince,
 		&i.PromotedAt,
+		&i.DemotedAt,
+		&i.DemotedReason,
+		&i.Seeded,
 	)
 	return i, err
 }
 
 const getTagForUpdateByName = `-- name: GetTagForUpdateByName :one
-SELECT id, name, created_at, orphaned_since, promoted_at FROM tag WHERE name = $1 FOR UPDATE
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag WHERE name = $1 FOR UPDATE
 `
 
 func (q *Queries) GetTagForUpdateByName(ctx context.Context, name string) (Tag, error) {
@@ -255,12 +288,15 @@ func (q *Queries) GetTagForUpdateByName(ctx context.Context, name string) (Tag, 
 		&i.CreatedAt,
 		&i.OrphanedSince,
 		&i.PromotedAt,
+		&i.DemotedAt,
+		&i.DemotedReason,
+		&i.Seeded,
 	)
 	return i, err
 }
 
 const listAllTags = `-- name: ListAllTags :many
-SELECT id, name, created_at, orphaned_since, promoted_at FROM tag ORDER BY created_at DESC
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
@@ -278,6 +314,9 @@ func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
 			&i.CreatedAt,
 			&i.OrphanedSince,
 			&i.PromotedAt,
+			&i.DemotedAt,
+			&i.DemotedReason,
+			&i.Seeded,
 		); err != nil {
 			return nil, err
 		}
@@ -293,7 +332,7 @@ func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
 }
 
 const listAllTagsWithDocumentCount = `-- name: ListAllTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -306,6 +345,9 @@ type ListAllTagsWithDocumentCountRow struct {
 	CreatedAt     sql.NullTime
 	OrphanedSince sql.NullTime
 	PromotedAt    sql.NullTime
+	DemotedAt     sql.NullTime
+	DemotedReason sql.NullString
+	Seeded        bool
 	DocumentCount int64
 }
 
@@ -324,6 +366,9 @@ func (q *Queries) ListAllTagsWithDocumentCount(ctx context.Context) ([]ListAllTa
 			&i.CreatedAt,
 			&i.OrphanedSince,
 			&i.PromotedAt,
+			&i.DemotedAt,
+			&i.DemotedReason,
+			&i.Seeded,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -343,6 +388,7 @@ const listOrphanTags = `-- name: ListOrphanTags :many
 SELECT t.name FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < $1::timestamptz
+  AND NOT t.seeded
   AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
 ORDER BY t.name
 `
@@ -399,6 +445,42 @@ func (q *Queries) ListPromotedTagNames(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listPromotedTagsForDemotion = `-- name: ListPromotedTagsForDemotion :many
+SELECT id, name, promoted_at FROM tag
+WHERE promoted_at IS NOT NULL
+  AND NOT seeded
+ORDER BY promoted_at
+`
+
+type ListPromotedTagsForDemotionRow struct {
+	ID         int64
+	Name       string
+	PromotedAt sql.NullTime
+}
+
+func (q *Queries) ListPromotedTagsForDemotion(ctx context.Context) ([]ListPromotedTagsForDemotionRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPromotedTagsForDemotion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPromotedTagsForDemotionRow
+	for rows.Next() {
+		var i ListPromotedTagsForDemotionRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.PromotedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProvisionalTagsOlderThan = `-- name: ListProvisionalTagsOlderThan :many
 SELECT t.id, t.name, t.created_at FROM tag t
 WHERE t.promoted_at IS NULL
@@ -437,6 +519,7 @@ func (q *Queries) ListProvisionalTagsOlderThan(ctx context.Context, cutoff time.
 
 const listProvisionalTagsWithDocumentCount = `-- name: ListProvisionalTagsWithDocumentCount :many
 SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
+       t.demoted_at, t.demoted_reason,
        (SELECT COUNT(*) FROM document_tag dt
         JOIN document d ON d.id = dt.document_id
         WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
@@ -493,6 +576,8 @@ type ListProvisionalTagsWithDocumentCountRow struct {
 	ID            int64
 	Name          string
 	CreatedAt     sql.NullTime
+	DemotedAt     sql.NullTime
+	DemotedReason sql.NullString
 	DocumentCount int64
 }
 
@@ -520,6 +605,8 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 			&i.ID,
 			&i.Name,
 			&i.CreatedAt,
+			&i.DemotedAt,
+			&i.DemotedReason,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -565,7 +652,7 @@ func (q *Queries) ListStoreTagKeys(ctx context.Context) ([]string, error) {
 }
 
 const listTags = `-- name: ListTags :many
-SELECT id, name, created_at, orphaned_since, promoted_at FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListTagsParams struct {
@@ -588,6 +675,9 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 			&i.CreatedAt,
 			&i.OrphanedSince,
 			&i.PromotedAt,
+			&i.DemotedAt,
+			&i.DemotedReason,
+			&i.Seeded,
 		); err != nil {
 			return nil, err
 		}
@@ -603,7 +693,7 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 }
 
 const listTagsWithDocumentCount = `-- name: ListTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -621,6 +711,9 @@ type ListTagsWithDocumentCountRow struct {
 	CreatedAt     sql.NullTime
 	OrphanedSince sql.NullTime
 	PromotedAt    sql.NullTime
+	DemotedAt     sql.NullTime
+	DemotedReason sql.NullString
+	Seeded        bool
 	DocumentCount int64
 }
 
@@ -639,6 +732,9 @@ func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWit
 			&i.CreatedAt,
 			&i.OrphanedSince,
 			&i.PromotedAt,
+			&i.DemotedAt,
+			&i.DemotedReason,
+			&i.Seeded,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -657,6 +753,7 @@ func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWit
 const markOrphanTags = `-- name: MarkOrphanTags :execrows
 UPDATE tag t SET orphaned_since = now()
 WHERE t.orphaned_since IS NULL
+  AND NOT t.seeded
   AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
 `
 
@@ -669,7 +766,10 @@ func (q *Queries) MarkOrphanTags(ctx context.Context) (int64, error) {
 }
 
 const promoteTags = `-- name: PromoteTags :execrows
-UPDATE tag SET promoted_at = now()
+UPDATE tag SET
+    promoted_at = now(),
+    demoted_at = NULL,
+    demoted_reason = NULL
 WHERE id = ANY($1::bigint[])
   AND promoted_at IS NULL
 `
@@ -683,7 +783,7 @@ func (q *Queries) PromoteTags(ctx context.Context, tagIds []int64) (int64, error
 }
 
 const searchTagsByName = `-- name: SearchTagsByName :many
-SELECT id, name, created_at, orphaned_since, promoted_at FROM tag WHERE name LIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded FROM tag WHERE name LIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchTagsByNameParams struct {
@@ -707,6 +807,9 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 			&i.CreatedAt,
 			&i.OrphanedSince,
 			&i.PromotedAt,
+			&i.DemotedAt,
+			&i.DemotedReason,
+			&i.Seeded,
 		); err != nil {
 			return nil, err
 		}
@@ -722,7 +825,7 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 }
 
 const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 WHERE t.name LIKE $1
@@ -742,6 +845,9 @@ type SearchTagsByNameWithDocumentCountRow struct {
 	CreatedAt     sql.NullTime
 	OrphanedSince sql.NullTime
 	PromotedAt    sql.NullTime
+	DemotedAt     sql.NullTime
+	DemotedReason sql.NullString
+	Seeded        bool
 	DocumentCount int64
 }
 
@@ -760,6 +866,9 @@ func (q *Queries) SearchTagsByNameWithDocumentCount(ctx context.Context, arg Sea
 			&i.CreatedAt,
 			&i.OrphanedSince,
 			&i.PromotedAt,
+			&i.DemotedAt,
+			&i.DemotedReason,
+			&i.Seeded,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err

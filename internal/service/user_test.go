@@ -218,4 +218,3 @@ func TestUser_UpdateWithoutRoleChange(t *testing.T) {
 	testutil.AssertNoError(t, err, "update without role")
 	testutil.AssertEqual(t, updated.Role, "editor", "role unchanged")
 }
-

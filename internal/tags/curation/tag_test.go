@@ -535,6 +535,112 @@ func TestTag_Promote(t *testing.T) {
 	})
 }
 
+func TestTag_Demote(t *testing.T) {
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+	embedder := testutil.NewMockEmbedder()
+	svc := NewTag(client, testutil.NewTestLogger(), embedder)
+
+	t.Run("demotion revokes the store copy and records why", func(t *testing.T) {
+		results, err := svc.Create(ctx, []string{"demote-standings"})
+		testutil.AssertNoError(t, err, "create")
+		tagID := results[0].Entity.ID
+		name := results[0].Entity.Name
+		_, err = client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set standing")
+		testutil.AssertNoError(t, embedder.AddToStore(ctx, []string{name}), "seed the store copy")
+
+		_, status, err := svc.Demote(ctx, tagID, "mass_decay")
+		testutil.AssertNoError(t, err, "demote")
+		testutil.AssertEqual(t, status, types.DemoteDemoted, "demoted status")
+
+		if embedder.Has(name) {
+			t.Error("the demoted name must leave the embedding store")
+		}
+		tag, err := svc.Get(ctx, tagID)
+		testutil.AssertNoError(t, err, "re-fetch")
+		if tag.PromotedAt.Valid {
+			t.Error("the value should have lost its standing")
+		}
+		if !tag.DemotedAt.Valid {
+			t.Error("the revocation should be recorded on the row")
+		}
+		testutil.AssertEqual(t, tag.DemotedReason.String, "mass_decay", "the row names the evidence")
+	})
+
+	t.Run("promoting again restores standing and clears the record", func(t *testing.T) {
+		results, err := svc.Create(ctx, []string{"demote-restored"})
+		testutil.AssertNoError(t, err, "create")
+		tagID := results[0].Entity.ID
+		name := results[0].Entity.Name
+		_, err = client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set standing")
+
+		_, status, err := svc.Demote(ctx, tagID, "mass_decay")
+		testutil.AssertNoError(t, err, "demote")
+		testutil.AssertEqual(t, status, types.DemoteDemoted, "demoted status")
+
+		_, promoteStatus, err := svc.Promote(ctx, tagID, "operator")
+		testutil.AssertNoError(t, err, "promote")
+		testutil.AssertEqual(t, promoteStatus, types.PromotePromoted, "re-admission")
+
+		tag, err := svc.Get(ctx, tagID)
+		testutil.AssertNoError(t, err, "re-fetch")
+		if !tag.PromotedAt.Valid {
+			t.Error("the value is promoted again")
+		}
+		if tag.DemotedAt.Valid || tag.DemotedReason.Valid {
+			t.Error("re-admission must clear the demotion record")
+		}
+		if !embedder.Has(name) {
+			t.Error("the restored value returns to the embedding store")
+		}
+	})
+
+	t.Run("seeded values are refused", func(t *testing.T) {
+		tagID := database.MustCreateTag(t, client.Queries, "demote-seeded")
+		_, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = now(), seeded = true WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set standing and seeded")
+
+		_, status, err := svc.Demote(ctx, tagID, "operator")
+		testutil.AssertNoError(t, err, "demote seeded")
+		testutil.AssertEqual(t, status, types.DemoteSeeded, "seeded status")
+
+		tag, err := svc.Get(ctx, tagID)
+		testutil.AssertNoError(t, err, "re-fetch")
+		if !tag.PromotedAt.Valid {
+			t.Error("an operator-owned value keeps its standing")
+		}
+		if tag.DemotedAt.Valid {
+			t.Error("a refused demotion leaves no record")
+		}
+	})
+
+	t.Run("not promoted", func(t *testing.T) {
+		tagID := database.MustCreateTag(t, client.Queries, "demote-pending")
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		_, status, err := svc.Demote(ctx, tagID, "operator")
+		testutil.AssertNoError(t, err, "demote provisional")
+		testutil.AssertEqual(t, status, types.DemoteNotPromoted, "not promoted status")
+
+		tag, err := svc.Get(ctx, tagID)
+		testutil.AssertNoError(t, err, "re-fetch")
+		if tag.DemotedAt.Valid {
+			t.Error("a provisional value has no standing to revoke")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, status, err := svc.Demote(ctx, 999999, "operator")
+		testutil.AssertNoError(t, err, "not found")
+		testutil.AssertEqual(t, status, types.DemoteNotFound, "not found status")
+	})
+}
+
 func TestTag_ApplyAliasPlan(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()

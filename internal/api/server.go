@@ -282,6 +282,7 @@ func registerRoutes(
 	mux.Handle("POST /api/v1/tags/audit/flags/dismiss", RequireRole(editor...)(http.HandlerFunc(tagHandler.DismissAuditFlag)))
 	mux.Handle("POST /api/v1/tags/audit/flags/create-value", RequireRole(editor...)(http.HandlerFunc(tagHandler.CreateAuditValue)))
 	mux.Handle("POST /api/v1/tags/{id}/promote", RequireRole(editor...)(http.HandlerFunc(tagHandler.PromoteTag)))
+	mux.Handle("POST /api/v1/tags/{id}/demote", RequireRole(editor...)(http.HandlerFunc(tagHandler.DemoteTag)))
 
 	peopleHandler := handlers.NewPeopleHandler(services, logger)
 	mux.Handle("GET /api/v1/people", RequireRole(viewer...)(http.HandlerFunc(peopleHandler.List)))

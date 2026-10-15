@@ -38,9 +38,27 @@ UPDATE tag SET
 WHERE id = $2;
 
 -- name: PromoteTags :execrows
-UPDATE tag SET promoted_at = now()
+UPDATE tag SET
+    promoted_at = now(),
+    demoted_at = NULL,
+    demoted_reason = NULL
 WHERE id = ANY(@tag_ids::bigint[])
   AND promoted_at IS NULL;
+
+-- name: DemoteTags :execrows
+UPDATE tag SET
+    promoted_at = NULL,
+    demoted_at = now(),
+    demoted_reason = @reason::text
+WHERE id = ANY(@tag_ids::bigint[])
+  AND promoted_at IS NOT NULL
+  AND NOT seeded;
+
+-- name: ListPromotedTagsForDemotion :many
+SELECT id, name, promoted_at FROM tag
+WHERE promoted_at IS NOT NULL
+  AND NOT seeded
+ORDER BY promoted_at;
 
 -- name: CountTags :one
 SELECT COUNT(*) FROM tag;
@@ -79,6 +97,7 @@ DELETE FROM tag WHERE id = $1;
 -- name: MarkOrphanTags :execrows
 UPDATE tag t SET orphaned_since = now()
 WHERE t.orphaned_since IS NULL
+  AND NOT t.seeded
   AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id);
 
 -- name: ClearOrphanTagMarks :execrows
@@ -93,6 +112,7 @@ WHERE id = ANY(@tag_ids::bigint[])
 
 -- name: ListProvisionalTagsWithDocumentCount :many
 SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
+       t.demoted_at, t.demoted_reason,
        (SELECT COUNT(*) FROM document_tag dt
         JOIN document d ON d.id = dt.document_id
         WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
@@ -182,6 +202,7 @@ LIMIT 1;
 SELECT t.name FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < @orphaned_before::timestamptz
+  AND NOT t.seeded
   AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
 ORDER BY t.name;
 
@@ -189,5 +210,6 @@ ORDER BY t.name;
 DELETE FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < @orphaned_before::timestamptz
+  AND NOT t.seeded
   AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
 RETURNING t.name;

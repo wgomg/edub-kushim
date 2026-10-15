@@ -274,6 +274,7 @@ export const api = {
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
+		demote: (id) => requestRaw(`/api/v1/tags/${id}/demote`, { method: 'POST' }),
 		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' }),
 		reevaluateAudit: () => requestRaw('/api/v1/tags/audit/reevaluate', { method: 'POST' }),
 		auditFlags: (limit = 50, offset = 0) => {
