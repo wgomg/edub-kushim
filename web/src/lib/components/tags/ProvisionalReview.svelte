@@ -269,7 +269,7 @@
 			onclick={reevaluateIdentity}
 			disabled={identityActing}
 			class="{btnGhost} ml-auto"
-			title="Adjudicate the pending identity evidence now instead of waiting for the scheduled sweep"
+			title="Adjudicate the pending identity evidence now instead of waiting for the daily identity pass"
 		>
 			{identityActing ? 'Queueing…' : 'Reevaluate identity'}
 		</button>
@@ -366,7 +366,7 @@
 					{#if tag.pending_identity > 0}
 						<span
 							class={pillWarn}
-							title="This tag is waiting for a same-intent decision; the scheduled sweep resolves it, or trigger the reevaluation"
+							title="This tag is waiting for a same-intent decision; the daily identity pass resolves it, or trigger the reevaluation"
 						>
 							identity pending
 						</span>

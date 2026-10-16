@@ -10,15 +10,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
 )
 
-const tagIdentityHelpText = "Usage: kushim tagidentity --run <batch-id>\n\n" +
+const tagIdentityHelpText = "Usage: kushim tagidentity [--run <batch-id>]\n\n" +
 	"  Adjudicate the pending identity evidence: resolve the flagged candidates'\n" +
 	"  base-form criteria and the same-intent pairs, then apply the dispositions.\n\n" +
-	"  --run <batch-id>: the queued trigger's execution mode (no lock, no drain).\n" +
-	"  The trigger is the review surface's reevaluate action; the provisional\n" +
-	"  sweep is the standing backstop."
+	"  Without flags: enqueue a blocking task and print its batch id; the queue\n" +
+	"  daemon claims it under the maintenance lock.\n" +
+	"  --run <batch-id>: the queued run's execution mode (no lock, no drain).\n" +
+	"  The run also fires on its own daily schedule while the tag adjudicator is on."
 
 func tagIdentityHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
@@ -31,14 +35,37 @@ func tagIdentityHandler(c *container.Container, args []string) error {
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
-	if batchID == "" {
-		return fmt.Errorf("--run <batch-id> is required")
+
+	if batchID != "" {
+		if _, err := uuid.Parse(batchID); err != nil {
+			return fmt.Errorf("--run: invalid batch id %q", batchID)
+		}
+		return runTagIdentityPass(c, batchID)
 	}
-	if _, err := uuid.Parse(batchID); err != nil {
-		return fmt.Errorf("--run: invalid batch id %q", batchID)
+	return enqueueTagIdentity(c)
+}
+
+// enqueueTagIdentity creates the queued batch and its blocking task, or reports that a run is already
+// active; it writes no lock and never waits.
+func enqueueTagIdentity(c *container.Container) error {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
 	}
 
-	return runTagIdentityPass(c, batchID)
+	store := task.NewStore(client)
+	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
+	batchID, alreadyQueued, err := curation.NewTagIdentity(client.Queries, store, batchSvc).Enqueue(context.Background())
+	if err != nil {
+		return fmt.Errorf("enqueue tag identity: %w", err)
+	}
+	if alreadyQueued {
+		fmt.Println("A tag identity run is already queued or processing.")
+		return nil
+	}
+
+	fmt.Printf("Batch %s queued — run 'kushim queue' to process\n", batchID)
+	return nil
 }
 
 func runTagIdentityPass(c *container.Container, batchID string) error {

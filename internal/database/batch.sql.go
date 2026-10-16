@@ -238,6 +238,20 @@ func (q *Queries) GetLastTagAuditBatchCreatedAt(ctx context.Context) (sql.NullTi
 	return created_at, err
 }
 
+const getLastTagIdentityBatchCreatedAt = `-- name: GetLastTagIdentityBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'tagidentity' AND status = 'completed'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastTagIdentityBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastTagIdentityBatchCreatedAt)
+	var created_at sql.NullTime
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const getLastTagMeasureBatchCreatedAt = `-- name: GetLastTagMeasureBatchCreatedAt :one
 SELECT created_at FROM batch
 WHERE source = 'tagmeasure' AND status = 'completed'

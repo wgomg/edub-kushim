@@ -211,3 +211,9 @@ LIMIT 1;
 -- name: CountActiveTagIdentityBatches :one
 SELECT COUNT(*) FROM batch
 WHERE source = 'tagidentity' AND status IN ('queued', 'processing');
+
+-- name: GetLastTagIdentityBatchCreatedAt :one
+SELECT created_at FROM batch
+WHERE source = 'tagidentity' AND status = 'completed'
+ORDER BY created_at DESC
+LIMIT 1;

@@ -7,6 +7,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
@@ -27,7 +28,7 @@ func NewTagAuditTaskHandler(queries *database.Queries, logger *log.Logger) *TagA
 
 // DedupKey is fixed for all tag audit tasks: only one run at a time regardless of payload.
 func (h *TagAuditTaskHandler) DedupKey(payload json.RawMessage) string {
-	return "tagaudit"
+	return curation.TagAuditDedupKey
 }
 
 // Handle forks the tagaudit verb for the task's batch and returns its report as the task result.

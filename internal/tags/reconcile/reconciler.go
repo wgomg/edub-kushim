@@ -17,7 +17,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
@@ -51,33 +50,32 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 // Report is the stored audit of one reconcile run. It is serialized as the task result and parsed by the web
 // UI, so its JSON vocabulary is a compatibility surface rather than free to rename.
 type Report struct {
-	ReportOnly            bool                      `json:"report_only"`
-	Worklist              WorklistCounts            `json:"worklist"`
-	Judged                int                       `json:"judged"`
-	Confirmed             int                       `json:"confirmed"`
-	Flips                 FlipCounts                `json:"flips"`
-	Aliases               []PairEntry               `json:"aliases"`
-	Retags                int                       `json:"retags"`
-	Invalidated           int                       `json:"invalidated"`
-	Skips                 map[string]int            `json:"skips"`
-	PlannedAliases        []PairEntry               `json:"planned_aliases,omitempty"`
-	PlannedKeepFlips      []PairEntry               `json:"planned_keep_flips,omitempty"`
-	RetagEntries          []PairEntry               `json:"retag_entries,omitempty"`
-	InvalidatedEntries    []PairEntry               `json:"invalidated_entries,omitempty"`
-	CompoundSplits        []CompoundSplitEntry      `json:"compound_splits,omitempty"`
-	PlannedCompoundSplits []CompoundSplitEntry      `json:"planned_compound_splits,omitempty"`
-	Demotion              DemotionCounts            `json:"demotion"`
-	Demoted               []DemotionEntry           `json:"demoted,omitempty"`
-	PlannedDemotions      []DemotionEntry           `json:"planned_demotions,omitempty"`
-	Capped                int                       `json:"capped,omitempty"`
-	NoDocuments           int                       `json:"no_documents,omitempty"`
-	Swept                 int                       `json:"swept,omitempty"`
-	AdjudicatorDisabled   bool                      `json:"adjudicator_disabled,omitempty"`
-	Twins                 TwinCounts                `json:"twins"`
-	Siblings              SiblingCounts             `json:"siblings"`
-	Measurement           *MeasurementRun           `json:"measurement,omitempty"`
-	Provisional           ProvisionalCounts         `json:"provisional"`
-	Identity              *admission.IdentityReport `json:"identity,omitempty"`
+	ReportOnly            bool                 `json:"report_only"`
+	Worklist              WorklistCounts       `json:"worklist"`
+	Judged                int                  `json:"judged"`
+	Confirmed             int                  `json:"confirmed"`
+	Flips                 FlipCounts           `json:"flips"`
+	Aliases               []PairEntry          `json:"aliases"`
+	Retags                int                  `json:"retags"`
+	Invalidated           int                  `json:"invalidated"`
+	Skips                 map[string]int       `json:"skips"`
+	PlannedAliases        []PairEntry          `json:"planned_aliases,omitempty"`
+	PlannedKeepFlips      []PairEntry          `json:"planned_keep_flips,omitempty"`
+	RetagEntries          []PairEntry          `json:"retag_entries,omitempty"`
+	InvalidatedEntries    []PairEntry          `json:"invalidated_entries,omitempty"`
+	CompoundSplits        []CompoundSplitEntry `json:"compound_splits,omitempty"`
+	PlannedCompoundSplits []CompoundSplitEntry `json:"planned_compound_splits,omitempty"`
+	Demotion              DemotionCounts       `json:"demotion"`
+	Demoted               []DemotionEntry      `json:"demoted,omitempty"`
+	PlannedDemotions      []DemotionEntry      `json:"planned_demotions,omitempty"`
+	Capped                int                  `json:"capped,omitempty"`
+	NoDocuments           int                  `json:"no_documents,omitempty"`
+	Swept                 int                  `json:"swept,omitempty"`
+	AdjudicatorDisabled   bool                 `json:"adjudicator_disabled,omitempty"`
+	Twins                 TwinCounts           `json:"twins"`
+	Siblings              SiblingCounts        `json:"siblings"`
+	Measurement           *MeasurementRun      `json:"measurement,omitempty"`
+	Provisional           ProvisionalCounts    `json:"provisional"`
 }
 
 // SiblingCounts tallies the containment worklist for the run report: how many pairs want a human's eye and
@@ -325,7 +323,6 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 	r.sweepPromotedTags(ctx, cfg, &report)
 	r.sweepOrphanTags(ctx, cfg, &report)
 	r.sweepProvisionalTags(ctx, cfg, &report)
-	r.sweepIdentityEvidence(ctx, cfg, &report)
 	r.logSummary(report)
 
 	progress("report", "reporting", 1)

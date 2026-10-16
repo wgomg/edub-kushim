@@ -112,6 +112,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Measure the tag store's extension algebra into versioned evidence records",
 			Handler:     tagMeasureHandler,
 		},
+		"tagreconcile": {
+			Name:        "tagreconcile",
+			Description: "Re-adjudicate stored tag evidence: re-check pairs, split compounds, canonicalize, sweep",
+			Handler:     tagReconcileHandler,
+		},
 		"tagidentity": {
 			Name:        "tagidentity",
 			Description: "Adjudicate pending tag identity evidence and apply its dispositions",

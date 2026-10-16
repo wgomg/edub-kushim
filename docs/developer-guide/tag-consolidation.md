@@ -47,7 +47,7 @@ The subsystem spans these packages:
 | `internal/tags/policy` | pure candidate generation: identity + band subjects, no logging, no config |
 | `internal/tags/admission` | admission seams: alias lookup, identity planning, judge/adjudicator orchestration, tag-quality gating, plan application |
 | `internal/enrichment` (`enricher.go`) | coordinator: runs the pipeline and calls the admission seams |
-| `internal/tags/reconcile` | scheduled re-adjudication + log bootstrap parser + identity-evidence sweep |
+| `internal/tags/reconcile` | scheduled re-adjudication + log bootstrap parser |
 | `internal/tags/curation` | tag vocabulary services: tag CRUD, alias disposition, identity-run enqueue |
 | `internal/matcher` | the daemon (`Rank`, embedding store) and the RPC client (`edub`'s deployment) |
 | `internal/database` | migrations 00017/00018/00029, verdict + evidence queries |
@@ -196,11 +196,10 @@ transaction — adjudication stays outside it:
   store label the alias (candidate-wins).
 - **Pending evidence** — with the adjudicator disabled or unavailable, flagged
   candidates stay provisional and pending rows accumulate in
-  `tag_identity_event`. The triggered run
-  (`kushim tagidentity --run <batch-id>`, enqueued by
-  `POST /api/v1/tags/identity/reevaluate`) and the reconciler's identity sweep
-  resolve them through the same cache; whichever runs first records the
-  verdict.
+  `tag_identity_event`. The identity pass
+  (`kushim tagidentity`, enqueued by
+  `POST /api/v1/tags/identity/reevaluate`, a manual run, or its own daily
+  schedule) resolves them through the cache.
 
 ---
 
@@ -314,7 +313,7 @@ Resolution order per document:
    pairs a reply returns are decided; a non-retryable error, an empty result,
    or a pair left missing by a partial reply keeps only those pairs pending:
    the candidates register provisionally with a pending `same_intent` row,
-   resolved later by the triggered run or the reconciler's identity sweep. A
+   resolved later by the identity pass. A
    disabled or failed-to-construct adjudicator skips both calls entirely —
    candidates register provisionally, folds are not applied, and every claim
    waits as pending evidence.
@@ -448,7 +447,9 @@ its batches never occupy a consume slot.
 
 **Scheduling** — the anchored scheduler (`maybeScheduleAnchored` with `tagReconcileSpec`, `internal/ops/queue/queue.go`)
 runs on the queue daemon's housekeeping ticker (thumbnail-backfill precedent):
-the daemon starts a 1-worker/60s pool for the source; `lastRun` is anchored on
+the daemon starts a 1-worker/60s pool for the source unconditionally — the
+enabled flag gates only automatic enqueuing, so a manual `kushim tagreconcile`
+is always claimed; `lastRun` is anchored on
 the most recent `tagreconcile` batch's `created_at`; a run is skipped while one
 is queued/processing or the maintenance lock is held. With no prior batch,
 `FirstRunAnchor` (`internal/backup/scheduler.go`) anchors to the *next*
@@ -461,10 +462,12 @@ preferred time re-phases the next run to the closest upcoming occurrence of
 the new timing (in-memory only — a daemon restart between the edit and the
 re-phased run falls back to the steady rule), and a reverted edit before the
 run restores the steady rule. The handler
-(`internal/tags/reconcile/tagreconcile.go`) owns the batch lifecycle
-(`MarkBatchProcessing`/`FinalizeBatchStatus`), dedups on
-`tagreconcile:<UTC date>`, and reports a JSON `Report` — worklist counts per
-category (the four pair categories plus `compounds` for the stored-compound
+(`internal/tags/reconcile/tagreconcile.go`) runs through the shared blocking
+lifecycle (lock, drain, heartbeat, batch bookends) and forks
+`kushim tagreconcile --run <batch-id>`, storing the child's printed `Report`
+JSON as the task result; it dedups on the fixed `tagreconcile` key, so any
+active run blocks further enqueues of the type. The report
+carries worklist counts per category (the four pair categories plus `compounds` for the stored-compound
 scan and `twins` for the canonicalization arm), judged/confirmed, flips by
 direction, aliases with reassignment
 counts, re-tags, invalidations, skip reasons — as the task result. The report
@@ -479,8 +482,7 @@ consumed `measurement` run (`run_id`, `snapshot_at`), plus `capped`,
 `demotion` (the demotion arm's `worklist`, `mass_decay`, `no_dimension`,
 `rejudged`, `demoted`, `held`, `no_judge`, `skipped`, `failed`, plus the
 demoted/planned entries naming each value and its reason),
-`identity` (the identity sweep's `pending`, `resolved`, `folded`, `aliased`,
-`deferred`, `failed`), `siblings` (the containment worklist's `worklist`,
+`siblings` (the containment worklist's `worklist`,
 `gray`, `firm` counts — evidence only, nothing acts on a containment reading),
 and `adjudicator_disabled`; report-only keep-flip
 document counts come from a
@@ -597,7 +599,7 @@ compounds, and the scan shares `max_rejudge`/`max_retag` with the other arms.
 twin worklist (`tags.Store.LatestWorklists`, the newest run only) and resolves
 each pair: a pinned variant class aliases mechanically onto the
 `PreferCanonical` winner with no judge call, and every other pair becomes
-pending same-intent evidence the run's identity sweep settles. Pairs are skipped
+pending same-intent evidence the identity pass settles. Pairs are skipped
 when a side is no longer a live tag, either side is identity-held, either is a
 conjunction the compound scan owns, the pair is already alias-linked or settled
 at the current rule-set version, or the pair is already in this run's band

@@ -19,24 +19,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-func (r *Reconciler) sweepIdentityEvidence(ctx context.Context, cfg *config.Config, report *Report) {
-	if report.ReportOnly {
-		return
-	}
-	resolver := admission.NewIdentityResolver(r.getConfig, r.logger, r.client, r.tag, r.runner)
-	identityReport, err := resolver.ResolvePending(ctx, cfg.Enricher.TagReconcile.MaxRejudge)
-	if err != nil {
-		r.logger.Error("", "tag reconcile: identity evidence sweep failed: %v", err)
-		return
-	}
-	if identityReport.Pending == 0 {
-		return
-	}
-	report.Identity = identityReport
-	r.logger.Info("", "tag reconcile: identity evidence — %d pending, %d resolved, %d folded, %d aliased, %d deferred, %d failed",
-		identityReport.Pending, identityReport.Resolved, identityReport.Folded, identityReport.Aliased, identityReport.Deferred, identityReport.Failed)
-}
-
 func (r *Reconciler) sweepOrphanTags(ctx context.Context, cfg *config.Config, report *Report) {
 	graceDays := cfg.Enricher.TagReconcile.DeadTagGraceDays
 	cutoff := time.Now().Add(-time.Duration(graceDays) * 24 * time.Hour)

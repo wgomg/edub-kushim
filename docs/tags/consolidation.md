@@ -428,7 +428,7 @@ anti-oscillating:
   so a compound is judged alike whether it arrives by emission or by sweep. A
   twin arm then works the measurement worklists' `≈` pairs: a pinned variant
   class aliases mechanically with no judge call, and every other pair becomes
-  pending identity evidence the same run's identity sweep settles.
+  pending identity evidence the identity pass settles.
 - **How it flips:** each pair is re-evaluated through the current policy on a
   fresh rank; band survivors are re-adjudicated, and a verdict flip must be
   confirmed by a second, orientation-reversed adjudication before it applies.

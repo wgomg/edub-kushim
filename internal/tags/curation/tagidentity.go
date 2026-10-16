@@ -12,6 +12,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// TagIdentityDedupKey is the active-dedup key shared by the enqueue path and the task handler so they agree.
+const TagIdentityDedupKey = "tagidentity"
+
 // TagIdentity enqueues identity resolution sweeps: the human trigger for
 // the machinery the admission resolver serves.
 type TagIdentity struct {
@@ -44,9 +47,9 @@ func (s *TagIdentity) Enqueue(ctx context.Context) (batchID string, alreadyQueue
 	batchID = uuid.New().String()
 	taskID := uuid.New().String()
 
-	// A unique violation on the active-dedup index means another identity task already owns the slot (the
-	// count above lost a race); anything else is a real failure and must not be reported as already queued.
-	if _, err := s.taskCreator.CreateTask(ctx, types.Task.Type.TagIdentity, batchID, json.RawMessage("{}"), taskID, types.Task.Status.Pending, "tagidentity"); err != nil {
+	// a unique violation on the active-dedup index means another identity task already owns the slot (the
+	// count above lost a race); anything else is a real failure and must not be reported as already queued
+	if _, err := s.taskCreator.CreateTask(ctx, types.Task.Type.TagIdentity, batchID, json.RawMessage("{}"), taskID, types.Task.Status.Pending, TagIdentityDedupKey); err != nil {
 		if errs.IsConstraint(err) {
 			return "", true, nil
 		}

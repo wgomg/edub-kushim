@@ -56,7 +56,7 @@ func (m *recordingBatchCreator) Create(_ context.Context, id string, source type
 	return nil
 }
 
-func newTagIdentityTestClient(t *testing.T) *database.Client {
+func newEnqueueTestClient(t *testing.T) *database.Client {
 	t.Helper()
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
@@ -66,7 +66,7 @@ func newTagIdentityTestClient(t *testing.T) *database.Client {
 
 func TestTagIdentityEnqueue(t *testing.T) {
 	t.Run("creates one blocking task and a queued batch", func(t *testing.T) {
-		client := newTagIdentityTestClient(t)
+		client := newEnqueueTestClient(t)
 		taskMock := &recordingTaskCreator{}
 		batchMock := &recordingBatchCreator{}
 		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
@@ -91,7 +91,7 @@ func TestTagIdentityEnqueue(t *testing.T) {
 	})
 
 	t.Run("an active batch reports already queued", func(t *testing.T) {
-		client := newTagIdentityTestClient(t)
+		client := newEnqueueTestClient(t)
 		taskMock := &recordingTaskCreator{}
 		batchMock := &recordingBatchCreator{}
 		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
@@ -110,7 +110,7 @@ func TestTagIdentityEnqueue(t *testing.T) {
 	})
 
 	t.Run("a duplicate active task reports already queued without a batch", func(t *testing.T) {
-		client := newTagIdentityTestClient(t)
+		client := newEnqueueTestClient(t)
 		taskMock := &recordingTaskCreator{
 			createFn: func(types.TaskType, string, json.RawMessage, string, types.TaskStatus, string) (string, error) {
 				// the active-dedup index rejects the second task for the slot the count above lost a race to
@@ -130,7 +130,7 @@ func TestTagIdentityEnqueue(t *testing.T) {
 	})
 
 	t.Run("a task creation failure is reported, not swallowed", func(t *testing.T) {
-		client := newTagIdentityTestClient(t)
+		client := newEnqueueTestClient(t)
 		taskMock := &recordingTaskCreator{
 			createFn: func(types.TaskType, string, json.RawMessage, string, types.TaskStatus, string) (string, error) {
 				return "", errors.New("connection lost")
@@ -145,7 +145,7 @@ func TestTagIdentityEnqueue(t *testing.T) {
 	})
 
 	t.Run("batch failure deletes the orphan task", func(t *testing.T) {
-		client := newTagIdentityTestClient(t)
+		client := newEnqueueTestClient(t)
 
 		// an orphan pending task would be claimable by the queue's
 		// tagidentity pool with a batch that never exists

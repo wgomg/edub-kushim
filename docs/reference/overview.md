@@ -179,8 +179,9 @@ internal/
 │   │   ├── search.go       # Search command (CLI)
 │   │   ├── storage.go      # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
 │   │   ├── tagaudit.go    # `kushim tagaudit [--run <batch-id>]` coverage-audit child
-│   │   ├── tagidentity.go  # `kushim tagidentity --run <batch-id>` identity-adjudication child
+│   │   ├── tagidentity.go  # `kushim tagidentity [--run <batch-id>]` enqueue / identity-adjudication child
 │   │   ├── tagmeasure.go   # `kushim tagmeasure [--run <batch-id>]` measurement child
+│   │   ├── tagreconcile.go # `kushim tagreconcile [--run <batch-id>]` enqueue / reconciliation child
 │   │   ├── task.go         # Task commands (list, status, retry)
 │   │   ├── thumbnails.go   # `kushim thumbnails <mode>` backfill enqueue
 │   │   └── user.go         # User commands (create)
@@ -231,6 +232,7 @@ internal/
 │   │   ├── registration.go # Planned tag registration (Create/CreateAndUnblock, PlanRegistration, CreatePlannedTx)
 │   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
 │   │   ├── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
+│   │   ├── tagreconcile.go # TagReconcile service (NewTagReconcile — enqueues the manual reconciliation runs)
 │   │   └── tagaudit.go     # TagAudit service (NewTagAudit — enqueues the coverage-audit runs, serves the coverage review surface)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
 │   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, compound decomposition incl. JudgeCompounds over the substrate reading, deleted-tag policy, identity planning, tag-quality gating)
@@ -246,8 +248,8 @@ internal/
 │       ├── worklist.go     # Worklist build (buildWorklist, bootstrap, category ordering)
 │       ├── evidence.go     # Evidence pass (re-rank, band adjudication, hysteresis confirmation)
 │       ├── apply.go        # Apply pass (alias/keep flips, verdict upsert)
-│       ├── sweeps.go       # Twin canonicalization, orphan, provisional and identity-evidence sweeps
-│       ├── tagreconcile.go # TagReconcileTaskHandler (reconciler run + batch lifecycle)
+│       ├── sweeps.go       # Twin canonicalization, orphan and provisional sweeps
+│       ├── tagreconcile.go # TagReconcileTaskHandler (forks `kushim tagreconcile --run`, blocking lifecycle)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system

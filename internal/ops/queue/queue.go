@@ -55,6 +55,7 @@ type daemon struct {
 	thumbnailBackfill scheduleState
 	tagReconcile      scheduleState
 	tagMeasure        scheduleState
+	tagIdentity       scheduleState
 	tagAudit          scheduleState
 
 	lastStaleTaskClaim time.Time
@@ -252,7 +253,7 @@ func (d *daemon) tick(ctx context.Context) {
 
 	d.ensureTagReconcile(ctx, cfg)
 	d.ensureTagMeasure(ctx, cfg)
-	d.ensureTagIdentity(ctx)
+	d.ensureTagIdentity(ctx, cfg)
 	d.ensureTagAudit(ctx, cfg)
 
 	if err := sweepEmptyQueuedBatches(ctx, d.client.Load(), d.c.GetLogger()); err != nil {
@@ -329,16 +330,13 @@ func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config) {
 }
 
 func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config) {
+	if err := startPool(ctx, d.c, types.Task.Type.TagReconcile, &d.tagReconcilePool); err != nil {
+		d.c.GetLogger().Error("", "tag reconcile pool: %v", err)
+	}
 	if cfg.Enricher.TagReconcile.Enabled {
-		if err := startPool(ctx, d.c, types.Task.Type.TagReconcile, &d.tagReconcilePool); err != nil {
-			d.c.GetLogger().Error("", "tag reconcile pool: %v", err)
-		}
 		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagReconcile, tagReconcileSpec); err != nil {
 			d.c.GetLogger().Error("", "tag reconcile scheduling: %v", err)
 		}
-	} else if d.tagReconcilePool.started {
-		stopPool(&d.tagReconcilePool)
-		d.c.GetLogger().Info("", "tag reconcile pool stopped (disabled)")
 	}
 }
 
@@ -356,9 +354,14 @@ func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config) {
 	}
 }
 
-func (d *daemon) ensureTagIdentity(ctx context.Context) {
+func (d *daemon) ensureTagIdentity(ctx context.Context, cfg *config.Config) {
 	if err := startPool(ctx, d.c, types.Task.Type.TagIdentity, &d.tagIdentityPool); err != nil {
 		d.c.GetLogger().Error("", "tag identity pool: %v", err)
+	}
+	if cfg.Enricher.TagAdjudicator.Enabled {
+		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagIdentity, tagIdentitySpec); err != nil {
+			d.c.GetLogger().Error("", "tag identity scheduling: %v", err)
+		}
 	}
 }
 
@@ -793,6 +796,23 @@ var (
 		lockGated: true,
 		execute:   executeTagAudit,
 	}
+	// identity's cadence is pinned, not configured: a fixed daily interval at an off-peak hour, gated on the
+	// tag adjudicator so the schedule only fires where a judge can act
+	tagIdentitySpec = anchoredTaskSpec{
+		name:    "tag identity",
+		enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagAdjudicator.Enabled },
+		lastBatch: func(ctx context.Context, q *database.Queries) (sql.NullTime, error) {
+			return q.GetLastTagIdentityBatchCreatedAt(ctx)
+		},
+		timing: func(*config.Config) backup.ScheduleTiming {
+			return backup.ScheduleTiming{Interval: 1, Time: "03:30"}
+		},
+		active: func(ctx context.Context, q *database.Queries) (int64, error) {
+			return q.CountActiveTagIdentityBatches(ctx)
+		},
+		lockGated: true,
+		execute:   executeTagIdentity,
+	}
 )
 
 func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config, state *scheduleState, spec anchoredTaskSpec) error {
@@ -874,6 +894,10 @@ func executeTagMeasure(ctx context.Context, c *container.Container, client *data
 
 func executeTagAudit(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
 	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagAudit, types.Batch.Source.TagAudit, "tag audit")
+}
+
+func executeTagIdentity(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagIdentity, types.Batch.Source.TagIdentity, "tag identity")
 }
 
 func enqueueScheduled(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, taskType types.TaskType, source types.BatchSource, name string) error {

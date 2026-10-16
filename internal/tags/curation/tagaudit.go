@@ -15,6 +15,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// TagAuditDedupKey is the active-dedup key shared by the enqueue path and the task handler so they agree.
+const TagAuditDedupKey = "tagaudit"
+
 // TagAudit enqueues completeness audits and serves the coverage review surface: the flags list and the
 // apply, dismiss, and create-value actions.
 type TagAudit struct {
@@ -55,9 +58,9 @@ func (s *TagAudit) Enqueue(ctx context.Context) (batchID string, alreadyQueued b
 	batchID = uuid.New().String()
 	taskID := uuid.New().String()
 
-	// A unique violation on the active-dedup index means another audit task already owns the slot (the count
-	// above lost a race); anything else is a real failure and must not be reported as already queued.
-	if _, err := s.taskCreator.CreateTask(ctx, types.Task.Type.TagAudit, batchID, json.RawMessage("{}"), taskID, types.Task.Status.Pending, "tagaudit"); err != nil {
+	// a unique violation on the active-dedup index means another audit task already owns the slot (the count
+	// above lost a race); anything else is a real failure and must not be reported as already queued
+	if _, err := s.taskCreator.CreateTask(ctx, types.Task.Type.TagAudit, batchID, json.RawMessage("{}"), taskID, types.Task.Status.Pending, TagAuditDedupKey); err != nil {
 		if errs.IsConstraint(err) {
 			return "", true, nil
 		}

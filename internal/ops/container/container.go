@@ -268,17 +268,7 @@ func (c *Container) ensureDispatcher() error {
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.Backup, backup.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register(types.Task.Type.Mirror, backup.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
-	registry.Register(types.Task.Type.TagReconcile, reconcile.NewTagReconcileTaskHandler(
-		reconcile.NewReconciler(
-			func() *config.Config { return c.cfg.Load() },
-			client,
-			c.tag,
-			c.GetTagToolsRunner(),
-			c.logger,
-		),
-		client.Queries,
-		c.logger,
-	))
+	registry.Register(types.Task.Type.TagReconcile, reconcile.NewTagReconcileTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.TagMeasure, tags.NewTagMeasureTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.TagIdentity, admission.NewTagIdentityTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.TagAudit, admission.NewTagAuditTaskHandler(client.Queries, c.logger))

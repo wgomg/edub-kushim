@@ -852,9 +852,12 @@ same fork-and-wait shape: claimed with the lock held, drained via
 evidence through `admission.IdentityResolver` and prints the
 `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/
 failed) that becomes the task result. Unlike `tagmeasure` there is no manual
-foreground mode and no schedule: the review surface's reevaluate action
-enqueues it, its pool runs unconditionally, and the reconciliation's identity
-sweep covers claims nobody triggers.
+foreground mode: the review surface's reevaluate action, a manual
+`kushim tagidentity` (which enqueues instead of running a foreground pass), and
+the pass's own anchored schedule all create the same queued task. Its pool runs
+unconditionally, and the schedule — a fixed daily 03:30 pass with no config
+keys — fires only while `enricher.tag_adjudicator.enabled` is set, so pending
+claims wait for the next run when the judge is off.
 
 The **tagaudit** task (`internal/tags/admission/tagaudit.go`) follows the same
 drain + heartbeat + fork shape as `tagmeasure`: claimed with the lock held,
@@ -866,11 +869,21 @@ proposals, judge call counts, pending coverage) that becomes the task result.
 Its pool is gated on `enricher.tag_audit.enabled` (the schedule is disabled by
 default) and the manual `kushim tagaudit` run bypasses the queue.
 
-The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) and the
-**thumbbackfill** task (`internal/documents/consumption/thumbnail_backfill.go`, a thin
+The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) is a
+blocking-class task too: claimed with the lock held, drained via
+`WaitForTaskDrain` under the same 5-minute heartbeat, then forks
+`kushim tagreconcile --run <batch-id>`; the child builds the reconciler and runs
+one pass, printing the `tagreconcile-report: <json>` line that becomes the task
+result (the exit code decides completion/failure). It dedups on the fixed key
+`tagreconcile`, so an active run blocks the next trigger, and the daemon's pool
+runs unconditionally — `enricher.tag_reconcile.enabled` gates only the schedule
+that enqueues runs automatically, while a manual `kushim tagreconcile` enqueues
+through the queue the same way.
+
+The **thumbbackfill** task (`internal/documents/consumption/thumbnail_backfill.go`, a thin
 wrapper that adds drain-wait + heartbeat around the per-document
-`ThumbnailTaskHandler`) are blocking-class tasks too: they are claimed with
-the lock held, drain in-flight work via `WaitForTaskDrain`, and run the same
+`ThumbnailTaskHandler`) is a blocking-class task too: it is claimed with
+the lock held, drains in-flight work via `WaitForTaskDrain`, and runs the same
 5-minute heartbeat across the whole run. `ThumbnailBackfill`
 (`internal/service/thumbnail_backfill.go`) creates `thumbbackfill` tasks
 (dedup key `thumbnail:doc:<uuid>`) in `thumbbackfill` batches, which the

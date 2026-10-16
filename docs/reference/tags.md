@@ -112,7 +112,8 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   promote, **demote**, deleted-tag records, embedder integration),
   `SiblingSnapshot` and `ListSiblings` (the read-only overlap surface),
   `PlanRegistration`/`CreatePlannedTx`, alias application (`ApplyAliasPlan`),
-  `TagIdentity`/`NewTagIdentity`, `TagAudit`/`NewTagAudit` plus `CoverageFlag`.
+  `TagIdentity`/`NewTagIdentity`, `TagReconcile`/`NewTagReconcile`,
+  `TagAudit`/`NewTagAudit` plus `CoverageFlag`.
 - `admission/` — `Adjudicator`/`NewAdjudicator` (canonical suggestions,
   decomposition via `JudgeCompounds` over the substrate reading, deleted-tag
   policy, identity planning, quality gating), `IdentityResolver`/
@@ -125,7 +126,7 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   (`Report`, `SiblingCounts`, `TwinCounts`, `MeasurementRun`, `ProvisionalCounts`,
   `WorklistCounts`, `CompoundSplitEntry`, `DemotionCounts`, `DemotionEntry`,
   `FlipCounts`, `PairEntry`), the worklist/evidence/apply paths, the sweeps (twin
-  canonicalization, orphan, provisional, identity evidence, promoted-mass
+  canonicalization, orphan, provisional, promoted-mass
   demotion), the stored-compound scan, `bootstrap.go` (historical log ingest),
   and `TagReconcileTaskHandler`/`NewTagReconcileTaskHandler`.
 

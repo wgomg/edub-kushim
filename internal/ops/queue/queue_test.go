@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/backup"
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 )
@@ -120,5 +121,26 @@ func TestScheduleStateNextDueRephase(t *testing.T) {
 	}
 	if since := time.Since(state.lastRun); since < 0 || since > 5*time.Second {
 		t.Errorf("lastRun = %v, want it advanced to now", state.lastRun)
+	}
+}
+
+// TestTagIdentityScheduleSpec pins the identity cadence: a daily 03:30 pass no
+// config key can move, gated on the tag adjudicator so an install without a judge
+// never schedules one while the pool still claims an explicit enqueue.
+func TestTagIdentityScheduleSpec(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Enricher.TagReconcile.Interval = 7
+	cfg.Enricher.TagReconcile.Time = "05:00"
+
+	if got, want := tagIdentitySpec.timing(cfg), (backup.ScheduleTiming{Interval: 1, Time: "03:30"}); got != want {
+		t.Errorf("timing = %+v, want %+v: identity's cadence is pinned, not configured", got, want)
+	}
+
+	if tagIdentitySpec.enabled(cfg) {
+		t.Error("schedule fires while the tag adjudicator is off")
+	}
+	cfg.Enricher.TagAdjudicator.Enabled = true
+	if !tagIdentitySpec.enabled(cfg) {
+		t.Error("schedule does not fire while the tag adjudicator is on")
 	}
 }

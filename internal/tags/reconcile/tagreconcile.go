@@ -3,53 +3,62 @@ package reconcile
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 var _ task.Dedupable = (*TagReconcileTaskHandler)(nil)
 
-// TagReconcileTaskHandler runs the scheduled reconciliation as a blocking
-// task; its dedup key is the UTC day, so at most one sweep runs per day.
+// ReportPrefix marks the serialized Report inside the tagreconcile command's output; the task handler
+// extracts the JSON that follows it.
+const ReportPrefix = "tagreconcile-report: "
+
+// TagReconcileTaskHandler runs the reconcile pass as a blocking task: it forks the tagreconcile verb
+// and extracts its JSON report. The task deduplicates on a fixed key, so concurrent triggers collapse
+// into one sweep.
 type TagReconcileTaskHandler struct {
-	reconciler *Reconciler
-	queries    *database.Queries
-	logger     *log.Logger
+	queries *database.Queries
+	logger  *log.Logger
 }
 
-// NewTagReconcileTaskHandler wires the handler to the reconciler, the
-// queries and the logger.
-func NewTagReconcileTaskHandler(r *Reconciler, queries *database.Queries, logger *log.Logger) *TagReconcileTaskHandler {
-	return &TagReconcileTaskHandler{
-		reconciler: r,
-		queries:    queries,
-		logger:     logger,
-	}
+// NewTagReconcileTaskHandler wires the handler to the queries and logger.
+func NewTagReconcileTaskHandler(queries *database.Queries, logger *log.Logger) *TagReconcileTaskHandler {
+	return &TagReconcileTaskHandler{queries: queries, logger: logger}
 }
 
-// DedupKey is the UTC day, collapsing concurrent triggers into one sweep
-// per calendar day.
+// DedupKey is fixed for all reconcile tasks: only one sweep runs at a time, so any active run blocks
+// further enqueues of the type.
 func (h *TagReconcileTaskHandler) DedupKey(payload json.RawMessage) string {
-	return fmt.Sprintf("tagreconcile:%s", time.Now().UTC().Format("2006-01-02"))
+	return curation.TagReconcileDedupKey
 }
 
-// Handle runs one reconcile pass and returns its report as the task
-// result.
+// Handle forks the tagreconcile verb for the task's batch and returns its report as the task result.
 func (h *TagReconcileTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	return task.RunBlocking(ctx, h.queries, h.logger, t, "tag reconcile", func(progress *task.ProgressTracker) (json.RawMessage, error) {
-		report, err := h.reconciler.Run(ctx, progress.Set)
+		progress.Set("run", "tagreconcile --run "+t.BatchID, 0)
+		result, err := tags.ForkAndExtractReport("tagreconcile", t.BatchID, ReportPrefix, "tag reconcile")
 		if err != nil {
 			return nil, err
 		}
 
-		raw, err := json.Marshal(report)
-		if err != nil {
-			return nil, fmt.Errorf("marshal tag reconcile report: %w", err)
+		if report, parseErr := parseReport(result); parseErr == nil {
+			h.logger.Info("", "tag reconcile run: report_only=%t, %d pairs re-checked, %d judged, %d aliases, %d restorations, %d compounds split, %d twin pairs, %d sibling pairs, %d demotions revoked",
+				report.ReportOnly, report.Worklist.Stale+report.Worklist.Unjudged+report.Worklist.Drifted+report.Worklist.Aged,
+				report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, len(report.CompoundSplits), report.Twins.Worklist,
+				report.Siblings.Worklist, report.Demotion.Demoted)
 		}
-		return raw, nil
+		return result, nil
 	})
+}
+
+func parseReport(result json.RawMessage) (Report, error) {
+	var report Report
+	if err := json.Unmarshal(result, &report); err != nil {
+		return Report{}, err
+	}
+	return report, nil
 }

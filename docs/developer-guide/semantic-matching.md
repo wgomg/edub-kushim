@@ -399,8 +399,8 @@ row: fresh verdicts record the judging model, cache-applied ones store NULL
 WHERE verdict_model IS NOT NULL` deduplicates fresh document-anchored verdicts
 across concurrent workers: the losing insert re-reads the cached verdict and
 applies it as cache-applied. Pending identity evidence is resolved later by the
-triggered run or the reconciler's identity sweep; whichever runs first settles
-the claim for both. When the adjudicator is unavailable (disabled, or failed to
+identity pass (`kushim tagidentity`, on demand or on its own daily schedule).
+When the adjudicator is unavailable (disabled, or failed to
 construct), both paths are skipped: candidates register provisionally and every
 claim waits as pending evidence.
 
