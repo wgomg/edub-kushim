@@ -1621,37 +1621,6 @@ func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams
 	return items, nil
 }
 
-const quarantineStaleBlockingTasks = `-- name: QuarantineStaleBlockingTasks :execrows
-UPDATE task SET
-    status = 'failed',
-    error = 'Max retries exceeded (' || attempts || ')',
-    completed_at = CURRENT_TIMESTAMP
-FROM backup_lock
-WHERE backup_lock.id = 1
-  AND task.status = 'processing'
-  AND task.task_type = ANY($3::task_type[])
-  AND task.attempts >= $1
-  AND task.started_at < $2
-  AND (
-    backup_lock.owner_token IS DISTINCT FROM task.claim_token
-    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
-  )
-`
-
-type QuarantineStaleBlockingTasksParams struct {
-	Attempts  int32
-	StartedAt sql.NullTime
-	Types     []types.TaskType
-}
-
-func (q *Queries) QuarantineStaleBlockingTasks(ctx context.Context, arg QuarantineStaleBlockingTasksParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, quarantineStaleBlockingTasks, arg.Attempts, arg.StartedAt, pq.Array(arg.Types))
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const quarantineStaleProcessingTasks = `-- name: QuarantineStaleProcessingTasks :execrows
 UPDATE task SET
     status = 'failed',
@@ -1669,78 +1638,6 @@ type QuarantineStaleProcessingTasksParams struct {
 
 func (q *Queries) QuarantineStaleProcessingTasks(ctx context.Context, arg QuarantineStaleProcessingTasksParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, quarantineStaleProcessingTasks, arg.Attempts, arg.StartedAt, pq.Array(arg.Types))
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const releaseMaintenanceLockForBatch = `-- name: ReleaseMaintenanceLockForBatch :execrows
-UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
-WHERE id = 1 AND running = true AND owner_token IN (
-  SELECT claim_token FROM task
-  WHERE batch_id = $1 AND status = 'processing'
-    AND task_type = ANY($2::task_type[])
-)
-`
-
-type ReleaseMaintenanceLockForBatchParams struct {
-	BatchID sql.NullString
-	Types   []types.TaskType
-}
-
-func (q *Queries) ReleaseMaintenanceLockForBatch(ctx context.Context, arg ReleaseMaintenanceLockForBatchParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForBatch, arg.BatchID, pq.Array(arg.Types))
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const releaseMaintenanceLockForStaleHolders = `-- name: ReleaseMaintenanceLockForStaleHolders :execrows
-UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
-WHERE id = 1 AND running = true
-  AND started_at <= NOW() - INTERVAL '30 minutes'
-  AND owner_token IN (
-    SELECT claim_token FROM task
-    WHERE status = 'processing'
-      AND task_type = ANY($1::task_type[])
-  )
-`
-
-func (q *Queries) ReleaseMaintenanceLockForStaleHolders(ctx context.Context, argTypes []types.TaskType) (int64, error) {
-	result, err := q.db.ExecContext(ctx, releaseMaintenanceLockForStaleHolders, pq.Array(argTypes))
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const resetStaleBlockingTasks = `-- name: ResetStaleBlockingTasks :execrows
-UPDATE task SET
-    status = 'pending',
-    attempts = attempts + 1,
-    progress = NULL
-FROM backup_lock
-WHERE backup_lock.id = 1
-  AND task.status = 'processing'
-  AND task.task_type = ANY($3::task_type[])
-  AND task.attempts < $1
-  AND task.started_at < $2
-  AND (
-    backup_lock.owner_token IS DISTINCT FROM task.claim_token
-    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
-  )
-`
-
-type ResetStaleBlockingTasksParams struct {
-	Attempts  int32
-	StartedAt sql.NullTime
-	Types     []types.TaskType
-}
-
-func (q *Queries) ResetStaleBlockingTasks(ctx context.Context, arg ResetStaleBlockingTasksParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, resetStaleBlockingTasks, arg.Attempts, arg.StartedAt, pq.Array(arg.Types))
 	if err != nil {
 		return 0, err
 	}

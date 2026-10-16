@@ -508,7 +508,7 @@ func createBackupTask(t *testing.T, store *Store, taskID string) {
 
 func lockHeld(t *testing.T, client *database.Client) bool {
 	t.Helper()
-	v, err := client.Queries.IsBackupLocked(context.Background())
+	v, err := client.Queries.IsMaintenanceLocked(context.Background())
 	testutil.AssertNoError(t, err, "check lock")
 	return v == 1
 }
@@ -652,7 +652,7 @@ func TestStoreGuardAgainstStaleClaimant(t *testing.T) {
 	testutil.AssertNoError(t, err, "claim")
 
 	fresh := uuid.New()
-	if _, err := client.DB().ExecContext(ctx, "UPDATE backup_lock SET owner_token = $1 WHERE id = 1", fresh); err != nil {
+	if _, err := client.DB().ExecContext(ctx, "UPDATE system_signal SET data = jsonb_set(data, '{owner_token}', to_jsonb($1::text)) WHERE name = 'maintenance_lock'", fresh); err != nil {
 		t.Fatalf("overwrite lock token: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx, "UPDATE task SET claim_token = $1 WHERE id = $2", fresh, task.ID); err != nil {

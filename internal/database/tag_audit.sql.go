@@ -9,15 +9,6 @@ import (
 	"context"
 )
 
-const bumpTagAuditSweep = `-- name: BumpTagAuditSweep :exec
-UPDATE tag_audit_sweep SET sweep_count = sweep_count + 1 WHERE id = 1
-`
-
-func (q *Queries) BumpTagAuditSweep(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, bumpTagAuditSweep)
-	return err
-}
-
 const countEligibleLiveDocuments = `-- name: CountEligibleLiveDocuments :one
 SELECT COUNT(*)
 FROM document d
@@ -34,14 +25,14 @@ func (q *Queries) CountEligibleLiveDocuments(ctx context.Context, sweepCount int
 }
 
 const getTagAuditSweep = `-- name: GetTagAuditSweep :one
-SELECT sweep_count FROM tag_audit_sweep WHERE id = 1
+SELECT value FROM system_signal WHERE name = 'tag_audit_sweep'
 `
 
-func (q *Queries) GetTagAuditSweep(ctx context.Context) (int64, error) {
+func (q *Queries) GetTagAuditSweep(ctx context.Context) (string, error) {
 	row := q.db.QueryRowContext(ctx, getTagAuditSweep)
-	var sweep_count int64
-	err := row.Scan(&sweep_count)
-	return sweep_count, err
+	var value string
+	err := row.Scan(&value)
+	return value, err
 }
 
 const listEligibleLiveDocumentsBelowTagFloor = `-- name: ListEligibleLiveDocumentsBelowTagFloor :many
@@ -122,6 +113,17 @@ func (q *Queries) SampleEligibleLiveDocumentIDs(ctx context.Context, arg SampleE
 		return nil, err
 	}
 	return items, nil
+}
+
+const setTagAuditSweep = `-- name: SetTagAuditSweep :exec
+UPDATE system_signal
+SET value = $1, modified_at = CURRENT_TIMESTAMP
+WHERE name = 'tag_audit_sweep'
+`
+
+func (q *Queries) SetTagAuditSweep(ctx context.Context, sweepCount string) error {
+	_, err := q.db.ExecContext(ctx, setTagAuditSweep, sweepCount)
+	return err
 }
 
 const upsertTagAuditRegister = `-- name: UpsertTagAuditRegister :exec

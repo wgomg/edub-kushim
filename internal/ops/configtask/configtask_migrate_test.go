@@ -128,7 +128,7 @@ func TestMigrateDBTask(t *testing.T) {
 	}
 
 	// Backup lock must be released after the migration.
-	locked, err := queries.IsBackupLocked(ctx)
+	locked, err := queries.IsMaintenanceLocked(ctx)
 	if err != nil {
 		t.Fatalf("check backup lock: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestMigrateStorageTask(t *testing.T) {
 			}
 
 			// Backup lock must be released and config persisted.
-			locked, err := queries.IsBackupLocked(ctx)
+			locked, err := queries.IsMaintenanceLocked(ctx)
 			if err != nil {
 				t.Fatalf("check backup lock: %v", err)
 			}

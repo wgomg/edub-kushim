@@ -256,13 +256,6 @@ func (ns NullTaskType) Value() (driver.Value, error) {
 	return string(ns.TaskType), nil
 }
 
-type BackupLock struct {
-	ID         int32
-	Running    bool
-	StartedAt  sql.NullTime
-	OwnerToken uuid.NullUUID
-}
-
 type Batch struct {
 	ID        string
 	Source    types.BatchSource
@@ -365,6 +358,15 @@ type SavedSearch struct {
 	CreatedAt  time.Time
 }
 
+type SystemSignal struct {
+	ID         int16
+	Name       string
+	Type       string
+	Value      string
+	Data       *json.RawMessage
+	ModifiedAt time.Time
+}
+
 type Tag struct {
 	ID            int64
 	Name          string
@@ -387,11 +389,6 @@ type TagAlias struct {
 type TagAuditRegister struct {
 	DocumentID int64
 	AuditCount int64
-}
-
-type TagAuditSweep struct {
-	ID         int16
-	SweepCount int64
 }
 
 type TagCompositionEvent struct {

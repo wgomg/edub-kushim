@@ -73,7 +73,7 @@ internal/
 │   ├── people_type.sql.go  # Generated people type queries
 │   ├── task.sql.go         # Generated task queries (includes SetEnrichTaskPending, DiscardEnrichTask)
 │   ├── batch.sql.go        # Generated batch + batch_owner queries (queued/processing, ownership, stale owners)
-│   ├── backup_lock.sql.go  # Generated backup lock queries
+│   ├── maintenance_lock.sql.go # Generated maintenance-lock signal queries
 │   ├── user.sql.go         # Generated user queries
 │   ├── saved_search.sql.go # Generated saved search queries (CreateSavedSearch, ListSavedSearches, DeleteSavedSearch)
 │   └── sql/                # Embedded SQL assets

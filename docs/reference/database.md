@@ -64,11 +64,11 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim backup`, `kushim restore`, the `migrate-db` config task, and the `migrate-storage` config task):
 
-- `DumpSchemaAndData(ctx, db, schemaFS, w)` — Writes a complete SQL dump to `w`: a single `BEGIN...COMMIT` transaction that recreates the schema from the embedded migrations (preamble drops the public schema), recreates the `goose_db_version` table from the live schema (introspection-based DDL) and carries its rows across the dump so a restored database can be reconnected without goose re-applying migrations, then batch-inserts all table data (excluding `goose_db_version` and `backup_lock` — the latter is recreated by its own migration).
+- `DumpSchemaAndData(ctx, db, schemaFS, w)` — Writes a complete SQL dump to `w`: a single `BEGIN...COMMIT` transaction that recreates the schema from the embedded migrations (preamble drops the public schema), recreates the `goose_db_version` table from the live schema (introspection-based DDL) and carries its rows across the dump so a restored database can be reconnected without goose re-applying migrations, then batch-inserts all table data (excluding the application-managed tables `goose_db_version` and `system_signal` — the latter's seeded signal rows are recreated by the migration replay).
 - `SQLDumpToFile(ctx, db, schemaFS, destPath)` — Gzipped variant (the gzip footer is flushed before the file is closed); used for the pre-migration safety snapshot.
 - `CheckRestoreTooling(runtime, container)` — Verifies the external tooling for a restore under the configured `database.runtime`: `psql` on PATH (`host`), the `docker`/`podman` binary plus a non-empty container name, or refuses outright for `remote` with manual-restore guidance. Runs before any destructive step.
 - `RestoreDumpViaPSQL(ctx, runtime, container, dsn, dumpPath)` — Pipes a plain SQL dump file into `psql`, executed on the host (`psql -X -v ON_ERROR_STOP=1 -f <dump> <dsn>`, password via `PGPASSWORD` so it never appears on argv) or inside the container (`<runtime> exec -i -e PGPASSWORD=<pw> <container> psql -X -v ON_ERROR_STOP=1 -h localhost -U <user> -d <db>`, dump piped to stdin; `-h localhost` forces TCP + password auth inside the container). The dump's own `BEGIN/COMMIT` keeps the restore atomic and `ON_ERROR_STOP=1` fails fast; stderr is captured into the error message.
-- `ValidateMigrationDestination(ctx, db)` — Refuses the destructive restore when the destination holds tables without edub migration history (goose version table present with rows), so a mistyped/reused database name is never silently wiped.
+- `ValidateMigrationDestination(ctx, db)` — Refuses the destructive restore when the destination holds tables without edub migration history (goose version table present with rows); the application-managed tables `goose_db_version` and `system_signal` are ignored (the shared `appManagedTables` list), so a mistyped/reused database name is never silently wiped.
 - `RewriteStoragePaths(ctx, db, oldDir, newDir)` — Rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` from `oldDir` to `newDir` in a single transaction (LIKE-escaped prefix match); used by restore and the `migrate-storage` task.
 - `RewriteTaskPayloadPaths(ctx, db, oldConsumptionDir, newConsumptionDir)` — Rewrites `file_path` inside pending `consume` task payloads (JSON) from the old consumption dir to the new one via `jsonb_set` with a strict-prefix match; runs before files move so queued work references the new inbox paths.
 - `WaitForTaskDrain(ctx, queries, logger, what, onWait ...func(count int64))` — Polls `CountProcessingTasks` (5s ticker) until no consume/enrich task is processing; the caller must hold the maintenance lock, which blocks new claims, so it converges. `onWait`, when non-nil, observes the in-flight count on each poll.
@@ -95,6 +95,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 - `SavedSearch` — `ID`, `Name`, `FilterJson string`, `CreatedAt time.Time`
 - `Batch` — `ID`, `Source`, `Status` (queued/processing/completed/failed/cancelled), `CreatedAt sql.NullTime`
 - `BatchOwner` — `BatchID`, `OwnerID`, `Pid`, `AcquiredAt`, `LastHeartbeat`
+- `SystemSignal` — `ID int16`, `Name`, `Type`, `Value string`, `Data *json.RawMessage` (JSONB), `ModifiedAt time.Time`
 - `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `OriginalType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
 - `TagVerdictEvent` — `ID`, `DocumentID int64` (FK → `document.id`, ON DELETE CASCADE), `Query`, `Target`, `Sim float64`, `Verdict types.TagVerdict` (`same`/`variant`/`related`), `VerdictModel sql.NullString` (NULL for cache-applied rows), `PolicyVersion`, `VerdictAt time.Time`
 - `TagQualityEvent` — `ID`, `DocumentID int64` (FK → `document.id`, ON DELETE CASCADE), `TagName`, `Criteria json.RawMessage` (JSONB, the rubric booleans — the judge's four answers plus the `dimension` stamped from the parts pass), `Pass bool`, `VerdictModel sql.NullString` (NULL for cache-applied rows), `PolicyVersion`, `VerdictAt time.Time`
@@ -158,7 +159,11 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Task
 
-`CreateTask`, `GetTask`, `GetTaskByTaskID`, `GetTaskByBatchID`, `ListTasks`, `ListAllTasks`, `ListTasksByBatch`, `ListAllTasksByBatch`, `ListTasksByBatchAndStatus`, `ListAllTasksByBatchAndStatus`, `ListTasksByBatchAndStatusAndType`, `ListAllTasksByBatchAndStatusAndType`, `ListTasksByBatchAndType`, `ListAllTasksByBatchAndType`, `ListTasksByStatus`, `ListAllTasksByStatus`, `ListTasksByStatusAndType`, `ListAllTasksByStatusAndType`, `ListTasksByType`, `ListAllTasksByType`, `ListActiveTasks` (non-terminal `pending`/`processing`/`waiting`, processing-first then oldest-queued, `LIMIT/OFFSET`), `CountTasksByBatchAndStatus`, `GetNextPendingTask`, `GetNextPendingTaskOfType`, `ClaimTask`, `CompleteTask` (now `:execrows` with `AND status = 'processing'` status guard), `FailTask`, `RetryTask`, `DeleteTask`, `CancelPendingTasksByBatch`, `CancelProcessingTasksByBatch`, `SetEnrichTaskPending`, `DiscardEnrichTask`, `DiscardEnrichTaskByTaskID`, `ListDistinctBatchIDs`, `ListDistinctBatchIDsByStatus`, `CountDistinctBatches`, `CountAllTasks`, `CountTasksByStatus`, `QuarantineStaleProcessingTasks`, `ResetStaleProcessingTasks` (both gated-class only, blocking types excluded), `QuarantineStaleBlockingTasks`, `ResetStaleBlockingTasks` (ownership-gated on `backup_lock`), `ReleaseMaintenanceLockForStaleHolders` (releases only past the 30-minute window, token-membership scoped), `ReleaseMaintenanceLockForBatch`
+`CreateTask`, `GetTask`, `GetTaskByTaskID`, `GetTaskByBatchID`, `ListTasks`, `ListAllTasks`, `ListTasksByBatch`, `ListAllTasksByBatch`, `ListTasksByBatchAndStatus`, `ListAllTasksByBatchAndStatus`, `ListTasksByBatchAndStatusAndType`, `ListAllTasksByBatchAndStatusAndType`, `ListTasksByBatchAndType`, `ListAllTasksByBatchAndType`, `ListTasksByStatus`, `ListAllTasksByStatus`, `ListTasksByStatusAndType`, `ListAllTasksByStatusAndType`, `ListTasksByType`, `ListAllTasksByType`, `ListActiveTasks` (non-terminal `pending`/`processing`/`waiting`, processing-first then oldest-queued, `LIMIT/OFFSET`), `CountTasksByBatchAndStatus`, `GetNextPendingTask`, `GetNextPendingTaskOfType`, `ClaimTask`, `CompleteTask` (now `:execrows` with `AND status = 'processing'` status guard), `FailTask`, `RetryTask`, `DeleteTask`, `CancelPendingTasksByBatch`, `CancelProcessingTasksByBatch`, `SetEnrichTaskPending`, `DiscardEnrichTask`, `DiscardEnrichTaskByTaskID`, `ListDistinctBatchIDs`, `ListDistinctBatchIDsByStatus`, `CountDistinctBatches`, `CountAllTasks`, `CountTasksByStatus`, `QuarantineStaleProcessingTasks`, `ResetStaleProcessingTasks` (both gated-class only, blocking types excluded)
+
+### Maintenance lock
+
+The `maintenance_lock` row of `system_signal`: `IsMaintenanceLocked` (the `is_maintenance_lock_held()` gate), `AcquireBackupLock` / `ReleaseBackupLock` (tokenless lock for the CLI and system-wide maintenance), `AcquireMaintenanceLockForTask` / `ReleaseMaintenanceLockForTask` / `TouchMaintenanceLockForTask` (claim-token lock, its owner-guarded release, and the 5-minute heartbeat), `ReleaseMaintenanceLockForStaleHolders` (releases only past the 30-minute window, token-membership scoped), `ReleaseMaintenanceLockForBatch`, `QuarantineStaleBlockingTasks`, `ResetStaleBlockingTasks` (both ownership-gated on the lock row's `owner_token` and freshness key)
 
 ### Batch
 
@@ -446,15 +451,21 @@ the judged-verdict cache), `idx_tag_coverage_event_open` (partial on
 serving the review list), `idx_tag_coverage_event_class`,
 `idx_tag_coverage_event_document` and `idx_tag_coverage_event_tag` — and the
 sweep register: `tag_audit_register` (per-document `audit_count`, cascading on
-document delete) and the `tag_audit_sweep` singleton seeded at `sweep_count = 0`).
-`tag_audit_sweep` is a migration-seeded singleton, so like `backup_lock` it is
-excluded from the schema-and-data dump and re-created by the migration replay on
-restore. `00039_tag_demotion.sql` adds the demotion record and the seeded marker
+document delete) and the `tag_audit_sweep` counter, whose row lives in
+`system_signal` since `00041_system_signal.sql`).
+`system_signal` holds the migration-seeded signal rows (the sweep counter and the
+maintenance lock), so it is excluded from the schema-and-data dump and its rows
+are re-created by the migration replay on restore. `00039_tag_demotion.sql` adds the demotion record and the seeded marker
 (`tag.demoted_at`, `tag.demoted_reason`, `tag.seeded`) plus the partial index
 `idx_tag_promoted_demotable` on `(promoted_at) WHERE promoted_at IS NOT NULL AND NOT
 seeded`, serving the demotion worklist. `00040_tag_composition_reading.sql` adds the
 `tag_composition_event.reading` evidence column (`JSONB NOT NULL DEFAULT '{}'`), which
-the insert fills with `COALESCE(@reading, '{}'::jsonb)`. Goose tracks
+the insert fills with `COALESCE(@reading, '{}'::jsonb)`. `00041_system_signal.sql`
+consolidates the singleton state into one `system_signal` table: it creates the
+signal store (`name` unique, text `value`, optional JSONB `data`), carries the
+maintenance lock and the sweep counter into it, redefines
+`is_maintenance_lock_held()` over the new table, and drops `backup_lock` and
+`tag_audit_sweep`. Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

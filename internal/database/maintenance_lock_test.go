@@ -26,12 +26,12 @@ func TestHoldMaintenanceLock(t *testing.T) {
 
 		release, err := TryHoldMaintenanceLock(ctx, q, logger, "try-lock", uuid.NullUUID{}, nil)
 		assertNoError(t, err, "try hold")
-		locked, err := q.IsBackupLocked(ctx)
+		locked, err := q.IsMaintenanceLocked(ctx)
 		assertNoError(t, err, "is locked")
 		assertEqual(t, locked, int32(1), "lock held while held")
 
 		release()
-		locked, err = q.IsBackupLocked(ctx)
+		locked, err = q.IsMaintenanceLocked(ctx)
 		assertNoError(t, err, "is locked after release")
 		assertEqual(t, locked, int32(0), "lock released")
 	})
@@ -51,7 +51,7 @@ func TestHoldMaintenanceLock(t *testing.T) {
 		if !strings.Contains(err.Error(), "held by another process") {
 			t.Errorf("error = %q, want it to report the held lock", err)
 		}
-		locked, err := q.IsBackupLocked(ctx)
+		locked, err := q.IsMaintenanceLocked(ctx)
 		assertNoError(t, err, "is locked")
 		assertEqual(t, locked, int32(1), "the original holder keeps the lock")
 	})
@@ -85,7 +85,7 @@ func TestHoldMaintenanceLock(t *testing.T) {
 		assertNoError(t, err, "hold under the claim token")
 		release()
 
-		locked, err := q.IsBackupLocked(ctx)
+		locked, err := q.IsMaintenanceLocked(ctx)
 		assertNoError(t, err, "is locked")
 		assertEqual(t, locked, int32(1), "the helper must not release the claim token's lock")
 	})

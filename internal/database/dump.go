@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 const insertBatchSize = 100
@@ -295,16 +297,18 @@ func writeIdentityRestore(ctx context.Context, tx *sql.Tx, tableName string, w i
 	return rows.Err()
 }
 
+// appManagedTables are the tables the application or its migration framework owns rather than user data: a
+// dump skips them so the restore's migration replay does not collide on the rows the replay re-seeds, and
+// destination validation ignores them so a database holding only these tables still counts as replaceable.
+var appManagedTables = []string{"goose_db_version", "system_signal"}
+
 func getTableNames(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT tablename FROM pg_catalog.pg_tables
 		WHERE schemaname = 'public'
-		  -- goose_db_version is dumped separately; backup_lock and tag_audit_sweep hold a singleton row
-		  -- their migration seeds itself, so dumping the row too would collide on the primary key when the
-		  -- restore replays the migration
-		  AND tablename NOT IN ('goose_db_version', 'backup_lock', 'tag_audit_sweep')
+		  AND tablename <> ALL($1::text[])
 		ORDER BY tablename
-	`)
+	`, pq.Array(appManagedTables))
 	if err != nil {
 		return nil, fmt.Errorf("query tables: %w", err)
 	}

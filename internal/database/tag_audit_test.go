@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"testing"
 )
 
@@ -153,8 +154,10 @@ func TestTagAuditSweepRegister(t *testing.T) {
 
 	doc := CreateUniqueDocument(t, q, "sweep register")
 
-	sweep, err := q.GetTagAuditSweep(ctx)
+	raw, err := q.GetTagAuditSweep(ctx)
 	assertNoError(t, err, "read sweep")
+	sweep, err := strconv.ParseInt(raw, 10, 64)
+	assertNoError(t, err, "parse sweep")
 	if sweep != 0 {
 		t.Fatalf("initial sweep = %d, want 0", sweep)
 	}
@@ -171,7 +174,7 @@ func TestTagAuditSweepRegister(t *testing.T) {
 
 	// the second audit is what makes the counter observable: with one audit the document is admitted again
 	// as soon as the sweep advances, with two it costs a sweep each
-	if err := q.BumpTagAuditSweep(ctx); err != nil {
+	if err := q.SetTagAuditSweep(ctx, "1"); err != nil {
 		t.Fatalf("bump sweep: %v", err)
 	}
 	eligible, err := q.SampleEligibleLiveDocumentIDs(ctx, SampleEligibleLiveDocumentIDsParams{SweepCount: 1, PageLimit: 10})
@@ -183,17 +186,19 @@ func TestTagAuditSweepRegister(t *testing.T) {
 		t.Errorf("eligible count under sweep 1 = %d, %v, want 0", n, err)
 	}
 
-	if err := q.BumpTagAuditSweep(ctx); err != nil {
+	if err := q.SetTagAuditSweep(ctx, "2"); err != nil {
 		t.Fatalf("bump sweep: %v", err)
 	}
 	if n, err := q.CountEligibleLiveDocuments(ctx, 2); err != nil || n != 0 {
 		t.Errorf("eligible count under sweep 2 = %d, %v, want 0: the document outran this sweep too", n, err)
 	}
-	if err := q.BumpTagAuditSweep(ctx); err != nil {
+	if err := q.SetTagAuditSweep(ctx, "3"); err != nil {
 		t.Fatalf("bump sweep: %v", err)
 	}
-	sweep, err = q.GetTagAuditSweep(ctx)
+	raw, err = q.GetTagAuditSweep(ctx)
 	assertNoError(t, err, "read the rolled-over sweep")
+	sweep, err = strconv.ParseInt(raw, 10, 64)
+	assertNoError(t, err, "parse the rolled-over sweep")
 	eligible, err = q.SampleEligibleLiveDocumentIDs(ctx, SampleEligibleLiveDocumentIDsParams{SweepCount: sweep, PageLimit: 10})
 	assertNoError(t, err, "sample after rollover")
 	if len(eligible) != 1 || eligible[0] != doc {

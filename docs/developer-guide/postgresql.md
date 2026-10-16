@@ -78,10 +78,12 @@ primary keys instead (`batch.id`, `00001_baseline.sql:101`). Rule of thumb in
 this schema: **database-invented IDs are identity, externally-invented IDs
 are TEXT PKs.**
 
-Also note `id int PRIMARY KEY DEFAULT 1 CHECK (id = 1)` in the `backup_lock`
-table (`00005_backup_lock.sql:3`) — the **single-row table** pattern: a `CHECK`
-that only ever allows the row with `id = 1` turns the table into a
-single-row document usable as a lock/flag store (§11).
+Shared singleton state — the maintenance lock and the tag-audit sweep counter —
+lives in the `system_signal` table (`00041_system_signal.sql`) — the **signal
+store** pattern: one row per signal keyed by a unique `name`, carrying its value
+as text plus an optional JSONB `data` object for structured fields. Adding a
+signal is a seed row and its queries, not a new table; the lock's use as a gate
+is covered in §11.
 
 ---
 
@@ -375,15 +377,17 @@ indexed) — which keeps payloads for machine data only.
 Plain SQL functions (not triggers) are used to centralize business conditions
 so they can be reused across queries.
 
-The maintenance-lock gate (`00014_maintenance_lock_predicate.sql`, reading the
-`backup_lock` table created in `00005_backup_lock.sql`):
+The maintenance-lock gate (`00014_maintenance_lock_predicate.sql`, redefined
+over `system_signal` by `00041_system_signal.sql`):
 
 ```sql
 CREATE OR REPLACE FUNCTION is_maintenance_lock_held() RETURNS boolean AS $$
 BEGIN
   RETURN EXISTS (
-    SELECT 1 FROM backup_lock
-    WHERE id = 1 AND running = true AND started_at > NOW() - INTERVAL '30 minutes'
+    SELECT 1 FROM system_signal
+    WHERE name = 'maintenance_lock'
+      AND value = 'true'
+      AND (data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
   );
 END;
 $$ LANGUAGE plpgsql;
@@ -403,12 +407,14 @@ the gate (`gated = true`) is declared once in the Go registry
 (`types.TaskType.IsLockGated()`: consume, enrich, thumbnail); all other types
 claim with `gated = false`, so the predicate can never leak into their
 queries. The lock is acquired with a
-conditional UPDATE on the single-row table (§2) — an atomic
+conditional UPDATE on the signal row (§2) — an atomic
 compare-and-swap:
 
 ```sql
-UPDATE backup_lock SET running = true, started_at = NOW()
-WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
+UPDATE system_signal SET value = 'true',
+    data = jsonb_build_object('started_at', to_jsonb(NOW()))
+WHERE name = 'maintenance_lock'
+  AND (value = 'false' OR (data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes');
 ```
 
 Zero rows affected = the lock was already held — same `:execrows` discipline
@@ -565,7 +571,7 @@ Knowing what *isn't* here is as instructive as what is:
 | Feature | Why it's absent |
 |---|---|
 | `SELECT ... FOR UPDATE SKIP LOCKED` | The task claim uses an atomic guarded UPDATE (`WHERE status='pending'` + `RowsAffected`) instead — one statement, no row lock held, no explicit unlock, works identically across retries. See §7. |
-| `pg_advisory_lock` | Backup mutual exclusion uses a **single-row table lock** (§11) instead — visible/queryable state, staleness rule in a SQL function, and no session-lifetime ownership to leak. |
+| `pg_advisory_lock` | Backup mutual exclusion uses a **signal-row lock** (§11) instead — visible/queryable state, staleness rule in a SQL function, and no session-lifetime ownership to leak. |
 | `pg_trgm` / `ILIKE` / `LIKE`-with-`%`-prefix | Name search is `LIKE $1` with the caller appending `%` (prefix match only) — an index-friendly pattern. Fuzzy/substring search would need trigram indexes, which aren't needed. |
 | `FILTER (WHERE ...)` | The codebase predates it or simply prefers portability: `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` is the classic form that works everywhere. |
 | `gen_random_uuid()` | UUIDs are generated in Go (`google/uuid`) and passed in as TEXT PKs — keeps the DB layer free of pgcrypto and the IDs available before the insert. |
@@ -586,7 +592,7 @@ Knowing what *isn't* here is as instructive as what is:
 | Generated tsvector column | `sql/schema/migrations/00002_tsvector.sql` |
 | GIN + CONCURRENTLY + NO TRANSACTION | `sql/schema/migrations/00003_tsvector_index.sql` |
 | Trigger + `pg_notify` | `sql/schema/migrations/00004_listen_notify.sql` + `internal/ops/queue/notify.go` |
-| Single-row lock table + SQL gate function | `sql/schema/migrations/00005_backup_lock.sql`, `sql/queries/backup_lock.sql`, `sql/queries/task.sql:35-40` |
+| Signal store + SQL gate function | `sql/schema/migrations/00041_system_signal.sql`, `sql/queries/maintenance_lock.sql`, `sql/queries/task.sql:13-18` |
 | Soft delete + partial index | `sql/schema/migrations/00007_trash_soft_delete.sql` |
 | Idempotent multi-row seeds with `ON CONFLICT` | `sql/schema/seed-*.sql` |
 | Upsert + `excluded` | `sql/queries/batch.sql:24-31`, `tag.sql:17-20`, `people.sql`, `document_tag.sql`, `deleted_tag.sql` |

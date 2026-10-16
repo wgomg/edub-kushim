@@ -296,7 +296,7 @@ func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config) {
 		if err := startPool(ctx, d.c, types.Task.Type.Backup, &d.backupPool); err != nil {
 			d.c.GetLogger().Error("", "backup pool: %v", err)
 		}
-		locked, lockErr := d.client.Load().Queries.IsBackupLocked(ctx)
+		locked, lockErr := d.client.Load().Queries.IsMaintenanceLocked(ctx)
 		if lockErr != nil {
 			d.c.GetLogger().Error("", "backup lock check: %v", lockErr)
 		} else if locked == 0 {
@@ -315,7 +315,7 @@ func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config) {
 		if err := startPool(ctx, d.c, types.Task.Type.Mirror, &d.mirrorPool); err != nil {
 			d.c.GetLogger().Error("", "mirror pool: %v", err)
 		}
-		locked, lockErr := d.client.Load().Queries.IsBackupLocked(ctx)
+		locked, lockErr := d.client.Load().Queries.IsMaintenanceLocked(ctx)
 		if lockErr != nil {
 			d.c.GetLogger().Error("", "mirror lock check: %v", lockErr)
 		} else if locked == 0 {
@@ -540,7 +540,7 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 		client := d.client.Load()
 		batchSvc := service.NewBatch(client, cfgPtr.Consumer.Reclaim.MaxRetries)
 		if pollingCfg.Enabled && config.IsWithinActiveWindows(pollingCfg.Windows) {
-			locked, lockErr := client.Queries.IsBackupLocked(ctx)
+			locked, lockErr := client.Queries.IsMaintenanceLocked(ctx)
 			if lockErr != nil {
 				c.GetLogger().Error("", "polling: backup lock check: %v", lockErr)
 			} else if locked > 0 {
@@ -853,7 +853,7 @@ func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *
 	}
 
 	if spec.lockGated {
-		locked, err := client.Queries.IsBackupLocked(ctx)
+		locked, err := client.Queries.IsMaintenanceLocked(ctx)
 		if err != nil {
 			return fmt.Errorf("backup lock check: %w", err)
 		}

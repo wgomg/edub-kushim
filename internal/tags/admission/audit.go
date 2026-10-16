@@ -255,19 +255,23 @@ func (a *AuditRunner) canonicalizationPairs(ctx context.Context) ([]tags.Twin, e
 // below-floor flagged documents from the pool (live documents not yet audited this sweep).
 func (a *AuditRunner) worklist(ctx context.Context, limit int32, floor int64) (auditWorklist, error) {
 	q := a.client.Queries
-	sweep, err := q.GetTagAuditSweep(ctx)
+	raw, err := q.GetTagAuditSweep(ctx)
 	if err != nil {
 		return auditWorklist{}, fmt.Errorf("read tag audit sweep: %w", err)
+	}
+	sweep, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return auditWorklist{}, fmt.Errorf("parse tag audit sweep: %w", err)
 	}
 	pool, err := q.CountEligibleLiveDocuments(ctx, sweep)
 	if err != nil {
 		return auditWorklist{}, fmt.Errorf("count eligible documents: %w", err)
 	}
 	if pool == 0 {
-		if err := q.BumpTagAuditSweep(ctx); err != nil {
-			return auditWorklist{}, fmt.Errorf("bump tag audit sweep: %w", err)
-		}
 		sweep++
+		if err := q.SetTagAuditSweep(ctx, strconv.FormatInt(sweep, 10)); err != nil {
+			return auditWorklist{}, fmt.Errorf("write tag audit sweep: %w", err)
+		}
 		if pool, err = q.CountEligibleLiveDocuments(ctx, sweep); err != nil {
 			return auditWorklist{}, fmt.Errorf("count eligible documents: %w", err)
 		}

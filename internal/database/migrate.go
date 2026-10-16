@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -19,8 +20,8 @@ func ValidateMigrationDestination(ctx context.Context, db *sql.DB) error {
 	var count int64
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pg_tables
-		WHERE schemaname = 'public' AND tablename NOT IN ('goose_db_version', 'backup_lock')
-	`).Scan(&count); err != nil {
+		WHERE schemaname = 'public' AND tablename <> ALL($1::text[])
+	`, pq.Array(appManagedTables)).Scan(&count); err != nil {
 		return fmt.Errorf("check destination tables: %w", err)
 	}
 	if count == 0 {

@@ -18,6 +18,8 @@ sql:
             go_type: '*encoding/json.RawMessage'
           - column: 'task.progress'
             go_type: '*encoding/json.RawMessage'
+          - column: 'system_signal.data'
+            go_type: '*encoding/json.RawMessage'
           - db_type: 'batch_source'
             go_type:
               import: 'github.com/wgomg/edub-kushim/internal/types'

@@ -1,8 +1,10 @@
 -- name: GetTagAuditSweep :one
-SELECT sweep_count FROM tag_audit_sweep WHERE id = 1;
+SELECT value FROM system_signal WHERE name = 'tag_audit_sweep';
 
--- name: BumpTagAuditSweep :exec
-UPDATE tag_audit_sweep SET sweep_count = sweep_count + 1 WHERE id = 1;
+-- name: SetTagAuditSweep :exec
+UPDATE system_signal
+SET value = sqlc.arg(sweep_count), modified_at = CURRENT_TIMESTAMP
+WHERE name = 'tag_audit_sweep';
 
 -- name: CountEligibleLiveDocuments :one
 SELECT COUNT(*)

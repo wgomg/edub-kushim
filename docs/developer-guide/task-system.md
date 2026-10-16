@@ -623,8 +623,8 @@ ticker; the per-batch variant runs at consume entry and batch resume.
 
 **Blocking-class recovery is gated on maintenance-lock ownership.** A
 blocking task is swept only when the lock is not held fresh by its own
-claim — `backup_lock.owner_token IS DISTINCT FROM task.claim_token`, or the
-token still matches but `backup_lock.started_at` is past the 30-minute
+claim — `(data->>'owner_token') IS DISTINCT FROM task.claim_token::text`, or the
+token still matches but the row's `started_at` key is past the 30-minute
 freshness window (the holder crashed without heartbeating). A live holder
 (5-minute heartbeat refreshing) keeps both the task row and the lock; a
 crashed holder is recovered exactly once. The sweep transaction releases
@@ -638,15 +638,15 @@ UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-FROM backup_lock
-WHERE backup_lock.id = 1
+FROM system_signal
+WHERE system_signal.name = 'maintenance_lock'
   AND task.status = 'processing'
   AND task.task_type = ANY(@types::task_type[])
   AND task.attempts >= $1
   AND task.started_at < $2
   AND (
-    backup_lock.owner_token IS DISTINCT FROM task.claim_token
-    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
+    (system_signal.data->>'owner_token') IS DISTINCT FROM task.claim_token::text
+    OR (system_signal.data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes'
   );
 
 -- name: ResetStaleBlockingTasks :execrows
@@ -654,15 +654,15 @@ UPDATE task SET
     status = 'pending',
     attempts = attempts + 1,
     progress = NULL
-FROM backup_lock
-WHERE backup_lock.id = 1
+FROM system_signal
+WHERE system_signal.name = 'maintenance_lock'
   AND task.status = 'processing'
   AND task.task_type = ANY(@types::task_type[])
   AND task.attempts < $1
   AND task.started_at < $2
   AND (
-    backup_lock.owner_token IS DISTINCT FROM task.claim_token
-    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
+    (system_signal.data->>'owner_token') IS DISTINCT FROM task.claim_token::text
+    OR (system_signal.data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes'
   );
 ```
 
@@ -747,15 +747,18 @@ The wizard also auto-resumes config setup on boot
 
 ## 12. The backup gate
 
-Backups must not race the pipeline. The mechanism is a **single-row lock
-table** plus a SQL function used as a claim gate
-(`00005_backup_lock.sql` + `00014_maintenance_lock_predicate.sql` +
-`00015_claim_token_lock.sql` + `task.sql:13-17`):
+Backups must not race the pipeline. The mechanism is a **maintenance-lock
+signal row** in `system_signal` plus a SQL function used as a claim gate
+(`00041_system_signal.sql` + `00014_maintenance_lock_predicate.sql` +
+`00015_claim_token_lock.sql` + `sql/queries/maintenance_lock.sql` + `task.sql:13-18`):
 
 ```sql
 -- name: AcquireMaintenanceLockForTask :execrows
-UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1
-WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
+UPDATE system_signal
+SET value = 'true',
+    data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text)
+WHERE name = 'maintenance_lock'
+  AND (value = 'false' OR (data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes');
 ```
 
 - Acquiring affects 0 rows if the lock is held and fresh — the same
@@ -774,7 +777,7 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   (`Store.claimBlockingNextPending`, `internal/task/store.go`):
   `GetNextPendingTaskOfType` → `ClaimTask` → `AcquireMaintenanceLockForTask`
   run in one tx with a per-claim UUID token written to both the task row
-  (`task.claim_token`) and the lock row (`backup_lock.owner_token`). If the
+  (`task.claim_token`) and the lock row's `owner_token` data key). If the
   acquire affects 0 rows (another blocking task holds the lock), the claim
   rolls back — the task stays `pending` — and `ErrLockBusy` is returned;
   the runner maps it to a quiet `nil` so the pool's next tick retries
@@ -785,8 +788,8 @@ WHERE id = 1 AND (NOT running OR started_at <= NOW() - INTERVAL '30 minutes');
   (`internal/task/store.go`) transition the task (`WHERE id = $2 AND status
   = 'processing' AND claim_token = $3`) and, only when the transition
   affected a row, release the lock in the same tx
-  (`ReleaseMaintenanceLockForTask`, guarded by `owner_token IS NOT DISTINCT
-  FROM $1`). Every leave-`processing` sweep/reset/cancel/retry path
+  (`ReleaseMaintenanceLockForTask`, guarded by `(data->>'owner_token') IS NOT
+  DISTINCT FROM $1::uuid::text`). Every leave-`processing` sweep/reset/cancel/retry path
   (`ResetStaleProcessingTasks`, `ResetProcessingTasksByBatch`, `CompleteCancel`,
   the consume-cancel CLI, `Owner.ResetProcessingByBatch`, `task.Retry`)
   releases via a subselect on the task rows' `claim_token`
@@ -818,7 +821,7 @@ The **mirror** task (`internal/backup/mirror_task.go`) participates in the
 same gate: it is claimed with the lock held, drains in-flight work, and runs
 `rsync -a --delete` over the storage tree (see `internal/backup/`). Because a
 large rsync can exceed the 30-minute staleness window, the handler runs a
-heartbeat that refreshes `backup_lock.started_at` every 5 minutes
+heartbeat that refreshes the lock row's `started_at` key every 5 minutes
 (`TouchMaintenanceLockForTask`, guarded by the claim token) for the rsync
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
 shared `database.StartMaintenanceLockHeartbeat` helper *before*

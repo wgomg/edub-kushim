@@ -859,7 +859,7 @@ func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
 		t.Fatalf("set orphan claim token and stale started_at: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1 WHERE id = 1",
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
 		foreignToken); err != nil {
 		t.Fatalf("hold lock with foreign token: %v", err)
 	}
@@ -876,7 +876,7 @@ func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
 	testutil.AssertNoError(t, err, "get foreign task")
 	testutil.AssertEqual(t, foreign.Status, "processing", "foreign holder untouched")
 
-	held, err := client.Queries.IsBackupLocked(ctx)
+	held, err := client.Queries.IsMaintenanceLocked(ctx)
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	if held != 1 {
 		t.Fatalf("foreign holder's lock was released, want held=%d", held)
@@ -899,7 +899,7 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 		t.Fatalf("set claim token and stale started_at: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE backup_lock SET running = true, started_at = NOW() - INTERVAL '31 minutes', owner_token = $1 WHERE id = 1",
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW() - INTERVAL '31 minutes'), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
 		token); err != nil {
 		t.Fatalf("hold lock with expired started_at: %v", err)
 	}
@@ -912,7 +912,7 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 	testutil.AssertNoError(t, err, "get task")
 	testutil.AssertEqual(t, row.Status, "pending", "task reset to pending")
 
-	held, err := client.Queries.IsBackupLocked(ctx)
+	held, err := client.Queries.IsMaintenanceLocked(ctx)
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	testutil.AssertEqual(t, held, 0, "lock released after window expiry")
 
@@ -958,7 +958,7 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 			t.Fatalf("set stale with max attempts: %v", err)
 		}
 		if _, err := client.DB().ExecContext(ctx,
-			"UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1 WHERE id = 1",
+			"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
 			token); err != nil {
 			t.Fatalf("hold lock with matching token: %v", err)
 		}
@@ -976,7 +976,7 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 		var owner uuid.NullUUID
 		var running bool
 		if err := client.DB().QueryRowContext(ctx,
-			"SELECT owner_token, running FROM backup_lock WHERE id = 1").Scan(&owner, &running); err != nil {
+			"SELECT (data->>'owner_token')::uuid, value::boolean FROM system_signal WHERE name = 'maintenance_lock'").Scan(&owner, &running); err != nil {
 			t.Fatalf("read lock state: %v", err)
 		}
 		testutil.AssertEqual(t, running, true, "lock still held")
@@ -1000,12 +1000,12 @@ func TestBatch_ResetStaleProcessingTasks_KeepsLiveBlockingHolder(t *testing.T) {
 		t.Fatalf("set claim token and stale started_at: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE backup_lock SET running = true, started_at = NOW(), owner_token = $1 WHERE id = 1",
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
 		token); err != nil {
 		t.Fatalf("hold lock with token: %v", err)
 	}
 
-	held, err := client.Queries.IsBackupLocked(ctx)
+	held, err := client.Queries.IsMaintenanceLocked(ctx)
 	testutil.AssertNoError(t, err, "pre-reset lock check")
 	if held != 1 {
 		t.Fatalf("pre-reset lock held=%d, want 1", held)
@@ -1015,7 +1015,7 @@ func TestBatch_ResetStaleProcessingTasks_KeepsLiveBlockingHolder(t *testing.T) {
 		t.Fatalf("reset stale: %v", err)
 	}
 
-	held, err = client.Queries.IsBackupLocked(ctx)
+	held, err = client.Queries.IsMaintenanceLocked(ctx)
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	if held != 1 {
 		t.Fatalf("post-reset lock held=%d, want 1 (live holder keeps its lock)", held)

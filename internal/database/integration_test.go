@@ -1149,7 +1149,7 @@ func TestBackupLockLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("initially unlocked", func(t *testing.T) {
-		locked, err := q.IsBackupLocked(ctx)
+		locked, err := q.IsMaintenanceLocked(ctx)
 		assertNoError(t, err, "is backup locked")
 		assertEqual(t, locked, int32(0), "not locked initially")
 	})
@@ -1159,7 +1159,7 @@ func TestBackupLockLifecycle(t *testing.T) {
 		assertNoError(t, err, "acquire")
 		assertEqual(t, rows, int64(1), "one row affected")
 
-		locked, err := q.IsBackupLocked(ctx)
+		locked, err := q.IsMaintenanceLocked(ctx)
 		assertNoError(t, err, "check locked")
 		assertEqual(t, locked, int32(1), "locked after acquire")
 	})
@@ -1169,7 +1169,7 @@ func TestBackupLockLifecycle(t *testing.T) {
 		assertNoError(t, err, "release")
 		assertEqual(t, rows, int64(1), "one row released")
 
-		locked, err := q.IsBackupLocked(ctx)
+		locked, err := q.IsMaintenanceLocked(ctx)
 		assertNoError(t, err, "check unlocked")
 		assertEqual(t, locked, int32(0), "unlocked after release")
 	})

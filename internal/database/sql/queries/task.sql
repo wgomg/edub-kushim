@@ -143,24 +143,6 @@ UPDATE task SET
     error = $1
 WHERE id = $2 AND status = 'processing' AND claim_token = $3;
 
--- name: ReleaseMaintenanceLockForStaleHolders :execrows
-UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
-WHERE id = 1 AND running = true
-  AND started_at <= NOW() - INTERVAL '30 minutes'
-  AND owner_token IN (
-    SELECT claim_token FROM task
-    WHERE status = 'processing'
-      AND task_type = ANY(@types::task_type[])
-  );
-
--- name: ReleaseMaintenanceLockForBatch :execrows
-UPDATE backup_lock SET running = false, started_at = NULL, owner_token = NULL
-WHERE id = 1 AND running = true AND owner_token IN (
-  SELECT claim_token FROM task
-  WHERE batch_id = $1 AND status = 'processing'
-    AND task_type = ANY(@types::task_type[])
-);
-
 -- name: UpdateTaskProgress :exec
 UPDATE task SET progress = $2
 WHERE task_id = $1 AND status = 'processing';
@@ -334,38 +316,6 @@ UPDATE task SET
     progress = NULL
 WHERE status = 'processing' AND attempts < $1 AND started_at < $2
   AND task_type <> ALL(@types::task_type[]);
-
--- name: QuarantineStaleBlockingTasks :execrows
-UPDATE task SET
-    status = 'failed',
-    error = 'Max retries exceeded (' || attempts || ')',
-    completed_at = CURRENT_TIMESTAMP
-FROM backup_lock
-WHERE backup_lock.id = 1
-  AND task.status = 'processing'
-  AND task.task_type = ANY(@types::task_type[])
-  AND task.attempts >= $1
-  AND task.started_at < $2
-  AND (
-    backup_lock.owner_token IS DISTINCT FROM task.claim_token
-    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
-  );
-
--- name: ResetStaleBlockingTasks :execrows
-UPDATE task SET
-    status = 'pending',
-    attempts = attempts + 1,
-    progress = NULL
-FROM backup_lock
-WHERE backup_lock.id = 1
-  AND task.status = 'processing'
-  AND task.task_type = ANY(@types::task_type[])
-  AND task.attempts < $1
-  AND task.started_at < $2
-  AND (
-    backup_lock.owner_token IS DISTINCT FROM task.claim_token
-    OR backup_lock.started_at <= NOW() - INTERVAL '30 minutes'
-  );
 
 -- name: CountRecentBackupTasksByMode :one
 SELECT COUNT(*) FROM task

@@ -26,7 +26,7 @@ func checkBackupPreconditions(c *container.Container, operation string) (*databa
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	locked, err := client.Queries.IsBackupLocked(context.Background())
+	locked, err := client.Queries.IsMaintenanceLocked(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("check backup state: %w", err)
 	}
