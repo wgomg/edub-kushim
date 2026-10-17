@@ -3,12 +3,27 @@ package tags
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+)
+
+// SignalMeasureChanged and its siblings name the store-changed flags of system_signal.
+const (
+	SignalMeasureChanged   = "tag_measure_changed"
+	SignalReconcileChanged = "tag_reconcile_changed"
+	SignalIdentityChanged  = "tag_identity_changed"
+	SignalAuditChanged     = "tag_audit_changed"
+)
+
+// SignalSet and SignalClear are the store-changed flags' two values.
+const (
+	SignalSet   = "true"
+	SignalClear = "false"
 )
 
 // Runner runs measurement sweeps over the tag store: one Run snapshots the
@@ -34,12 +49,12 @@ func NewRunner(client *database.Client, aliases AliasResolver) *Runner {
 // same fork-and-extract convention the tag identity machinery uses.
 const ReportPrefix = "tagmeasure-report: "
 
-// Report summarizes one measurement sweep: totals, operator and state
-// histograms, skip reasons, and the derived worklist tallies.
+// Report is one measurement sweep's serialized summary; a skipped sweep reports ZeroWork.
 type Report struct {
 	RunID          string         `json:"run_id"`
 	SnapshotAt     time.Time      `json:"snapshot_at"`
 	RuleSetVersion string         `json:"rule_set_version"`
+	ZeroWork       bool           `json:"zero_work"`
 	Tags           int            `json:"tags"`
 	Operators      map[string]int `json:"operators"`
 	States         map[string]int `json:"states"`
@@ -58,11 +73,87 @@ type WorklistCounts struct {
 	SiblingsGray   int `json:"siblings_gray"`
 }
 
-// Run measures the current tag store and persists its readings. The whole
-// sweep runs under one repeatable-read transaction, so the report and the
-// stored records describe the same snapshot. runID identifies the sweep in
-// the stored rows and the returned report.
+// Run records one measurement sweep, or reports ZeroWork when the store is unchanged since the last completed
+// run under the current rule set.
 func (r *Runner) Run(ctx context.Context, runID uuid.UUID) (*Report, error) {
+	proceed, err := r.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !proceed {
+		return r.zeroWorkReport(ctx, runID)
+	}
+
+	report, err := r.sweep(ctx, runID)
+	if err != nil {
+		if cerr := r.client.Queries.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
+			Name:  SignalMeasureChanged,
+			Value: SignalSet,
+		}); cerr != nil {
+			return nil, fmt.Errorf("%w (re-arming the store-changed signal failed: %v)", err, cerr)
+		}
+		return nil, err
+	}
+	return report, nil
+}
+
+func (r *Runner) open(ctx context.Context) (bool, error) {
+	// the clear commits before the sweep opens, so a mutation landing mid-run re-arms the flag
+	tx, err := r.client.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin tag measure opening transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := r.client.Queries.WithTx(tx)
+
+	value, err := q.GetTagStoreSignal(ctx, SignalMeasureChanged)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("read store-changed signal: %w", err)
+	}
+	changed := err != nil || value != SignalClear
+
+	if !changed {
+		run, err := q.LatestTagWorklistRun(ctx)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return false, fmt.Errorf("latest tag worklist run: %w", err)
+		}
+		changed = errors.Is(err, sql.ErrNoRows) || run.RuleSetVersion != RuleSetVersion
+	}
+
+	if changed {
+		if err := q.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
+			Name:  SignalMeasureChanged,
+			Value: SignalClear,
+		}); err != nil {
+			return false, fmt.Errorf("clear store-changed signal: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit tag measure opening transaction: %w", err)
+	}
+	return changed, nil
+}
+
+func (r *Runner) zeroWorkReport(ctx context.Context, runID uuid.UUID) (*Report, error) {
+	tags, err := r.client.Queries.CountTags(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count tags: %w", err)
+	}
+	snapshotAt, err := r.client.Queries.SnapshotNow(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot instant: %w", err)
+	}
+	return &Report{
+		RunID:          runID.String(),
+		SnapshotAt:     snapshotAt,
+		RuleSetVersion: RuleSetVersion,
+		ZeroWork:       true,
+		Tags:           int(tags),
+	}, nil
+}
+
+func (r *Runner) sweep(ctx context.Context, runID uuid.UUID) (*Report, error) {
 	tx, err := r.client.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, fmt.Errorf("begin tag measure transaction: %w", err)

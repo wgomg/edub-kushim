@@ -306,12 +306,14 @@ type DocumentPeople struct {
 	DocumentID   int64
 	PeopleID     int64
 	PeopleTypeID int64
+	CreatedAt    time.Time
 }
 
 type DocumentTag struct {
 	DocumentID int64
 	TagID      int64
 	Source     string
+	CreatedAt  time.Time
 }
 
 type DocumentType struct {
@@ -376,6 +378,7 @@ type Tag struct {
 	DemotedAt     sql.NullTime
 	DemotedReason sql.NullString
 	Seeded        bool
+	ModifiedAt    time.Time
 }
 
 type TagAlias struct {

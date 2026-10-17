@@ -78,12 +78,14 @@ primary keys instead (`batch.id`, `00001_baseline.sql:101`). Rule of thumb in
 this schema: **database-invented IDs are identity, externally-invented IDs
 are TEXT PKs.**
 
-Shared singleton state — the maintenance lock and the tag-audit sweep counter —
-lives in the `system_signal` table (`00041_system_signal.sql`) — the **signal
-store** pattern: one row per signal keyed by a unique `name`, carrying its value
-as text plus an optional JSONB `data` object for structured fields. Adding a
-signal is a seed row and its queries, not a new table; the lock's use as a gate
-is covered in §11.
+Shared singleton state — the maintenance lock, the tag-audit sweep counter, and
+the four tag store-changed flags — lives in the `system_signal` table
+(`00041_system_signal.sql`, extended by `00044_tag_store_change_record.sql`) —
+the **signal store** pattern: one row per signal keyed by a unique `name`,
+carrying its value as text plus an optional JSONB `data` object for structured
+fields. Adding a signal is a seed row and its queries, not a new table; the
+lock's use as a gate is covered in §11, and the flags' trigger-owned setting is
+covered in §11's closing note.
 
 ---
 
@@ -419,6 +421,21 @@ WHERE name = 'maintenance_lock'
 
 Zero rows affected = the lock was already held — same `:execrows` discipline
 as the task claim (§7).
+
+The store-changed flags are the counterexample where the mechanism is a
+**trigger, not a gate**: `tag_store_changed()` (migration `00044`) upserts the
+four `system_signal` flags to `'true'` whenever a row changes in `tag`,
+`document_tag`, `tag_alias`, or `deleted_tag`, fired by AFTER row triggers so
+the set rides the mutating statement's own transaction. Table-owned setting is
+deliberate: the vocabulary has ~23 mutating queries called from the enricher's
+persist transaction, the curation service, the reconciler, the identity pass,
+the audit fills, and the seeders, and a Go-side call at each site is one forget
+away from a silent gap. The UPDATE triggers' `WHEN` guards compare only the
+semantic columns, so bookkeeping writes (orphan marks, the seeder's no-op
+`ON CONFLICT` rewrites) do not fire — without that, the measurement's zero-work
+skip would never hold on a running store. A `WHEN` referencing `OLD` is illegal
+on a trigger that can fire for INSERT, so the INSERT/DELETE arms are separate
+triggers carrying no guard.
 
 ---
 

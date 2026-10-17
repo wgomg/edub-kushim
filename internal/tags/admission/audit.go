@@ -146,6 +146,14 @@ func (a *AuditRunner) Run(ctx context.Context, runID uuid.UUID) (*AuditReport, e
 		Coverage:        map[string]int{},
 	}
 
+	// a mid-run mutation re-arms the flag, so no change is swallowed by this open
+	if err := a.client.Queries.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
+		Name:  tags.SignalAuditChanged,
+		Value: tags.SignalClear,
+	}); err != nil {
+		return nil, fmt.Errorf("clear store-changed signal: %w", err)
+	}
+
 	view, err := a.loadStoreView(ctx)
 	if err != nil {
 		return nil, err

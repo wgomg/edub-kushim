@@ -101,8 +101,13 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
 
 ## Runs
 
-- `measure.go` — `Runner`/`NewRunner`, `Report`, `WorklistCounts`,
-  `ReportPrefix`
+- `measure.go` — `Runner`/`NewRunner`, `Report` (with `ZeroWork`),
+  `WorklistCounts`, `ReportPrefix`, the store-changed signal names
+  (`SignalMeasureChanged`, `SignalReconcileChanged`, `SignalIdentityChanged`,
+  `SignalAuditChanged`) and values (`SignalSet`/`SignalClear`); `Run` opens on
+  the store-changed gate — the flag set, or no completed run under the current
+  `RuleSetVersion` — clears its flag in that opening transaction, and re-arms it
+  if the sweep fails, reporting `ZeroWork` when it skips.
 - `tagmeasure.go` — `TagMeasureTaskHandler`/`NewTagMeasureTaskHandler`,
   `ForkAndExtractReport`, `ExtractReport`
 
@@ -119,7 +124,9 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   policy, identity planning, quality gating), `IdentityResolver`/
   `NewIdentityResolver`, `AuditRunner`/`NewAuditRunner`, the identity and audit
   task handlers, `VerdictStore`/`NewVerdictStore` and `PartDimensionFeature`,
-  `PhraseFoldKey`/`PhraseFoldVerdict`.
+  `PhraseFoldKey`/`PhraseFoldVerdict`; the identity and audit passes clear
+  their store-changed flags (`SignalIdentityChanged`/`SignalAuditChanged`) as
+  they open.
 - `policy/` — pure candidate generation: `Evaluate`, `Decision`, `Version` (no
   logging, no config, no I/O).
 - `reconcile/` — `Reconciler`/`NewReconciler` and its `Run`, the report types
@@ -128,7 +135,8 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   `FlipCounts`, `PairEntry`), the worklist/evidence/apply paths, the sweeps (twin
   canonicalization, orphan, provisional, promoted-mass
   demotion), the stored-compound scan, `bootstrap.go` (historical log ingest),
-  and `TagReconcileTaskHandler`/`NewTagReconcileTaskHandler`.
+  and `TagReconcileTaskHandler`/`NewTagReconcileTaskHandler`; `Run` clears its
+  store-changed flag (`SignalReconcileChanged`) as it opens.
 
 ## Tests
 

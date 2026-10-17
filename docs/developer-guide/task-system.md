@@ -846,7 +846,11 @@ blocking-class task too: claimed with the lock held, drained via
 `kushim tagmeasure --run <batch-id>` and waits, so the pass's long
 repeatable-read transaction runs in its own process while the parent keeps the
 lock fresh; the child's printed report line becomes the task result and its
-exit code decides completion/failure.
+exit code decides completion/failure. The pass opens by checking the
+`tag_measure_changed` flag: with the flag clear and a completed run under the
+current rule set it short-circuits to a zero-work report, writing nothing;
+otherwise its opening transaction clears the flag and the sweep runs, re-arming
+the flag if the sweep fails.
 
 The **tagidentity** task (`internal/tags/admission/tagidentity.go`) follows the
 same fork-and-wait shape: claimed with the lock held, drained via
@@ -882,6 +886,16 @@ result (the exit code decides completion/failure). It dedups on the fixed key
 runs unconditionally — `enricher.tag_reconcile.enabled` gates only the schedule
 that enqueues runs automatically, while a manual `kushim tagreconcile` enqueues
 through the queue the same way.
+
+Each of the four tag passes opens by clearing its own store-changed flag in
+`system_signal` (`tag_measure_changed`, `tag_identity_changed`,
+`tag_audit_changed`, `tag_reconcile_changed`) before it reads its work set, so a
+mutation landing during a run re-arms the flag for the next one. Only the
+measurement gates on its flag; a pass's own applies re-arm the flags through the
+table triggers (migration `00044`), which is the record's honest reading of
+"changed since it last ran". The identity pass clears only when it actually
+opens: with the adjudicator off it counts the backlog and returns without
+clearing.
 
 The **thumbbackfill** task (`internal/documents/consumption/thumbnail_backfill.go`, a thin
 wrapper that adds drain-wait + heartbeat around the per-document

@@ -37,14 +37,16 @@ RETURNING id;
 
 -- name: UpdateTag :exec
 UPDATE tag SET
-    name = $1
+    name = $1,
+    modified_at = now()
 WHERE id = $2;
 
 -- name: PromoteTags :execrows
 UPDATE tag SET
     promoted_at = now(),
     demoted_at = NULL,
-    demoted_reason = NULL
+    demoted_reason = NULL,
+    modified_at = now()
 WHERE id = ANY(@tag_ids::bigint[])
   AND promoted_at IS NULL;
 
@@ -52,7 +54,8 @@ WHERE id = ANY(@tag_ids::bigint[])
 UPDATE tag SET
     promoted_at = NULL,
     demoted_at = now(),
-    demoted_reason = @reason::text
+    demoted_reason = @reason::text,
+    modified_at = now()
 WHERE id = ANY(@tag_ids::bigint[])
   AND promoted_at IS NOT NULL
   AND NOT seeded;

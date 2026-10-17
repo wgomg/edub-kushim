@@ -88,6 +88,14 @@ func (r *IdentityResolver) ResolvePending(ctx context.Context, budget int) (*Ide
 		return report, nil
 	}
 
+	// a mid-run mutation re-arms the flag, so no change is swallowed by this open
+	if err := r.client.Queries.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
+		Name:  tags.SignalIdentityChanged,
+		Value: tags.SignalClear,
+	}); err != nil {
+		return nil, fmt.Errorf("clear store-changed signal: %w", err)
+	}
+
 	events, err := r.client.Queries.ListPendingTagIdentityEvents(ctx, database.ListPendingTagIdentityEventsParams{
 		PageOffset: 0,
 		PageLimit:  int32(budget),

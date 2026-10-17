@@ -741,6 +741,15 @@ debugging. Each pass mints its own run id, so retries and manual runs coexist
 as distinguishable snapshots. Nothing acts on the measurements automatically:
 they are evidence for review.
 
+The pass is a no-op when nothing changed: it reads its store-changed flag in
+`system_signal`, and if the flag is clear and a completed run exists under the
+current rule set it prints a zero-work report and writes no records — the
+previous run's readings and worklists stand. Every tag-store mutation re-arms
+the flag — a tag created, renamed, promoted, demoted, deleted or restored, an
+assignment added, removed or re-pointed, an alias added or withdrawn, a
+blocklist row added or removed, and every enrichment batch — so the next run
+recomputes.
+
 The schedule is opt-in through `enricher.tag_measure` (disabled by default) and
 can also be triggered from the settings page.
 

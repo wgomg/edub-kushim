@@ -217,6 +217,14 @@ func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Repor
 		progress = func(string, string, float64) {}
 	}
 
+	// a mid-run mutation re-arms the flag, so no change is swallowed by this open
+	if err := r.client.Queries.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
+		Name:  tags.SignalReconcileChanged,
+		Value: tags.SignalClear,
+	}); err != nil {
+		return report, fmt.Errorf("clear store-changed signal: %w", err)
+	}
+
 	_, err := r.client.GetLastCompletedTagReconcileTask(ctx)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
