@@ -144,8 +144,10 @@ func insertMeasurementRun(t *testing.T, q *Queries, runID, operator string) {
 	}
 }
 
-// TestTagAuditSweepRegister pins the once-per-sweep register the sample is drawn from: a document that was
-// audited in a sweep leaves the eligible pool until the sweep counter advances past its count.
+// TestTagAuditSweepRegister pins the epoch register: the row records the sweep a document was last audited
+// in, so an audited document leaves the eligible pool for the rest of its sweep and returns exactly one
+// sweep later, a never-audited document (a mid-sweep arrival) is eligible in the running sweep, and a
+// re-audit moves the stamp with it. The three pool reads answer under the same predicate.
 func TestTagAuditSweepRegister(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
@@ -162,46 +164,51 @@ func TestTagAuditSweepRegister(t *testing.T) {
 		t.Fatalf("initial sweep = %d, want 0", sweep)
 	}
 
-	if err := q.UpsertTagAuditRegister(ctx, doc); err != nil {
-		t.Fatalf("register document: %v", err)
-	}
+	// a document with no register row has never been audited: it is a mid-sweep arrival, eligible once a
+	// sweep is running (the initial sweep 0 holds nobody because no epoch has opened yet)
 	if n, err := q.CountEligibleLiveDocuments(ctx, 0); err != nil || n != 0 {
-		t.Errorf("eligible under sweep 0 = %d, %v, want 0: the document is a sweep ahead", n, err)
+		t.Errorf("eligible under sweep 0 = %d, %v, want 0: no epoch has opened yet", n, err)
 	}
-	if err := q.UpsertTagAuditRegister(ctx, doc); err != nil {
-		t.Fatalf("register document twice: %v", err)
+	if n, err := q.CountEligibleLiveDocuments(ctx, 1); err != nil || n != 1 {
+		t.Errorf("eligible under sweep 1 = %d, %v, want 1: the never-audited document is a late arrival", n, err)
+	}
+	sample, err := q.SampleEligibleLiveDocumentIDs(ctx, SampleEligibleLiveDocumentIDsParams{SweepCount: 1, PageLimit: 10})
+	assertNoError(t, err, "sample the unregistered document")
+	if len(sample) != 1 || sample[0] != doc {
+		t.Errorf("sample under sweep 1 = %v, want the never-audited document", sample)
+	}
+	below, err := q.ListEligibleLiveDocumentsBelowTagFloor(ctx, ListEligibleLiveDocumentsBelowTagFloorParams{SweepCount: 1, TagFloor: 10, PageLimit: 10})
+	assertNoError(t, err, "list the unregistered below-floor document")
+	if len(below) != 1 || below[0] != doc {
+		t.Errorf("below-floor under sweep 1 = %v, want the never-audited document", below)
 	}
 
-	// the second audit is what makes the counter observable: with one audit the document is admitted again
-	// as soon as the sweep advances, with two it costs a sweep each
-	if err := q.SetTagAuditSweep(ctx, "1"); err != nil {
-		t.Fatalf("bump sweep: %v", err)
-	}
-	eligible, err := q.SampleEligibleLiveDocumentIDs(ctx, SampleEligibleLiveDocumentIDsParams{SweepCount: 1, PageLimit: 10})
-	assertNoError(t, err, "sample eligible")
-	if len(eligible) != 0 {
-		t.Errorf("eligible under sweep 1 = %v, want none: the document was audited twice", eligible)
+	// the audit stamps the document with the sweep it ran in: it leaves the pool for the rest of that sweep
+	// and returns exactly one sweep later
+	if err := q.UpsertTagAuditRegister(ctx, UpsertTagAuditRegisterParams{DocumentID: doc, SweepCount: 1}); err != nil {
+		t.Fatalf("stamp document: %v", err)
 	}
 	if n, err := q.CountEligibleLiveDocuments(ctx, 1); err != nil || n != 0 {
-		t.Errorf("eligible count under sweep 1 = %d, %v, want 0", n, err)
+		t.Errorf("eligible under sweep 1 = %d, %v, want 0: the document was audited this sweep", n, err)
+	}
+	if n, err := q.CountEligibleLiveDocuments(ctx, 2); err != nil || n != 1 {
+		t.Errorf("eligible under sweep 2 = %d, %v, want 1: the stamp is one sweep behind", n, err)
+	}
+	sample, err = q.SampleEligibleLiveDocumentIDs(ctx, SampleEligibleLiveDocumentIDsParams{SweepCount: 2, PageLimit: 10})
+	assertNoError(t, err, "sample the returned document")
+	if len(sample) != 1 || sample[0] != doc {
+		t.Errorf("sample under sweep 2 = %v, want the audited document back", sample)
 	}
 
-	if err := q.SetTagAuditSweep(ctx, "2"); err != nil {
-		t.Fatalf("bump sweep: %v", err)
+	// a re-audit in a later sweep overwrites the stamp: eligibility follows the newest audit, never the
+	// first one (the ledger model's double-audit skip is gone)
+	if err := q.UpsertTagAuditRegister(ctx, UpsertTagAuditRegisterParams{DocumentID: doc, SweepCount: 3}); err != nil {
+		t.Fatalf("re-stamp document: %v", err)
 	}
-	if n, err := q.CountEligibleLiveDocuments(ctx, 2); err != nil || n != 0 {
-		t.Errorf("eligible count under sweep 2 = %d, %v, want 0: the document outran this sweep too", n, err)
+	if n, err := q.CountEligibleLiveDocuments(ctx, 3); err != nil || n != 0 {
+		t.Errorf("eligible under sweep 3 = %d, %v, want 0: the re-audit moved the stamp", n, err)
 	}
-	if err := q.SetTagAuditSweep(ctx, "3"); err != nil {
-		t.Fatalf("bump sweep: %v", err)
-	}
-	raw, err = q.GetTagAuditSweep(ctx)
-	assertNoError(t, err, "read the rolled-over sweep")
-	sweep, err = strconv.ParseInt(raw, 10, 64)
-	assertNoError(t, err, "parse the rolled-over sweep")
-	eligible, err = q.SampleEligibleLiveDocumentIDs(ctx, SampleEligibleLiveDocumentIDsParams{SweepCount: sweep, PageLimit: 10})
-	assertNoError(t, err, "sample after rollover")
-	if len(eligible) != 1 || eligible[0] != doc {
-		t.Errorf("eligible under sweep %d = %v, want the audited document back", sweep, eligible)
+	if n, err := q.CountEligibleLiveDocuments(ctx, 4); err != nil || n != 1 {
+		t.Errorf("eligible under sweep 4 = %d, %v, want 1: the document returns after its newest audit", n, err)
 	}
 }

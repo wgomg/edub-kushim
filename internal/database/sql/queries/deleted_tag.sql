@@ -1,10 +1,10 @@
 -- name: ListAllDeletedTags :many
-SELECT name, kind FROM deleted_tag ORDER BY created_at DESC;
+SELECT name, kind FROM deleted_tag ORDER BY deleted_at DESC;
 
 -- name: ListDeletedTags :many
-SELECT name, kind, created_at FROM deleted_tag
+SELECT name, kind, deleted_at FROM deleted_tag
 WHERE (@name_prefix::text = '' OR name LIKE @name_prefix::text || '%')
-ORDER BY created_at DESC
+ORDER BY deleted_at DESC
 LIMIT @page_limit OFFSET @page_offset;
 
 -- name: CountDeletedTags :one
@@ -15,7 +15,7 @@ WHERE (@name_prefix::text = '' OR name LIKE @name_prefix::text || '%');
 INSERT INTO deleted_tag (name, kind)
 VALUES (@name, @kind)
 ON CONFLICT (name) DO UPDATE
-SET kind = EXCLUDED.kind, created_at = now();
+SET kind = EXCLUDED.kind, deleted_at = now();
 
 -- name: GetDeletedTag :one
 SELECT * FROM deleted_tag WHERE name = @name;

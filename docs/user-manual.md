@@ -806,11 +806,13 @@ dimensions the document is about but does not carry, an optional applicability
 judge confirms the gaps, confirmed gaps are filled (attached under the canonical
 label), gray calls are flagged for review, and the durable coverage classes
 (`explicit`, `pending_split`, `pending_canonicalization`, `missing`, `gray`,
-`pending_coverage`) are recorded. A document is audited at most once per sweep;
-when every live document has been drawn the sweep counter advances and they
-become eligible again. Every run is evidence: the per-dimension coverage counts
-are recorded in the measurement substrate, and flags surface in the **Coverage**
-tab of the tags page.
+`pending_coverage`) are recorded. A document is audited at most once per sweep: the
+register stamps it with the sweep it was audited in, so it leaves the eligible pool
+for the rest of that sweep and returns exactly one sweep later; a document ingested
+mid-sweep joins that sweep's pool, and once the pool is exhausted the sweep counter
+advances and every live document becomes eligible again. Every run is evidence: the
+per-dimension coverage counts are recorded in the measurement substrate, and flags
+surface in the **Coverage** tab of the tags page.
 
 ```bash
 kushim tagaudit                # manual run under the maintenance lock
@@ -1443,7 +1445,7 @@ Response `200`:
 ```json
 {
   "results": [
-    { "name": "software development", "kind": "blocked", "created_at": "2024-03-19T10:30:12Z" }
+    { "name": "software development", "kind": "blocked", "deleted_at": "2024-03-19T10:30:12Z" }
   ],
   "total": 1
 }

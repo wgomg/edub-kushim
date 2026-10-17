@@ -176,7 +176,7 @@ func (a *AuditRunner) Run(ctx context.Context, runID uuid.UUID) (*AuditReport, e
 	bar := auditTriggerSimilarity
 	var records []tags.CoverageRecord
 	for _, docID := range worklist.DocumentIDs {
-		outcome, derr := a.auditDocument(ctx, docID, view, twins, bar)
+		outcome, derr := a.auditDocument(ctx, docID, worklist.SweepCount, view, twins, bar)
 		if derr != nil {
 			if isCreditError(derr) {
 				return nil, derr
@@ -250,9 +250,10 @@ func (a *AuditRunner) canonicalizationPairs(ctx context.Context) ([]tags.Twin, e
 	return snap.Worklists.Twins, nil
 }
 
-// worklist builds the audit's document set from the F-14 sweep register: it reads the sweep counter,
-// rolls the epoch over when the eligible pool is exhausted, and draws both the random sample and the
-// below-floor flagged documents from the pool (live documents not yet audited this sweep).
+// worklist builds the audit's document set from the epoch register: it reads the sweep, rolls the epoch
+// over when the eligible pool is exhausted, and draws both the random sample and the below-floor flagged
+// documents from the pool — live documents whose register stamp is below the sweep, meaning they have
+// never been audited or were last audited in an earlier sweep.
 func (a *AuditRunner) worklist(ctx context.Context, limit int32, floor int64) (auditWorklist, error) {
 	q := a.client.Queries
 	raw, err := q.GetTagAuditSweep(ctx)
@@ -428,8 +429,8 @@ func (a *AuditRunner) cachedPartValues(ctx context.Context, values []string) (ma
 	return cached, nil
 }
 
-// auditDocument verifies one document's coverage and writes its readings, fills, and register advance.
-func (a *AuditRunner) auditDocument(ctx context.Context, docID int64, view storeView, twins []tags.Twin, bar float64) (auditOutcome, error) {
+// auditDocument verifies one document's coverage and writes its readings, fills, and register stamp.
+func (a *AuditRunner) auditDocument(ctx context.Context, docID, sweep int64, view storeView, twins []tags.Twin, bar float64) (auditOutcome, error) {
 	var stats auditDocStats
 	q := a.client.Queries
 
@@ -639,15 +640,15 @@ func (a *AuditRunner) auditDocument(ctx context.Context, docID int64, view store
 		return auditOutcome{Records: records, Stats: stats}, nil
 	}
 
-	if err := a.persistDocument(ctx, docID, records, fills); err != nil {
+	if err := a.persistDocument(ctx, docID, sweep, records, fills); err != nil {
 		return auditOutcome{Stats: stats}, err
 	}
 	return auditOutcome{Records: records, Stats: stats}, nil
 }
 
-// persistDocument writes a document's register advance, fills, and coverage rows in one transaction, so an
+// persistDocument writes a document's register stamp, fills, and coverage rows in one transaction, so an
 // attachment and its evidence always land together.
-func (a *AuditRunner) persistDocument(ctx context.Context, docID int64, records []tags.CoverageRecord, fills []pendingFill) error {
+func (a *AuditRunner) persistDocument(ctx context.Context, docID, sweep int64, records []tags.CoverageRecord, fills []pendingFill) error {
 	tx, err := a.client.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tag audit transaction: %w", err)
@@ -655,11 +656,11 @@ func (a *AuditRunner) persistDocument(ctx context.Context, docID int64, records 
 	defer tx.Rollback()
 	q := a.client.Queries.WithTx(tx)
 
-	// a document reaching the persist step has been audited this sweep: its register counter advances so
-	// the sweep register does not draw it again until the next one (a deleted or empty-text skip never
-	// gets here and stays eligible)
-	if err := q.UpsertTagAuditRegister(ctx, docID); err != nil {
-		return fmt.Errorf("advance tag audit register: %w", err)
+	// a document reaching the persist step has been audited this sweep: its register stamp records that
+	// sweep so the register does not draw it again until the next one (a document skipped for deletion or
+	// empty text, or whose audit was degraded, never gets here and stays eligible)
+	if err := q.UpsertTagAuditRegister(ctx, database.UpsertTagAuditRegisterParams{DocumentID: docID, SweepCount: sweep}); err != nil {
+		return fmt.Errorf("stamp tag audit register: %w", err)
 	}
 
 	for _, f := range fills {

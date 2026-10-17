@@ -14,7 +14,7 @@ SELECT COUNT(*)
 FROM document d
 LEFT JOIN tag_audit_register r ON r.document_id = d.id
 WHERE d.deleted_at IS NULL
-  AND COALESCE(r.audit_count, 0) < $1
+  AND COALESCE(r.last_audited_sweep, 0) < $1
 `
 
 func (q *Queries) CountEligibleLiveDocuments(ctx context.Context, sweepCount int64) (int64, error) {
@@ -41,7 +41,7 @@ FROM document d
 LEFT JOIN document_tag dt ON dt.document_id = d.id
 LEFT JOIN tag_audit_register r ON r.document_id = d.id
 WHERE d.deleted_at IS NULL
-  AND COALESCE(r.audit_count, 0) < $1
+  AND COALESCE(r.last_audited_sweep, 0) < $1
 GROUP BY d.id
 HAVING COUNT(dt.tag_id) < $2
 ORDER BY d.id
@@ -82,7 +82,7 @@ SELECT d.id
 FROM document d
 LEFT JOIN tag_audit_register r ON r.document_id = d.id
 WHERE d.deleted_at IS NULL
-  AND COALESCE(r.audit_count, 0) < $1
+  AND COALESCE(r.last_audited_sweep, 0) < $1
 ORDER BY random()
 LIMIT $2
 `
@@ -127,12 +127,17 @@ func (q *Queries) SetTagAuditSweep(ctx context.Context, sweepCount string) error
 }
 
 const upsertTagAuditRegister = `-- name: UpsertTagAuditRegister :exec
-INSERT INTO tag_audit_register (document_id, audit_count)
-VALUES ($1, 1)
-ON CONFLICT (document_id) DO UPDATE SET audit_count = tag_audit_register.audit_count + 1
+INSERT INTO tag_audit_register (document_id, last_audited_sweep)
+VALUES ($1, $2)
+ON CONFLICT (document_id) DO UPDATE SET last_audited_sweep = EXCLUDED.last_audited_sweep
 `
 
-func (q *Queries) UpsertTagAuditRegister(ctx context.Context, documentID int64) error {
-	_, err := q.db.ExecContext(ctx, upsertTagAuditRegister, documentID)
+type UpsertTagAuditRegisterParams struct {
+	DocumentID int64
+	SweepCount int64
+}
+
+func (q *Queries) UpsertTagAuditRegister(ctx context.Context, arg UpsertTagAuditRegisterParams) error {
+	_, err := q.db.ExecContext(ctx, upsertTagAuditRegister, arg.DocumentID, arg.SweepCount)
 	return err
 }

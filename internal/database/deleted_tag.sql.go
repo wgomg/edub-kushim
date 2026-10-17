@@ -31,18 +31,18 @@ func (q *Queries) DeleteDeletedTag(ctx context.Context, name string) error {
 }
 
 const getDeletedTag = `-- name: GetDeletedTag :one
-SELECT name, kind, created_at FROM deleted_tag WHERE name = $1
+SELECT name, kind, deleted_at FROM deleted_tag WHERE name = $1
 `
 
 func (q *Queries) GetDeletedTag(ctx context.Context, name string) (DeletedTag, error) {
 	row := q.db.QueryRowContext(ctx, getDeletedTag, name)
 	var i DeletedTag
-	err := row.Scan(&i.Name, &i.Kind, &i.CreatedAt)
+	err := row.Scan(&i.Name, &i.Kind, &i.DeletedAt)
 	return i, err
 }
 
 const listAllDeletedTags = `-- name: ListAllDeletedTags :many
-SELECT name, kind FROM deleted_tag ORDER BY created_at DESC
+SELECT name, kind FROM deleted_tag ORDER BY deleted_at DESC
 `
 
 type ListAllDeletedTagsRow struct {
@@ -74,9 +74,9 @@ func (q *Queries) ListAllDeletedTags(ctx context.Context) ([]ListAllDeletedTagsR
 }
 
 const listDeletedTags = `-- name: ListDeletedTags :many
-SELECT name, kind, created_at FROM deleted_tag
+SELECT name, kind, deleted_at FROM deleted_tag
 WHERE ($1::text = '' OR name LIKE $1::text || '%')
-ORDER BY created_at DESC
+ORDER BY deleted_at DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -95,7 +95,7 @@ func (q *Queries) ListDeletedTags(ctx context.Context, arg ListDeletedTagsParams
 	var items []DeletedTag
 	for rows.Next() {
 		var i DeletedTag
-		if err := rows.Scan(&i.Name, &i.Kind, &i.CreatedAt); err != nil {
+		if err := rows.Scan(&i.Name, &i.Kind, &i.DeletedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -113,7 +113,7 @@ const upsertDeletedTag = `-- name: UpsertDeletedTag :exec
 INSERT INTO deleted_tag (name, kind)
 VALUES ($1, $2)
 ON CONFLICT (name) DO UPDATE
-SET kind = EXCLUDED.kind, created_at = now()
+SET kind = EXCLUDED.kind, deleted_at = now()
 `
 
 type UpsertDeletedTagParams struct {

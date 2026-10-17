@@ -23,7 +23,7 @@
 			width: '100%'
 		},
 		{
-			key: 'created_at',
+			key: 'deleted_at',
 			label: 'Deleted',
 			sortable: false,
 			width: '180px',

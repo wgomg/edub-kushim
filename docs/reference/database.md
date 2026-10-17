@@ -139,7 +139,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Deleted tag
 
-`ListAllDeletedTags` (`:many` — `name`, `kind`, newest first; the enricher and reconciler load this once per run as the blocklist), `ListDeletedTags` (`:many` — `name`, `kind`, `created_at` with an optional `name_prefix` filter, paged by `page_limit`/`page_offset`), `CountDeletedTags`, `UpsertDeletedTag` (`INSERT ... ON CONFLICT (name) DO UPDATE` — refreshes `kind`/`created_at`; written by tag delete), `GetDeletedTag`, `DeleteDeletedTag`
+`ListAllDeletedTags` (`:many` — `name`, `kind`, newest first; the enricher and reconciler load this once per run as the blocklist), `ListDeletedTags` (`:many` — `name`, `kind`, `deleted_at` with an optional `name_prefix` filter, paged by `page_limit`/`page_offset`), `CountDeletedTags`, `UpsertDeletedTag` (`INSERT ... ON CONFLICT (name) DO UPDATE` — refreshes `kind`/`deleted_at`; written by tag delete), `GetDeletedTag`, `DeleteDeletedTag`
 
 ### Document type
 
@@ -309,7 +309,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `batch` — Batch processing units: `id`, `source`, `status` (queued/processing/completed/failed/cancelled), `created_at`
 - `batch_owner` — Batch ownership: `batch_id` (PK, FK to batch), `owner_id`, `pid` (`BIGINT`), `acquired_at`, `last_heartbeat`
 - `orphaned_file` — Detected orphaned files: `document_key`, `document_key_type` (uuid/dbid), `source_dir` (originals/processed), `file_path`, `file_size` (`BIGINT`), `original_type`, `detected_at`, `status` (pending/deleted/restored/reingested), `action_at`, `action_type`. CHECK constraints on `document_key_type`, `source_dir`, `status`, `action_type`.
-- `deleted_tag` — Tag blocklist: `name` (PK, canonical form), `kind` (`blocked` only, CHECK constrained), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Written when an operator deletes a tag and read by the enricher/reconciler to keep enrichment from resurrecting the name.
+- `deleted_tag` — Tag blocklist: `name` (PK, canonical form), `kind` (`blocked` only, CHECK constrained), `deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Written when an operator deletes a tag and read by the enricher/reconciler to keep enrichment from resurrecting the name.
 - `tag_verdict_event` — Append-only tag-adjudication verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `query`, `target`, `sim`, `verdict` (`same`/`variant`/`related`), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(query, target, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
 - `tag_quality_event` — Append-only tag-quality rubric verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE), `tag_name` (canonical form), `criteria` (JSONB — the judge's four rubric answers `subject_matter`, `not_person`, `atomic`, `not_form_genre` plus the optional `defer` abstention, with `dimension` stamped from the parts pass's shared verdict), `pass` (whether the decision admitted the name), `outcome` (nullable — `reject`/`defer`/`admit`, the recorded disposition; NULL on rows predating the column and on cache-applied copies of those), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(tag_name, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers; the newest row per name is the cache, so a re-emitted name resolves without an LLM call.
 - `tag_composition_event` — Append-only decomposition verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE; nullable — NULL on a row the stored-compound sweep journals with no emitting document, migration `00036`), `candidate` (canonical form), `parts` JSONB (the validated segments for split rows and the segments applied alongside for keep rows; `[]` when a row has no parts, including `part_rejected` drops that keep the parts they resolved and keep rows pruned of every rejected part), `disposition` (`split`/`keep`/`drop`, CHECK constrained), `reason` (`judge`/`cached`/`conjunction`/`invalid_components`/`judge_unavailable`; the decision reasons `named_unit`, `named_unit_reconstructible`, `relational_keep`, `no_dimension`, `split_defer`, `conflicting_evidence`, `sample_disagreement`; or `part_rejected` when a split lost every admitted part and degrades to `drop`, or `partial_parts` when it lost some but not all and keeps the compound whole), `criteria_version` (the split criteria the verdict was read under), `model` (nullable — the split judge's model for fresh verdicts), `reconstructible` (nullable — the substrate reconstructibility signal the parts test read: true on the reading's firm or gray band, false when it is far, and NULL on rows with no parts reading), `reading` (JSONB, non-NULL — the evidence behind that signal: `source` (`substrate`, `proxy`, or `absent`) plus, for a substrate reading, `band`, `state`, `mass`, `parts_intersection`, `both`, `excess`, `deficit`, `excess_ratio`, and `deficit_ratio`; `{}` when no reading was established), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. One row per judged compound per document, serving the composition review as evidence only; a store-present compound skips judgment only once a current-version row decides it, so a missing or degraded row means the compound is re-judged on the next emission.
@@ -450,8 +450,9 @@ the judged-verdict cache), `idx_tag_coverage_event_open` (partial on
 `(created_at DESC) WHERE action IN ('flag','proposal') AND review_outcome IS NULL`,
 serving the review list), `idx_tag_coverage_event_class`,
 `idx_tag_coverage_event_document` and `idx_tag_coverage_event_tag` — and the
-sweep register: `tag_audit_register` (per-document `audit_count`, cascading on
-document delete) and the `tag_audit_sweep` counter, whose row lives in
+sweep register: `tag_audit_register` (per-document `last_audited_sweep` — the sweep
+the document was last audited in, read as `stamp < current sweep` for eligibility,
+cascading on document delete) and the `tag_audit_sweep` counter, whose row lives in
 `system_signal` since `00041_system_signal.sql`).
 `system_signal` holds the migration-seeded signal rows (the sweep counter and the
 maintenance lock), so it is excluded from the schema-and-data dump and its rows
@@ -465,7 +466,10 @@ consolidates the singleton state into one `system_signal` table: it creates the
 signal store (`name` unique, text `value`, optional JSONB `data`), carries the
 maintenance lock and the sweep counter into it, redefines
 `is_maintenance_lock_held()` over the new table, and drops `backup_lock` and
-`tag_audit_sweep`. Goose tracks
+`tag_audit_sweep`. `00042_tag_audit_epoch_register.sql` renames
+`tag_audit_register.audit_count` to `last_audited_sweep` and stamps existing rows with
+the current sweep; `00043_deleted_tag_deleted_at.sql` renames `deleted_tag.created_at`
+to `deleted_at`. Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table

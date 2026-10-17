@@ -274,7 +274,7 @@ type BatchOwner struct {
 type DeletedTag struct {
 	Name      string
 	Kind      string
-	CreatedAt time.Time
+	DeletedAt time.Time
 }
 
 type Document struct {
@@ -387,8 +387,8 @@ type TagAlias struct {
 }
 
 type TagAuditRegister struct {
-	DocumentID int64
-	AuditCount int64
+	DocumentID       int64
+	LastAuditedSweep int64
 }
 
 type TagCompositionEvent struct {

@@ -11,14 +11,14 @@ SELECT COUNT(*)
 FROM document d
 LEFT JOIN tag_audit_register r ON r.document_id = d.id
 WHERE d.deleted_at IS NULL
-  AND COALESCE(r.audit_count, 0) < @sweep_count;
+  AND COALESCE(r.last_audited_sweep, 0) < @sweep_count;
 
 -- name: SampleEligibleLiveDocumentIDs :many
 SELECT d.id
 FROM document d
 LEFT JOIN tag_audit_register r ON r.document_id = d.id
 WHERE d.deleted_at IS NULL
-  AND COALESCE(r.audit_count, 0) < @sweep_count
+  AND COALESCE(r.last_audited_sweep, 0) < @sweep_count
 ORDER BY random()
 LIMIT @page_limit;
 
@@ -28,13 +28,13 @@ FROM document d
 LEFT JOIN document_tag dt ON dt.document_id = d.id
 LEFT JOIN tag_audit_register r ON r.document_id = d.id
 WHERE d.deleted_at IS NULL
-  AND COALESCE(r.audit_count, 0) < @sweep_count
+  AND COALESCE(r.last_audited_sweep, 0) < @sweep_count
 GROUP BY d.id
 HAVING COUNT(dt.tag_id) < @tag_floor
 ORDER BY d.id
 LIMIT @page_limit;
 
 -- name: UpsertTagAuditRegister :exec
-INSERT INTO tag_audit_register (document_id, audit_count)
-VALUES (@document_id, 1)
-ON CONFLICT (document_id) DO UPDATE SET audit_count = tag_audit_register.audit_count + 1;
+INSERT INTO tag_audit_register (document_id, last_audited_sweep)
+VALUES (@document_id, @sweep_count)
+ON CONFLICT (document_id) DO UPDATE SET last_audited_sweep = EXCLUDED.last_audited_sweep;

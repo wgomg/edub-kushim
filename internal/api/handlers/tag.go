@@ -637,7 +637,7 @@ func (h *TagHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
 		responses[i] = DeletedTagResponse{
 			Name:      t.Name,
 			Kind:      t.Kind,
-			CreatedAt: t.CreatedAt,
+			DeletedAt: t.DeletedAt,
 		}
 	}
 
@@ -679,7 +679,7 @@ type TagListResponse struct {
 type DeletedTagResponse struct {
 	Name      string    `json:"name"`
 	Kind      string    `json:"kind"`
-	CreatedAt time.Time `json:"created_at"`
+	DeletedAt time.Time `json:"deleted_at"`
 }
 
 // DeletedTagListResponse is one page of deleted-tag records.
