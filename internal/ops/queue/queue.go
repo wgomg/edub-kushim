@@ -1,10 +1,8 @@
-// Package queue is the queue daemon: it LISTENs for batch and task
-// notifications, polls as a safety net, claims queued consume batches for
-// the per-batch consume children, dispatches every other task type to
-// their handlers, runs the blocking-task sweeps (backup, mirror, tag
-// measure, tag reconcile, tag identity, thumbnails backfill) under the
-// maintenance lock, and requeues stale work. The per-batch consume work
-// itself forks kushim consume children.
+// Package queue is the queue daemon: it LISTENs for batch and task notifications, polls as a safety
+// net, claims queued consume batches for the per-batch consume children, dispatches every other task
+// type to their handlers, runs the blocking-task sweeps (backup, mirror, tag measure, tag audit, tag
+// reconcile, tag identity, thumbnails backfill) under the maintenance lock, and requeues stale work.
+// The per-batch consume work itself forks kushim consume children.
 package queue
 
 import (
@@ -341,16 +339,13 @@ func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config) {
 }
 
 func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config) {
+	if err := startPool(ctx, d.c, types.Task.Type.TagMeasure, &d.tagMeasurePool); err != nil {
+		d.c.GetLogger().Error("", "tag measure pool: %v", err)
+	}
 	if cfg.Enricher.TagMeasure.Enabled {
-		if err := startPool(ctx, d.c, types.Task.Type.TagMeasure, &d.tagMeasurePool); err != nil {
-			d.c.GetLogger().Error("", "tag measure pool: %v", err)
-		}
 		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagMeasure, tagMeasureSpec); err != nil {
 			d.c.GetLogger().Error("", "tag measure scheduling: %v", err)
 		}
-	} else if d.tagMeasurePool.started {
-		stopPool(&d.tagMeasurePool)
-		d.c.GetLogger().Info("", "tag measure pool stopped (disabled)")
 	}
 }
 
@@ -366,16 +361,13 @@ func (d *daemon) ensureTagIdentity(ctx context.Context, cfg *config.Config) {
 }
 
 func (d *daemon) ensureTagAudit(ctx context.Context, cfg *config.Config) {
+	if err := startPool(ctx, d.c, types.Task.Type.TagAudit, &d.tagAuditPool); err != nil {
+		d.c.GetLogger().Error("", "tag audit pool: %v", err)
+	}
 	if cfg.Enricher.TagAudit.Enabled {
-		if err := startPool(ctx, d.c, types.Task.Type.TagAudit, &d.tagAuditPool); err != nil {
-			d.c.GetLogger().Error("", "tag audit pool: %v", err)
-		}
 		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagAudit, tagAuditSpec); err != nil {
 			d.c.GetLogger().Error("", "tag audit scheduling: %v", err)
 		}
-	} else if d.tagAuditPool.started {
-		stopPool(&d.tagAuditPool)
-		d.c.GetLogger().Info("", "tag audit pool stopped (disabled)")
 	}
 }
 

@@ -11,38 +11,41 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 )
 
-// TestTagCommandsDispatchHelp pins that both tag verbs are registered in the cli
+// TestTagCommandsDispatchHelp pins that the tag verbs are registered in the cli
 // table and answer --help through the dispatcher, the path cmd/kushim takes.
 func TestTagCommandsDispatchHelp(t *testing.T) {
 	c, _ := newTestContainer(t)
 	runner := NewCommandRunner(c, "cli")
 
-	for _, name := range []string{"tagidentity", "tagreconcile"} {
+	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
 		if err := runner.ExecuteCommand(name, []string{"--help"}); err != nil {
 			t.Errorf("%s --help: %v", name, err)
 		}
 	}
 }
 
-// TestTagReconcileValidatesRunID pins the fork mode's contract: --run takes a batch
-// id and anything else is rejected before a pass is launched.
-func TestTagReconcileValidatesRunID(t *testing.T) {
+// TestTagCommandsValidateRunID pins the fork mode's contract across the tag
+// verbs: --run takes a batch id and anything else is rejected before a pass is
+// launched.
+func TestTagCommandsValidateRunID(t *testing.T) {
 	c, _ := newTestContainer(t)
 	runner := NewCommandRunner(c, "cli")
 
-	err := runner.ExecuteCommand("tagreconcile", []string{"--run", "not-a-uuid"})
-	if err == nil || !strings.Contains(err.Error(), "invalid batch id") {
-		t.Errorf("--run with a non-uuid: got %v, want an invalid-batch-id error", err)
-	}
+	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
+		err := runner.ExecuteCommand(name, []string{"--run", "not-a-uuid"})
+		if err == nil || !strings.Contains(err.Error(), "invalid batch id") {
+			t.Errorf("%s --run with a non-uuid: got %v, want an invalid-batch-id error", name, err)
+		}
 
-	err = runner.ExecuteCommand("tagreconcile", []string{"--bogus"})
-	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
-		t.Errorf("unknown flag: got %v, want an unknown-flag error", err)
+		err = runner.ExecuteCommand(name, []string{"--bogus"})
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("%s unknown flag: got %v, want an unknown-flag error", name, err)
+		}
 	}
 }
 
-// TestTagCommandsWithoutFlagsEnqueue pins the two-mode contract: with no flags both
-// verbs reach the enqueue path instead of demanding --run, and only report the
+// TestTagCommandsWithoutFlagsEnqueue pins the two-mode contract: with no flags the
+// tag verbs reach the enqueue path instead of demanding --run, and only report the
 // database here — the container points at a dead port, so the enqueue itself is
 // exercised down to the connection.
 func TestTagCommandsWithoutFlagsEnqueue(t *testing.T) {
@@ -66,7 +69,7 @@ database:
 	t.Cleanup(func() { c.Close() })
 
 	runner := NewCommandRunner(c, "cli")
-	for _, name := range []string{"tagidentity", "tagreconcile"} {
+	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
 		err := runner.ExecuteCommand(name, nil)
 		if err == nil {
 			t.Errorf("%s without flags: want an unreachable-database error, got nil", name)

@@ -850,7 +850,10 @@ exit code decides completion/failure. The pass opens by checking the
 `tag_measure_changed` flag: with the flag clear and a completed run under the
 current rule set it short-circuits to a zero-work report, writing nothing;
 otherwise its opening transaction clears the flag and the sweep runs, re-arming
-the flag if the sweep fails.
+the flag if the sweep fails. A manual `kushim tagmeasure` enqueues the same
+queued task through `curation.TagMeasure` (dedup key `tagmeasure`), and the pool
+always claims — `enricher.tag_measure.enabled` gates only the schedule
+that enqueues runs automatically.
 
 The **tagidentity** task (`internal/tags/admission/tagidentity.go`) follows the
 same fork-and-wait shape: claimed with the lock held, drained via
@@ -858,10 +861,9 @@ same fork-and-wait shape: claimed with the lock held, drained via
 `kushim tagidentity --run <batch-id>`; the child resolves pending identity
 evidence through `admission.IdentityResolver` and prints the
 `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/
-failed) that becomes the task result. Unlike `tagmeasure` there is no manual
-foreground mode: the review surface's reevaluate action, a manual
-`kushim tagidentity` (which enqueues instead of running a foreground pass), and
-the pass's own anchored schedule all create the same queued task. Its pool runs
+failed) that becomes the task result. The review surface's reevaluate action, a
+manual `kushim tagidentity` (which enqueues), and the pass's own anchored
+schedule all create the same queued task. Its pool runs
 unconditionally, and the schedule — a fixed daily 03:30 pass with no config
 keys — fires only while `enricher.tag_adjudicator.enabled` is set, so pending
 claims wait for the next run when the judge is off.
@@ -873,8 +875,9 @@ drained via `WaitForTaskDrain`, heartbeat across the run, then forks
 pass (`admission.AuditRunner`) and prints the `tagaudit-report: <json>` line
 (sweep, sampled/flagged counts, coverage tallies by class, fills/flags/
 proposals, judge call counts, pending coverage) that becomes the task result.
-Its pool is gated on `enricher.tag_audit.enabled` (the schedule is disabled by
-default) and the manual `kushim tagaudit` run bypasses the queue.
+Runs come from the anchored schedule (disabled by default), a manual
+`kushim tagaudit` (which enqueues), and the reevaluate endpoint; the pool always
+claims — `enricher.tag_audit.enabled` gates only automatic enqueuing.
 
 The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) is a
 blocking-class task too: claimed with the lock held, drained via

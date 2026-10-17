@@ -727,19 +727,21 @@ reconstructibility against mechanically derived parts, and part coverage),
 written as versioned evidence records.
 
 ```bash
-kushim tagmeasure                 # foreground run under the maintenance lock
-kushim tagmeasure --run <batch-id>  # the scheduled fork's execution mode
+kushim tagmeasure                # enqueue a blocking task and print its batch id
+kushim tagmeasure --run <batch-id>  # the queued run's execution mode
 ```
 
-Without flags the run acquires the maintenance lock (waiting for a scheduled
-run or another manual run to finish), waits for in-flight document work to
-drain, executes the pass in one REPEATABLE READ transaction, prints the run
-summary, and releases the lock; the lock is heartbeated while the run lasts.
-`--run <batch-id>` is how the queue daemon's scheduled task executes the same
-pass — it takes no lock (the claiming task holds it) and is mostly useful for
-debugging. Each pass mints its own run id, so retries and manual runs coexist
-as distinguishable snapshots. Nothing acts on the measurements automatically:
-they are evidence for review.
+Without flags the command enqueues a `tagmeasure` task into a `queued` batch
+(dedup key `tagmeasure`) and prints the batch id with the `kushim queue` hint,
+whether or not the daemon is running; a run already queued or processing is
+reported instead. `--run <batch-id>` is how the queue daemon executes that task
+— the child takes no lock (the claiming task holds it and already drained) and
+prints the report line the handler stores as the task result. The queue pool
+always claims measurement tasks, so a manual enqueue runs even with the schedule
+off; `enricher.tag_measure.enabled` gates only the automatic scheduled
+enqueuing. Each pass mints its own run id, so retries and manual runs coexist as
+distinguishable snapshots. Nothing acts on the measurements automatically: they
+are evidence for review.
 
 The pass is a no-op when nothing changed: it reads its store-changed flag in
 `system_signal`, and if the flag is clear and a completed run exists under the
@@ -824,18 +826,22 @@ per-dimension coverage counts are recorded in the measurement substrate, and fla
 surface in the **Coverage** tab of the tags page.
 
 ```bash
-kushim tagaudit                # manual run under the maintenance lock
-kushim tagaudit --run <batch-id>  # the scheduled fork's execution mode
+kushim tagaudit                # enqueue a blocking task and print its batch id
+kushim tagaudit --run <batch-id>  # the queued run's execution mode
 ```
 
-The manual run takes the maintenance lock and waits for any running pass to
-finish; `--run <batch-id>` is how the queue daemon executes a scheduled run — it
-takes no lock (the claiming task holds it and already drained) and the batch id
-only labels the run. The run requires the applicability judge (`enricher.tag_adjudicator`);
-without it, or when the matcher is unavailable, no reading is taken and the
-documents stay eligible for the next run. Scheduling (`enricher.tag_audit`) is
-disabled by default; enabling it starts the queue pool that executes scheduled
-runs, and `POST /api/v1/tags/audit/reevaluate` enqueues a run on demand.
+Without flags the command enqueues a `tagaudit` task into a `queued` batch
+(dedup key `tagaudit`) and prints the batch id with the `kushim queue` hint,
+whether or not the daemon is running; a run already queued or processing is
+reported instead. `--run <batch-id>` is how the queue daemon executes that task —
+it takes no lock (the claiming task holds it and already drained) and the batch
+id only labels the run. The run requires the applicability judge
+(`enricher.tag_adjudicator`); without it, or when the matcher is unavailable, no
+reading is taken and the documents stay eligible for the next run. Scheduling
+(`enricher.tag_audit`) is disabled by default and gates only automatic
+enqueuing; the queue pool always claims audit tasks, so a manual
+`kushim tagaudit` or a `POST /api/v1/tags/audit/reevaluate` run executes even
+with the schedule off.
 
 ### `kushim restore`
 
@@ -2941,8 +2947,8 @@ mirror:
 | `enricher.tag_quality`         | Optional admission decision for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary are decided by the pinned rule set over their features: the judge's four rubric answers — `subject_matter`, `not_person`, `atomic`, `not_form_genre`, plus the optional `defer` abstention — together with the `dimension` verdict the parts pass owns (read from the shared parts cache and stamped onto the row), and the emission's deterministic signals (a detail annotated `other`, a best store similarity below the internal no-anchor cut). The decision defers on the judge's abstention, rejects on two or more failing signals, defers on exactly one (the gray band), and admits when nothing fails; verdicts are cached per name in `tag_quality_event` with the recorded outcome, rejections drop the tag for that document — never stored — and are logged as `tagquality[v6]` lines, and a transient judge failure retries once while parse failures, incomplete replies, output-cap hits, credit exhaustion, token-limit, content-too-large and context errors are never retried — a reply that omits verdicts for some candidates salvages the entries it returned (each decided and cached) and defers only the missing candidates with `judge_unavailable`, while every other non-credit failure keeps every novel tag with a defer decision, and a credit-exhaustion failure pauses the batch. Kept tags are **provisional**: attached and searchable from birth, but excluded from the embedding store — and therefore from suggestions, consolidation targets, and the suggestion fallback — until the admission decision admits them and assignments on ≥10 distinct live (non-trashed) documents clear the promotion floor and promote them inline (logged as `tagquality[v6]: promote …`); a verdict-less birth (judge outage) or re-emitted legacy provisional never gets a verdict row — a name in the tag table is not novel, so the judge never sees it again — and stays out of the vocabulary until the scheduled reconciliation sweep re-derives the decision from its stored verdict or re-judges it, or an operator promotes it from the review queue. A fold the gate refuses beside a live store value holds the birth for review — the queue shows the anchor and promotion waits until an operator resolves it. The decision thresholds are internal pinned constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
 | `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`; also the identity pass's per-run budget), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (disposed through the composition decision when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored verdict the decision re-derives as admit plus ≥10 live documents promotes the name immediately, defer and reject verdicts stay queued for the review surface on the tags page, verdict-less names are re-judged under the `max_rejudge` cap and promoted when admitted (report-only runs list the would-be promotions and verdicts). Requires the tag adjudicator for acting (write) runs — without it, runs stay snapshot-only. `enabled` gates only the automatic scheduled enqueuing: the queue pool runs unconditionally, so `kushim tagreconcile` and any run already queued are always claimed. Pending identity evidence is resolved by the identity pass (`kushim tagidentity`), not by this sweep |
 
-| `enricher.tag_measure`         | Scheduled tag extension measurement: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `03:00`). The queue daemon enqueues a `tagmeasure` task when due (anchored on the most recent completed run); the pass reads one REPEATABLE READ snapshot and appends versioned evidence records (`tag_measurement`) for per-value mass, pairwise overlap with Jaccard/overlap/containment coefficients, compound reconstructibility against mechanically derived parts, and part coverage, plus the derived composition-review worklists (`≈` twin candidates, compound split proposals, near-contained siblings) as evidence only — nothing is promoted, merged, split, or deleted. `kushim tagmeasure` runs the pass in the foreground under the maintenance lock |
-| `enricher.tag_audit`           | Scheduled tag coverage audit: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `04:00`), `sample_size` (documents sampled per run, default `25`; `≤ 0` resets to the default). When enabled, the queue daemon enqueues a `tagaudit` task when due (anchored on the most recent completed run) and runs its pool; the pass draws a sample plus the below-floor documents from the sweep register, suggests dimensions the document is about but does not carry (matcher trigger, then lexical narrowing), confirms them with the applicability judge, fills the confirmed gaps, and records the durable coverage classes plus per-dimension coverage counts. A document is audited at most once per sweep. `kushim tagaudit` runs the pass in the foreground under the maintenance lock, and `POST /api/v1/tags/audit/reevaluate` enqueues a run on demand (executed only while the schedule is enabled). The trigger bar is a pinned constant, not a setting |
+| `enricher.tag_measure`         | Scheduled tag extension measurement: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `03:00`). The queue daemon enqueues a `tagmeasure` task when due (anchored on the most recent completed run); the pass reads one REPEATABLE READ snapshot and appends versioned evidence records (`tag_measurement`) for per-value mass, pairwise overlap with Jaccard/overlap/containment coefficients, compound reconstructibility against mechanically derived parts, and part coverage, plus the derived composition-review worklists (`≈` twin candidates, compound split proposals, near-contained siblings) as evidence only — nothing is promoted, merged, split, or deleted. `kushim tagmeasure` enqueues a run through the queue (dedup key `tagmeasure`); the pool always claims, so the flag gates only automatic enqueuing |
+| `enricher.tag_audit`           | Scheduled tag coverage audit: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `04:00`), `sample_size` (documents sampled per run, default `25`; `≤ 0` resets to the default). The queue daemon enqueues a `tagaudit` task when due (anchored on the most recent completed run); the pass draws a sample plus the below-floor documents from the sweep register, suggests dimensions the document is about but does not carry (matcher trigger, then lexical narrowing), confirms them with the applicability judge, fills the confirmed gaps, and records the durable coverage classes plus per-dimension coverage counts. A document is audited at most once per sweep. `kushim tagaudit` and `POST /api/v1/tags/audit/reevaluate` enqueue a run through the queue (dedup key `tagaudit`); the pool always claims, so these runs execute regardless of the schedule, which gates only automatic enqueuing. The trigger bar is a pinned constant, not a setting |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
 > takes effect at the closest upcoming occurrence of the new timing; if that

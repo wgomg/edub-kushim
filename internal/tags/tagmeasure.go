@@ -17,6 +17,10 @@ import (
 
 var _ task.Dedupable = (*TagMeasureTaskHandler)(nil)
 
+// TagMeasureDedupKey is the active-dedup key shared by the enqueue path and the task handler so they
+// agree; it is declared here because this package sits below the curation package that shares it.
+const TagMeasureDedupKey = "tagmeasure"
+
 // TagMeasureTaskHandler runs the measurement sweep as a blocking task: it
 // forks the tagmeasure verb and extracts its JSON report. The task
 // deduplicates on a fixed key, so concurrent triggers collapse into one
@@ -34,7 +38,7 @@ func NewTagMeasureTaskHandler(queries *database.Queries, logger *log.Logger) *Ta
 // DedupKey is fixed for all tag measure tasks: one sweep runs at a time
 // regardless of payload.
 func (h *TagMeasureTaskHandler) DedupKey(payload json.RawMessage) string {
-	return "tagmeasure"
+	return TagMeasureDedupKey
 }
 
 // Handle forks the tagmeasure verb for the task's batch and returns its

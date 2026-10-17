@@ -728,10 +728,10 @@ the reconciler's live counts, and the pair-verdict aggregates all read through
   read-only on the tags page's Overlap tab (`GET /api/v1/tags/siblings`) —
   nothing is acted on at measurement time.
 - **Running it**: `enricher.tag_measure.{enabled, interval, time}` schedules a
-  `tagmeasure` task (disabled by default), and `kushim tagmeasure` runs the
-  pass in the foreground under the maintenance lock, while
-  `kushim tagmeasure --run <batch-id>` is the scheduled fork's execution mode.
-  The pass holds the lock for its whole transaction, so runs are
+  `tagmeasure` task (disabled by default), and `kushim tagmeasure` enqueues the
+  same queued task — the pool always claims, so the flag gates only the
+  schedule — while `kushim tagmeasure --run <batch-id>` is the queued run's
+  execution mode. The pass holds the lock for its whole transaction, so runs are
   minutes-scale and serialize with every other blocking task.
 
 The pass measures; it never judges. Dispositions — promote, demote, alias, split,

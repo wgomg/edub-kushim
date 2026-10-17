@@ -233,6 +233,7 @@ internal/
 │   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
 │   │   ├── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
 │   │   ├── tagreconcile.go # TagReconcile service (NewTagReconcile — enqueues the manual reconciliation runs)
+│   │   ├── tagmeasure.go   # TagMeasure service (NewTagMeasure — enqueues the manual measurement runs)
 │   │   └── tagaudit.go     # TagAudit service (NewTagAudit — enqueues the coverage-audit runs, serves the coverage review surface)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
 │   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, compound decomposition incl. JudgeCompounds over the substrate reading, deleted-tag policy, identity planning, tag-quality gating)

@@ -109,7 +109,7 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   `RuleSetVersion` — clears its flag in that opening transaction, and re-arms it
   if the sweep fails, reporting `ZeroWork` when it skips.
 - `tagmeasure.go` — `TagMeasureTaskHandler`/`NewTagMeasureTaskHandler`,
-  `ForkAndExtractReport`, `ExtractReport`
+  `TagMeasureDedupKey`, `ForkAndExtractReport`, `ExtractReport`
 
 ## Subpackages
 
@@ -118,7 +118,7 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   `SiblingSnapshot` and `ListSiblings` (the read-only overlap surface),
   `PlanRegistration`/`CreatePlannedTx`, alias application (`ApplyAliasPlan`),
   `TagIdentity`/`NewTagIdentity`, `TagReconcile`/`NewTagReconcile`,
-  `TagAudit`/`NewTagAudit` plus `CoverageFlag`.
+  `TagMeasure`/`NewTagMeasure`, `TagAudit`/`NewTagAudit` plus `CoverageFlag`.
 - `admission/` — `Adjudicator`/`NewAdjudicator` (canonical suggestions,
   decomposition via `JudgeCompounds` over the substrate reading, deleted-tag
   policy, identity planning, quality gating), `IdentityResolver`/
