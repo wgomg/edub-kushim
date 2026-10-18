@@ -1,10 +1,8 @@
 [
   {
     "provider": "deepseek",
-    "adapter": "openai-compatible",
     "model_id": "deepseek-v4-flash",
     "display_name": "DeepSeek V4 Flash",
-    "official_url": "https://api.deepseek.com/v1",
     "max_input_tokens": 1000000,
     "max_output_tokens": 8192,
     "disable_reasoning": true,
@@ -15,10 +13,8 @@
   },
   {
     "provider": "deepseek",
-    "adapter": "openai-compatible",
     "model_id": "deepseek-v4-pro",
     "display_name": "DeepSeek V4 Pro",
-    "official_url": "https://api.deepseek.com/v1",
     "max_input_tokens": 1000000,
     "max_output_tokens": 8192,
     "disable_reasoning": true,
@@ -29,10 +25,8 @@
   },
   {
     "provider": "mistral",
-    "adapter": "openai-compatible",
     "model_id": "mistral-small-latest",
     "display_name": "Mistral Small",
-    "official_url": "https://api.mistral.ai/v1",
     "max_input_tokens": 128000,
     "max_output_tokens": 16384,
     "disable_reasoning": false,
@@ -43,10 +37,8 @@
   },
   {
     "provider": "anthropic",
-    "adapter": "anthropic",
     "model_id": "claude-sonnet-5",
     "display_name": "Claude Sonnet 5",
-    "official_url": "https://api.anthropic.com/v1",
     "max_input_tokens": 200000,
     "max_output_tokens": 128000,
     "disable_reasoning": true,
@@ -57,10 +49,8 @@
   },
   {
     "provider": "anthropic",
-    "adapter": "anthropic",
     "model_id": "claude-haiku-4-5",
     "display_name": "Claude Haiku 4.5",
-    "official_url": "https://api.anthropic.com/v1",
     "max_input_tokens": 200000,
     "max_output_tokens": 64000,
     "disable_reasoning": true,

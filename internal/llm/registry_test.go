@@ -1,17 +1,19 @@
 package llm
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
-func fixturePath(t *testing.T) string {
-	return filepath.Join("testdata", "catalog_fixture.json")
+func fixtureDir(t *testing.T) string {
+	return "testdata"
 }
 
 func TestNewRegistry(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -21,7 +23,7 @@ func TestNewRegistry(t *testing.T) {
 }
 
 func TestNewRegistry_FallsBackToEmbeddedCatalog(t *testing.T) {
-	r, err := NewRegistry("/nonexistent/path.json")
+	r, err := NewRegistry(t.TempDir())
 	if err != nil {
 		t.Fatalf("expected fallback to embedded catalog, got error: %v", err)
 	}
@@ -40,8 +42,84 @@ func TestNewRegistry_EmptyPathUsesEmbeddedCatalog(t *testing.T) {
 	}
 }
 
+func TestNewRegistry_UserModelOverlay(t *testing.T) {
+	models := `[
+		{"provider":"openai","model_id":"gpt-5.6-sol","display_name":"User Sol","max_input_tokens":1000,"max_output_tokens":1234,"disable_reasoning":true,"reasoning_efforts":["low"],"supports_structured_output":true,"supports_temperature":true,"supports_prompt_caching":false},
+		{"provider":"deepseek","model_id":"user-added-model","display_name":"User Added","max_input_tokens":2000,"max_output_tokens":567,"disable_reasoning":true,"reasoning_efforts":["high"],"supports_structured_output":true,"supports_temperature":true,"supports_prompt_caching":false}
+	]`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, modelCatalogFile), []byte(models), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := NewRegistry(dir)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	dup := r.Lookup("openai", "gpt-5.6-sol")
+	if dup == nil {
+		t.Fatal("expected the duplicated embedded model to stay cataloged")
+	}
+	if dup.MaxOutputTokens != 1234 || !dup.SupportsTemperature || !slices.Equal(dup.ReasoningEffortLevels, []string{"low"}) {
+		t.Errorf("user duplicate did not replace the embedded entry: got max_output_tokens=%d supports_temperature=%v efforts=%v, want 1234/true/[low]",
+			dup.MaxOutputTokens, dup.SupportsTemperature, dup.ReasoningEffortLevels)
+	}
+	added := r.Lookup("deepseek", "user-added-model")
+	if added == nil {
+		t.Fatal("expected a user model absent from the embedded catalog to extend it")
+	}
+
+	flags := make(map[string]bool)
+	for _, m := range r.ModelsForProvider("openai") {
+		flags[m.ID] = m.Overridden
+	}
+	if !flags["gpt-5.6-sol"] {
+		t.Error("a model duplicated by the user catalog must be flagged as overridden")
+	}
+	for _, m := range r.ModelsForProvider("deepseek") {
+		if m.ID == "user-added-model" && m.Overridden {
+			t.Error("a user model absent from the embedded catalog must not be flagged as overridden")
+		}
+	}
+}
+
+func TestNewRegistry_UserProviderOverlay(t *testing.T) {
+	providers := `[{"provider":"openai","adapter":"openai-compatible","official_url":"https://proxy.example/v1"}]`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, providerCatalogFile), []byte(providers), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := NewRegistry(dir)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	if got := r.ProviderDefaultURL("openai"); got != "https://proxy.example/v1" {
+		t.Errorf("ProviderDefaultURL(openai) = %q, want the user catalog's endpoint", got)
+	}
+	if r.Lookup("openai", "gpt-5.6-sol") == nil {
+		t.Error("models must stay cataloged when only the provider file is overridden")
+	}
+}
+
+func TestNewRegistry_UserModelWithoutProviderFails(t *testing.T) {
+	models := `[{"provider":"no-such-provider","model_id":"m","max_input_tokens":1,"max_output_tokens":1}]`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, modelCatalogFile), []byte(models), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewRegistry(dir); err == nil {
+		t.Fatal("expected a load error for a model whose provider has no provider-catalog entry")
+	} else if !strings.Contains(err.Error(), "no-such-provider") || !strings.Contains(err.Error(), providerCatalogFile) {
+		t.Errorf("error must name the missing provider and the provider catalog, got %v", err)
+	}
+}
+
 func TestLookup_KnownModel(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +149,7 @@ func TestLookup_KnownModel(t *testing.T) {
 }
 
 func TestLookup_DeepSeekPro(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +167,7 @@ func TestLookup_DeepSeekPro(t *testing.T) {
 }
 
 func TestLookup_MissingModel(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +179,7 @@ func TestLookup_MissingModel(t *testing.T) {
 }
 
 func TestLookup_MissingProvider(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +191,7 @@ func TestLookup_MissingProvider(t *testing.T) {
 }
 
 func TestLookup_MistralSmall(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +209,7 @@ func TestLookup_MistralSmall(t *testing.T) {
 }
 
 func TestLookup_AnthropicModel(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +230,7 @@ func TestLookup_AnthropicModel(t *testing.T) {
 }
 
 func TestAdapters(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +248,7 @@ func TestAdapters(t *testing.T) {
 }
 
 func TestProvidersForAdapter_OpenAICompatible(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +263,7 @@ func TestProvidersForAdapter_OpenAICompatible(t *testing.T) {
 }
 
 func TestProvidersForAdapter_Anthropic(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +278,7 @@ func TestProvidersForAdapter_Anthropic(t *testing.T) {
 }
 
 func TestProvidersForAdapter_Gemini(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +293,7 @@ func TestProvidersForAdapter_Gemini(t *testing.T) {
 }
 
 func TestProvidersForAdapter_Unknown(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +308,7 @@ func TestProvidersForAdapter_Unknown(t *testing.T) {
 }
 
 func TestModelsForProvider_DeepSeek(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +339,7 @@ func TestModelsForProvider_DeepSeek(t *testing.T) {
 }
 
 func TestModelsForProvider_Mistral(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +356,7 @@ func TestModelsForProvider_Mistral(t *testing.T) {
 }
 
 func TestModelsForProvider_Unknown(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +368,7 @@ func TestModelsForProvider_Unknown(t *testing.T) {
 }
 
 func TestModelsForProvider_Anthropic(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +385,7 @@ func TestModelsForProvider_Anthropic(t *testing.T) {
 }
 
 func TestModelsForProvider_Sorted(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +402,7 @@ func TestModelsForProvider_Sorted(t *testing.T) {
 }
 
 func TestDefaultURL(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +423,7 @@ func TestDefaultURL(t *testing.T) {
 }
 
 func TestDefaultURL_Unknown(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +434,7 @@ func TestDefaultURL_Unknown(t *testing.T) {
 }
 
 func TestProviderAdapter(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +456,7 @@ func TestProviderAdapter(t *testing.T) {
 }
 
 func TestReasoningEffortDefaults(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +474,7 @@ func TestReasoningEffortDefaults(t *testing.T) {
 }
 
 func TestReasoningEffort_EmptyStaysEmpty(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +492,7 @@ func TestReasoningEffort_EmptyStaysEmpty(t *testing.T) {
 }
 
 func TestReload(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +513,7 @@ func TestReload(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +535,7 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestConcurrentReloadAndProviderReads(t *testing.T) {
-	r, err := NewRegistry(fixturePath(t))
+	r, err := NewRegistry(fixtureDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -156,8 +156,9 @@ internal/
 │   │   ├── text.go         # estimateTokens, cleanCodeBlock, ContainsNonLatin
 │   │   ├── openai_compatible.go # OpenAI-compatible API (absorbs former OpenAI, DeepSeek, Mistral, etc.)
 │   │   └── llm_anthropic.go # Anthropic Messages API with capability flags
-│   ├── model_catalog.json  # Manually curated model catalog (committed to repo)
-│   └── registry.go         # Registry: loads catalog, Lookup, Adapters, ProvidersForAdapter, ModelsForProvider
+│   ├── provider_catalog.json # Embedded provider entries (adapter, official_url, session_header)
+│   ├── model_catalog.json  # Embedded model entries: capabilities per provider/model (committed to repo)
+│   └── registry.go         # Registry: loads and merges both catalogs, Lookup, Adapters, ProvidersForAdapter, ModelsForProvider
 ├── log/                    # Structured logging and memory metrics
 │   ├── logger.go           # Logger (slog-based console/file handlers, numeric level filtering, reqID) + WithReqID/ReqIDFrom context accessors
 │   └── metrics.go          # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta, FormatBytes

@@ -36,7 +36,8 @@ func (h *LlmHandler) buildResponse() *LlmModelsResponse {
 			entries := make([]LlmModelEntry, 0, len(models))
 			for _, m := range models {
 				entry := LlmModelEntry{
-					ID: m.ID,
+					ID:         m.ID,
+					Overridden: m.Overridden,
 				}
 				entry.Capabilities.CanDisableReasoning = m.Capabilities.CanDisableReasoning
 				entry.Capabilities.ReasoningEfforts = m.Capabilities.ReasoningEffortLevels

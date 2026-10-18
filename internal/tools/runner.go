@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -152,20 +151,18 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 	}
 }
 
-// NewRunner instantiates the adapters for the named tools from cfg. The
-// names are the capability keys below ("textextractor", "ocr",
-// "converter", "pdfoptimizer", "thumbnail", "textreducer",
-// "contentanalyzer", "tagmatcher"); an unknown name is logged and skipped.
-// A requested adapter whose constructor fails is logged with its cause and
-// left nil, so the later "not configured" failure traces back to a cause
-// named here. The model catalog is loaded from the config directory; a load
-// failure is logged, leaving the analyzer adapters unconfigured.
+// NewRunner instantiates the adapters for the named tools from cfg. The names are the capability keys
+// below ("textextractor", "ocr", "converter", "pdfoptimizer", "thumbnail", "textreducer", "contentanalyzer",
+// "tagmatcher"); an unknown name is logged and skipped. A requested adapter whose constructor fails
+// is logged with its cause and left nil, so the later "not configured" failure traces back to a cause
+// named here. The provider and model catalogs are loaded from the config directory; a load failure is
+// logged, leaving the analyzer adapters unconfigured.
 func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 	r := &Runner{logger: logger, config: cfg}
 
-	reg, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))
+	reg, err := llm.NewRegistry(cfg.App.ConfigDir)
 	if err != nil {
-		logger.Error("", "load model catalog: %v", err)
+		logger.Error("", "load model catalogs: %v", err)
 	}
 
 	for _, name := range tools {

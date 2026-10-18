@@ -34,16 +34,23 @@ func newFixtureWithCatalog(t *testing.T, capsJSON string, respond http.HandlerFu
 	srv := httptest.NewServer(respond)
 	t.Cleanup(srv.Close)
 
-	catalog := fmt.Sprintf(
-		`[{"provider":"testprovider","adapter":"openai-compatible","model_id":"test-model","display_name":"Test Model","official_url":%q,%s}]`,
-		srv.URL, capsJSON,
+	providers := fmt.Sprintf(
+		`[{"provider":"testprovider","adapter":"openai-compatible","official_url":%q}]`,
+		srv.URL,
 	)
-	path := filepath.Join(t.TempDir(), "catalog.json")
-	if err := os.WriteFile(path, []byte(catalog), 0o600); err != nil {
+	models := fmt.Sprintf(
+		`[{"provider":"testprovider","model_id":"test-model","display_name":"Test Model",%s}]`,
+		capsJSON,
+	)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "provider_catalog.json"), []byte(providers), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_catalog.json"), []byte(models), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	reg, err := llm.NewRegistry(path)
+	reg, err := llm.NewRegistry(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

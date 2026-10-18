@@ -29,6 +29,10 @@
 		return llmModels.providers[llm?.provider] ?? [];
 	}
 
+	function modelLabel(model) {
+		return model.overridden ? `${model.id} (user override)` : model.id;
+	}
+
 	function entryFor(engine) {
 		return toolStatus.find((t) => t.engine === engine);
 	}
@@ -141,7 +145,7 @@
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 						>
 							{#each selectedProviderModels as model (model.id)}
-								<option value={model.id}>{model.id}</option>
+								<option value={model.id}>{modelLabel(model)}</option>
 							{/each}
 						</select>
 					</div>
@@ -384,7 +388,7 @@
 												class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 											>
 												{#each providerModels(fb.llm) as model (model.id)}
-													<option value={model.id}>{model.id}</option>
+													<option value={model.id}>{modelLabel(model)}</option>
 												{/each}
 											</select>
 										</div>
@@ -593,7 +597,7 @@
 						>
 							<option value="">Inherit from content analyzer</option>
 							{#each providerModels(cfg.enricher.tag_adjudicator.llm) as model (model.id)}
-								<option value={model.id}>{model.id}</option>
+								<option value={model.id}>{modelLabel(model)}</option>
 							{/each}
 						</select>
 					</div>
@@ -693,7 +697,7 @@
 						>
 							<option value="">Inherit from content analyzer</option>
 							{#each providerModels(cfg.enricher.tag_quality.llm) as model (model.id)}
-								<option value={model.id}>{model.id}</option>
+								<option value={model.id}>{modelLabel(model)}</option>
 							{/each}
 						</select>
 					</div>

@@ -41,7 +41,7 @@ pieces:
 | Anthropic adapter | `analyzer/llm_anthropic.go` | Claude via `POST /messages` |
 | OpenAI-compatible adapter | `analyzer/openai_compatible.go` | anything with a `/chat/completions` API |
 | Prompt, parse and gate logic | `analyzer/prompt.go` · `analyzer/facets.go` · `analyzer/gates.go` · the per-step files | system prompt, template, JSON cleaning, pre-flight errors, judged-step prompts/parsers |
-| Model catalog | `llm/registry.go` + `model_catalog.json` | per-model capabilities |
+| Model catalogs | `llm/registry.go` + `provider_catalog.json`/`model_catalog.json` | provider endpoints and per-model capabilities |
 | The enricher | `internal/enrichment/enricher.go` | orchestrates: reduce → match → analyze → persist |
 | Task handler | `internal/enrichment/enrich.go` | the `enrich` task type |
 
@@ -552,39 +552,50 @@ caveats: `algorithms.md` §12.
 
 ## 9. The model catalog and registry
 
-`internal/llm/registry.go` loads `model_catalog.json` — from disk
-(`<config-dir>/model_catalog.json` if present) or the embedded copy
-(`//go:embed model_catalog.json`, `registry.go:21-22`) — and indexes it.
-
-Catalog entry fields (`registry.go:78-94`): `provider`, `adapter`,
-`model_id`, `display_name`, `official_url`, `session_header`,
-`max_input_tokens`, `max_output_tokens`, `disable_reasoning`,
+`internal/llm/registry.go` loads two embedded catalogs (`//go:embed`) and
+overlays the config directory's copies when present. `provider_catalog.json`
+defines providers — `provider`, `adapter`, `official_url`, optional
+`session_header` — and `model_catalog.json` defines their models:
+`provider`, `model_id`, `display_name`, the token limits, and the capability
+flags (`max_input_tokens`, `max_output_tokens`, `disable_reasoning`,
 `reasoning_efforts`, `supports_structured_output`, `supports_temperature`,
 `supports_prompt_caching`, `uses_max_completion_tokens` (the OpenAI GPT-5
 family rejects `max_tokens`; the flag makes the adapters send the output
-budget as `max_completion_tokens`), and `uses_responses_endpoint` (the entry is
-served only over the Responses API). Eight providers: openai, deepseek,
-mistral, anthropic, qwen, zhipu, opencode-go, opencode — each entry carries its
-own `official_url`, which is how the adapters know the endpoint. Providers that
-declare `session_header` receive the process-stable `llm.SessionID()` in that
-header on every request (both adapters set it; the opencode gateways ask for
-`x-opencode-session`, which they use for request routing and prompt caching):
+budget as `max_completion_tokens`), and `uses_responses_endpoint` (the entry
+is served only over the Responses API)). Eight providers: openai, deepseek,
+mistral, anthropic, qwen, zhipu, opencode-go, opencode — the provider
+catalog's `official_url` is how the adapters know the endpoint, and providers
+that declare `session_header` receive the process-stable `llm.SessionID()` in
+that header on every request (both adapters set it; the opencode gateways ask
+for `x-opencode-session`, which they use for request routing and prompt
+caching):
 
 ```go
-key := provider + "/" + modelID
+key := modelKey(provider, modelID)
 i, ok := r.index[key]
 ...
 return entryToCapability(entry)
 ```
 
-(`registry.go:223-236`). Lookups feed the API surface
-(`ModelsForProvider`, `ProvidersForAdapter`) and the capability gating in
-both adapters. **Unknown model → nil capabilities** → adapters degrade
-gracefully: no temperature, no reasoning knob, no structured output, no token
-pre-check.
+(`registry.go:352-361`). Both catalogs are extendable from the config
+directory: `<config-dir>/provider_catalog.json` and
+`<config-dir>/model_catalog.json`, when present, overlay their embedded
+counterparts instead of replacing them. A user entry duplicating an embedded
+key (`provider` for providers, `provider/model_id` for models) replaces it in
+place, new entries append, and duplicates within one user file follow array
+order (the last entry wins). A user model duplicating an embedded model is
+flagged as an override and surfaced as such by `GET /api/v1/llm/models` and
+the settings UI. Loading validates required fields (`provider`, `adapter`,
+`official_url` for providers; `provider`, `model_id` for models) and rejects
+a model whose provider is absent from the merged provider catalog; a user
+file that cannot be read, parsed, or validated fails the load. Lookups feed
+the API surface (`ModelsForProvider`, `ProvidersForAdapter`) and the
+capability gating in both adapters. **Unknown model → nil capabilities** →
+adapters degrade gracefully: no temperature, no reasoning knob, no structured
+output, no token pre-check.
 
-Note: neither the catalog nor `ModelCapability` models per-token costs —
-`entryToCapability` (`registry.go:207-221`) maps only the capability flags
+Note: neither catalog nor `ModelCapability` models per-token costs —
+`entryToCapability` (`registry.go:336-348`) maps only the capability flags
 and limits.
 
 ---

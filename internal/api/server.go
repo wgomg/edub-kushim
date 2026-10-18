@@ -199,9 +199,9 @@ func registerRoutes(
 	engine := search.NewEngine(logger, client)
 
 	cfg := getConfig()
-	llmRegistry, err := llm.NewRegistry(filepath.Join(cfg.App.ConfigDir, "model_catalog.json"))
+	llmRegistry, err := llm.NewRegistry(cfg.App.ConfigDir)
 	if err != nil {
-		logger.Error("", "load model catalog: %v", err)
+		logger.Error("", "load model catalogs: %v", err)
 	}
 	if llmRegistry != nil {
 		llmHandler := handlers.NewLlmHandler(llmRegistry)

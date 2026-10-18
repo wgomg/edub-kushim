@@ -8,7 +8,7 @@
 
 - **Fields**: `logger`, `config`, `textExtractor`, `ocr`, `pdfOptimizer`, `tagMatcher matcher.Matcher`, `contentAnalyzer`, `tagAdjudicator analyzer.ContentAnalyzer` (built from `cfg.Enricher.TagAdjudicator` when enabled; logs an error and stays nil when construction fails), `tagQualityJudge analyzer.ContentAnalyzer` (built from `cfg.Enricher.TagQuality` when enabled, same construction-failure contract), `fallbackAnalyzers []analyzer.ContentAnalyzer` + `fallbackMeta []fallbackMeta` (one entry per enabled `enricher.contentanalyzer.fallbacks` entry, empty when none are configured), `textReducer`
 - **Functions**:
-  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). The accepted capability keys are `"textextractor"`, `"ocr"`, `"converter"`, `"pdfoptimizer"`, `"thumbnail"`, `"textreducer"`, `"contentanalyzer"`, and `"tagmatcher"`. Construction never fails: a requested adapter whose constructor fails is logged with its cause and left nil (its method then fails fast with "not configured"), and an unknown capability name is logged and skipped. Loads the LLM model catalog from `<configDir>/model_catalog.json` via `llm.NewRegistry`; a load failure is logged, leaving the analyzer adapters unconfigured. Does not create a tagmatcher internally. Content analyzer is created via the adapter-based factory: `analyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`. For each **enabled** entry in `cfg.Enricher.ContentAnalyzer.Fallbacks`, an analyzer is built from that entry's `Llm` block with the same factory and appended to `fallbackAnalyzers` (with its provider/model recorded in `fallbackMeta`); entries whose factory fails are skipped with a logged error.
+  - `NewRunner(logger, cfg, tools []string) *Runner` — Initializes only the listed tool adapters (e.g., `["textextractor","ocr","pdfoptimizer"]` for consumer). The accepted capability keys are `"textextractor"`, `"ocr"`, `"converter"`, `"pdfoptimizer"`, `"thumbnail"`, `"textreducer"`, `"contentanalyzer"`, and `"tagmatcher"`. Construction never fails: a requested adapter whose constructor fails is logged with its cause and left nil (its method then fails fast with "not configured"), and an unknown capability name is logged and skipped. Loads the LLM provider and model catalogs from the config directory via `llm.NewRegistry`; a load failure is logged, leaving the analyzer adapters unconfigured. Does not create a tagmatcher internally. Content analyzer is created via the adapter-based factory: `analyzer.NewContentAnalyzer(logger, cfg.ToolConfig, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, reg)`. For each **enabled** entry in `cfg.Enricher.ContentAnalyzer.Fallbacks`, an analyzer is built from that entry's `Llm` block with the same factory and appended to `fallbackAnalyzers` (with its provider/model recorded in `fallbackMeta`); entries whose factory fails are skipped with a logged error.
   - `NewRunnerWithMatcher(logger, cfg, tools, matcher matcher.Matcher) *Runner` — Calls `NewRunner` then conditionally sets `r.tagMatcher` if `matcher != nil` and `"tagmatcher"` is in the tools list.
 - **Methods**: `ExtractText`, `OCR(ctx, docId, path)`, `OptimizePdf(ctx, docId, path)`, `ReduceContent`, `MatchTags(ctx, docId, input)` (the result carries the matched tags with their similarities), `AnalyzeContent`, `AnalyzeDocType` — the two analyzer methods retry through `fallbackAnalyzers` in order when the primary error passes `isProviderError` (provider-attributable failure and at least one fallback is configured), returning the first success or the last error; request-side and lifecycle errors never retry. `AdjudicateTags(ctx, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)` — classifies same-intent tag pairs via `tagAdjudicator.Adjudicate` under the `enricher.tag_adjudicator.timeout`; returns "tag adjudicator not configured" when the adjudicator is disabled or failed to construct. `JudgeTagPhraseFolds(ctx, candidates []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error)` — decides whether each part, in the context of its phrase, denotes the candidate anchor value, via `tagAdjudicator.JudgeTagPhraseFolds`, same timeout and error contract. `JudgeTagIdentity(ctx, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)` — answers the three binary canonical-form criteria for flagged candidates via `tagAdjudicator.JudgeTagIdentity` under the same timeout and error contract. `HasTagIdentityJudge() bool` — whether an identity adapter was built at construction time (the same adapter as the adjudicator). `JudgeTagParts(ctx, values []string) ([]analyzer.TagPartResult, error)` — decides whether each value, on its own, names a subject a searcher would filter by via `tagAdjudicator.JudgeTagParts`, under the `enricher.tag_adjudicator.timeout`; returns "tag adjudicator not configured" when the adjudicator is disabled or failed to construct. `JudgeTagCompounds(ctx, candidates []string) ([]analyzer.TagCompoundResult, error)` — reads what each compound phrase denotes via `tagAdjudicator.JudgeTagCompounds`, same timeout and error contract. `JudgeTagTranslations(ctx, values []string) ([]analyzer.TagTranslationResult, error)` — returns each value's English canonical form, or the value unchanged when it is already English, via `tagAdjudicator.JudgeTagTranslations`, same timeout and error contract. `HasTagAdjudicator() bool` — whether an adjudicator adapter was built at construction time. `JudgeTagQuality(ctx, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)` — runs the tag-quality rubric judge over the novel candidates under `enricher.tag_quality.timeout`; returns "tag quality judge not configured" when the layer is disabled or the adapter failed to construct. `HasTagQualityJudge() bool` — whether a tag-quality adapter was built at construction time.
 - **Result types**: `TextExtractionResult`, `OCRResult`, `PdfOptimizationResult`, `TextReducerResult` (with Text, WordCount, CharCount, TargetWordCount), `TagMatchResult`, `ContentAnalysisResult` (with People)
@@ -391,12 +391,16 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 
 ### Data source
 
-A manually maintained `model_catalog.json` file committed to the repository at
-`internal/llm/model_catalog.json` and embedded via `//go:embed`. At startup the
-registry tries to load `<configDir>/model_catalog.json` first (so deployments can
-override the catalog without rebuilding); if that file is absent it falls back to
-the embedded copy. There is no runtime refresh mechanism — updating the catalog
-requires replacing the file and restarting, or rebuilding the binary.
+Two manually maintained catalog files are committed to the repository at
+`internal/llm/` and embedded via `//go:embed`: `provider_catalog.json` (one
+entry per provider: `provider`, `adapter`, `official_url`, optional
+`session_header`) and `model_catalog.json` (one entry per model: `provider`,
+`model_id`, display name, token limits, and capability gates). At startup the
+registry overlays the config directory's `provider_catalog.json` and
+`model_catalog.json` onto the embedded copies (so deployments can extend or
+override entries without rebuilding); a missing user file leaves the embedded
+copy alone. There is no runtime refresh mechanism — updating the catalogs
+requires editing the files and restarting, or rebuilding the binary.
 
 ### Key types
 
@@ -420,7 +424,7 @@ type ModelCapability struct {
 
 | Method | Description |
 |--------|-------------|
-| `NewRegistry(path)` | Loads JSON catalog from disk (falls back to embedded copy), builds index |
+| `NewRegistry(configDir)` | Loads the embedded catalogs, overlays the config-dir copies, validates, builds the indexes |
 | `Lookup(provider, model)` | Returns `*ModelCapability` for a given provider+model |
 | `Adapters()` | Returns adapter names present in the catalog (currently `["anthropic", "openai-compatible"]`) |
 | `ProvidersForAdapter(adapter)` | Returns provider keys for a given adapter |
@@ -428,11 +432,11 @@ type ModelCapability struct {
 
 ### Provider→Adapter mapping
 
-The mapping is data-driven: each entry in `model_catalog.json` has an `adapter` field (`"openai-compatible"`, `"anthropic"`, or `"custom"`). The `ProviderAdapter(provider)` method returns the adapter from the catalog, falling back to `"custom"` for unknown providers. The `"custom"` adapter itself is not listed by `Adapters()` unless a catalog entry uses it.
+The mapping is data-driven: each `provider_catalog.json` entry names its `adapter` (`"openai-compatible"`, `"anthropic"`, or `"custom"`). The `ProviderAdapter(provider)` method returns the adapter from the provider catalog, falling back to `"custom"` for unknown providers. The `"custom"` adapter itself is not listed by `Adapters()` unless a provider entry uses it.
 
 ### Loading
 
-The catalog is loaded at startup from `<configDir>/model_catalog.json`, falling back to the embedded copy (`internal/llm/model_catalog.json`, compiled via `//go:embed`) when the file doesn't exist. There is no runtime refresh mechanism — updating the catalog requires replacing the file and restarting, or rebuilding the binary for embedded updates.
+`NewRegistry(configDir)` parses both embedded catalogs, overlays the config-dir counterparts when present — duplicate keys replace their embedded entry in place, new entries append, and duplicates within one file follow array order (the last entry wins) — rejects entries missing required fields or naming a provider absent from the merged provider catalog, and indexes the merged result. A user model duplicating an embedded model is flagged as overridden and exposed through the discovery endpoint. There is no runtime refresh mechanism — updating the catalogs requires editing the files and restarting, or rebuilding the binary for embedded updates.
 
 ---
 
@@ -589,4 +593,4 @@ are not bounded upstream. The 100 MP ceiling allows generous large-format page
 - [Tag Matcher Guide](../tags/matcher.md) — Matcher config, memory, and CPU tuning
 - [Pipeline](pipeline.md) — Consumer and Enricher that use the Runner
 - [Config & Utils](config-and-utils.md) — Tool configuration (engines, timeouts, models)
-- `internal/llm/` — LLM capability registry (model catalog, adapter/provider/model discovery)
+- `internal/llm/` — LLM capability registry (provider and model catalogs, adapter/provider/model discovery)
