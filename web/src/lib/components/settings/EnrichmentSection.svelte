@@ -29,10 +29,6 @@
 		return llmModels.providers[llm?.provider] ?? [];
 	}
 
-	function modelLabel(model) {
-		return model.overridden ? `${model.id} (user override)` : model.id;
-	}
-
 	function entryFor(engine) {
 		return toolStatus.find((t) => t.engine === engine);
 	}
@@ -145,7 +141,7 @@
 							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 						>
 							{#each selectedProviderModels as model (model.id)}
-								<option value={model.id}>{modelLabel(model)}</option>
+								<option value={model.id}>{model.id}</option>
 							{/each}
 						</select>
 					</div>
@@ -217,6 +213,20 @@
 							label="Pause batches on credit errors"
 						/>
 					</div>
+				</div>
+
+				<div class="mt-4">
+					<Note variant="info">
+						Provider and model information and documentation:
+						<a
+							href="https://models.dev/providers/"
+							target="_blank"
+							rel="noopener noreferrer"
+							class="rounded-sm text-lapis-300 underline decoration-lapis-300/40 underline-offset-2 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>models.dev/providers</a
+						>. The adapter, provider and model options come from the catalogs in your config
+						directory.
+					</Note>
 				</div>
 
 				{#if cfg.enricher.contentanalyzer.min_tags > cfg.enricher.contentanalyzer.max_tags}
@@ -388,7 +398,7 @@
 												class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 											>
 												{#each providerModels(fb.llm) as model (model.id)}
-													<option value={model.id}>{modelLabel(model)}</option>
+													<option value={model.id}>{model.id}</option>
 												{/each}
 											</select>
 										</div>
@@ -597,7 +607,7 @@
 						>
 							<option value="">Inherit from content analyzer</option>
 							{#each providerModels(cfg.enricher.tag_adjudicator.llm) as model (model.id)}
-								<option value={model.id}>{modelLabel(model)}</option>
+								<option value={model.id}>{model.id}</option>
 							{/each}
 						</select>
 					</div>
@@ -697,7 +707,7 @@
 						>
 							<option value="">Inherit from content analyzer</option>
 							{#each providerModels(cfg.enricher.tag_quality.llm) as model (model.id)}
-								<option value={model.id}>{modelLabel(model)}</option>
+								<option value={model.id}>{model.id}</option>
 							{/each}
 						</select>
 					</div>

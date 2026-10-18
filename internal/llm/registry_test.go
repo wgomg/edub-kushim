@@ -22,31 +22,33 @@ func TestNewRegistry(t *testing.T) {
 	}
 }
 
-func TestNewRegistry_FallsBackToEmbeddedCatalog(t *testing.T) {
-	r, err := NewRegistry(t.TempDir())
+func TestNewRegistry_SeedsMissingCatalogs(t *testing.T) {
+	dir := t.TempDir()
+	r, err := NewRegistry(dir)
 	if err != nil {
-		t.Fatalf("expected fallback to embedded catalog, got error: %v", err)
+		t.Fatalf("expected the embedded defaults to be seeded, got error: %v", err)
+	}
+	for _, name := range []string{providerCatalogFile, modelCatalogFile} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("expected %s to be seeded on disk: %v", name, err)
+		}
 	}
 	if caps := r.Lookup("openai", "gpt-5.6-sol"); caps == nil {
-		t.Error("expected the embedded production catalog to be loaded")
+		t.Error("expected the seeded catalog to be loaded")
 	}
 }
 
-func TestNewRegistry_EmptyPathUsesEmbeddedCatalog(t *testing.T) {
-	r, err := NewRegistry("")
-	if err != nil {
-		t.Fatalf("expected fallback to embedded catalog, got error: %v", err)
-	}
-	if caps := r.Lookup("openai", "gpt-5.6-sol"); caps == nil {
-		t.Error("expected the embedded production catalog to be loaded")
+func TestNewRegistry_EmptyPathFails(t *testing.T) {
+	if _, err := NewRegistry(""); err == nil {
+		t.Fatal("expected an error for an empty catalog directory")
 	}
 }
 
-func TestNewRegistry_UserModelOverlay(t *testing.T) {
-	models := `[
+func TestNewRegistry_UserModelCatalog(t *testing.T) {
+	models := `{"version":1,"models":[
 		{"provider":"openai","model_id":"gpt-5.6-sol","display_name":"User Sol","max_input_tokens":1000,"max_output_tokens":1234,"disable_reasoning":true,"reasoning_efforts":["low"],"supports_structured_output":true,"supports_temperature":true,"supports_prompt_caching":false},
 		{"provider":"deepseek","model_id":"user-added-model","display_name":"User Added","max_input_tokens":2000,"max_output_tokens":567,"disable_reasoning":true,"reasoning_efforts":["high"],"supports_structured_output":true,"supports_temperature":true,"supports_prompt_caching":false}
-	]`
+	]}`
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, modelCatalogFile), []byte(models), 0o600); err != nil {
 		t.Fatal(err)
@@ -57,37 +59,30 @@ func TestNewRegistry_UserModelOverlay(t *testing.T) {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 
-	dup := r.Lookup("openai", "gpt-5.6-sol")
-	if dup == nil {
-		t.Fatal("expected the duplicated embedded model to stay cataloged")
+	sol := r.Lookup("openai", "gpt-5.6-sol")
+	if sol == nil {
+		t.Fatal("expected the on-disk model to be cataloged")
 	}
-	if dup.MaxOutputTokens != 1234 || !dup.SupportsTemperature || !slices.Equal(dup.ReasoningEffortLevels, []string{"low"}) {
-		t.Errorf("user duplicate did not replace the embedded entry: got max_output_tokens=%d supports_temperature=%v efforts=%v, want 1234/true/[low]",
-			dup.MaxOutputTokens, dup.SupportsTemperature, dup.ReasoningEffortLevels)
+	if sol.MaxOutputTokens != 1234 || !sol.SupportsTemperature || !slices.Equal(sol.ReasoningEffortLevels, []string{"low"}) {
+		t.Errorf("on-disk entry not loaded verbatim: got max_output_tokens=%d supports_temperature=%v efforts=%v, want 1234/true/[low]",
+			sol.MaxOutputTokens, sol.SupportsTemperature, sol.ReasoningEffortLevels)
 	}
-	added := r.Lookup("deepseek", "user-added-model")
-	if added == nil {
-		t.Fatal("expected a user model absent from the embedded catalog to extend it")
+	if added := r.Lookup("deepseek", "user-added-model"); added == nil {
+		t.Fatal("expected the added model to be cataloged")
 	}
-
-	flags := make(map[string]bool)
-	for _, m := range r.ModelsForProvider("openai") {
-		flags[m.ID] = m.Overridden
-	}
-	if !flags["gpt-5.6-sol"] {
-		t.Error("a model duplicated by the user catalog must be flagged as overridden")
-	}
-	for _, m := range r.ModelsForProvider("deepseek") {
-		if m.ID == "user-added-model" && m.Overridden {
-			t.Error("a user model absent from the embedded catalog must not be flagged as overridden")
-		}
+	if r.Lookup("openai", "gpt-5.5") != nil {
+		t.Error("a model absent from the on-disk catalog must not be cataloged")
 	}
 }
 
-func TestNewRegistry_UserProviderOverlay(t *testing.T) {
-	providers := `[{"provider":"openai","adapter":"openai-compatible","official_url":"https://proxy.example/v1"}]`
+func TestNewRegistry_UserProviderCatalog(t *testing.T) {
+	providers := `{"version":1,"providers":[{"provider":"openai","adapter":"openai-compatible","official_url":"https://proxy.example/v1"}]}`
+	models := `{"version":1,"models":[{"provider":"openai","model_id":"gpt-5.6-sol","max_input_tokens":1,"max_output_tokens":1,"supports_structured_output":true,"supports_temperature":true,"supports_prompt_caching":false}]}`
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, providerCatalogFile), []byte(providers), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, modelCatalogFile), []byte(models), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,15 +92,18 @@ func TestNewRegistry_UserProviderOverlay(t *testing.T) {
 	}
 
 	if got := r.ProviderDefaultURL("openai"); got != "https://proxy.example/v1" {
-		t.Errorf("ProviderDefaultURL(openai) = %q, want the user catalog's endpoint", got)
+		t.Errorf("ProviderDefaultURL(openai) = %q, want the on-disk endpoint", got)
 	}
 	if r.Lookup("openai", "gpt-5.6-sol") == nil {
-		t.Error("models must stay cataloged when only the provider file is overridden")
+		t.Error("expected the on-disk model to be cataloged")
+	}
+	if got := r.ProviderDefaultURL("anthropic"); got != "" {
+		t.Errorf("ProviderDefaultURL(anthropic) = %q, want empty for a provider absent from the on-disk catalog", got)
 	}
 }
 
 func TestNewRegistry_UserModelWithoutProviderFails(t *testing.T) {
-	models := `[{"provider":"no-such-provider","model_id":"m","max_input_tokens":1,"max_output_tokens":1}]`
+	models := `{"version":1,"models":[{"provider":"no-such-provider","model_id":"m","max_input_tokens":1,"max_output_tokens":1}]}`
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, modelCatalogFile), []byte(models), 0o600); err != nil {
 		t.Fatal(err)
@@ -115,6 +113,57 @@ func TestNewRegistry_UserModelWithoutProviderFails(t *testing.T) {
 		t.Fatal("expected a load error for a model whose provider has no provider-catalog entry")
 	} else if !strings.Contains(err.Error(), "no-such-provider") || !strings.Contains(err.Error(), providerCatalogFile) {
 		t.Errorf("error must name the missing provider and the provider catalog, got %v", err)
+	}
+}
+
+func TestNewRegistry_UnsupportedVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"missing version", `{"providers":[]}`, "unsupported catalog version 0"},
+		{"wrong version", `{"version":2,"providers":[]}`, "unsupported catalog version 2"},
+		{"legacy bare array", `[{"provider":"p","adapter":"a","official_url":"u"}]`, "expected an object with version"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, providerCatalogFile), []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := NewRegistry(dir)
+			if err == nil {
+				t.Fatal("expected a load error for an unsupported catalog format")
+			}
+			if !strings.Contains(err.Error(), providerCatalogFile) || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error must name the file and %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestNewRegistry_FailedLoadLeavesConfigDirUntouched(t *testing.T) {
+	invalid := `[{"provider":"openai"}]`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, providerCatalogFile), []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewRegistry(dir); err == nil {
+		t.Fatal("expected a load error for an invalid provider catalog")
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, providerCatalogFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != invalid {
+		t.Errorf("a failing load must not overwrite the existing catalog: got %q, want %q", got, invalid)
+	}
+	if _, err := os.Stat(filepath.Join(dir, modelCatalogFile)); !os.IsNotExist(err) {
+		t.Error("a failing load must not seed the other catalog file")
 	}
 }
 
@@ -491,24 +540,32 @@ func TestReasoningEffort_EmptyStaysEmpty(t *testing.T) {
 	}
 }
 
-func TestReload(t *testing.T) {
-	r, err := NewRegistry(fixtureDir(t))
+func TestReload_PicksUpEdits(t *testing.T) {
+	dir := t.TempDir()
+	r, err := NewRegistry(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	caps := r.Lookup("deepseek", "deepseek-v4-flash")
-	if caps == nil {
-		t.Fatal("expected capabilities before reload")
+	edited := `{"version":1,"models":[{"provider":"deepseek","model_id":"deepseek-v4-flash","display_name":"Edited","max_input_tokens":100,"max_output_tokens":200,"disable_reasoning":true,"reasoning_efforts":["high"],"supports_structured_output":true,"supports_temperature":true,"supports_prompt_caching":false}]}`
+	if err := os.WriteFile(filepath.Join(dir, modelCatalogFile), []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
 	}
-
 	if err := r.Reload(); err != nil {
 		t.Fatalf("reload failed: %v", err)
 	}
+	if caps := r.Lookup("deepseek", "deepseek-v4-flash"); caps == nil || caps.MaxOutputTokens != 200 {
+		t.Fatalf("expected the edited catalog after reload, got %+v", caps)
+	}
 
-	caps = r.Lookup("deepseek", "deepseek-v4-flash")
-	if caps == nil {
-		t.Fatal("expected capabilities after reload")
+	if err := os.WriteFile(filepath.Join(dir, modelCatalogFile), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reload(); err == nil {
+		t.Fatal("expected reload to fail on an unparseable catalog")
+	}
+	if caps := r.Lookup("deepseek", "deepseek-v4-flash"); caps == nil || caps.MaxOutputTokens != 200 {
+		t.Fatalf("a failed reload must keep the previous catalogs, got %+v", caps)
 	}
 }
 

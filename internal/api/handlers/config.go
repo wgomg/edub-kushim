@@ -1049,11 +1049,9 @@ type LlmModelsResponse struct {
 	Providers map[string][]LlmModelEntry `json:"providers"`
 }
 
-// LlmModelEntry is one model in the UI's model catalog view; Overridden marks a model whose entry comes
-// from the config directory's catalog.
+// LlmModelEntry is one model in the UI's model catalog view.
 type LlmModelEntry struct {
 	ID           string `json:"id"`
-	Overridden   bool   `json:"overridden,omitempty"`
 	Capabilities struct {
 		CanDisableReasoning    bool     `json:"disable_reasoning"`
 		ReasoningEfforts       []string `json:"reasoning_efforts,omitempty"`

@@ -391,16 +391,16 @@ The composition root builds a single `*Hugot` (for the `kushim` CLI) or uses a `
 
 ### Data source
 
-Two manually maintained catalog files are committed to the repository at
-`internal/llm/` and embedded via `//go:embed`: `provider_catalog.json` (one
+The live catalogs are the config directory's `provider_catalog.json` (one
 entry per provider: `provider`, `adapter`, `official_url`, optional
 `session_header`) and `model_catalog.json` (one entry per model: `provider`,
-`model_id`, display name, token limits, and capability gates). At startup the
-registry overlays the config directory's `provider_catalog.json` and
-`model_catalog.json` onto the embedded copies (so deployments can extend or
-override entries without rebuilding); a missing user file leaves the embedded
-copy alone. There is no runtime refresh mechanism — updating the catalogs
-requires editing the files and restarting, or rebuilding the binary.
+`model_id`, display name, token limits, and capability gates). The binary
+embeds a default copy of each via `//go:embed` and uses it only to seed a
+missing file, after the combined result validates; an existing file is never
+overwritten, so deployments edit their copies freely. Each file is a
+versioned wrapper object (`{"version": 1, ...}`) that may carry an ignored
+`_comment` hint key. There is no runtime refresh mechanism — updating the
+catalogs requires editing the files and restarting (or calling `Reload`).
 
 ### Key types
 
@@ -424,7 +424,7 @@ type ModelCapability struct {
 
 | Method | Description |
 |--------|-------------|
-| `NewRegistry(configDir)` | Loads the embedded catalogs, overlays the config-dir copies, validates, builds the indexes |
+| `NewRegistry(configDir)` | Resolves both catalogs from the config directory (embedded defaults seed missing files after validation), validates, builds the indexes |
 | `Lookup(provider, model)` | Returns `*ModelCapability` for a given provider+model |
 | `Adapters()` | Returns adapter names present in the catalog (currently `["anthropic", "openai-compatible"]`) |
 | `ProvidersForAdapter(adapter)` | Returns provider keys for a given adapter |
@@ -436,7 +436,7 @@ The mapping is data-driven: each `provider_catalog.json` entry names its `adapte
 
 ### Loading
 
-`NewRegistry(configDir)` parses both embedded catalogs, overlays the config-dir counterparts when present — duplicate keys replace their embedded entry in place, new entries append, and duplicates within one file follow array order (the last entry wins) — rejects entries missing required fields or naming a provider absent from the merged provider catalog, and indexes the merged result. A user model duplicating an embedded model is flagged as overridden and exposed through the discovery endpoint. There is no runtime refresh mechanism — updating the catalogs requires editing the files and restarting, or rebuilding the binary for embedded updates.
+`NewRegistry(configDir)` resolves each catalog file from the config directory, falling back to the embedded default when the file does not exist yet; each file must declare `version: 1` (any other or missing value, and a top-level array, fails before entry validation), pass required-field checks (`provider`/`adapter`/`official_url`, `provider`/`model_id`), and name providers that exist in the provider catalog. Duplicate keys within one file follow array order (the last entry winning). Seeding happens only after both catalogs validate, so a failing load never writes files; a file that exists is never overwritten. `Reload` re-resolves both catalogs — seeding any file that has since been deleted — and keeps the previous catalogs on failure.
 
 ---
 

@@ -1,7 +1,7 @@
-// Package llm is the model catalog: the embedded JSON catalogs of providers and their models, extendable
-// from the config directory, plus the process-stable session identifier that session-gated providers
-// expect. The catalogs drive what the LLM adapters may send (reasoning, temperature, caching, structured
-// output) and what the API and CLI display.
+// Package llm is the model catalog: the provider and model catalogs read from the config directory,
+// seeded with the embedded defaults when a file is absent, plus the process-stable session identifier
+// that session-gated providers expect. The catalogs drive what the LLM adapters may send (reasoning,
+// temperature, caching, structured output) and what the API and CLI display.
 package llm
 
 import (
@@ -18,14 +18,18 @@ import (
 )
 
 //go:embed provider_catalog.json
-var embeddedProviderCatalog []byte
+var defaultProviderCatalog []byte
 
 //go:embed model_catalog.json
-var embeddedModelCatalog []byte
+var defaultModelCatalog []byte
 
 const (
 	providerCatalogFile = "provider_catalog.json"
 	modelCatalogFile    = "model_catalog.json"
+
+	// catalogVersion is the format version both catalog files must declare to load; the loader rejects any
+	// other or missing value, so bump it alongside a shape change.
+	catalogVersion = 1
 )
 
 var (
@@ -74,12 +78,10 @@ func (c *ModelCapability) RunsAtEffortLevel() bool {
 	return c != nil && !c.CanDisableReasoning && len(c.ReasoningEffortLevels) > 0
 }
 
-// ProviderModel is one cataloged model of a provider, as exposed to the API surface. Overridden marks a
-// model whose entry comes from the config directory instead of the embedded catalog.
+// ProviderModel is one cataloged model of a provider, as exposed to the API surface.
 type ProviderModel struct {
 	ID           string          `json:"id"`
 	DisplayName  string          `json:"display_name,omitempty"`
-	Overridden   bool            `json:"overridden,omitempty"`
 	Capabilities ModelCapability `json:"capabilities"`
 }
 
@@ -103,7 +105,20 @@ type modelEntry struct {
 	SupportsPromptCaching    bool     `json:"supports_prompt_caching"`
 	UsesMaxCompletionTokens  bool     `json:"uses_max_completion_tokens,omitempty"`
 	UsesResponsesEndpoint    bool     `json:"uses_responses_endpoint,omitempty"`
-	Overridden               bool     `json:"-"`
+}
+
+// providerCatalogDoc is the on-disk provider catalog: the format version, the provider entries, and
+// an ignored `_comment` hint key.
+type providerCatalogDoc struct {
+	Version   int             `json:"version"`
+	Providers []providerEntry `json:"providers"`
+}
+
+// modelCatalogDoc is the on-disk model catalog: the format version, the model entries, and an ignored
+// `_comment` hint key.
+type modelCatalogDoc struct {
+	Version int          `json:"version"`
+	Models  []modelEntry `json:"models"`
 }
 
 // Registry is the loaded provider and model catalogs, with model entries indexed by provider/model. All
@@ -117,11 +132,17 @@ type Registry struct {
 	adapters   map[string][]string
 }
 
-// NewRegistry loads the embedded provider and model catalogs, overlaying the config directory's copies
-// when present; an empty catalogDir uses the embedded catalogs only. A user entry duplicating an embedded
-// key replaces it, and duplicates within one user file follow array order. A user model must name a
-// provider defined in the provider catalog. Files that cannot be read or parsed are an error.
+// NewRegistry loads the provider and model catalogs from the config directory: a file that does not
+// exist yet resolves from its embedded default and is seeded to disk only after the combined result
+// validates, so a failing load never writes files; an existing file is never overwritten, so user
+// edits are authoritative. Each file must declare version 1 and pass entry validation; duplicate keys
+// inside one file follow array order, the array's last entry winning. A model must name a provider
+// defined in the provider catalog. Unreadable, unparseable or invalid files are an error, as is an
+// empty catalogDir.
 func NewRegistry(catalogDir string) (*Registry, error) {
+	if catalogDir == "" {
+		return nil, fmt.Errorf("catalog directory is required")
+	}
 	r := &Registry{catalogDir: catalogDir}
 	if err := r.load(); err != nil {
 		return nil, err
@@ -130,154 +151,157 @@ func NewRegistry(catalogDir string) (*Registry, error) {
 	return r, nil
 }
 
-// load parses both embedded catalogs, overlays the user copies when present, and assigns the merged
-// result, leaving the registry untouched on failure.
+// load resolves both catalogs — reading each file when present and using its embedded default when
+// the file is missing — validates them, seeds the defaults for missing files, and assigns the result,
+// leaving the registry untouched on failure.
 func (r *Registry) load() error {
-	providers, err := loadProviders(r.catalogDir)
+	providers, providerMissing, err := resolveProviders(r.catalogDir)
 	if err != nil {
 		return err
 	}
-	models, err := loadModels(r.catalogDir, providers)
+	models, modelMissing, err := resolveModels(r.catalogDir, providers)
 	if err != nil {
 		return err
+	}
+	if providerMissing {
+		if err := seedCatalog(r.catalogDir, providerCatalogFile, defaultProviderCatalog); err != nil {
+			return err
+		}
+	}
+	if modelMissing {
+		if err := seedCatalog(r.catalogDir, modelCatalogFile, defaultModelCatalog); err != nil {
+			return err
+		}
 	}
 	r.providers = indexProviders(providers)
 	r.models = models
 	return nil
 }
 
-func loadProviders(catalogDir string) ([]providerEntry, error) {
-	base, err := parseProviders(embeddedProviderCatalog, "embedded "+providerCatalogFile)
-	if err != nil {
-		return nil, err
+// catalogSource returns the catalog file's bytes with the file name as the error label, falling back
+// to the embedded default labeled "default <name>" when the file does not exist yet; missing reports
+// that the fallback was used.
+func catalogSource(catalogDir, name string, def []byte) ([]byte, string, bool, error) {
+	data, err := os.ReadFile(filepath.Join(catalogDir, name))
+	if err == nil {
+		return data, name, false, nil
 	}
-	data, ok, err := readUserCatalog(catalogDir, providerCatalogFile)
-	if err != nil {
-		return nil, err
+	if !os.IsNotExist(err) {
+		return nil, "", false, fmt.Errorf("read %s: %w", name, err)
 	}
-	if !ok {
-		return base, nil
-	}
-	user, err := parseProviders(data, filepath.Join(catalogDir, providerCatalogFile))
-	if err != nil {
-		return nil, err
-	}
-	return mergeProviders(base, user), nil
+	return def, "default " + name, true, nil
 }
 
-func loadModels(catalogDir string, providers []providerEntry) ([]modelEntry, error) {
-	base, err := parseModels(embeddedModelCatalog, "embedded "+modelCatalogFile)
+// seedCatalog creates name in catalogDir from the embedded default when it does not exist yet.
+// Creation is exclusive (O_CREATE|O_EXCL), so an existing file — or a symlink at the path — is never
+// overwritten or followed, even when it appeared since the read that loaded the catalog.
+func seedCatalog(catalogDir, name string, def []byte) error {
+	path := filepath.Join(catalogDir, name)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		return nil, err
+		if os.IsExist(err) {
+			return nil
+		}
+		return fmt.Errorf("seed %s: %w", name, err)
 	}
-	data, ok, err := readUserCatalog(catalogDir, modelCatalogFile)
+	// a partial file would be adopted as user content on the next load (existing files are never
+	// overwritten), so roll this create back before reporting the failure
+	if _, err := f.Write(def); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("seed %s: %w", name, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("seed %s: %w", name, err)
+	}
+	return nil
+}
+
+// resolveProviders resolves the provider catalog from catalogDir and validates its entries,
+// collapsing duplicate provider keys with the last entry winning; missing reports that the file does
+// not exist yet and its embedded default was used.
+func resolveProviders(catalogDir string) ([]providerEntry, bool, error) {
+	data, source, missing, err := catalogSource(catalogDir, providerCatalogFile, defaultProviderCatalog)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if !ok {
-		return base, nil
+	var doc providerCatalogDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, false, fmt.Errorf("parse %s: expected an object with version and providers fields: %w", source, err)
 	}
-	source := filepath.Join(catalogDir, modelCatalogFile)
-	user, err := parseModels(data, source)
+	if doc.Version != catalogVersion {
+		return nil, false, fmt.Errorf("%s: unsupported catalog version %d, want %d", source, doc.Version, catalogVersion)
+	}
+	for i, e := range doc.Providers {
+		if e.Provider == "" || e.Adapter == "" || e.OfficialURL == "" {
+			return nil, false, fmt.Errorf("%s: entry %d: provider, adapter and official_url are required", source, i)
+		}
+	}
+	return dedupeProviders(doc.Providers), missing, nil
+}
+
+// resolveModels resolves the model catalog from catalogDir, validating its entries against the
+// provider keys and collapsing duplicate provider/model keys with the last entry winning; missing
+// reports that the file does not exist yet and its embedded default was used.
+func resolveModels(catalogDir string, providers []providerEntry) ([]modelEntry, bool, error) {
+	data, source, missing, err := catalogSource(catalogDir, modelCatalogFile, defaultModelCatalog)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	var doc modelCatalogDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, false, fmt.Errorf("parse %s: expected an object with version and models fields: %w", source, err)
+	}
+	if doc.Version != catalogVersion {
+		return nil, false, fmt.Errorf("%s: unsupported catalog version %d, want %d", source, doc.Version, catalogVersion)
 	}
 	known := make(map[string]bool, len(providers))
 	for _, p := range providers {
 		known[p.Provider] = true
 	}
-	for i, e := range user {
-		if !known[e.Provider] {
-			return nil, fmt.Errorf("%s: entry %d: provider %q is not defined in %s", source, i, e.Provider, providerCatalogFile)
-		}
-	}
-	return mergeModels(base, user), nil
-}
-
-func readUserCatalog(catalogDir, name string) ([]byte, bool, error) {
-	if catalogDir == "" {
-		return nil, false, nil
-	}
-	data, err := os.ReadFile(filepath.Join(catalogDir, name))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("read %s: %w", name, err)
-	}
-	return data, true, nil
-}
-
-func parseProviders(data []byte, source string) ([]providerEntry, error) {
-	var entries []providerEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", source, err)
-	}
-	for i, e := range entries {
-		if e.Provider == "" || e.Adapter == "" || e.OfficialURL == "" {
-			return nil, fmt.Errorf("%s: entry %d: provider, adapter and official_url are required", source, i)
-		}
-	}
-	return entries, nil
-}
-
-func parseModels(data []byte, source string) ([]modelEntry, error) {
-	var entries []modelEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", source, err)
-	}
-	for i, e := range entries {
+	for i, e := range doc.Models {
 		if e.Provider == "" || e.ModelID == "" {
-			return nil, fmt.Errorf("%s: entry %d: provider and model_id are required", source, i)
+			return nil, false, fmt.Errorf("%s: entry %d: provider and model_id are required", source, i)
+		}
+		if !known[e.Provider] {
+			return nil, false, fmt.Errorf("%s: entry %d: provider %q is not defined in %s", source, i, e.Provider, providerCatalogFile)
 		}
 	}
-	return entries, nil
+	return dedupeModels(doc.Models), missing, nil
 }
 
-// mergeProviders overlays user provider entries on the embedded catalog: a duplicate provider replaces
-// its base entry in place, new providers append. The replace/append and last-wins rules mirror mergeModels
-// and must stay in sync with it.
-func mergeProviders(base, overlay []providerEntry) []providerEntry {
-	merged := slices.Clone(base)
-	index := make(map[string]int, len(merged))
-	for i, e := range merged {
-		index[e.Provider] = i
-	}
-	for _, e := range overlay {
+// dedupeProviders collapses duplicate provider keys, the last entry winning, so the indexed catalog
+// never resolves a key twice.
+func dedupeProviders(entries []providerEntry) []providerEntry {
+	out := make([]providerEntry, 0, len(entries))
+	index := make(map[string]int, len(entries))
+	for _, e := range entries {
 		if i, ok := index[e.Provider]; ok {
-			merged[i] = e
+			out[i] = e
 			continue
 		}
-		index[e.Provider] = len(merged)
-		merged = append(merged, e)
+		index[e.Provider] = len(out)
+		out = append(out, e)
 	}
-	return merged
+	return out
 }
 
-// mergeModels overlays user model entries on the embedded catalog: a duplicate provider/model replaces
-// its base entry in place and is marked as an override, new models append. Duplicates inside the overlay
-// itself follow array order, the last entry winning, and never carry the override mark. The replace/append
-// and last-wins rules mirror mergeProviders and must stay in sync with it.
-func mergeModels(base, overlay []modelEntry) []modelEntry {
-	merged := slices.Clone(base)
-	index := make(map[string]int, len(merged))
-	baseKeys := make(map[string]bool, len(merged))
-	for i, e := range merged {
-		key := modelKey(e.Provider, e.ModelID)
-		index[key] = i
-		baseKeys[key] = true
-	}
-	for _, e := range overlay {
+// dedupeModels collapses duplicate provider/model keys, the last entry winning, so the indexed catalog
+// never resolves a key twice.
+func dedupeModels(entries []modelEntry) []modelEntry {
+	out := make([]modelEntry, 0, len(entries))
+	index := make(map[string]int, len(entries))
+	for _, e := range entries {
 		key := modelKey(e.Provider, e.ModelID)
 		if i, ok := index[key]; ok {
-			e.Overridden = baseKeys[key]
-			merged[i] = e
+			out[i] = e
 			continue
 		}
-		index[key] = len(merged)
-		merged = append(merged, e)
+		index[key] = len(out)
+		out = append(out, e)
 	}
-	return merged
+	return out
 }
 
 func indexProviders(entries []providerEntry) map[string]providerEntry {
@@ -292,7 +316,8 @@ func modelKey(provider, modelID string) string {
 	return provider + "/" + modelID
 }
 
-// Reload re-reads both catalogs and rebuilds the indexes; a failure leaves the previous catalogs in place.
+// Reload re-reads both catalogs — seeding any missing file — and rebuilds the indexes; a failure leaves
+// the previous catalogs in place.
 func (r *Registry) Reload() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -313,10 +338,7 @@ func (r *Registry) buildIndex() {
 	adapterProviders := make(map[string][]string)
 	seen := make(map[string]bool)
 	for _, e := range r.models {
-		p, ok := r.providers[e.Provider]
-		if !ok {
-			continue
-		}
+		p := r.providers[e.Provider]
 		pk := p.Adapter + ":" + e.Provider
 		if seen[pk] {
 			continue
@@ -401,7 +423,6 @@ func (r *Registry) ModelsForProvider(provider string) []ProviderModel {
 		result = append(result, ProviderModel{
 			ID:           e.ModelID,
 			DisplayName:  e.DisplayName,
-			Overridden:   e.Overridden,
 			Capabilities: *entryToCapability(e),
 		})
 	}

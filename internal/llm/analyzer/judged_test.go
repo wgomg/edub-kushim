@@ -35,11 +35,11 @@ func newFixtureWithCatalog(t *testing.T, capsJSON string, respond http.HandlerFu
 	t.Cleanup(srv.Close)
 
 	providers := fmt.Sprintf(
-		`[{"provider":"testprovider","adapter":"openai-compatible","official_url":%q}]`,
+		`{"version":1,"providers":[{"provider":"testprovider","adapter":"openai-compatible","official_url":%q}]}`,
 		srv.URL,
 	)
 	models := fmt.Sprintf(
-		`[{"provider":"testprovider","model_id":"test-model","display_name":"Test Model",%s}]`,
+		`{"version":1,"models":[{"provider":"testprovider","model_id":"test-model","display_name":"Test Model",%s}]}`,
 		capsJSON,
 	)
 	dir := t.TempDir()

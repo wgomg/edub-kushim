@@ -1045,8 +1045,8 @@ project ships self-contained binaries. Five sites:
 | `internal/static/fs.go:11` `//go:embed build` | SvelteKit SPA build | `embed.FS` → `fs.Sub(buildFS, "build")` → `http.FileServer` |
 | `internal/api/wizard/fs.go:8` `//go:embed static` | setup wizard SPA | same `fs.Sub` pattern |
 | `internal/database/schema.go:11` `//go:embed sql/schema` | migrations + seeds | `goose.SetBaseFS(SchemaFS)` + `ReadFile` |
-| `internal/llm/registry.go:20` `//go:embed provider_catalog.json` | LLM provider catalog | `[]byte` |
-| `internal/llm/registry.go:23` `//go:embed model_catalog.json` | LLM model catalog | `[]byte` |
+| `internal/llm/registry.go:20` `//go:embed provider_catalog.json` | default LLM provider catalog, seeded into the config dir on first load | `[]byte` |
+| `internal/llm/registry.go:23` `//go:embed model_catalog.json` | default LLM model catalog, seeded into the config dir on first load | `[]byte` |
 | `internal/documents/ocr/font_embed.go:11` `//go:embed kushim_font.ttf` | TrueType font for invisible OCR text layer | `[]byte` → `pdf.AddUTF8FontFromBytes` |
 
 A directory embeds as an `embed.FS` (plus `fs.Sub` when the embed root is a

@@ -552,23 +552,33 @@ caveats: `algorithms.md` §12.
 
 ## 9. The model catalog and registry
 
-`internal/llm/registry.go` loads two embedded catalogs (`//go:embed`) and
-overlays the config directory's copies when present. `provider_catalog.json`
-defines providers — `provider`, `adapter`, `official_url`, optional
-`session_header` — and `model_catalog.json` defines their models:
-`provider`, `model_id`, `display_name`, the token limits, and the capability
-flags (`max_input_tokens`, `max_output_tokens`, `disable_reasoning`,
+The provider and model catalogs live in the config directory as
+`provider_catalog.json` and `model_catalog.json`; `internal/llm/registry.go`
+reads them from there and nowhere else. The binary embeds one default copy of
+each (`//go:embed`) and uses it only to seed a missing file: when a catalog
+file does not exist yet, its default is validated together with the other
+catalog and written to the config directory once the combined result loads,
+so a failing load never creates files. An existing file is never overwritten
+or replaced — user edits are authoritative. `provider_catalog.json` defines
+providers — `provider`, `adapter`, `official_url`, optional `session_header`
+— and `model_catalog.json` defines their models: `provider`, `model_id`,
+`display_name`, the token limits, and the capability flags
+(`max_input_tokens`, `max_output_tokens`, `disable_reasoning`,
 `reasoning_efforts`, `supports_structured_output`, `supports_temperature`,
 `supports_prompt_caching`, `uses_max_completion_tokens` (the OpenAI GPT-5
 family rejects `max_tokens`; the flag makes the adapters send the output
 budget as `max_completion_tokens`), and `uses_responses_endpoint` (the entry
-is served only over the Responses API)). Eight providers: openai, deepseek,
-mistral, anthropic, qwen, zhipu, opencode-go, opencode — the provider
-catalog's `official_url` is how the adapters know the endpoint, and providers
-that declare `session_header` receive the process-stable `llm.SessionID()` in
-that header on every request (both adapters set it; the opencode gateways ask
-for `x-opencode-session`, which they use for request routing and prompt
-caching):
+is served only over the Responses API)). Both files are versioned wrapper
+objects (`{"version": 1, "providers": [...]}` / `{"version": 1, "models":
+[...]}`) and may carry an ignored `_comment` hint key; the seeded defaults
+point at [models.dev/providers](https://models.dev/providers/) for provider
+and model documentation. Eight providers ship in the default catalog: openai,
+deepseek, mistral, anthropic, qwen, zhipu, opencode-go, opencode — the
+provider catalog's `official_url` is how the adapters know the endpoint, and
+providers that declare `session_header` receive the process-stable
+`llm.SessionID()` in that header on every request (both adapters set it; the
+opencode gateways ask for `x-opencode-session`, which they use for request
+routing and prompt caching):
 
 ```go
 key := modelKey(provider, modelID)
@@ -577,25 +587,21 @@ i, ok := r.index[key]
 return entryToCapability(entry)
 ```
 
-(`registry.go:352-361`). Both catalogs are extendable from the config
-directory: `<config-dir>/provider_catalog.json` and
-`<config-dir>/model_catalog.json`, when present, overlay their embedded
-counterparts instead of replacing them. A user entry duplicating an embedded
-key (`provider` for providers, `provider/model_id` for models) replaces it in
-place, new entries append, and duplicates within one user file follow array
-order (the last entry wins). A user model duplicating an embedded model is
-flagged as an override and surfaced as such by `GET /api/v1/llm/models` and
-the settings UI. Loading validates required fields (`provider`, `adapter`,
-`official_url` for providers; `provider`, `model_id` for models) and rejects
-a model whose provider is absent from the merged provider catalog; a user
-file that cannot be read, parsed, or validated fails the load. Lookups feed
-the API surface (`ModelsForProvider`, `ProvidersForAdapter`) and the
-capability gating in both adapters. **Unknown model → nil capabilities** →
-adapters degrade gracefully: no temperature, no reasoning knob, no structured
-output, no token pre-check.
+(`registry.go:374-385`). Loading validates each file's version (`1`, any
+other or missing value fails before entry validation), the required fields
+(`provider`, `adapter`, `official_url` for providers; `provider`,
+`model_id` for models), and rejects a model whose provider is absent from
+the provider catalog. Duplicate keys within one file follow array order (the
+last entry wins). Lookups feed the API surface (`ModelsForProvider`,
+`ProvidersForAdapter`) and the capability gating in both adapters. **Unknown
+model → nil capabilities** → adapters degrade gracefully: no temperature, no
+reasoning knob, no structured output, no token pre-check. `Reload`
+re-resolves both catalogs — seeding any file that has since been deleted —
+and swaps them in only on success; a failed reload keeps the previous
+catalogs.
 
 Note: neither catalog nor `ModelCapability` models per-token costs —
-`entryToCapability` (`registry.go:336-348`) maps only the capability flags
+`entryToCapability` (`registry.go:358-370`) maps only the capability flags
 and limits.
 
 ---

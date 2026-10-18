@@ -1,62 +1,65 @@
-[
-  {
-    "provider": "deepseek",
-    "model_id": "deepseek-v4-flash",
-    "display_name": "DeepSeek V4 Flash",
-    "max_input_tokens": 1000000,
-    "max_output_tokens": 8192,
-    "disable_reasoning": true,
-    "reasoning_efforts": ["high", "max"],
-    "supports_structured_output": true,
-    "supports_temperature": true,
-    "supports_prompt_caching": false
-  },
-  {
-    "provider": "deepseek",
-    "model_id": "deepseek-v4-pro",
-    "display_name": "DeepSeek V4 Pro",
-    "max_input_tokens": 1000000,
-    "max_output_tokens": 8192,
-    "disable_reasoning": true,
-    "reasoning_efforts": ["high", "max"],
-    "supports_structured_output": true,
-    "supports_temperature": true,
-    "supports_prompt_caching": false
-  },
-  {
-    "provider": "mistral",
-    "model_id": "mistral-small-latest",
-    "display_name": "Mistral Small",
-    "max_input_tokens": 128000,
-    "max_output_tokens": 16384,
-    "disable_reasoning": false,
-    "reasoning_efforts": ["none", "high"],
-    "supports_structured_output": true,
-    "supports_temperature": true,
-    "supports_prompt_caching": false
-  },
-  {
-    "provider": "anthropic",
-    "model_id": "claude-sonnet-5",
-    "display_name": "Claude Sonnet 5",
-    "max_input_tokens": 200000,
-    "max_output_tokens": 128000,
-    "disable_reasoning": true,
-    "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
-    "supports_structured_output": true,
-    "supports_temperature": true,
-    "supports_prompt_caching": true
-  },
-  {
-    "provider": "anthropic",
-    "model_id": "claude-haiku-4-5",
-    "display_name": "Claude Haiku 4.5",
-    "max_input_tokens": 200000,
-    "max_output_tokens": 64000,
-    "disable_reasoning": true,
-    "reasoning_efforts": [],
-    "supports_structured_output": true,
-    "supports_temperature": true,
-    "supports_prompt_caching": true
-  }
-]
+{
+  "version": 1,
+  "models": [
+    {
+      "provider": "deepseek",
+      "model_id": "deepseek-v4-flash",
+      "display_name": "DeepSeek V4 Flash",
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 8192,
+      "disable_reasoning": true,
+      "reasoning_efforts": ["high", "max"],
+      "supports_structured_output": true,
+      "supports_temperature": true,
+      "supports_prompt_caching": false
+    },
+    {
+      "provider": "deepseek",
+      "model_id": "deepseek-v4-pro",
+      "display_name": "DeepSeek V4 Pro",
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 8192,
+      "disable_reasoning": true,
+      "reasoning_efforts": ["high", "max"],
+      "supports_structured_output": true,
+      "supports_temperature": true,
+      "supports_prompt_caching": false
+    },
+    {
+      "provider": "mistral",
+      "model_id": "mistral-small-latest",
+      "display_name": "Mistral Small",
+      "max_input_tokens": 128000,
+      "max_output_tokens": 16384,
+      "disable_reasoning": false,
+      "reasoning_efforts": ["none", "high"],
+      "supports_structured_output": true,
+      "supports_temperature": true,
+      "supports_prompt_caching": false
+    },
+    {
+      "provider": "anthropic",
+      "model_id": "claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
+      "max_input_tokens": 200000,
+      "max_output_tokens": 128000,
+      "disable_reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "supports_structured_output": true,
+      "supports_temperature": true,
+      "supports_prompt_caching": true
+    },
+    {
+      "provider": "anthropic",
+      "model_id": "claude-haiku-4-5",
+      "display_name": "Claude Haiku 4.5",
+      "max_input_tokens": 200000,
+      "max_output_tokens": 64000,
+      "disable_reasoning": true,
+      "reasoning_efforts": [],
+      "supports_structured_output": true,
+      "supports_temperature": true,
+      "supports_prompt_caching": true
+    }
+  ]
+}

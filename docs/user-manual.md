@@ -1788,7 +1788,7 @@ Response `204 No Content`.
 
 ### LLM Model Discovery
 
-Returns the available adapters, providers, and models from the model catalog. Used by the settings UI to populate cascading selectors.
+Returns the available adapters, providers, and models from the model catalog. The catalog lives in your config directory as `provider_catalog.json` and `model_catalog.json` — the app seeds it there with defaults on first start, and you can edit the files to add, remove, or tune providers and models (restart to apply). Used by the settings UI to populate cascading selectors. Provider and model documentation: [models.dev/providers](https://models.dev/providers/).
 
 ```
 GET /api/v1/llm/models

@@ -1,17 +1,20 @@
-[
-  {
-    "provider": "deepseek",
-    "adapter": "openai-compatible",
-    "official_url": "https://api.deepseek.com/v1"
-  },
-  {
-    "provider": "mistral",
-    "adapter": "openai-compatible",
-    "official_url": "https://api.mistral.ai/v1"
-  },
-  {
-    "provider": "anthropic",
-    "adapter": "anthropic",
-    "official_url": "https://api.anthropic.com/v1"
-  }
-]
+{
+  "version": 1,
+  "providers": [
+    {
+      "provider": "deepseek",
+      "adapter": "openai-compatible",
+      "official_url": "https://api.deepseek.com/v1"
+    },
+    {
+      "provider": "mistral",
+      "adapter": "openai-compatible",
+      "official_url": "https://api.mistral.ai/v1"
+    },
+    {
+      "provider": "anthropic",
+      "adapter": "anthropic",
+      "official_url": "https://api.anthropic.com/v1"
+    }
+  ]
+}
