@@ -485,8 +485,16 @@ mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 mux.HandleFunc("GET /wizard/bootstrap", configHandler.Bootstrap)  // only non-sensitive fields
 
-// LLM model discovery (viewer + public):
-mux.HandleFunc("GET /api/v1/llm/models", llmHandler.ListModels)  // viewer role
+// LLM model catalog (reads viewer; catalog mutations and reset admin):
+mux.Handle("GET /api/v1/llm/models", RequireRole(viewer...)(llmHandler.ListModels))
+mux.Handle("GET /api/v1/llm/catalog", RequireRole(viewer...)(llmHandler.GetCatalog))
+mux.Handle("POST /api/v1/llm/providers", RequireRole(admin...)(llmHandler.AddProvider))
+mux.Handle("PUT /api/v1/llm/providers/{name}", RequireRole(admin...)(llmHandler.SetProvider))
+mux.Handle("DELETE /api/v1/llm/providers/{name}", RequireRole(admin...)(llmHandler.RemoveProvider))
+mux.Handle("POST /api/v1/llm/models", RequireRole(admin...)(llmHandler.AddModel))
+mux.Handle("PUT /api/v1/llm/models/{provider}/{model}", RequireRole(admin...)(llmHandler.SetModel))
+mux.Handle("DELETE /api/v1/llm/models/{provider}/{model}", RequireRole(admin...)(llmHandler.RemoveModel))
+mux.Handle("POST /api/v1/llm/reset", RequireRole(admin...)(llmHandler.ResetCatalogs))
 
 // viewer (read-only):
 viewer := []auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}

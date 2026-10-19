@@ -1,7 +1,8 @@
 // Package llm is the model catalog: the provider and model catalogs read from the config directory,
-// seeded with the embedded defaults when a file is absent, plus the process-stable session identifier
-// that session-gated providers expect. The catalogs drive what the LLM adapters may send (reasoning,
-// temperature, caching, structured output) and what the API and CLI display.
+// seeded with the embedded defaults when a file is absent and edited through the mutation API, plus
+// the process-stable session identifier that session-gated providers expect. The catalogs drive what
+// the LLM adapters may send (reasoning, temperature, caching, structured output) and what the API and
+// CLI display, and can be reset to their embedded defaults.
 package llm
 
 import (
@@ -108,15 +109,17 @@ type modelEntry struct {
 }
 
 // providerCatalogDoc is the on-disk provider catalog: the format version, the provider entries, and
-// an ignored `_comment` hint key.
+// the `_comment` hint key, preserved across rewrites.
 type providerCatalogDoc struct {
+	Comment   string          `json:"_comment,omitempty"`
 	Version   int             `json:"version"`
 	Providers []providerEntry `json:"providers"`
 }
 
-// modelCatalogDoc is the on-disk model catalog: the format version, the model entries, and an ignored
-// `_comment` hint key.
+// modelCatalogDoc is the on-disk model catalog: the format version, the model entries, and the `_comment`
+// hint key, preserved across rewrites.
 type modelCatalogDoc struct {
+	Comment string       `json:"_comment,omitempty"`
 	Version int          `json:"version"`
 	Models  []modelEntry `json:"models"`
 }
@@ -132,18 +135,26 @@ type Registry struct {
 	adapters   map[string][]string
 }
 
-// NewRegistry loads the provider and model catalogs from the config directory: a file that does not
-// exist yet resolves from its embedded default and is seeded to disk only after the combined result
-// validates, so a failing load never writes files; an existing file is never overwritten, so user
-// edits are authoritative. Each file must declare version 1 and pass entry validation; duplicate keys
-// inside one file follow array order, the array's last entry winning. A model must name a provider
-// defined in the provider catalog. Unreadable, unparseable or invalid files are an error, as is an
-// empty catalogDir.
+// NewRegistry loads the provider and model catalogs from the config directory: a file that does not exist
+// yet resolves from its embedded default and is seeded to disk only after the combined result validates,
+// so a failing load never writes files, and an existing file is never overwritten, so the user's edits
+// stay authoritative. Each file must declare version 1 and pass entry validation; duplicate keys inside
+// one file follow array order, the array's last entry winning. A model must name a provider defined in
+// the provider catalog. Unreadable, unparseable or invalid files are an error, as is an empty catalogDir.
+// The catalog lock is held across the load, so a concurrent two-file write by another process is never
+// observed half-applied.
 func NewRegistry(catalogDir string) (*Registry, error) {
 	if catalogDir == "" {
 		return nil, fmt.Errorf("catalog directory is required")
 	}
 	r := &Registry{catalogDir: catalogDir}
+
+	unlock, err := lockCatalogDir(catalogDir)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	if err := r.load(); err != nil {
 		return nil, err
 	}
@@ -151,30 +162,48 @@ func NewRegistry(catalogDir string) (*Registry, error) {
 	return r, nil
 }
 
-// load resolves both catalogs — reading each file when present and using its embedded default when
-// the file is missing — validates them, seeds the defaults for missing files, and assigns the result,
-// leaving the registry untouched on failure.
+// readCatalog resolves both catalogs from catalogDir into one state — reading each file when present
+// and falling back to its embedded default when it is missing — without writing anything. The caller
+// holds the catalog lock.
+func readCatalog(catalogDir string) (catalogState, error) {
+	providers, providerComment, providerMissing, err := resolveProviders(catalogDir)
+	if err != nil {
+		return catalogState{}, err
+	}
+	models, modelComment, modelMissing, err := resolveModels(catalogDir, providers)
+	if err != nil {
+		return catalogState{}, err
+	}
+	return catalogState{
+		providers:       providers,
+		models:          models,
+		providerComment: providerComment,
+		modelComment:    modelComment,
+		providerMissing: providerMissing,
+		modelMissing:    modelMissing,
+	}, nil
+}
+
+// load resolves both catalogs — reading each file when present and using its embedded default when the
+// file is missing — validates them, seeds the defaults for missing files, and assigns the result, while
+// leaving the registry untouched on failure. The caller holds the catalog lock.
 func (r *Registry) load() error {
-	providers, providerMissing, err := resolveProviders(r.catalogDir)
+	st, err := readCatalog(r.catalogDir)
 	if err != nil {
 		return err
 	}
-	models, modelMissing, err := resolveModels(r.catalogDir, providers)
-	if err != nil {
-		return err
-	}
-	if providerMissing {
+	if st.providerMissing {
 		if err := seedCatalog(r.catalogDir, providerCatalogFile, defaultProviderCatalog); err != nil {
 			return err
 		}
 	}
-	if modelMissing {
+	if st.modelMissing {
 		if err := seedCatalog(r.catalogDir, modelCatalogFile, defaultModelCatalog); err != nil {
 			return err
 		}
 	}
-	r.providers = indexProviders(providers)
-	r.models = models
+	r.providers = indexProviders(st.providers)
+	r.models = st.models
 	return nil
 }
 
@@ -218,57 +247,81 @@ func seedCatalog(catalogDir, name string, def []byte) error {
 	return nil
 }
 
-// resolveProviders resolves the provider catalog from catalogDir and validates its entries,
-// collapsing duplicate provider keys with the last entry winning; missing reports that the file does
-// not exist yet and its embedded default was used.
-func resolveProviders(catalogDir string) ([]providerEntry, bool, error) {
+// resolveProviders resolves the provider catalog from catalogDir and validates its entries, collapsing
+// the duplicate provider keys with the last entry winning; missing reports that the file does not exist
+// yet and its embedded default was used. The returned comment is the file's `_comment` hint.
+func resolveProviders(catalogDir string) ([]providerEntry, string, bool, error) {
 	data, source, missing, err := catalogSource(catalogDir, providerCatalogFile, defaultProviderCatalog)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	var doc providerCatalogDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, false, fmt.Errorf("parse %s: expected an object with version and providers fields: %w", source, err)
+		return nil, "", false, fmt.Errorf("parse %s: expected an object with version and providers fields: %w", source, err)
 	}
 	if doc.Version != catalogVersion {
-		return nil, false, fmt.Errorf("%s: unsupported catalog version %d, want %d", source, doc.Version, catalogVersion)
+		return nil, "", false, fmt.Errorf("%s: unsupported catalog version %d, want %d", source, doc.Version, catalogVersion)
 	}
 	for i, e := range doc.Providers {
 		if e.Provider == "" || e.Adapter == "" || e.OfficialURL == "" {
-			return nil, false, fmt.Errorf("%s: entry %d: provider, adapter and official_url are required", source, i)
+			return nil, "", false, fmt.Errorf("%s: entry %d: provider, adapter and official_url are required", source, i)
 		}
 	}
-	return dedupeProviders(doc.Providers), missing, nil
+	return dedupeProviders(doc.Providers), doc.Comment, missing, nil
 }
 
-// resolveModels resolves the model catalog from catalogDir, validating its entries against the
-// provider keys and collapsing duplicate provider/model keys with the last entry winning; missing
-// reports that the file does not exist yet and its embedded default was used.
-func resolveModels(catalogDir string, providers []providerEntry) ([]modelEntry, bool, error) {
+// parseModels resolves the model catalog's entries and comment from catalogDir, validating the file's
+// shape and its entries without cross-checking providers; missing reports that the file does not exist
+// yet and its embedded default was used.
+func parseModels(catalogDir string) ([]modelEntry, string, bool, error) {
 	data, source, missing, err := catalogSource(catalogDir, modelCatalogFile, defaultModelCatalog)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	var doc modelCatalogDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, false, fmt.Errorf("parse %s: expected an object with version and models fields: %w", source, err)
+		return nil, "", false, fmt.Errorf("parse %s: expected an object with version and models fields: %w", source, err)
 	}
 	if doc.Version != catalogVersion {
-		return nil, false, fmt.Errorf("%s: unsupported catalog version %d, want %d", source, doc.Version, catalogVersion)
+		return nil, "", false, fmt.Errorf("%s: unsupported catalog version %d, want %d", source, doc.Version, catalogVersion)
 	}
+	for i, e := range doc.Models {
+		if e.Provider == "" || e.ModelID == "" {
+			return nil, "", false, fmt.Errorf("%s: entry %d: provider and model_id are required", source, i)
+		}
+	}
+	return dedupeModels(doc.Models), doc.Comment, missing, nil
+}
+
+// resolveModels resolves the model catalog from catalogDir, validating its entries against the provider
+// keys and collapsing the duplicate provider/model keys with the last entry winning; missing reports
+// that the file does not exist yet and its embedded default was used. The returned comment is the file's
+// `_comment` hint.
+func resolveModels(catalogDir string, providers []providerEntry) ([]modelEntry, string, bool, error) {
+	models, comment, missing, err := parseModels(catalogDir)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if p := missingProvider(providers, models); p != "" {
+		return nil, "", false, fmt.Errorf("%s: a model names provider %q, which is not defined in %s",
+			modelCatalogFile, p, providerCatalogFile)
+	}
+	return models, comment, missing, nil
+}
+
+// missingProvider returns the first model entry's provider that the provider list does not define, or ""
+// when every model resolves.
+func missingProvider(providers []providerEntry, models []modelEntry) string {
 	known := make(map[string]bool, len(providers))
 	for _, p := range providers {
 		known[p.Provider] = true
 	}
-	for i, e := range doc.Models {
-		if e.Provider == "" || e.ModelID == "" {
-			return nil, false, fmt.Errorf("%s: entry %d: provider and model_id are required", source, i)
-		}
-		if !known[e.Provider] {
-			return nil, false, fmt.Errorf("%s: entry %d: provider %q is not defined in %s", source, i, e.Provider, providerCatalogFile)
+	for _, m := range models {
+		if !known[m.Provider] {
+			return m.Provider
 		}
 	}
-	return dedupeModels(doc.Models), missing, nil
+	return ""
 }
 
 // dedupeProviders collapses duplicate provider keys, the last entry winning, so the indexed catalog
@@ -317,8 +370,15 @@ func modelKey(provider, modelID string) string {
 }
 
 // Reload re-reads both catalogs — seeding any missing file — and rebuilds the indexes; a failure leaves
-// the previous catalogs in place.
+// the previous catalogs in place. The catalog lock is taken first, matching the mutation order, so a
+// concurrent two-file write is never observed half-applied.
 func (r *Registry) Reload() error {
+	unlock, err := lockCatalogDir(r.catalogDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

@@ -637,6 +637,54 @@ Exit codes: `0` on success, `1` on any error (missing key, invalid value, valida
 
 ---
 
+### `kushim llm`
+
+View and edit the provider and model catalogs from the terminal. Mirrors
+`kushim config`: no arguments dumps the catalog, one argument reads a key,
+two arguments write a key-value pair.
+
+```
+kushim llm
+kushim llm providers.zhipu.adapter
+kushim llm providers.zhipu.adapter custom-adapter
+kushim llm models.zhipu/glm-5.supports_temperature false
+kushim llm --unset providers.zhipu
+kushim llm --unset providers.zhipu --cascade
+kushim llm --reset
+kushim llm --reset --providers
+```
+
+| Mode | Example | Description |
+| ---- | ------- | ----------- |
+| `dump` | `kushim llm` | List every catalog field as sorted `key = value` lines |
+| `get` | `kushim llm providers.zhipu.adapter` | Print a field's value; a whole entry prints as YAML |
+| `set` | `kushim llm providers.zhipu.adapter custom-adapter` | Set a field. Values coerce like `kushim config`: `true`/`false` → bool, integers → int, floats, comma-separated → list, otherwise string |
+| whole entry | `kushim llm providers.groq '{"adapter":"openai-compatible","official_url":"https://api.groq.com/openai/v1"}'` | Create or replace a whole entry from a JSON object value |
+| `--unset` | `kushim llm --unset providers.zhipu` | Remove a whole entry (`unset <key>` confirmation). `--cascade` also deletes the provider's models |
+| `--reset` | `kushim llm --reset [--providers] [--models]` | Restore the embedded defaults (both catalogs by default); works even on a corrupt catalog |
+
+Keys use dot notation over two roots: `providers.<name>[.<field>]` for
+`adapter`, `official_url`, `session_header`, and
+`models.<provider>/<model>[.<field>]` for `display_name`, `max_input_tokens`,
+`max_output_tokens`, `disable_reasoning`, `reasoning_efforts`,
+`supports_structured_output`, `supports_temperature`, `supports_prompt_caching`,
+`uses_max_completion_tokens`, `uses_responses_endpoint`. A model is created
+by setting its first field (the key itself carries provider and model id);
+a provider must be created as a whole entry, because its adapter and URL are
+required together. Setting a field to `""` clears it (session header,
+reasoning efforts).
+
+Guards: removing an entry the enricher configuration references (content
+analyzer, its fallbacks, tag adjudicator, tag quality) fails with an in-use
+error, and removing a provider that still owns models fails until
+`--cascade`. `--unset` on a field key is refused — clear the field by setting
+it to `""` instead. `--providers` and `--models` require `--reset`.
+
+Exit codes: `0` on success, `1` on any error (invalid key or field, unknown
+entry, guard rejection, load failure).
+
+---
+
 ### `kushim backup`
 
 Create a backup of the database, configuration, and storage files.
@@ -1788,7 +1836,7 @@ Response `204 No Content`.
 
 ### LLM Model Discovery
 
-Returns the available adapters, providers, and models from the model catalog. The catalog lives in your config directory as `provider_catalog.json` and `model_catalog.json` — the app seeds it there with defaults on first start, and you can edit the files to add, remove, or tune providers and models (restart to apply). Used by the settings UI to populate cascading selectors. Provider and model documentation: [models.dev/providers](https://models.dev/providers/).
+Returns the available adapters, providers, and models from the model catalog. The catalog lives in your config directory as `provider_catalog.json` and `model_catalog.json` — the app seeds it there with defaults on first start — and is managed through the settings page's Models section, the `kushim llm` CLI verb, or the catalog endpoints below; no hand-editing is needed, and changes apply without a restart (read endpoints re-read the files, and the next consume batch picks them up). Used by the settings UI to populate cascading selectors. Provider and model documentation: [models.dev/providers](https://models.dev/providers/).
 
 ```
 GET /api/v1/llm/models
@@ -1832,6 +1880,45 @@ Response `200`:
   }
 }
 ```
+
+### LLM Catalog Management
+
+Providers and models are editable resources. Every endpoint below requires
+the admin role and answers with the fresh catalog, so a client refreshes in
+one round trip.
+
+```
+POST   /api/v1/llm/providers
+PUT    /api/v1/llm/providers/{name}
+DELETE /api/v1/llm/providers/{name}?cascade=true|false
+POST   /api/v1/llm/models
+PUT    /api/v1/llm/models/{provider}/{model}
+DELETE /api/v1/llm/models/{provider}/{model}
+POST   /api/v1/llm/reset
+```
+
+The provider body carries `provider` (the immutable key), `adapter`,
+`official_url` and the optional `session_header`; name, adapter and an
+absolute `http(s)` URL are required, the name may not contain `.` or `/`
+(catalog key delimiters), and `set` ignores the body's name field. The model
+body carries `provider` and `model_id` (the immutable key), `display_name`,
+`max_input_tokens`, `max_output_tokens`, `disable_reasoning`,
+`reasoning_efforts` (a list), and the capability flags
+`supports_structured_output`, `supports_temperature`, `supports_prompt_caching`,
+`uses_max_completion_tokens`, `uses_responses_endpoint`; `set` ignores the
+body's key fields.
+
+Deletion guards: a provider that still owns models is rejected unless
+`cascade=true` deletes them together, and a provider or model named by the
+enricher configuration (content analyzer, its fallbacks, tag adjudicator, tag
+quality) is always rejected. Failures map to `409` (duplicate key or guard
+rejection), `404` (unknown entry) and `400` (invalid fields).
+
+`POST /api/v1/llm/reset` restores the embedded defaults for the catalogs
+selected by `{"providers": bool, "models": bool}` (at least one required). It
+also works when the catalog failed to load at startup: catalog reads answer
+`503` in that state, and a successful reset loads a fresh catalog live, so
+the reads serve again without a restart.
 
 ### Configuration (Wizard API)
 
@@ -3256,10 +3343,11 @@ accept and enqueue files.
 The main web UI includes a **Settings** page at `/settings`: one scrollable
 form grouped into sections, with a rail on the left that tracks the active
 section as you scroll (each section has a URL hash — `#overview`, `#intake`,
-`#processing`, `#enrichment`, `#storage`, `#safety`, `#access`, `#system` —
-so any section is deep-linkable). A search box at the top filters fields and
-cards across all sections, and a save bar slides up from the bottom when
-there are unsaved changes, with a per-section dirty dot on the rail.
+`#processing`, `#enrichment`, `#models`, `#storage`, `#safety`, `#access`,
+`#system` — so any section is deep-linkable). A search box at the top filters
+fields and cards across all sections, and a save bar slides up from the
+bottom when there are unsaved changes, with a per-section dirty dot on the
+rail.
 
 ### Overview
 
@@ -3322,6 +3410,29 @@ tools, plus an "N of M" availability counter.
   (HH:MM), with a note that a run blocks document processing while it
   measures
 - **Enrichment workers**: worker count
+
+### Models
+
+- **Providers**: one card per cataloged provider with its adapter badge,
+  official URL and optional session header. **Add provider** opens a form
+  with the name, an adapter selector fed from the catalog's adapters plus the
+  two built-ins, the official URL, and the optional session header;
+  **Edit** opens the adapter/URL/session-header form (the name is immutable);
+  **Remove** asks for confirmation, states how many models the provider owns,
+  and deletes them together
+- **Models**: listed under their provider with the id, display name, token
+  limits and a capability summary. **Add model** opens a form with the
+  provider preselected, the model id, display name, token limits (0 = not
+  set), reasoning efforts as a comma list, and the six capability switches
+  (disable reasoning, structured output, temperature, prompt caching,
+  max_completion_tokens, responses endpoint); **Edit** opens the same form
+  with the id immutable; **Remove** asks for confirmation
+- **Restore default catalogs**: replaces both catalog files with the embedded
+  defaults after a confirmation dialog
+
+Every change applies immediately through the catalog API — this section is
+not part of the save bar — and the enrichment selectors re-fetch the catalog
+after each change.
 
 ### Storage
 

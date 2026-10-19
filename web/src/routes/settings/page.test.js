@@ -17,6 +17,11 @@ vi.mock('$lib/api', () => ({
 			status: apiMocks.configStatus,
 			llmModels: apiMocks.configLlmModels
 		},
+		llm: {
+			catalog: vi
+				.fn()
+				.mockResolvedValue({ ok: true, status: 200, data: { providers: [], models: [] } })
+		},
 		users: { list: vi.fn().mockResolvedValue({ users: [], total: 0 }) }
 	}
 }));

@@ -397,10 +397,13 @@ entry per provider: `provider`, `adapter`, `official_url`, optional
 `model_id`, display name, token limits, and capability gates). The binary
 embeds a default copy of each via `//go:embed` and uses it only to seed a
 missing file, after the combined result validates; an existing file is never
-overwritten, so deployments edit their copies freely. Each file is a
-versioned wrapper object (`{"version": 1, ...}`) that may carry an ignored
-`_comment` hint key. There is no runtime refresh mechanism — updating the
-catalogs requires editing the files and restarting (or calling `Reload`).
+overwritten by loading, so deployments edit their copies freely. Each file is
+a versioned wrapper object (`{"version": 1, ...}`) that may carry a `_comment`
+hint key, preserved across rewrites. The catalogs are managed through the
+settings page's Models section, the `kushim llm` CLI verb, and the
+`/api/v1/llm` catalog endpoints, all driving the mutation API below; file
+edits reach running processes without a restart (the API's read endpoints
+re-read the files, and consume forks load them fresh per batch).
 
 ### Key types
 
@@ -424,11 +427,26 @@ type ModelCapability struct {
 
 | Method | Description |
 |--------|-------------|
-| `NewRegistry(configDir)` | Resolves both catalogs from the config directory (embedded defaults seed missing files after validation), validates, builds the indexes |
+| `NewRegistry(configDir)` | Resolves both catalogs from the config directory (embedded defaults seed missing files after validation) under the catalog lock, validates, builds the indexes |
 | `Lookup(provider, model)` | Returns `*ModelCapability` for a given provider+model |
 | `Adapters()` | Returns adapter names present in the catalog (currently `["anthropic", "openai-compatible"]`) |
 | `ProvidersForAdapter(adapter)` | Returns provider keys for a given adapter |
 | `ModelsForProvider(provider)` | Returns model entries with capabilities |
+| `Catalog()` | Full editable snapshot: every provider (including model-less ones) and every model entry, ordered by name |
+| `AddProvider(ProviderInput)` / `SetProvider(name, in)` | Append or rewrite a provider; duplicates conflict, the name is immutable |
+| `RemoveProvider(name, cascade, cfg)` | Drops a provider; the orphan-model guard needs `cascade` and the in-use guard refuses any provider the enricher configuration names |
+| `AddModel(ModelInput)` / `SetModel(provider, modelID, in)` | Append or rewrite a model; duplicates conflict, the key is immutable, the provider must be cataloged |
+| `RemoveModel(provider, modelID, cfg)` | Drops a model, refusing one the enricher configuration references |
+| `ResetCatalogs(providers, models)` | Restores the embedded defaults for the selected catalogs and reloads |
+| `ResetCatalogFiles(dir, providers, models)` | Package-level reset that works without a loadable registry — the recovery path for a mangled catalog |
+
+All mutations serialize through a cross-process `flock` on
+`<config dir>/catalog.lock` (taken before the in-memory mutex), re-read both
+files fresh, validate the result with the loader's rules — plus provider
+names free of `.` and `/` (both catalog key delimiters) — and persist through
+the staged write: atomic temp+rename per file, and a two-file change stages
+both before renaming either, with the model file rolled back when the
+provider rename fails. Each file's `_comment` hint survives rewrites.
 
 ### Provider→Adapter mapping
 
@@ -593,4 +611,4 @@ are not bounded upstream. The 100 MP ceiling allows generous large-format page
 - [Tag Matcher Guide](../tags/matcher.md) — Matcher config, memory, and CPU tuning
 - [Pipeline](pipeline.md) — Consumer and Enricher that use the Runner
 - [Config & Utils](config-and-utils.md) — Tool configuration (engines, timeouts, models)
-- `internal/llm/` — LLM capability registry (provider and model catalogs, adapter/provider/model discovery)
+- `internal/llm/` — LLM capability registry (provider and model catalogs, adapter/provider/model discovery, and the catalog mutation API behind the settings page, CLI and REST surfaces)

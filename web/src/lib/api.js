@@ -434,6 +434,60 @@ export const api = {
 			request('/api/v1/llm/models').then((data) => data ?? { adapters: {}, providers: {} })
 	},
 
+	llm: {
+		catalog: () => requestRaw('/api/v1/llm/catalog'),
+
+		addProvider: (body) =>
+			requestRaw('/api/v1/llm/providers', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+
+		setProvider: (name, body) =>
+			requestRaw(`/api/v1/llm/providers/${encodeURIComponent(name)}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+
+		removeProvider: (name, cascade = false) =>
+			requestRaw(
+				`/api/v1/llm/providers/${encodeURIComponent(name)}${cascade ? '?cascade=true' : ''}`,
+				{ method: 'DELETE' }
+			),
+
+		addModel: (body) =>
+			requestRaw('/api/v1/llm/models', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}),
+
+		setModel: (provider, model, body) =>
+			requestRaw(
+				`/api/v1/llm/models/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`,
+				{
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(body)
+				}
+			),
+
+		removeModel: (provider, model) =>
+			requestRaw(
+				`/api/v1/llm/models/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`,
+				{ method: 'DELETE' }
+			),
+
+		reset: (body) =>
+			requestRaw('/api/v1/llm/reset', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			})
+	},
+
 	auth: {
 		login: (username, password) =>
 			requestRaw('/api/v1/auth/login', {

@@ -600,6 +600,51 @@ re-resolves both catalogs — seeding any file that has since been deleted —
 and swaps them in only on success; a failed reload keeps the previous
 catalogs.
 
+### 9.1 Mutating the catalog
+
+`catalog_edit.go` adds the management layer on the same registry:
+`AddProvider`/`SetProvider`/`RemoveProvider`/`AddModel`/`SetModel`/
+`RemoveModel` mutate the catalog files and the in-memory state in one
+operation, `ResetCatalogs` restores the embedded defaults for the selected
+scope, and `Catalog()` returns a full snapshot (every provider including
+model-less ones, every model entry) for the editing surfaces. Every edit
+takes the cross-process catalog lock first — an exclusive `flock` on
+`<config dir>/catalog.lock`, taken before the in-memory mutex so a wait on
+another writer never blocks in-process readers — then re-reads both files
+from disk, applies and validates the change against that fresh state, and
+persists it. A single-file change is atomic (temp file + rename); a change
+touching both files (`writeCatalogPair`, used by the cascade removal and the
+full reset) stages both temp files before either rename so write errors
+surface before a file is replaced, installs the model file first — which
+keeps a pruning mutation's intermediate pair referentially valid — and rolls
+the model file back from its previous bytes when the provider rename fails.
+Each file's `_comment` hint survives rewrites, and the mode stays 0644.
+
+Validation mirrors the loader's rules and tightens two: required fields
+(`provider`/`adapter`/an absolute `http(s)` `official_url`;
+`provider`/`model_id`), non-negative token limits, and — new — provider
+names may not contain `.` or `/`, both catalog-key delimiters (the CLI keys
+are `providers.<name>[.<field>]` and `models.<provider>/<model>[.<field>]`).
+Removal carries two guards: a provider that still owns models is rejected
+unless `cascade` deletes them together, and `llmInUse` rejects a provider or
+model the enricher configuration names (the content analyzer, its fallbacks,
+the tag adjudicator and the tag quality judge — enabled or not; a nil config
+lifts the guard). `ResetCatalogFiles` is the package-level recovery path: it
+works without a loadable registry (a mangled catalog cannot be loaded), each
+partial scope validates its result against the catalog it leaves in place —
+reading only that file, so it can repair its own mangled one — and the full
+reset restores both files.
+
+The surfaces on top: the API handler (`internal/api/handlers/llm.go`) maps
+kinds to statuses (409 duplicate/guard, 404 unknown, 400 invalid) and answers
+every mutation with the fresh `Catalog()`; its registry sits in an
+`atomic.Pointer`, so reads answer 503 when the startup load failed and a
+successful reset installs a fresh registry live. The `kushim llm` CLI verb
+mirrors `kushim config`'s grammar (dump/get/set/`--unset`), and the settings
+page's Models section drives the same endpoints. Consumer processes and the
+queue's consume forks load the catalogs fresh per batch, so file edits reach
+the pipeline without any restart.
+
 Note: neither catalog nor `ModelCapability` models per-token costs —
 `entryToCapability` (`registry.go:358-370`) maps only the capability flags
 and limits.

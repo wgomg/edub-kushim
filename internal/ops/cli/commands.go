@@ -97,6 +97,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "View and edit config values",
 			Handler:     configHandler,
 		},
+		"llm": {
+			Name:        "llm",
+			Description: "View and edit the provider and model catalogs",
+			Handler:     llmHandler,
+		},
 		"restore": {
 			Name:        "restore",
 			Description: "Restore from a backup archive",

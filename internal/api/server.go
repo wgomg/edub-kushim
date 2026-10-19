@@ -198,15 +198,25 @@ func registerRoutes(
 	mux := http.NewServeMux()
 	engine := search.NewEngine(logger, client)
 
+	viewer := []auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}
+	editor := []auth.Role{auth.RoleEditor, auth.RoleAdmin}
+	admin := []auth.Role{auth.RoleAdmin}
+
 	cfg := getConfig()
 	llmRegistry, err := llm.NewRegistry(cfg.App.ConfigDir)
 	if err != nil {
 		logger.Error("", "load model catalogs: %v", err)
 	}
-	if llmRegistry != nil {
-		llmHandler := handlers.NewLlmHandler(llmRegistry)
-		mux.Handle("GET /api/v1/llm/models", RequireRole([]auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}...)(http.HandlerFunc(llmHandler.ListModels)))
-	}
+	llmHandler := handlers.NewLlmHandler(llmRegistry, cfg.App.ConfigDir, getConfig, logger)
+	mux.Handle("GET /api/v1/llm/models", RequireRole(viewer...)(http.HandlerFunc(llmHandler.ListModels)))
+	mux.Handle("GET /api/v1/llm/catalog", RequireRole(viewer...)(http.HandlerFunc(llmHandler.GetCatalog)))
+	mux.Handle("POST /api/v1/llm/providers", RequireRole(admin...)(http.HandlerFunc(llmHandler.AddProvider)))
+	mux.Handle("PUT /api/v1/llm/providers/{name}", RequireRole(admin...)(http.HandlerFunc(llmHandler.SetProvider)))
+	mux.Handle("DELETE /api/v1/llm/providers/{name}", RequireRole(admin...)(http.HandlerFunc(llmHandler.RemoveProvider)))
+	mux.Handle("POST /api/v1/llm/models", RequireRole(admin...)(http.HandlerFunc(llmHandler.AddModel)))
+	mux.Handle("PUT /api/v1/llm/models/{provider}/{model}", RequireRole(admin...)(http.HandlerFunc(llmHandler.SetModel)))
+	mux.Handle("DELETE /api/v1/llm/models/{provider}/{model}", RequireRole(admin...)(http.HandlerFunc(llmHandler.RemoveModel)))
+	mux.Handle("POST /api/v1/llm/reset", RequireRole(admin...)(http.HandlerFunc(llmHandler.ResetCatalogs)))
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
@@ -217,9 +227,6 @@ func registerRoutes(
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 
 	docHandler := handlers.NewDocumentHandler(client, logger, engine, services, tag, getConfig)
-	viewer := []auth.Role{auth.RoleViewer, auth.RoleEditor, auth.RoleAdmin}
-	editor := []auth.Role{auth.RoleEditor, auth.RoleAdmin}
-	admin := []auth.Role{auth.RoleAdmin}
 	mux.Handle("GET /api/v1/documents", RequireRole(viewer...)(http.HandlerFunc(docHandler.ListDocuments)))
 	mux.Handle("GET /api/v1/documents/{id}", RequireRole(viewer...)(http.HandlerFunc(docHandler.GetDocument)))
 	mux.Handle("GET /api/v1/documents/{id}/file", RequireRole(viewer...)(http.HandlerFunc(docHandler.GetDocumentFile)))

@@ -6,7 +6,7 @@ The process layer is split by role: the verb table and the `kushim` verbs live i
 
 ### Globals
 
-`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `restore`, `migrate`, `tagmeasure`, `tagreconcile`, `tagidentity`, `tagaudit`. The `consume`, `queue`, and `setup` entries delegate to `consume.Run`, `queue.Run`, and `setup.RunSetup` respectively.
+`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `llm`, `restore`, `migrate`, `tagmeasure`, `tagreconcile`, `tagidentity`, `tagaudit`. The `consume`, `queue`, and `setup` entries delegate to `consume.Run`, `queue.Run`, and `setup.RunSetup` respectively.
 
 > **Note**: The `edub` binary has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -252,6 +252,21 @@ The **tagaudit pool** (1 worker, 5s poll interval, always running) executes cove
 - `atomicWriteConfig(configDir, write func(tmpPath string) error) error` — Temp-write-validate-rename pipeline shared by `atomicSetConfig` and `unsetConfigValue`: writes through the callback into a temp directory inside the config dir, validates with `config.Load(tmpDir)` (including `finalizeConfig` business rules), then renames the file into place; a write or validation failure leaves the original untouched.
 - `parseValue(raw string) any` — Auto-detects value type: `true`/`false` → `bool`, parseable integer → `int`, parseable float → `float64`, contains comma → `[]string` (trimmed), otherwise `string`.
 - `printValue(val any)` — Prints a value matching CLI output specs: scalars raw, arrays/maps via `yaml.Marshal`.
+
+---
+
+## `llm.go`
+
+### Functions
+
+- `llmHandler(c, args) error` — Entry point for `kushim llm`, mirroring `configHandler`'s grammar over the catalog key space: parses `--unset` (String) plus `--reset`/`--providers`/`--models`/`--cascade` (Bool), then dispatches on positional count: 0 → `dumpCatalog`, 1 → `getCatalogValue`, 2+ → `setCatalogValue` (value = `strings.Join(rest[1:], " ")`). `--reset` routes to `llm.ResetCatalogFiles` (works even when `NewRegistry` fails — the mangled-catalog recovery path), `--unset` removes a whole entry through `RemoveProvider`/`RemoveModel` (the registry applies the in-use and orphan-model guards; `--cascade` also drops the provider's models); `--providers`/`--models` require `--reset` and `--cascade` requires `--unset`.
+- `parseCatalogKey(key) (catalogKey, error)` — Parses `providers.<name>[.<field>]` and `models.<provider>/<model>[.<field>]`; the field is split off by known-name suffix (`trailingField`), so model ids containing dots stay addressable.
+- `catalogKey` — `kind` (`providers`/`models`), `name`, `modelID`, `field`; an empty field selects the whole entry.
+- `dumpCatalog(c) error` — Prints every catalog entry value as sorted `key = value` lines (`dumpValue` renders scalars and effort lists).
+- `getCatalogValue(c, key) error` — Prints a field's value via `printValue` (a whole entry as YAML via `providerMap`/`modelMap`).
+- `setCatalogValue(c, key, rawValue) error` — A field set applies through `applyField` onto the entry found by `findProviderInput`/`findModelInput`, then `SetProvider`/`SetModel`; a missing model is created with defaults plus the field (`AddModel`), a missing provider is refused (its required fields need the whole-entry form). A whole-entry set decodes a JSON object (`setProviderEntry`/`setModelEntry`, keys forced from the key path) into `AddProvider`/`SetProvider`/`AddModel`/`SetModel`. Prints `key = value`.
+- `unsetCatalogValue(c, key, cascade) error` — Removes the entry and prints `unset <key>`; a field key is refused (clear the field by setting it to `""`).
+- `fieldSpec[T]` — One table per catalog (`providerFieldSpecs`/`modelFieldSpecs`) binding each settable field name to its getter and setter (`textSetter`/`intSetter`/`boolSetter` over `parseValue`-coerced scalars, `listStrings` for `reasoning_efforts`); the key vocabulary (`providerFields`/`modelFields` via `fieldNames`), the entry maps, the dump and the value accessors all derive from it.
 
 ---
 

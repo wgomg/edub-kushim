@@ -11,6 +11,7 @@
 		{ id: 'intake', label: 'Intake', sub: 'uploads & inbox', node: '1' },
 		{ id: 'processing', label: 'Processing', sub: 'OCR & rendering', node: '2' },
 		{ id: 'enrichment', label: 'Enrichment', sub: 'LLM & tags', node: '3' },
+		{ id: 'models', label: 'Models', sub: 'providers & catalog', node: '' },
 		{ id: 'storage', label: 'Storage', sub: 'files & database', node: '4' }
 	];
 	const OPERATIONS = [

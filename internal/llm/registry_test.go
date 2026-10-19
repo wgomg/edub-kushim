@@ -8,8 +8,28 @@ import (
 	"testing"
 )
 
+// fixtureDir copies the committed catalog fixtures into a temp dir, so tests never leave the catalog
+// lock file behind in the repository.
 func fixtureDir(t *testing.T) string {
-	return "testdata"
+	t.Helper()
+	dir := t.TempDir()
+	entries, err := os.ReadDir("testdata")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("testdata", entry.Name()))
+		if err != nil {
+			t.Fatalf("read testdata/%s: %v", entry.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, entry.Name()), data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", entry.Name(), err)
+		}
+	}
+	return dir
 }
 
 func TestNewRegistry(t *testing.T) {

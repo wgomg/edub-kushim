@@ -8,6 +8,7 @@
 	import AccessSection from '$lib/components/settings/AccessSection.svelte';
 	import EnrichmentSection from '$lib/components/settings/EnrichmentSection.svelte';
 	import IntakeSection from '$lib/components/settings/IntakeSection.svelte';
+	import ModelsSection from '$lib/components/settings/ModelsSection.svelte';
 	import OverviewSection from '$lib/components/settings/OverviewSection.svelte';
 	import ProcessingSection from '$lib/components/settings/ProcessingSection.svelte';
 	import SafetySection from '$lib/components/settings/SafetySection.svelte';
@@ -374,6 +375,10 @@
 		}
 	}
 
+	async function refreshLlmModels() {
+		llmModels = await api.config.llmModels();
+	}
+
 	async function save() {
 		saving = true;
 		try {
@@ -544,6 +549,7 @@
 				<IntakeSection {cfg} {mimeTypeOptions} />
 				<ProcessingSection {cfg} {toolStatus} statusKnown={statusLoaded} />
 				<EnrichmentSection {cfg} {llmModels} {toolStatus} statusKnown={statusLoaded} />
+				<ModelsSection onChanged={refreshLlmModels} />
 				<StorageSection {cfg} />
 				<SafetySection {cfg} {toolStatus} statusKnown={statusLoaded} />
 				<AccessSection {cfg} />

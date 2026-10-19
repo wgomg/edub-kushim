@@ -17,7 +17,7 @@ internal/
 │   │   ├── errors.go       # Shared error writing helpers
 │   │   ├── health.go       # Health check handler
 │   │   ├── json.go         # Shared JSON response writer (writeJSON)
-│   │   ├── llm.go          # LLM model catalog discovery handler
+│   │   ├── llm.go          # LLM model catalog handler: discovery view + catalog CRUD/reset (503 with live recovery when the startup load failed)
 │   │   ├── logs.go         # Log viewer handler
 │   │   ├── orphaned.go     # Orphaned file management handlers (list, scan, delete, restore, move-to-inbox)
 │   │   ├── people.go       # People + people-type CRUD handlers + request/response types
@@ -158,7 +158,8 @@ internal/
 │   │   └── llm_anthropic.go # Anthropic Messages API with capability flags
 │   ├── provider_catalog.json # Default provider entries (adapter, official_url, session_header); seeded into the config dir on first load
 │   ├── model_catalog.json  # Default model entries: capabilities per provider/model; seeded into the config dir on first load
-│   └── registry.go         # Registry: resolves the config-dir catalogs (seeds missing files from the defaults), Lookup, Adapters, ProvidersForAdapter, ModelsForProvider
+│   ├── registry.go         # Registry: resolves the config-dir catalogs (seeds missing files from the defaults), Lookup, Adapters, ProvidersForAdapter, ModelsForProvider
+│   └── catalog_edit.go     # Catalog mutation API (Add/Set/Remove provider and model, ResetCatalogs, Catalog snapshot): the in-use guard, the cross-process catalog lock, the staged two-file write with rollback, and the atomic single-file write
 ├── log/                    # Structured logging and memory metrics
 │   ├── logger.go           # Logger (slog-based console/file handlers, numeric level filtering, reqID) + WithReqID/ReqIDFrom context accessors
 │   └── metrics.go          # Memory metrics (HeapInUse, RSS, NumGC), HumanDuration, FormatMemDelta, FormatBytes
