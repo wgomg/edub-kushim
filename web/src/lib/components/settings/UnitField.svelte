@@ -16,11 +16,12 @@
 		spellcheck = undefined,
 		mono = false,
 		wide = false,
+		advancedOnly = false,
 		autocomplete = 'off'
 	} = $props();
 </script>
 
-<div class="field {wide ? 'sm:col-span-2' : ''}">
+<div class="field {advancedOnly ? 'advanced-only' : ''} {wide ? 'sm:col-span-2' : ''}">
 	<label for={id} class="text-[0.8125rem] font-medium text-parchment-200">{label}</label>
 	<div class="relative">
 		<input

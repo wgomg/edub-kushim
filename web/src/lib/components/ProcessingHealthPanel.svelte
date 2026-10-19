@@ -60,7 +60,7 @@
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-sm text-parchment-500">Missing Tools</p>
 				<a
-					href={resolve(`/settings`)}
+					href={resolve(`/settings/processing`)}
 					class="mt-1 block text-lg font-semibold {missingToolsClass(
 						health.missing_tools
 					)} hover:underline"

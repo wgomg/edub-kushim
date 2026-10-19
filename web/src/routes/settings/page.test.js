@@ -1,13 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
-import Page from './+page.svelte';
+import EnrichmentSection from '$lib/components/settings/EnrichmentSection.svelte';
+import ModelsPage from './models/+page.svelte';
+import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
 
 const apiMocks = vi.hoisted(() => ({
 	configGet: vi.fn(),
 	configUpdate: vi.fn(),
 	configStatus: vi.fn(),
-	configLlmModels: vi.fn()
+	configLlmModels: vi.fn(),
+	catalog: vi.fn()
 }));
+
+vi.mock('$app/stores', () => ({
+	page: {
+		subscribe(run) {
+			run({ url: new URL('http://localhost/settings/models'), state: {} });
+			return () => {};
+		}
+	}
+}));
+
+vi.mock('$app/navigation', () => ({ replaceState: vi.fn() }));
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -18,18 +32,9 @@ vi.mock('$lib/api', () => ({
 			llmModels: apiMocks.configLlmModels
 		},
 		llm: {
-			catalog: vi
-				.fn()
-				.mockResolvedValue({ ok: true, status: 200, data: { providers: [], models: [] } })
-		},
-		users: { list: vi.fn().mockResolvedValue({ users: [], total: 0 }) }
+			catalog: apiMocks.catalog
+		}
 	}
-}));
-
-vi.mock('$lib/stores/authStore.js', () => ({
-	authEnabled: () => false,
-	isAdmin: () => true,
-	roleBadgeClass: () => 'bg-gold-500/20 text-gold-500'
 }));
 
 const fullCfg = () => ({
@@ -132,31 +137,40 @@ const fullCfg = () => ({
 	},
 	available_file_types: [
 		{ mime_type: 'application/pdf', extensions: ['.pdf'], required: true, label: 'PDF' }
-	],
-	available_engines: {
-		ocr: [{ value: 'tesseract', label: 'Tesseract' }],
-		text_extractor: [{ value: 'pdftotext', label: 'pdftotext' }],
-		pdf_optimizer: [{ value: 'qpdf', label: 'qpdf' }],
-		text_reducer: [{ value: 'textrank', label: 'TextRank' }],
-		thumbnail: [{ value: 'mupdf', label: 'MuPDF' }]
-	}
+	]
 });
+
+async function loadSection(cfg) {
+	settingsStore.reset();
+	apiMocks.configGet.mockResolvedValue(cfg);
+	await settingsStore.load();
+	return render(EnrichmentSection, {
+		props: {
+			cfg: settingsStore.cfg,
+			llmModels: settingsStore.llmModels,
+			toolStatus: [],
+			statusKnown: true
+		}
+	});
+}
 
 beforeEach(() => {
-	apiMocks.configGet.mockReset();
-	apiMocks.configUpdate.mockReset();
-	apiMocks.configStatus.mockReset();
-	apiMocks.configLlmModels.mockReset();
-	apiMocks.configStatus.mockResolvedValue({ missing_tools: [], tools: [] });
+	vi.clearAllMocks();
+	settingsStore.reset();
+	apiMocks.configStatus.mockResolvedValue({ tools: [] });
 	apiMocks.configLlmModels.mockResolvedValue({ adapters: {}, providers: {} });
+	apiMocks.catalog.mockResolvedValue({
+		ok: true,
+		status: 200,
+		data: { providers: [], models: [] }
+	});
 });
 
-describe('Settings — Tag reconciliation section', () => {
+describe('Enrichment settings', () => {
 	it('renders the adjudicator card with the toggle and LLM fields', async () => {
 		const cfg = fullCfg();
 		cfg.enricher.tag_adjudicator.enabled = true;
-		apiMocks.configGet.mockResolvedValue(cfg);
-		render(Page);
+		await loadSection(cfg);
 
 		expect(await screen.findByRole('heading', { name: 'Tag adjudicator' })).toBeTruthy();
 
@@ -166,137 +180,91 @@ describe('Settings — Tag reconciliation section', () => {
 		const timeout = document.getElementById('tag-adjudicator-timeout');
 		expect(Number(timeout.value)).toBe(30);
 
-		const adapter = document.getElementById('tag-adjudicator-adapter');
-		expect(adapter).toBeTruthy();
-		const provider = document.getElementById('tag-adjudicator-provider');
-		expect(provider).toBeTruthy();
-		const model = document.getElementById('tag-adjudicator-model');
-		expect(model).toBeTruthy();
-		// Each select must offer the inherit-from-analyzer escape hatch so the
-		// adjudicator can be enabled without pinning an explicit LLM.
+		expect(document.getElementById('tag-adjudicator-adapter')).toBeTruthy();
+		expect(document.getElementById('tag-adjudicator-provider')).toBeTruthy();
+		expect(document.getElementById('tag-adjudicator-model')).toBeTruthy();
 		expect(screen.getAllByRole('option', { name: 'Inherit from content analyzer' })).toHaveLength(
 			3
 		);
-		const token = document.getElementById('tag-adjudicator-token');
-		expect(token).toBeTruthy();
-		const requestDelay = document.getElementById('tag-adjudicator-request-delay');
-		expect(requestDelay).toBeTruthy();
+		expect(document.getElementById('tag-adjudicator-token')).toBeTruthy();
+		expect(document.getElementById('tag-adjudicator-request-delay')).toBeTruthy();
 	});
 
-	it('renders the card with the seven bound inputs', async () => {
-		apiMocks.configGet.mockResolvedValue(fullCfg());
-		render(Page);
+	it('renders the reconciliation card with the bound inputs', async () => {
+		await loadSection(fullCfg());
 
 		expect(await screen.findByRole('heading', { name: 'Tag reconciliation' })).toBeTruthy();
 
-		const enabled = document.getElementById('tag-reconcile-enabled');
-		expect(enabled.checked).toBe(true);
-
-		const reportOnly = document.getElementById('tag-reconcile-report-only');
-		expect(reportOnly.checked).toBe(true);
-
-		const interval = document.getElementById('tag-reconcile-interval');
-		expect(interval).toBeTruthy();
-		expect(Number(interval.value)).toBe(7);
-
-		const time = document.getElementById('tag-reconcile-time');
-		expect(time.value).toBe('03:30');
-
-		const maxRejudge = document.getElementById('tag-reconcile-max-rejudge');
-		expect(Number(maxRejudge.value)).toBe(250);
-
-		const maxRetag = document.getElementById('tag-reconcile-max-retag');
-		expect(Number(maxRetag.value)).toBe(2000);
-
-		const deadTagGrace = document.getElementById('tag-reconcile-dead-tag-grace');
-		expect(Number(deadTagGrace.value)).toBe(14);
+		expect(document.getElementById('tag-reconcile-enabled').checked).toBe(true);
+		expect(document.getElementById('tag-reconcile-report-only').checked).toBe(true);
+		expect(Number(document.getElementById('tag-reconcile-interval').value)).toBe(7);
+		expect(document.getElementById('tag-reconcile-time').value).toBe('03:30');
+		expect(Number(document.getElementById('tag-reconcile-max-rejudge').value)).toBe(250);
+		expect(Number(document.getElementById('tag-reconcile-max-retag').value)).toBe(2000);
+		expect(Number(document.getElementById('tag-reconcile-dead-tag-grace').value)).toBe(14);
 	});
 
-	it('ensureTagReconcileBlock fills the default block when missing', async () => {
+	it('fills the reconciliation defaults when the block is missing', async () => {
 		const cfg = fullCfg();
 		delete cfg.enricher.tag_reconcile;
-		apiMocks.configGet.mockResolvedValue(cfg);
-		apiMocks.configUpdate.mockResolvedValue({ message: 'Settings saved.' });
-
-		render(Page);
+		await loadSection(cfg);
 
 		await screen.findByRole('heading', { name: 'Tag reconciliation' });
 
-		const interval = document.getElementById('tag-reconcile-interval');
-		expect(Number(interval.value)).toBe(7);
-		const time = document.getElementById('tag-reconcile-time');
-		expect(time.value).toBe('02:00');
-		const maxRejudge = document.getElementById('tag-reconcile-max-rejudge');
-		expect(Number(maxRejudge.value)).toBe(200);
-		const deadTagGrace = document.getElementById('tag-reconcile-dead-tag-grace');
-		expect(Number(deadTagGrace.value)).toBe(7);
+		expect(Number(document.getElementById('tag-reconcile-interval').value)).toBe(7);
+		expect(document.getElementById('tag-reconcile-time').value).toBe('02:00');
+		expect(Number(document.getElementById('tag-reconcile-max-rejudge').value)).toBe(200);
+		expect(Number(document.getElementById('tag-reconcile-dead-tag-grace').value)).toBe(7);
 	});
 
-	it('ensureTagAdjudicatorBlock fills the default block when missing', async () => {
+	it('fills the adjudicator defaults when the block is missing', async () => {
 		const cfg = fullCfg();
 		delete cfg.enricher.tag_adjudicator;
-		apiMocks.configGet.mockResolvedValue(cfg);
-
-		render(Page);
+		await loadSection(cfg);
 
 		await screen.findByRole('heading', { name: 'Tag adjudicator' });
 
 		const toggle = screen.getByRole('checkbox', { name: 'Enable tag adjudicator' });
 		expect(toggle.checked).toBe(false);
-		// Body is gated on enabled — the timeout field renders once toggled on.
-		fireEvent.click(toggle);
-		const timeout = document.getElementById('tag-adjudicator-timeout');
-		expect(Number(timeout.value)).toBe(0);
+		await fireEvent.click(toggle);
+		expect(Number(document.getElementById('tag-adjudicator-timeout').value)).toBe(0);
 	});
 
-	it('ensureTagQualityBlock fills the default block when missing', async () => {
+	it('fills the quality defaults when the block is missing', async () => {
 		const cfg = fullCfg();
 		delete cfg.enricher.tag_quality;
-		apiMocks.configGet.mockResolvedValue(cfg);
-
-		render(Page);
+		await loadSection(cfg);
 
 		await screen.findByRole('heading', { name: 'Tag reconciliation' });
 
 		const toggle = screen.getByRole('checkbox', { name: 'Enable tag quality judge' });
 		expect(toggle.checked).toBe(false);
-		fireEvent.click(toggle);
+		await fireEvent.click(toggle);
 
-		const timeout = document.getElementById('tag-quality-timeout');
-		expect(Number(timeout.value)).toBe(0);
-		// The reject-band thresholds are internal constants, not operator knobs.
+		expect(Number(document.getElementById('tag-quality-timeout').value)).toBe(0);
 		expect(document.getElementById('tag-quality-t-low')).toBeNull();
 		expect(document.getElementById('tag-quality-no-anchor-similarity')).toBeNull();
 	});
 
-	it('ensureTagMeasureBlock fills the default block when missing', async () => {
+	it('fills the measurement defaults when the block is missing', async () => {
 		const cfg = fullCfg();
 		delete cfg.enricher.tag_measure;
-		apiMocks.configGet.mockResolvedValue(cfg);
-		apiMocks.configUpdate.mockResolvedValue({ message: 'Settings saved.' });
-
-		render(Page);
+		await loadSection(cfg);
 
 		await screen.findByRole('heading', { name: 'Tag measurement' });
 
-		const toggle = screen.getByRole('checkbox', { name: 'Schedule measurement runs' });
-		expect(toggle.checked).toBe(false);
-
-		const interval = document.getElementById('tag-measure-interval');
-		expect(Number(interval.value)).toBe(7);
-		const time = document.getElementById('tag-measure-time');
-		expect(time.value).toBe('03:00');
+		expect(screen.getByRole('checkbox', { name: 'Schedule measurement runs' }).checked).toBe(false);
+		expect(Number(document.getElementById('tag-measure-interval').value)).toBe(7);
+		expect(document.getElementById('tag-measure-time').value).toBe('03:00');
 	});
 
-	it('bodyFromConfig carries the enricher block keys on save', async () => {
-		apiMocks.configGet.mockResolvedValue(fullCfg());
-		apiMocks.configUpdate.mockResolvedValue({ message: 'Settings saved.' });
+	it('carries the enricher block keys when applying', async () => {
+		const cfg = fullCfg();
+		apiMocks.configUpdate.mockResolvedValue({ ok: true, status: 200, data: {} });
+		await loadSection(cfg);
 
-		render(Page);
-
-		await screen.findByRole('heading', { name: 'Tag reconciliation' });
-
-		fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+		settingsStore.cfg.enricher.tag_reconcile.time = '04:15';
+		await settingsStore.applyAll();
 
 		await waitFor(() => expect(apiMocks.configUpdate).toHaveBeenCalledTimes(1));
 
@@ -311,7 +279,7 @@ describe('Settings — Tag reconciliation section', () => {
 		expect(body['enricher.tag_reconcile.enabled']).toBe(true);
 		expect(body['enricher.tag_reconcile.report_only']).toBe(true);
 		expect(body['enricher.tag_reconcile.interval']).toBe(7);
-		expect(body['enricher.tag_reconcile.time']).toBe('03:30');
+		expect(body['enricher.tag_reconcile.time']).toBe('04:15');
 		expect(body['enricher.tag_reconcile.max_rejudge']).toBe(250);
 		expect(body['enricher.tag_reconcile.max_retag']).toBe(2000);
 		expect(body['enricher.tag_reconcile.dead_tag_grace_days']).toBe(14);
@@ -331,9 +299,7 @@ describe('Settings — Tag reconciliation section', () => {
 		const cfg = fullCfg();
 		cfg.enricher.tag_reconcile.enabled = true;
 		cfg.enricher.tag_adjudicator.enabled = false;
-		apiMocks.configGet.mockResolvedValue(cfg);
-
-		render(Page);
+		await loadSection(cfg);
 
 		await screen.findByRole('heading', { name: 'Tag reconciliation' });
 		expect(await screen.findByText(/Tag adjudicator not enabled/)).toBeTruthy();
@@ -344,13 +310,61 @@ describe('Settings — Tag reconciliation section', () => {
 		const cfg = fullCfg();
 		cfg.enricher.tag_reconcile.enabled = true;
 		cfg.enricher.tag_adjudicator.enabled = true;
-		apiMocks.configGet.mockResolvedValue(cfg);
-
-		render(Page);
+		await loadSection(cfg);
 
 		await screen.findByRole('heading', { name: 'Tag reconciliation' });
-		// Wait a tick for the conditional to resolve.
-		await new Promise((r) => setTimeout(r, 0));
+		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(screen.queryByText(/Tag adjudicator not enabled/)).toBeNull();
+	});
+});
+
+describe('AI providers & models page', () => {
+	it('reports disabled fallbacks and inherited provider references as in use', async () => {
+		const cfg = fullCfg();
+		cfg.enricher.tag_adjudicator.llm.provider = 'groq';
+		cfg.enricher.tag_adjudicator.llm.model = '';
+		cfg.enricher.contentanalyzer.fallbacks = [
+			{
+				enabled: false,
+				llm: {
+					adapter: 'openai-compatible',
+					provider: 'groq',
+					model: 'llama-4-scout',
+					token: '',
+					temperature: 0,
+					request_delay: 0
+				}
+			}
+		];
+		apiMocks.configGet.mockResolvedValue(cfg);
+		apiMocks.catalog.mockResolvedValue({
+			ok: true,
+			status: 200,
+			data: {
+				providers: [
+					{
+						provider: 'groq',
+						adapter: 'openai-compatible',
+						official_url: 'https://api.groq.com/openai/v1',
+						session_header: ''
+					}
+				],
+				models: [
+					{
+						provider: 'groq',
+						model_id: 'llama-4-scout',
+						display_name: 'Llama 4 Scout',
+						max_input_tokens: 131072,
+						max_output_tokens: 32768
+					}
+				]
+			}
+		});
+		await settingsStore.load();
+
+		render(ModelsPage);
+
+		expect(await screen.findByText('Fallback 1')).toBeTruthy();
+		expect(await screen.findByText(/provider used by Adjudicator/)).toBeTruthy();
 	});
 });

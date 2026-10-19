@@ -6,7 +6,7 @@
 	import Switch from './Switch.svelte';
 	import UnitField from './UnitField.svelte';
 
-	let { cfg, toolStatus = [], statusKnown = false } = $props();
+	let { cfg, toolStatus = [], statusKnown = false, showHead = true } = $props();
 
 	let newLanguage = $state('');
 
@@ -30,11 +30,13 @@
 </script>
 
 <section id="processing" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Stage 2 · Pipeline"
-		title="Processing"
-		description="What happens to each file — OCR, text extraction, optimization, thumbnails."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Stage 2 · Pipeline"
+			title="Processing"
+			description="What happens to each file — OCR, text extraction, optimization, thumbnails."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card
@@ -112,6 +114,7 @@
 					label="Tessdata directory"
 					mono
 					wide
+					advancedOnly
 					bind:value={cfg.consumer.ocr.data_dir}
 				/>
 				<UnitField
@@ -299,6 +302,7 @@
 					min="0"
 					step="0.1"
 					hint="0 = disabled. Automatically enqueue thumbnail tasks for documents missing one."
+					advancedOnly
 					bind:value={cfg.consumer.thumbnail.backfill_interval}
 				/>
 				<UnitField
@@ -308,6 +312,7 @@
 					placeholder="02:00"
 					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
 					hint="HH:MM, 24-hour. Ignored for sub-daily intervals."
+					advancedOnly
 					bind:value={cfg.consumer.thumbnail.backfill_time}
 				/>
 			</div>
@@ -345,7 +350,7 @@
 					bind:value={cfg.consumer.max_files_per_batch}
 				/>
 			</div>
-			<details class="adv mt-[1.125rem] border-t border-dashed border-clay-700 pt-3">
+			<details class="adv advanced-only mt-[1.125rem] border-t border-dashed border-clay-700 pt-3">
 				<summary
 					class="flex cursor-pointer list-none items-center gap-1.5 text-[0.8125rem] font-medium text-parchment-500 before:font-mono before:text-gold-500 before:content-['+'] open:before:content-['−'] focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none [&::-webkit-details-marker]:hidden"
 				>

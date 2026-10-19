@@ -307,7 +307,8 @@ web/                      # SvelteKit SPA frontend (main UI)
 │   │   │   ├── filterStore.js   # Reactive filter state store (setPartial, reset, fromQueryString)
 │   │   │   ├── searchFilter.js  # Query parser, tokenizer, size/date formatting utilities
 │   │   │   ├── confirmStore.svelte.js  # Imperative confirm-dialog promise store
-│   │   │   └── toastStore.svelte.js    # Global toast stack store
+│   │   │   ├── toastStore.svelte.js    # Global toast stack store
+│   │   │   └── settingsStore.svelte.js # Settings state — config snapshot/diff, staged catalog op queue, detail level
 │   │   └── components/
 │   │       ├── DataTable.svelte   # Reusable data table (sortable, paginated, total count, refreshKey)
 │   │       ├── FilterPanel.svelte # Collapsible advanced filter panel (tags, people, dates, size, missing flags)
@@ -332,7 +333,16 @@ web/                      # SvelteKit SPA frontend (main UI)
 │       ├── documents/orphaned/
 │       │   └── +page.svelte      # Orphaned + errored file management page
 │       ├── settings/
-│       │   └── +page.svelte      # Settings page — grouped config form + section components (web/src/lib/components/settings/)
+│       │   ├── +layout.svelte     # Settings shell — admin guard, breadcrumb, detail level, staged-changes tray, palette
+│       │   ├── +page.svelte       # Settings hub — health summary, pipeline map, destination rows
+│       │   ├── intake/+page.svelte     # Intake settings page
+│       │   ├── processing/+page.svelte # Processing settings page
+│       │   ├── enrichment/+page.svelte # Enrichment settings page
+│       │   ├── models/+page.svelte     # AI providers & models page (master–detail catalog editor)
+│       │   ├── storage/+page.svelte    # Storage settings page
+│       │   ├── safety/+page.svelte     # Safety settings page
+│       │   ├── access/+page.svelte     # Access settings page
+│       │   └── system/+page.svelte     # System settings page
 │       ├── tags/
 │       │   └── +page.svelte      # Tag management page
 │       ├── people/

@@ -625,9 +625,11 @@ types, languages, and person names intact through the URL round-trip.
 ### 3. Plain `history.replaceState` — legacy settings redirect, wizard step
 
 When no SvelteKit navigation is needed, `switchTab` writes the param directly
-(`web-wizard/+page.svelte:30-34`); the settings page uses SvelteKit's
-`replaceState` only for the legacy `?tab=Users` → `#access` redirect
-(`settings/+page.svelte:356-363`).
+(`web-wizard/+page.svelte:30-34`); the settings area redirects the legacy
+`?tab=Users` parameter to `/settings/access` with `goto`
+(`settings/+layout.svelte`), and the Models page syncs its selected provider
+to the `?provider=` parameter with `replaceState`
+(`settings/ModelsSection.svelte`).
 
 Also in play: `page.subscribe(($p) => ...)` for reacting to URL changes
 (`tasks/+page.svelte:234-236` reads `?batch=`), and DataTable's own
@@ -940,8 +942,8 @@ return {
 ```
 
 The Go side merges it with `config.SaveMap` (viper dot-keys → YAML, see
-`internal/config/setup.go:76`). The main app's settings page repeats the same
-dotted-map pattern (`settings/+page.svelte:122-240`).
+`internal/config/setup.go:76`). The main app's settings store repeats the same
+dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 
 ### Wizard vs main app
 

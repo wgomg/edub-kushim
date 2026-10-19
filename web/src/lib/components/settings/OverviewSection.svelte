@@ -5,7 +5,7 @@
 	import Note from './Note.svelte';
 	import StatusBadge from './StatusBadge.svelte';
 
-	let { tools = [], statusKnown = false } = $props();
+	let { tools = [], statusKnown = false, showHead = true } = $props();
 
 	const CATEGORY_PURPOSE = {
 		prerequisite: 'Required for model and language file downloads',
@@ -35,12 +35,14 @@
 </script>
 
 <section id="overview" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Overview"
-		variant="op"
-		title="State of the machine"
-		description="The engines, tools and services the pipeline depends on — before you touch anything."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Overview"
+			variant="op"
+			title="State of the machine"
+			description="The engines, tools and services the pipeline depends on — before you touch anything."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card

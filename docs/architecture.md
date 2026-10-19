@@ -425,18 +425,20 @@ environments or CI.
 
 ### In-App Settings Page
 
-The main web UI (`web/`) includes a **Settings** page at `/settings` backed by the same
-`/wizard/config` API endpoints. It is one scrollable form grouped into sections — Overview
-(toolchain health), Intake (uploads & server, watched inbox, accepted file types, office
-converter), Processing (OCR, text extraction, PDF optimizer, thumbnails, throughput &
-recovery), Enrichment (content analyzer, text reducer, tag matcher, tag adjudicator, tag
-reconciliation, enrichment workers), Storage (directories, trash, database), Safety
-(backups, mirror), Access (sign-in, users), and System (logging) — with a sticky rail that
-tracks the active section (each section has a URL hash, `#overview`…`#system`), a
-`/`-focused search that filters fields and cards, and a fixed save bar with an
-unsaved-changes count. The orchestrator (`settings/+page.svelte`) loads the config,
-snapshots it, and PATCHes the flattened dotted-key map on save; the section components
-live in `web/src/lib/components/settings/`.
+The main web UI (`web/`) includes a **Settings** hub at `/settings` backed by the same
+`/wizard/config` API endpoints. The hub shows a health summary, a pipeline map (Intake →
+Processing → Enrichment → Storage) and destination rows grouped into Pipeline, Catalog and
+Operations; each destination is a focused page (`/settings/intake`, `/settings/processing`,
+`/settings/enrichment`, `/settings/models`, `/settings/storage`, `/settings/safety`,
+`/settings/access`, `/settings/system`) that renders one section component from
+`web/src/lib/components/settings/`. A settings-scoped layout owns the admin guard, a sticky
+header with the breadcrumb, an Essentials/Advanced detail level, a command palette (`/` or
+`Ctrl+K`) and the staged-changes surfaces. A shared rune store (`settingsStore.svelte.js`) loads the config,
+snapshots it, derives the flattened dotted-key diff, and stages catalog mutations client-side
+as an ordered operation queue; **Apply Changes** saves the flattened map (`PUT
+/wizard/config`) and then replays the catalog operations through the catalog REST endpoints,
+keeping any failed operation staged with the server's reason; **Discard All** restores the
+snapshot and reloads the catalog.
 
 Fields cover: server host/port, max upload/download sizes, max download files; OCR engine,
 timeout, data directory, languages (chips); consumer workers, max files per batch,

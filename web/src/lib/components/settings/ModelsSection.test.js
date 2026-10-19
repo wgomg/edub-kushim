@@ -2,18 +2,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import ModelsSection from './ModelsSection.svelte';
 
-const { catalog, removeProvider, confirm, toastSuccess, toastError, onChanged } = vi.hoisted(() => ({
-	catalog: vi.fn(),
-	removeProvider: vi.fn(),
+const { confirm, toastSuccess, toastError, replaceState } = vi.hoisted(() => ({
 	confirm: vi.fn(),
 	toastSuccess: vi.fn(),
 	toastError: vi.fn(),
-	onChanged: vi.fn()
+	replaceState: vi.fn()
 }));
 
-vi.mock('$lib/api', () => ({
-	api: { llm: { catalog, removeProvider } }
+vi.mock('$app/stores', () => ({
+	page: {
+		subscribe(run) {
+			run({ url: new URL('http://localhost/settings/models'), state: {} });
+			return () => {};
+		}
+	}
 }));
+
+vi.mock('$app/navigation', () => ({ replaceState }));
+
 vi.mock('$lib/stores/confirmStore.svelte.js', () => ({ confirmStore: { confirm } }));
 vi.mock('$lib/stores/toastStore.svelte.js', () => ({
 	toastStore: { success: toastSuccess, error: toastError }
@@ -41,60 +47,52 @@ const scout = {
 	uses_responses_endpoint: false
 };
 
-describe('ModelsSection', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-		confirm.mockResolvedValue(true);
+function renderSection(overrides = {}) {
+	return render(ModelsSection, {
+		props: {
+			catalog: { providers: [groq], models: [scout] },
+			loaded: true,
+			usedBy: { 'groq/llama-4-scout': ['Analyzer'] },
+			...overrides
+		}
 	});
+}
 
+beforeEach(() => {
+	vi.clearAllMocks();
+	confirm.mockResolvedValue(true);
+});
+
+describe('ModelsSection', () => {
 	it('renders cataloged providers with their models and capability summary', async () => {
-		catalog.mockResolvedValue({
-			ok: true,
-			status: 200,
-			data: { providers: [groq], models: [scout] }
-		});
+		renderSection();
 
-		render(ModelsSection, { props: { onChanged } });
-
-		expect(await screen.findByText('groq')).toBeTruthy();
+		expect((await screen.findAllByText('groq')).length).toBeGreaterThan(0);
 		expect(await screen.findByText('llama-4-scout')).toBeTruthy();
-		expect(await screen.findByText(/temperature/)).toBeTruthy();
+		expect(await screen.findByText('JSON')).toBeTruthy();
 		expect(screen.getByText('https://api.groq.com/openai/v1')).toBeTruthy();
+		expect(screen.getByText('Analyzer')).toBeTruthy();
 	});
 
 	it('surfaces the load error instead of pretending the catalog is empty', async () => {
-		catalog.mockResolvedValue({
-			ok: false,
-			status: 503,
-			data: { error: 'the model catalog failed to load; restore the default catalogs to recover' }
+		renderSection({
+			catalog: { providers: [], models: [] },
+			error: 'the model catalog failed to load; restore the default catalogs to recover'
 		});
-
-		render(ModelsSection, { props: { onChanged } });
 
 		expect(await screen.findByText(/failed to load/)).toBeTruthy();
 		expect(screen.queryByText('No providers cataloged.')).toBeNull();
 	});
 
-	it('confirms, calls the API and adopts the returned catalog when removing a provider', async () => {
-		catalog.mockResolvedValue({
-			ok: true,
-			status: 200,
-			data: { providers: [groq], models: [] }
-		});
-		removeProvider.mockResolvedValue({
-			ok: true,
-			status: 200,
-			data: { providers: [], models: [] }
-		});
+	it('confirms and stages a provider removal through its callback', async () => {
+		const onRemoveProvider = vi.fn();
+		renderSection({ onRemoveProvider });
 
-		render(ModelsSection, { props: { onChanged } });
-
-		const remove = await screen.findByRole('button', { name: 'Remove' });
+		const [remove] = await screen.findAllByRole('button', { name: 'Remove' });
 		await fireEvent.click(remove);
 
 		await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
-		await waitFor(() => expect(removeProvider).toHaveBeenCalledWith('groq', false));
-		await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
-		await waitFor(() => expect(screen.queryByText('groq')).toBeNull());
+		await waitFor(() => expect(onRemoveProvider).toHaveBeenCalledWith('groq', true));
+		expect(toastSuccess).toHaveBeenCalled();
 	});
 });

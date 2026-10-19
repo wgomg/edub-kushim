@@ -74,4 +74,7 @@
 		touch-action: manipulation;
 		-webkit-tap-highlight-color: transparent;
 	}
+	.settings-scope:not(.advanced) .advanced-only {
+		display: none !important;
+	}
 }

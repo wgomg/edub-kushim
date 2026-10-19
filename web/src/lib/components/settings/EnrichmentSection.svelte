@@ -11,7 +11,8 @@
 		cfg,
 		llmModels = { adapters: {}, providers: {} },
 		toolStatus = [],
-		statusKnown = false
+		statusKnown = false,
+		showHead = true
 	} = $props();
 
 	let selectedAdapterProviders = $derived(
@@ -76,11 +77,13 @@
 </script>
 
 <section id="enrichment" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Stage 3 · Pipeline"
-		title="Enrichment"
-		description="What the machine understands — analysis, summaries, tags."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Stage 3 · Pipeline"
+			title="Enrichment"
+			description="What the machine understands — analysis, summaries, tags."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card
@@ -161,6 +164,7 @@
 						min="0"
 						max="2"
 						step="0.1"
+						advancedOnly
 						bind:value={cfg.enricher.contentanalyzer.llm.temperature}
 					/>
 					<UnitField
@@ -173,6 +177,7 @@
 						max="60"
 						step="0.1"
 						hint="Seconds to sleep after each LLM request; 0 = off, max 60. Use for rate-limited providers."
+						advancedOnly
 						bind:value={cfg.enricher.contentanalyzer.llm.request_delay}
 					/>
 					<UnitField
@@ -182,6 +187,7 @@
 						type="number"
 						inputmode="numeric"
 						min="1"
+						advancedOnly
 						bind:value={cfg.enricher.contentanalyzer.timeout}
 					/>
 					<UnitField
@@ -237,7 +243,9 @@
 					</div>
 				{/if}
 
-				<details class="adv mt-[1.125rem] border-t border-dashed border-clay-700 pt-3">
+				<details
+					class="adv advanced-only mt-[1.125rem] border-t border-dashed border-clay-700 pt-3"
+				>
 					<summary
 						class="flex cursor-pointer list-none items-center gap-1.5 text-[0.8125rem] font-medium text-parchment-500 before:font-mono before:text-gold-500 before:content-['+'] open:before:content-['−'] focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none [&::-webkit-details-marker]:hidden"
 					>
@@ -630,6 +638,7 @@
 						min="0"
 						max="60"
 						step="0.1"
+						advancedOnly
 						bind:value={cfg.enricher.tag_adjudicator.llm.request_delay}
 					/>
 				</div>
@@ -726,6 +735,7 @@
 						min="0"
 						max="60"
 						step="0.1"
+						advancedOnly
 						bind:value={cfg.enricher.tag_quality.llm.request_delay}
 					/>
 				</div>

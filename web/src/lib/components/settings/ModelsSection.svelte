@@ -1,42 +1,77 @@
 <script>
-	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
+	import { page } from '$app/stores';
+	import { replaceState } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import Card from './Card.svelte';
-	import GroupHead from './GroupHead.svelte';
-	import Switch from './Switch.svelte';
-	import UnitField from './UnitField.svelte';
 
-	let { onChanged = () => {} } = $props();
+	let {
+		catalog = { providers: [], models: [] },
+		loaded = false,
+		error = '',
+		usedBy = {},
+		pendingCount = 0,
+		busy = false,
+		onAddProvider = () => {},
+		onUpdateProvider = () => {},
+		onRemoveProvider = () => {},
+		onAddModel = () => {},
+		onUpdateModel = () => {},
+		onRemoveModel = () => {},
+		onReset = async () => false
+	} = $props();
 
-	let catalog = $state({ providers: [], models: [] });
-	let loaded = $state(false);
-	let loadError = $state('');
-	let busy = $state(false);
+	let providerQuery = $state('');
+	let selectedProviderName = $state($page.url.searchParams.get('provider'));
+	let panelMode = $state(null);
+	let panelProvider = $state(null);
+	let panelModelId = $state(null);
+	let resetting = $state(false);
 
-	let showAddProvider = $state(false);
-	let addProviderForm = $state({ provider: '', adapter: '', official_url: '', session_header: '' });
+	let providerErrors = $state({ name: '', url: '' });
+	let modelErrors = $state({ id: '' });
 
-	let editingProvider = $state(null);
-	let providerForm = $state({ adapter: '', official_url: '', session_header: '' });
-
-	let addModelFor = $state(null);
-	let addModelForm = $state(emptyModelForm());
-
-	let editingModel = $state(null);
+	let providerForm = $state(emptyProviderForm());
+	let modelForm = $state(emptyModelForm());
 	let editModelBase = $state(null);
-	let editModelForm = $state(emptyModelForm());
 
 	let adapterOptions = $derived(
 		[
-			...new Set([...catalog.providers.map((p) => p.adapter), 'openai-compatible', 'anthropic'])
+			...new Set([
+				...catalog.providers.map((provider) => provider.adapter),
+				'openai-compatible',
+				'anthropic',
+				'google'
+			])
 		].filter(Boolean)
 	);
 
+	let filteredProviders = $derived.by(() => {
+		const needle = providerQuery.trim().toLowerCase();
+		if (!needle) return catalog.providers;
+		return catalog.providers.filter(
+			(provider) =>
+				provider.provider.toLowerCase().includes(needle) ||
+				provider.adapter.toLowerCase().includes(needle) ||
+				catalog.models.some(
+					(model) =>
+						model.provider === provider.provider && model.model_id.toLowerCase().includes(needle)
+				)
+		);
+	});
+
+	let selectedProvider = $derived(
+		catalog.providers.find((provider) => provider.provider === selectedProviderName) ??
+			catalog.providers[0] ??
+			null
+	);
+
+	function emptyProviderForm() {
+		return { provider: '', adapter: 'openai-compatible', official_url: '', session_header: '' };
+	}
+
 	function emptyModelForm() {
 		return {
-			provider: '',
 			model_id: '',
 			display_name: '',
 			max_input_tokens: '',
@@ -51,586 +86,863 @@
 		};
 	}
 
-	function modelFormFrom(m) {
+	function modelFormFrom(model) {
 		return {
-			provider: m.provider,
-			model_id: m.model_id,
-			display_name: m.display_name ?? '',
-			max_input_tokens: m.max_input_tokens ? String(m.max_input_tokens) : '',
-			max_output_tokens: m.max_output_tokens ? String(m.max_output_tokens) : '',
-			disable_reasoning: !!m.disable_reasoning,
-			reasoning_efforts: (m.reasoning_efforts ?? []).join(', '),
-			supports_structured_output: !!m.supports_structured_output,
-			supports_temperature: !!m.supports_temperature,
-			supports_prompt_caching: !!m.supports_prompt_caching,
-			uses_max_completion_tokens: !!m.uses_max_completion_tokens,
-			uses_responses_endpoint: !!m.uses_responses_endpoint
+			model_id: model.model_id,
+			display_name: model.display_name ?? '',
+			max_input_tokens: model.max_input_tokens ? String(model.max_input_tokens) : '',
+			max_output_tokens: model.max_output_tokens ? String(model.max_output_tokens) : '',
+			disable_reasoning: !!model.disable_reasoning,
+			reasoning_efforts: (model.reasoning_efforts ?? []).join(', '),
+			supports_structured_output: !!model.supports_structured_output,
+			supports_temperature: !!model.supports_temperature,
+			supports_prompt_caching: !!model.supports_prompt_caching,
+			uses_max_completion_tokens: !!model.uses_max_completion_tokens,
+			uses_responses_endpoint: !!model.uses_responses_endpoint
 		};
 	}
 
-	// base is the fetched entry, spread under the edited fields so a field this form does not know survives
-	function modelBody(form, base = {}) {
+	function modelsFor(providerName) {
+		return catalog.models.filter((model) => model.provider === providerName);
+	}
+
+	const compactNumber = new Intl.NumberFormat(undefined, {
+		notation: 'compact',
+		maximumFractionDigits: 1
+	});
+
+	function formatTokens(value) {
+		if (!value) return '—';
+		return compactNumber.format(value);
+	}
+
+	function selectProvider(name) {
+		selectedProviderName = name;
+		const url = new URL($page.url);
+		if (name) url.searchParams.set('provider', name);
+		else url.searchParams.delete('provider');
+		replaceState(resolve(`${url.pathname}${url.search}`), $page.state);
+	}
+
+	function capsSummary(model) {
+		const parts = [];
+		if (model.supports_structured_output) parts.push('JSON');
+		if (model.supports_temperature) parts.push('temp');
+		if (model.supports_prompt_caching) parts.push('cache');
+		if (model.uses_responses_endpoint) parts.push('responses');
+		if (model.disable_reasoning) parts.push('no think');
+		if (model.uses_max_completion_tokens) parts.push('max tokens');
+		if ((model.reasoning_efforts ?? []).length) parts.push('efforts');
+		return parts;
+	}
+
+	function usedByFor(provider, modelId) {
+		return usedBy[`${provider}/${modelId}`] ?? [];
+	}
+
+	function providerUsedBy(provider) {
+		return usedBy[`${provider}/*`] ?? [];
+	}
+
+	function modelBody(form) {
 		return {
-			...base,
-			provider: form.provider.trim(),
+			...form,
+			provider: panelProvider,
 			model_id: form.model_id.trim(),
 			display_name: form.display_name.trim(),
 			max_input_tokens: parseInt(form.max_input_tokens, 10) || 0,
 			max_output_tokens: parseInt(form.max_output_tokens, 10) || 0,
-			disable_reasoning: form.disable_reasoning,
 			reasoning_efforts: form.reasoning_efforts
 				.split(',')
-				.map((s) => s.trim())
-				.filter(Boolean),
-			supports_structured_output: form.supports_structured_output,
-			supports_temperature: form.supports_temperature,
-			supports_prompt_caching: form.supports_prompt_caching,
-			uses_max_completion_tokens: form.uses_max_completion_tokens,
-			uses_responses_endpoint: form.uses_responses_endpoint
+				.map((value) => value.trim())
+				.filter(Boolean)
 		};
 	}
 
-	function modelsFor(provider) {
-		return catalog.models.filter((m) => m.provider === provider);
+	function openAddProvider() {
+		panelMode = 'provider-add';
+		panelProvider = null;
+		panelModelId = null;
+		providerForm = emptyProviderForm();
+		providerErrors = { name: '', url: '' };
 	}
 
-	function capsSummary(m) {
-		const parts = [];
-		if (m.disable_reasoning) parts.push('disable-reasoning');
-		if ((m.reasoning_efforts ?? []).length)
-			parts.push(`efforts: ${m.reasoning_efforts.join(', ')}`);
-		if (m.supports_structured_output) parts.push('structured output');
-		if (m.supports_temperature) parts.push('temperature');
-		if (m.supports_prompt_caching) parts.push('caching');
-		if (m.uses_max_completion_tokens) parts.push('max_completion_tokens');
-		if (m.uses_responses_endpoint) parts.push('responses api');
-		return parts.join(' · ') || 'no capabilities';
-	}
-
-	async function load() {
-		const res = await api.llm.catalog();
-		if (res.ok) {
-			catalog = res.data ?? { providers: [], models: [] };
-			loadError = '';
-		} else {
-			loadError = res.data?.error ?? `Failed to load the catalog (${res.status}).`;
-		}
-		loaded = true;
-	}
-
-	async function run(op) {
-		busy = true;
-		const res = await op();
-		busy = false;
-		if (res.ok) {
-			catalog = res.data ?? catalog;
-			loadError = '';
-			onChanged();
-			return true;
-		}
-		toastStore.error(res.data?.error ?? `Request failed (${res.status})`);
-		return false;
-	}
-
-	async function addProvider() {
-		const name = addProviderForm.provider.trim();
-		const ok = await run(() =>
-			api.llm.addProvider({
-				provider: name,
-				adapter: addProviderForm.adapter.trim(),
-				official_url: addProviderForm.official_url.trim(),
-				session_header: addProviderForm.session_header.trim()
-			})
-		);
-		if (ok) {
-			toastStore.success(`Provider "${name}" added.`);
-			addProviderForm = { provider: '', adapter: '', official_url: '', session_header: '' };
-			showAddProvider = false;
-		}
-	}
-
-	function openProviderEdit(p) {
-		editingProvider = p.provider;
+	function openEditProvider(provider) {
+		panelMode = 'provider-edit';
+		panelProvider = provider.provider;
+		panelModelId = null;
 		providerForm = {
-			adapter: p.adapter,
-			official_url: p.official_url,
-			session_header: p.session_header ?? ''
+			provider: provider.provider,
+			adapter: provider.adapter,
+			official_url: provider.official_url,
+			session_header: provider.session_header ?? ''
 		};
+		providerErrors = { name: '', url: '' };
 	}
 
-	async function saveProvider() {
-		const ok = await run(() =>
-			api.llm.setProvider(editingProvider, {
-				adapter: providerForm.adapter.trim(),
-				official_url: providerForm.official_url.trim(),
-				session_header: providerForm.session_header.trim()
-			})
+	function openAddModel(providerName) {
+		panelMode = 'model-add';
+		panelProvider = providerName;
+		panelModelId = null;
+		modelForm = emptyModelForm();
+		editModelBase = null;
+		modelErrors = { id: '' };
+	}
+
+	function openEditModel(model) {
+		panelMode = 'model-edit';
+		panelProvider = model.provider;
+		panelModelId = model.model_id;
+		modelForm = modelFormFrom(model);
+		editModelBase = model;
+		modelErrors = { id: '' };
+	}
+
+	function closePanel() {
+		panelMode = null;
+		panelProvider = null;
+		panelModelId = null;
+		editModelBase = null;
+	}
+
+	function submitProvider(event) {
+		event.preventDefault();
+		const name = providerForm.provider.trim();
+		const url = providerForm.official_url.trim();
+		const duplicate =
+			panelMode === 'provider-add' &&
+			catalog.providers.some((provider) => provider.provider === name);
+		providerErrors = {
+			name: !name
+				? 'Enter a provider name.'
+				: duplicate
+					? 'Use a different name; this provider already exists.'
+					: '',
+			url: !url ? 'Enter the provider URL.' : ''
+		};
+		if (providerErrors.name || providerErrors.url) {
+			const first = providerErrors.name ? 'provider-name' : 'provider-url';
+			document.getElementById(first)?.focus();
+			return;
+		}
+		const payload = {
+			provider: name,
+			adapter: providerForm.adapter.trim(),
+			official_url: url,
+			session_header: providerForm.session_header.trim()
+		};
+		if (panelMode === 'provider-add') {
+			onAddProvider(payload);
+			selectProvider(name);
+		} else {
+			onUpdateProvider(panelProvider, {
+				adapter: payload.adapter,
+				official_url: payload.official_url,
+				session_header: payload.session_header
+			});
+		}
+		toastStore.success(
+			panelMode === 'provider-add' ? 'Provider staged.' : 'Provider update staged.'
 		);
-		if (ok) {
-			toastStore.success(`Provider "${editingProvider}" updated.`);
-			editingProvider = null;
+		closePanel();
+	}
+
+	function submitModel(event) {
+		event.preventDefault();
+		const body = modelBody(modelForm);
+		const duplicate =
+			panelMode === 'model-add' &&
+			modelsFor(panelProvider).some((model) => model.model_id === body.model_id);
+		modelErrors = {
+			id: !body.model_id
+				? 'Enter a model ID.'
+				: duplicate
+					? 'Use a different ID; this model already exists on this provider.'
+					: ''
+		};
+		if (modelErrors.id) {
+			document.getElementById('model-id')?.focus();
+			return;
 		}
-	}
-
-	async function removeProvider(p) {
-		const count = modelsFor(p.provider).length;
-		const message =
-			count > 0
-				? `Delete provider "${p.provider}" and its ${count} model(s)? This cannot be undone.`
-				: `Delete provider "${p.provider}"? This action cannot be undone.`;
-		const ok = await confirmStore.confirm({ title: 'Delete provider', message, danger: true });
-		if (!ok) return;
-		if (await run(() => api.llm.removeProvider(p.provider, count > 0))) {
-			toastStore.success(`Provider "${p.provider}" removed.`);
+		if (panelMode === 'model-add') {
+			onAddModel(body);
+			toastStore.success('Model staged.');
+		} else {
+			onUpdateModel(panelProvider, panelModelId, {
+				...(editModelBase ?? {}),
+				...body
+			});
+			toastStore.success('Model update staged.');
 		}
+		closePanel();
 	}
 
-	function openAddModel(provider) {
-		addModelFor = provider;
-		editingModel = null;
-		addModelForm = emptyModelForm();
-		addModelForm.provider = provider;
-	}
-
-	async function addModel() {
-		const ok = await run(() => api.llm.addModel(modelBody(addModelForm)));
-		if (ok) {
-			toastStore.success(`Model "${addModelForm.model_id.trim()}" added.`);
-			addModelFor = null;
-		}
-	}
-
-	function openModelEdit(m) {
-		editingModel = { provider: m.provider, model_id: m.model_id };
-		editModelBase = m;
-		addModelFor = null;
-		editModelForm = modelFormFrom(m);
-	}
-
-	async function saveModel() {
-		const { provider, model_id } = editingModel;
-		const ok = await run(() =>
-			api.llm.setModel(provider, model_id, modelBody(editModelForm, editModelBase))
-		);
-		if (ok) {
-			toastStore.success(`Model "${model_id}" updated.`);
-			editingModel = null;
-		}
-	}
-
-	async function removeModel(m) {
+	async function removeProvider(provider) {
+		const count = modelsFor(provider.provider).length;
 		const ok = await confirmStore.confirm({
-			title: 'Delete model',
-			message: `Delete model "${m.provider}/${m.model_id}"? This action cannot be undone.`,
+			title: 'Remove Provider',
+			message:
+				count > 0
+					? `Remove provider "${provider.provider}" and its ${count} model(s) from the staged catalog? Nothing is applied until you apply changes.`
+					: `Remove provider "${provider.provider}" from the staged catalog? Nothing is applied until you apply changes.`,
 			danger: true
 		});
 		if (!ok) return;
-		if (await run(() => api.llm.removeModel(m.provider, m.model_id))) {
-			toastStore.success(`Model "${m.model_id}" removed.`);
-		}
+		const next = catalog.providers.find((item) => item.provider !== provider.provider);
+		onRemoveProvider(provider.provider, count > 0);
+		selectProvider(next?.provider ?? null);
+		toastStore.success('Provider removal staged.');
+	}
+
+	async function removeModel(model) {
+		const ok = await confirmStore.confirm({
+			title: 'Remove Model',
+			message: `Remove model "${model.provider}/${model.model_id}" from the staged catalog? Nothing is applied until you apply changes.`,
+			danger: true
+		});
+		if (!ok) return;
+		onRemoveModel(model.provider, model.model_id);
+		toastStore.success('Model removal staged.');
 	}
 
 	async function resetCatalogs() {
+		if (busy) return;
 		const ok = await confirmStore.confirm({
-			title: 'Restore default catalogs',
+			title: 'Restore Default Catalogs',
 			message:
-				'Replace both catalog files with the embedded defaults? Custom providers and models will be lost.',
+				'Replace both catalog files with the embedded defaults? This applies immediately and discards staged catalog changes.',
 			danger: true
 		});
 		if (!ok) return;
-		if (await run(() => api.llm.reset({ providers: true, models: true }))) {
-			toastStore.success('Catalogs restored to defaults.');
-		}
+		resetting = true;
+		await onReset();
+		resetting = false;
 	}
 
-	onMount(load);
+	function handleKeydown(event) {
+		if (event.key === 'Escape' && panelMode) closePanel();
+	}
 </script>
 
-{#snippet modelFields(form, prefix)}
-	<div class="grid gap-3 sm:grid-cols-2">
-		<UnitField id="{prefix}-display-name" label="Display name" bind:value={form.display_name} />
-		<UnitField
-			id="{prefix}-efforts"
-			label="Reasoning efforts"
-			placeholder="low, medium, high"
-			hint="Comma separated; empty = none"
-			bind:value={form.reasoning_efforts}
-		/>
-		<UnitField
-			id="{prefix}-max-input-tokens"
-			label="Max input tokens"
-			unit="tokens"
-			type="number"
-			inputmode="numeric"
-			min="0"
-			hint="0 = not set"
-			bind:value={form.max_input_tokens}
-		/>
-		<UnitField
-			id="{prefix}-max-output-tokens"
-			label="Max output tokens"
-			unit="tokens"
-			type="number"
-			inputmode="numeric"
-			min="0"
-			hint="0 = not set"
-			bind:value={form.max_output_tokens}
-		/>
-		<Switch
-			id="{prefix}-disable-reasoning"
-			bind:checked={form.disable_reasoning}
-			label="Disable reasoning"
-			description="The endpoint accepts a flag to turn thinking off."
-		/>
-		<Switch
-			id="{prefix}-structured-output"
-			bind:checked={form.supports_structured_output}
-			label="Structured output"
-			description="Accepts a JSON response format request."
-		/>
-		<Switch
-			id="{prefix}-temperature"
-			bind:checked={form.supports_temperature}
-			label="Temperature"
-			description="Accepts a temperature parameter."
-		/>
-		<Switch
-			id="{prefix}-prompt-caching"
-			bind:checked={form.supports_prompt_caching}
-			label="Prompt caching"
-			description="Caches the prompt prefix across requests."
-		/>
-		<Switch
-			id="{prefix}-max-completion-tokens"
-			bind:checked={form.uses_max_completion_tokens}
-			label="max_completion_tokens"
-			description="Output bound sent as max_completion_tokens."
-		/>
-		<Switch
-			id="{prefix}-responses-endpoint"
-			bind:checked={form.uses_responses_endpoint}
-			label="Responses API"
-			description="Served over the /responses endpoint."
-		/>
+<svelte:window onkeydown={handleKeydown} />
+
+{#if pendingCount > 0}
+	<div
+		class="mb-4 flex items-center gap-2 rounded-lg border border-gold-800/60 bg-gold-500/5 px-3 py-2 text-xs text-gold-500"
+	>
+		<span class="size-1.5 rounded-full bg-gold-500"></span>
+		{pendingCount === 1 ? '1 catalog change staged' : `${pendingCount} catalog changes staged`} — apply
+		them with the rest of your settings.
 	</div>
-{/snippet}
+{/if}
 
-<section id="models" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Catalog"
-		title="Models"
-		description="The providers and models the enricher can draw from. Changes apply immediately."
-	/>
+<div class="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start">
+	<aside class="rounded-xl border border-clay-800 bg-clay-900 p-2.5 lg:sticky lg:top-16">
+		<div class="mb-2">
+			<input
+				type="search"
+				name="provider-filter"
+				autocomplete="off"
+				bind:value={providerQuery}
+				placeholder="Filter providers…"
+				aria-label="Filter providers"
+				class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-1.5 text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			/>
+		</div>
 
-	<div class="space-y-4">
-		<Card
-			title="Providers"
-			name="models providers catalog adapters endpoints models llm"
-			description="Endpoints with their adapter and models."
+		{#if !loaded}
+			<p class="px-2 py-3 text-sm text-parchment-500">Loading catalog…</p>
+		{:else if error}
+			<p class="px-2 py-3 text-sm text-terracotta-400">{error}</p>
+		{:else if filteredProviders.length === 0}
+			<p class="px-2 py-3 text-sm text-parchment-500">
+				{providerQuery ? 'No providers match this filter.' : 'No providers cataloged.'}
+			</p>
+		{:else}
+			<div class="flex max-h-[calc(100vh-19rem)] flex-col gap-0.5 overflow-y-auto">
+				{#each filteredProviders as provider (provider.provider)}
+					<button
+						type="button"
+						onclick={() => selectProvider(provider.provider)}
+						class="flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {selectedProvider?.provider ===
+						provider.provider
+							? 'border-clay-700 bg-clay-800 text-parchment-200'
+							: 'border-transparent text-parchment-400 hover:border-clay-800 hover:bg-clay-800'}"
+					>
+						<span
+							class="grid size-7 shrink-0 place-items-center rounded-md border border-clay-700 bg-clay-950 font-mono text-[0.6875rem] font-bold text-gold-500"
+						>
+							{provider.provider.slice(0, 1).toUpperCase()}
+						</span>
+						<span class="flex min-w-0 flex-col">
+							<strong class="text-[0.8125rem] font-medium">{provider.provider}</strong>
+							<span class="truncate font-mono text-[0.625rem] text-parchment-500">
+								{provider.adapter} · {modelsFor(provider.provider).length}
+								{modelsFor(provider.provider).length === 1 ? 'model' : 'models'}
+							</span>
+						</span>
+						<span class="ml-auto font-mono text-[0.625rem] font-semibold text-parchment-500">
+							{modelsFor(provider.provider).length}
+						</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+
+		<div
+			class="mt-2 flex items-center justify-between gap-2 border-t border-dashed border-clay-700 px-1 pt-2"
 		>
-			{#snippet actions()}
+			<p class="text-[0.625rem] text-parchment-500">Providers own their endpoint and adapter.</p>
+			<button
+				type="button"
+				onclick={openAddProvider}
+				class="rounded-md bg-gold-500 px-2.5 py-1 text-xs font-semibold text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			>
+				+ Add
+			</button>
+		</div>
+	</aside>
+
+	<section class="min-w-0 rounded-xl border border-clay-800 bg-clay-900 p-4">
+		{#if !selectedProvider}
+			<div class="py-12 text-center">
+				<h2 class="text-lg font-semibold text-parchment-200">No Providers Yet</h2>
+				<p class="mt-1 text-sm text-parchment-500">Add a provider to start building the catalog.</p>
 				<button
-					onclick={() => (showAddProvider = !showAddProvider)}
-					class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					type="button"
+					onclick={openAddProvider}
+					class="mt-4 rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 				>
-					Add provider
-				</button>
-			{/snippet}
-
-			{#if showAddProvider}
-				<form
-					class="field mb-4 grid gap-3 rounded-lg border border-dashed border-clay-700 p-3 sm:grid-cols-2"
-					onsubmit={(e) => {
-						e.preventDefault();
-						addProvider();
-					}}
-				>
-					<UnitField
-						id="provider-add-name"
-						label="Name"
-						placeholder="groq"
-						spellcheck="false"
-						bind:value={addProviderForm.provider}
-					/>
-					<div class="field">
-						<label
-							for="provider-add-adapter"
-							class="text-[0.8125rem] font-medium text-parchment-200">Adapter</label
-						>
-						<select
-							id="provider-add-adapter"
-							bind:value={addProviderForm.adapter}
-							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							{#each adapterOptions as adapter (adapter)}
-								<option value={adapter}>{adapter}</option>
-							{/each}
-						</select>
-					</div>
-					<UnitField
-						id="provider-add-url"
-						label="Official URL"
-						placeholder="https://api.example.com/v1"
-						spellcheck="false"
-						wide
-						bind:value={addProviderForm.official_url}
-					/>
-					<UnitField
-						id="provider-add-session-header"
-						label="Session header"
-						placeholder="optional"
-						spellcheck="false"
-						hint="Header the provider expects the session id in"
-						bind:value={addProviderForm.session_header}
-					/>
-					<div class="flex items-end gap-2 sm:col-span-2">
-						<button
-							type="submit"
-							disabled={busy}
-							class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-						>
-							Add
-						</button>
-						<button
-							type="button"
-							onclick={() => (showAddProvider = false)}
-							class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-						>
-							Cancel
-						</button>
-					</div>
-				</form>
-			{/if}
-
-			{#if !loaded}
-				<p class="text-parchment-500">Loading catalog…</p>
-			{:else if loadError}
-				<p class="field text-terracotta-400">{loadError}</p>
-			{:else if catalog.providers.length === 0}
-				<p class="text-parchment-500">No providers cataloged.</p>
-			{:else}
-				<div class="space-y-3">
-					{#each catalog.providers as p (p.provider)}
-						<div class="field rounded-lg border border-clay-800 p-3">
-							<div class="flex flex-wrap items-start justify-between gap-2">
-								<div class="min-w-0">
-									<div class="flex items-center gap-2">
-										<span class="text-sm font-medium text-parchment-200">{p.provider}</span>
-										<span
-											class="rounded-full border border-clay-700 px-2 py-0.5 font-mono text-[0.6875rem] text-parchment-500"
-											>{p.adapter}</span
-										>
-									</div>
-									<p class="truncate font-mono text-xs text-parchment-500">{p.official_url}</p>
-									{#if p.session_header}
-										<p class="font-mono text-xs text-parchment-500">
-											session: {p.session_header}
-										</p>
-									{/if}
-								</div>
-								<div class="flex shrink-0 gap-1">
-									<button
-										onclick={() => openProviderEdit(p)}
-										class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-									>
-										Edit
-									</button>
-									<button
-										onclick={() => openAddModel(p.provider)}
-										class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-									>
-										Add model
-									</button>
-									<button
-										onclick={() => removeProvider(p)}
-										class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-									>
-										Remove
-									</button>
-								</div>
-							</div>
-
-							{#if editingProvider === p.provider}
-								<form
-									class="mt-3 grid gap-3 rounded-lg border border-dashed border-clay-700 p-3 sm:grid-cols-2"
-									onsubmit={(e) => {
-										e.preventDefault();
-										saveProvider();
-									}}
-								>
-									<div class="field">
-										<label
-											for="provider-edit-adapter-{p.provider}"
-											class="text-[0.8125rem] font-medium text-parchment-200">Adapter</label
-										>
-										<select
-											id="provider-edit-adapter-{p.provider}"
-											bind:value={providerForm.adapter}
-											class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-										>
-											{#each adapterOptions as adapter (adapter)}
-												<option value={adapter}>{adapter}</option>
-											{/each}
-										</select>
-									</div>
-									<UnitField
-										id="provider-edit-url-{p.provider}"
-										label="Official URL"
-										spellcheck="false"
-										bind:value={providerForm.official_url}
-									/>
-									<UnitField
-										id="provider-edit-session-{p.provider}"
-										label="Session header"
-										placeholder="optional"
-										spellcheck="false"
-										bind:value={providerForm.session_header}
-									/>
-									<div class="flex items-end gap-2">
-										<button
-											type="submit"
-											disabled={busy}
-											class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-										>
-											Save
-										</button>
-										<button
-											type="button"
-											onclick={() => (editingProvider = null)}
-											class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-										>
-											Cancel
-										</button>
-									</div>
-								</form>
-							{/if}
-
-							<ul class="mt-2 divide-y divide-clay-800/60">
-								{#each modelsFor(p.provider) as m (m.model_id)}
-									<li class="field py-2">
-										<div class="flex flex-wrap items-start justify-between gap-2">
-											<div class="min-w-0">
-												<div class="flex items-center gap-2">
-													<span class="font-mono text-xs text-parchment-300">{m.model_id}</span>
-													{#if m.display_name}
-														<span class="text-xs text-parchment-500">{m.display_name}</span>
-													{/if}
-												</div>
-												<p class="text-xs text-parchment-500">
-													in {m.max_input_tokens || '—'} · out {m.max_output_tokens || '—'} ·
-													{capsSummary(m)}
-												</p>
-											</div>
-											<div class="flex shrink-0 gap-1">
-												<button
-													onclick={() => openModelEdit(m)}
-													class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-												>
-													Edit
-												</button>
-												<button
-													onclick={() => removeModel(m)}
-													class="rounded-md px-2 py-1 text-xs font-medium text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-												>
-													Remove
-												</button>
-											</div>
-										</div>
-
-										{#if editingModel && editingModel.provider === p.provider && editingModel.model_id === m.model_id}
-											<form
-												class="mt-2 rounded-lg border border-dashed border-clay-700 p-3"
-												onsubmit={(e) => {
-													e.preventDefault();
-													saveModel();
-												}}
-											>
-												{@render modelFields(
-													editModelForm,
-													`model-edit-${m.provider}-${m.model_id}`
-												)}
-												<div class="mt-3 flex items-end gap-2">
-													<button
-														type="submit"
-														disabled={busy}
-														class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-													>
-														Save
-													</button>
-													<button
-														type="button"
-														onclick={() => (editingModel = null)}
-														class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-													>
-														Cancel
-													</button>
-												</div>
-											</form>
-										{/if}
-									</li>
-								{/each}
-							</ul>
-
-							{#if addModelFor === p.provider}
-								<form
-									class="mt-2 rounded-lg border border-dashed border-clay-700 p-3"
-									onsubmit={(e) => {
-										e.preventDefault();
-										addModel();
-									}}
-								>
-									<div class="mb-3">
-										<UnitField
-											id="model-add-id-{p.provider}"
-											label="Model id"
-											placeholder="llama-4-scout"
-											spellcheck="false"
-											wide
-											bind:value={addModelForm.model_id}
-										/>
-									</div>
-									{@render modelFields(addModelForm, `model-add-${p.provider}`)}
-									<div class="mt-3 flex items-end gap-2">
-										<button
-											type="submit"
-											disabled={busy}
-											class="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
-										>
-											Add
-										</button>
-										<button
-											type="button"
-											onclick={() => (addModelFor = null)}
-											class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-										>
-											Cancel
-										</button>
-									</div>
-								</form>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</Card>
-
-		<Card
-			title="Defaults"
-			name="defaults restore reset embedded catalog providers models"
-			description="Recover the shipped provider and model catalogs."
-		>
-			<div class="field flex flex-wrap items-center justify-between gap-3">
-				<p class="text-[0.8125rem] text-parchment-500">
-					Replaces both catalog files with the embedded defaults.
-				</p>
-				<button
-					onclick={resetCatalogs}
-					disabled={busy}
-					class="rounded-lg border border-terracotta-700 px-4 py-2 text-sm font-medium text-terracotta-400 hover:bg-terracotta-950 focus-visible:ring-2 focus-visible:ring-terracotta-500 focus-visible:outline-none disabled:opacity-50"
-				>
-					Restore default catalogs
+					Add Provider
 				</button>
 			</div>
-		</Card>
+		{:else}
+			<div class="flex flex-wrap items-start justify-between gap-3">
+				<div class="flex items-center gap-3">
+					<span
+						class="grid size-9 place-items-center rounded-lg border border-clay-700 bg-clay-950 font-mono text-xs font-bold text-gold-500"
+					>
+						{selectedProvider.provider.slice(0, 1).toUpperCase()}
+					</span>
+					<div>
+						<h2 class="text-lg font-semibold text-parchment-200">
+							{selectedProvider.provider}
+						</h2>
+						<div class="mt-1 flex flex-wrap items-center gap-1.5">
+							<span
+								class="rounded-full border border-clay-700 px-2 py-0.5 font-mono text-[0.625rem] text-parchment-500"
+								>{selectedProvider.adapter}</span
+							>
+							<span
+								class="rounded-full border border-clay-700 px-2 py-0.5 text-[0.6875rem] text-parchment-500"
+							>
+								{modelsFor(selectedProvider.provider).length}
+								{modelsFor(selectedProvider.provider).length === 1 ? 'model' : 'models'}
+							</span>
+							{#each providerUsedBy(selectedProvider.provider) as label (label)}
+								<span
+									class="rounded-full border border-gold-800 px-2 py-0.5 text-[0.6875rem] text-gold-500"
+								>
+									provider used by {label}
+								</span>
+							{/each}
+						</div>
+					</div>
+				</div>
+				<div class="flex gap-1.5">
+					<button
+						type="button"
+						onclick={() => openEditProvider(selectedProvider)}
+						class="rounded-lg border border-clay-700 px-2.5 py-1.5 text-xs font-medium text-parchment-300 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						Edit
+					</button>
+					<button
+						type="button"
+						onclick={() => removeProvider(selectedProvider)}
+						class="rounded-lg border border-terracotta-700 px-2.5 py-1.5 text-xs font-medium text-terracotta-400 hover:bg-terracotta-950 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						Remove
+					</button>
+				</div>
+			</div>
+
+			<div class="mt-4 grid gap-4 border-y border-clay-800 py-3 sm:grid-cols-[1.4fr_1fr_0.7fr]">
+				<div>
+					<span
+						class="block font-mono text-[0.625rem] font-semibold tracking-[0.1em] text-parchment-500 uppercase"
+						>Endpoint</span
+					>
+					<code class="block truncate font-mono text-xs text-parchment-300"
+						>{selectedProvider.official_url}</code
+					>
+				</div>
+				<div>
+					<span
+						class="block font-mono text-[0.625rem] font-semibold tracking-[0.1em] text-parchment-500 uppercase"
+						>Session header</span
+					>
+					<code class="block truncate font-mono text-xs text-parchment-300"
+						>{selectedProvider.session_header || '—'}</code
+					>
+				</div>
+				<div>
+					<span
+						class="block font-mono text-[0.625rem] font-semibold tracking-[0.1em] text-parchment-500 uppercase"
+						>Adapter</span
+					>
+					<code class="block truncate font-mono text-xs text-parchment-300"
+						>{selectedProvider.adapter}</code
+					>
+				</div>
+			</div>
+
+			<div class="mt-4 flex items-center justify-between gap-3">
+				<h3 class="text-sm font-semibold text-parchment-200">
+					Models
+					<span class="font-mono text-xs font-normal text-parchment-500"
+						>({modelsFor(selectedProvider.provider).length})</span
+					>
+				</h3>
+				<button
+					type="button"
+					onclick={() => openAddModel(selectedProvider.provider)}
+					class="rounded-lg border border-clay-700 px-2.5 py-1 text-xs font-medium text-parchment-300 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					+ Add Model
+				</button>
+			</div>
+
+			{#if modelsFor(selectedProvider.provider).length === 0}
+				<p class="py-6 text-center text-sm text-parchment-500">
+					No models yet. Add the first model for this provider.
+				</p>
+			{:else}
+				<div class="mt-2 overflow-x-auto">
+					<table class="w-full border-collapse text-xs">
+						<thead>
+							<tr class="border-b border-clay-800 text-left">
+								<th
+									class="px-2 py-2 font-mono text-[0.625rem] font-semibold tracking-[0.09em] text-parchment-500 uppercase"
+								>
+									Model
+								</th>
+								<th
+									class="px-2 py-2 font-mono text-[0.625rem] font-semibold tracking-[0.09em] text-parchment-500 uppercase"
+								>
+									Context
+								</th>
+								<th
+									class="px-2 py-2 font-mono text-[0.625rem] font-semibold tracking-[0.09em] text-parchment-500 uppercase"
+								>
+									Output
+								</th>
+								<th
+									class="px-2 py-2 font-mono text-[0.625rem] font-semibold tracking-[0.09em] text-parchment-500 uppercase"
+								>
+									Capabilities
+								</th>
+								<th
+									class="px-2 py-2 font-mono text-[0.625rem] font-semibold tracking-[0.09em] text-parchment-500 uppercase"
+								>
+									Used by
+								</th>
+								<th class="px-2 py-2"></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each modelsFor(selectedProvider.provider) as model (model.model_id)}
+								<tr class="border-b border-clay-800/60 last:border-b-0 hover:bg-clay-800/60">
+									<td class="px-2 py-2.5">
+										<span class="block font-mono text-xs text-parchment-200">{model.model_id}</span>
+										{#if model.display_name}
+											<span class="block text-[0.6875rem] text-parchment-500"
+												>{model.display_name}</span
+											>
+										{/if}
+									</td>
+									<td class="px-2 py-2.5 text-[0.6875rem] text-parchment-500 tabular-nums">
+										{formatTokens(model.max_input_tokens)}
+									</td>
+									<td class="px-2 py-2.5 text-[0.6875rem] text-parchment-500 tabular-nums">
+										{formatTokens(model.max_output_tokens)}
+									</td>
+									<td class="px-2 py-2.5">
+										<div class="flex flex-wrap gap-1">
+											{#each capsSummary(model) as cap (cap)}
+												<span
+													class="rounded border border-clay-700 px-1 py-px font-mono text-[0.5625rem] text-parchment-500"
+													>{cap}</span
+												>
+											{:else}
+												<span class="text-[0.6875rem] text-parchment-500">—</span>
+											{/each}
+										</div>
+									</td>
+									<td class="px-2 py-2.5 text-[0.6875rem] text-parchment-500">
+										{usedByFor(model.provider, model.model_id).join(', ') || '—'}
+									</td>
+									<td class="px-2 py-2.5 text-right whitespace-nowrap">
+										<button
+											type="button"
+											onclick={() => openEditModel(model)}
+											class="px-1.5 py-0.5 text-[0.6875rem] text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										>
+											Edit
+										</button>
+										<button
+											type="button"
+											onclick={() => removeModel(model)}
+											class="px-1.5 py-0.5 text-[0.6875rem] text-parchment-500 hover:text-terracotta-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+										>
+											Remove
+										</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		{/if}
+	</section>
+</div>
+
+<section class="mt-4 rounded-xl border border-terracotta-700/40 bg-terracotta-950/20 p-4">
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<div>
+			<h3 class="text-sm font-semibold text-parchment-200">Restore Default Catalogs</h3>
+			<p class="mt-0.5 text-xs text-parchment-500">
+				Replaces both catalog files with the embedded defaults. Applies immediately and discards
+				staged catalog changes.
+			</p>
+		</div>
+		<button
+			type="button"
+			onclick={resetCatalogs}
+			disabled={resetting || busy}
+			class="rounded-lg border border-terracotta-700 px-3 py-1.5 text-sm font-medium text-terracotta-400 hover:bg-terracotta-950 focus-visible:ring-2 focus-visible:ring-terracotta-500 focus-visible:outline-none disabled:opacity-50"
+		>
+			{resetting ? 'Restoring…' : 'Restore Defaults'}
+		</button>
 	</div>
 </section>
+
+{#if panelMode}
+	<div
+		class="fixed inset-0 z-[90] bg-[rgba(10,8,7,0.62)]"
+		onclick={closePanel}
+		role="presentation"
+	></div>
+	<div
+		class="fixed inset-y-0 right-0 z-[100] flex w-[min(28rem,100vw)] flex-col border-l border-clay-800 bg-clay-900 pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] shadow-[-24px_0_48px_rgba(0,0,0,0.35)]"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="catalog-panel-title"
+	>
+		<div class="flex items-start justify-between gap-4 border-b border-clay-800 px-5 py-4">
+			<div>
+				<p
+					class="font-mono text-[0.625rem] font-semibold tracking-[0.14em] text-gold-500 uppercase"
+				>
+					{panelMode.startsWith('provider') ? 'Catalog · provider' : 'Catalog · model'}
+				</p>
+				<h2 id="catalog-panel-title" class="mt-1 text-lg font-semibold text-parchment-200">
+					{panelMode === 'provider-add'
+						? 'Add Provider'
+						: panelMode === 'provider-edit'
+							? 'Edit Provider'
+							: panelMode === 'model-add'
+								? 'Add Model'
+								: 'Edit Model'}
+				</h2>
+			</div>
+			<button
+				type="button"
+				onclick={closePanel}
+				aria-label="Close catalog editor"
+				class="text-xl leading-none text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			>
+				×
+			</button>
+		</div>
+
+		{#if panelMode === 'provider-add' || panelMode === 'provider-edit'}
+			<form class="flex flex-1 flex-col overflow-hidden" onsubmit={submitProvider}>
+				<div class="flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+					<div class="grid gap-3 sm:grid-cols-2">
+						<div class="field">
+							<label for="provider-name" class="text-[0.8125rem] font-medium text-parchment-200"
+								>Provider name</label
+							>
+							<input
+								id="provider-name"
+								name="provider"
+								type="text"
+								autocomplete="off"
+								bind:value={providerForm.provider}
+								disabled={panelMode === 'provider-edit'}
+								placeholder="groq…"
+								spellcheck="false"
+								aria-invalid={!!providerErrors.name}
+								aria-describedby={providerErrors.name ? 'provider-name-error' : undefined}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-60"
+							/>
+							{#if providerErrors.name}
+								<p
+									id="provider-name-error"
+									class="text-[0.6875rem] text-terracotta-400"
+									role="alert"
+								>
+									{providerErrors.name}
+								</p>
+							{/if}
+						</div>
+						<div class="field">
+							<label for="provider-adapter" class="text-[0.8125rem] font-medium text-parchment-200"
+								>Adapter</label
+							>
+							<select
+								id="provider-adapter"
+								name="adapter"
+								bind:value={providerForm.adapter}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								{#each adapterOptions as adapter (adapter)}
+									<option value={adapter}>{adapter}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="field sm:col-span-2">
+							<label for="provider-url" class="text-[0.8125rem] font-medium text-parchment-200"
+								>Official URL</label
+							>
+							<input
+								id="provider-url"
+								name="official_url"
+								type="url"
+								autocomplete="off"
+								bind:value={providerForm.official_url}
+								placeholder="https://api.example.com/v1…"
+								spellcheck="false"
+								aria-invalid={!!providerErrors.url}
+								aria-describedby={providerErrors.url ? 'provider-url-error' : undefined}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							{#if providerErrors.url}
+								<p
+									id="provider-url-error"
+									class="text-[0.6875rem] text-terracotta-400"
+									role="alert"
+								>
+									{providerErrors.url}
+								</p>
+							{/if}
+						</div>
+						<div class="field sm:col-span-2">
+							<label for="provider-session" class="text-[0.8125rem] font-medium text-parchment-200"
+								>Session header <span class="font-normal text-parchment-500">(optional)</span
+								></label
+							>
+							<input
+								id="provider-session"
+								name="session_header"
+								type="text"
+								autocomplete="off"
+								bind:value={providerForm.session_header}
+								placeholder="x-session-id…"
+								spellcheck="false"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+					</div>
+					<p class="mt-4 text-[0.6875rem] text-parchment-500">
+						Provider changes stay staged until you apply them. Removing a provider also stages the
+						removal of its models.
+					</p>
+				</div>
+				<div class="flex justify-end gap-2 border-t border-clay-800 px-5 py-3.5">
+					<button
+						type="button"
+						onclick={closePanel}
+						class="rounded-lg border border-clay-700 px-3 py-1.5 text-[0.8125rem] font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						Cancel
+					</button>
+					<button
+						type="submit"
+						class="rounded-lg bg-gold-500 px-4 py-1.5 text-sm font-semibold text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						{panelMode === 'provider-add' ? 'Add Provider' : 'Save Provider'}
+					</button>
+				</div>
+			</form>
+		{:else}
+			<form class="flex flex-1 flex-col overflow-hidden" onsubmit={submitModel}>
+				<div class="flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+					<div class="grid gap-3 sm:grid-cols-2">
+						<div class="field sm:col-span-2">
+							<label for="model-id" class="text-[0.8125rem] font-medium text-parchment-200"
+								>Model ID</label
+							>
+							<input
+								id="model-id"
+								name="model_id"
+								type="text"
+								autocomplete="off"
+								bind:value={modelForm.model_id}
+								disabled={panelMode === 'model-edit'}
+								placeholder="llama-4-scout…"
+								spellcheck="false"
+								aria-invalid={!!modelErrors.id}
+								aria-describedby={modelErrors.id ? 'model-id-error' : undefined}
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] font-mono text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-60"
+							/>
+							{#if modelErrors.id}
+								<p id="model-id-error" class="text-[0.6875rem] text-terracotta-400" role="alert">
+									{modelErrors.id}
+								</p>
+							{/if}
+						</div>
+						<div class="field sm:col-span-2">
+							<label for="model-name" class="text-[0.8125rem] font-medium text-parchment-200"
+								>Display name</label
+							>
+							<input
+								id="model-name"
+								name="display_name"
+								type="text"
+								autocomplete="off"
+								bind:value={modelForm.display_name}
+								placeholder="Llama 4 Scout…"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div class="field">
+							<label
+								for="model-input-tokens"
+								class="text-[0.8125rem] font-medium text-parchment-200">Max input tokens</label
+							>
+							<input
+								id="model-input-tokens"
+								name="max_input_tokens"
+								type="number"
+								min="0"
+								bind:value={modelForm.max_input_tokens}
+								placeholder="131072…"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div class="field">
+							<label
+								for="model-output-tokens"
+								class="text-[0.8125rem] font-medium text-parchment-200">Max output tokens</label
+							>
+							<input
+								id="model-output-tokens"
+								name="max_output_tokens"
+								type="number"
+								min="0"
+								bind:value={modelForm.max_output_tokens}
+								placeholder="8192…"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+						</div>
+						<div class="field sm:col-span-2">
+							<label for="model-efforts" class="text-[0.8125rem] font-medium text-parchment-200"
+								>Reasoning efforts</label
+							>
+							<input
+								id="model-efforts"
+								name="reasoning_efforts"
+								type="text"
+								autocomplete="off"
+								bind:value={modelForm.reasoning_efforts}
+								placeholder="low, medium, high…"
+								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							/>
+							<p class="text-[0.6875rem] text-parchment-500">Comma separated; empty = none</p>
+						</div>
+					</div>
+
+					<details class="mt-4 border-t border-dashed border-clay-700 pt-3" open>
+						<summary
+							class="cursor-pointer list-none text-[0.8125rem] font-medium text-parchment-300 before:font-mono before:text-gold-500 before:content-['−'] open:before:content-['+']"
+						>
+							Capabilities
+						</summary>
+						<div class="mt-3 grid gap-2 sm:grid-cols-2">
+							<label class="flex items-center gap-2 text-xs text-parchment-400">
+								<input
+									type="checkbox"
+									name="supports_structured_output"
+									bind:checked={modelForm.supports_structured_output}
+								/>
+								Structured output
+							</label>
+							<label class="flex items-center gap-2 text-xs text-parchment-400">
+								<input
+									type="checkbox"
+									name="supports_temperature"
+									bind:checked={modelForm.supports_temperature}
+								/>
+								Temperature
+							</label>
+							<label class="flex items-center gap-2 text-xs text-parchment-400">
+								<input
+									type="checkbox"
+									name="supports_prompt_caching"
+									bind:checked={modelForm.supports_prompt_caching}
+								/>
+								Prompt caching
+							</label>
+							<label class="flex items-center gap-2 text-xs text-parchment-400">
+								<input
+									type="checkbox"
+									name="uses_responses_endpoint"
+									bind:checked={modelForm.uses_responses_endpoint}
+								/>
+								Responses API
+							</label>
+							<label class="flex items-center gap-2 text-xs text-parchment-400">
+								<input
+									type="checkbox"
+									name="disable_reasoning"
+									bind:checked={modelForm.disable_reasoning}
+								/>
+								Disable reasoning
+							</label>
+							<label class="flex items-center gap-2 text-xs text-parchment-400">
+								<input
+									type="checkbox"
+									name="uses_max_completion_tokens"
+									bind:checked={modelForm.uses_max_completion_tokens}
+								/>
+								max_completion_tokens
+							</label>
+						</div>
+					</details>
+
+					<p class="mt-4 text-[0.6875rem] text-parchment-500">
+						Capabilities are hints for the enricher; they do not change the provider endpoint.
+					</p>
+				</div>
+				<div class="flex justify-end gap-2 border-t border-clay-800 px-5 py-3.5">
+					<button
+						type="button"
+						onclick={closePanel}
+						class="rounded-lg border border-clay-700 px-3 py-1.5 text-[0.8125rem] font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						Cancel
+					</button>
+					<button
+						type="submit"
+						class="rounded-lg bg-gold-500 px-4 py-1.5 text-sm font-semibold text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+					>
+						{panelMode === 'model-add' ? 'Add Model' : 'Save Model'}
+					</button>
+				</div>
+			</form>
+		{/if}
+	</div>
+{/if}

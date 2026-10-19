@@ -3,15 +3,17 @@
 	import GroupHead from './GroupHead.svelte';
 	import UnitField from './UnitField.svelte';
 
-	let { cfg } = $props();
+	let { cfg, showHead = true } = $props();
 </script>
 
 <section id="storage" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Stage 4 · Pipeline"
-		title="Storage"
-		description="Where everything ends up — directories, database, trash."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Stage 4 · Pipeline"
+			title="Storage"
+			description="Where everything ends up — directories, database, trash."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card
@@ -143,6 +145,7 @@
 						placeholder="edub-pg"
 						hint="Required for docker/podman: the container running PostgreSQL, where psql is executed for restores."
 						wide
+						advancedOnly
 						bind:value={cfg.database.container}
 					/>
 				{/if}

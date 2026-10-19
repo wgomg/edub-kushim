@@ -17,14 +17,18 @@ run strategy (Go backend + web UI):
   orphaned, errored files, users, enrichment, API keys), the tag curation services
   (`internal/tags/curation`: tag CRUD, merge, identity-run enqueue), API handlers,
   consumption pipeline, and the tag measurement runner.
-- **`make test-web`** (vitest, no database) — 120 unit + component tests across 14 files
+- **`make test-web`** (vitest, no database) — 130 unit + component tests across 16 files
   in `web/`: pure logic (`searchFilter`, `html` utils, `tagReconcile` utils), stores
   (`filterStore`, `authStore`, `toastStore`, `confirmStore`), the `api` client (fetch
   stubbing, auth header, 401 handling), and the logic-dense components (`DataTable`,
-  `FilterPanel`, `UploadModal`, settings page — the settings test covers the tag
+  `FilterPanel`, `UploadModal`, settings area — the settings tests cover the tag
   adjudicator/quality/reconciliation cards, inherit-from-analyzer options,
   default-fill blocks, and the full save payload — including the tag-reconcile
-  grace fields). Component tests run under jsdom
+  grace fields; the settings store tests cover the staged config+catalog apply
+  (config-before-operations ordering, failed catalog operations staying staged
+  with the server reason, the apply/reset mutual exclusion, token redaction,
+  and discard of changes to omitted keys) and the Models page used-by mapping
+  (disabled fallbacks and inherited provider references report as in use). Component tests run under jsdom
   with `@testing-library/svelte`.
 - **`make test-web-e2e`** (Playwright, no backend) — 4 smoke specs in `web/e2e/`
   (login, documents list + detail, upload) driven against the static SPA build with a

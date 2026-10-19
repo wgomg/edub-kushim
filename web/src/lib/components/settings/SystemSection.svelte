@@ -4,16 +4,18 @@
 	import Switch from './Switch.svelte';
 	import UnitField from './UnitField.svelte';
 
-	let { cfg } = $props();
+	let { cfg, showHead = true } = $props();
 </script>
 
 <section id="system" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Operations"
-		variant="op"
-		title="System"
-		description="Logging for both binaries."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Operations"
+			variant="op"
+			title="System"
+			description="Logging for both binaries."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card

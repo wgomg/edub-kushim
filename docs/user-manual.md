@@ -1836,7 +1836,11 @@ Response `204 No Content`.
 
 ### LLM Model Discovery
 
-Returns the available adapters, providers, and models from the model catalog. The catalog lives in your config directory as `provider_catalog.json` and `model_catalog.json` — the app seeds it there with defaults on first start — and is managed through the settings page's Models section, the `kushim llm` CLI verb, or the catalog endpoints below; no hand-editing is needed, and changes apply without a restart (read endpoints re-read the files, and the next consume batch picks them up). Used by the settings UI to populate cascading selectors. Provider and model documentation: [models.dev/providers](https://models.dev/providers/).
+Returns the available adapters, providers, and models from the model catalog. The catalog lives in your config directory as `provider_catalog.json` and `model_catalog.json` — the app seeds it there with defaults on first start — and is managed through the settings UI's AI providers & models page (edits
+are staged there and applied with **Apply Changes**), the `kushim llm` CLI
+verb, or the catalog endpoints below; no hand-editing is needed, and changes
+apply without a restart (read endpoints re-read the files, and the next
+consume batch picks them up). Used by the settings UI to populate cascading selectors. Provider and model documentation: [models.dev/providers](https://models.dev/providers/).
 
 ```
 GET /api/v1/llm/models
@@ -3338,22 +3342,57 @@ re-execs its own binary to fork workers. If `kushim queue` cannot re-exec,
 batches stay queued and are never processed — the API consume endpoints still
 accept and enqueue files.
 
-## Settings Page
+## Settings
 
-The main web UI includes a **Settings** page at `/settings`: one scrollable
-form grouped into sections, with a rail on the left that tracks the active
-section as you scroll (each section has a URL hash — `#overview`, `#intake`,
-`#processing`, `#enrichment`, `#models`, `#storage`, `#safety`, `#access`,
-`#system` — so any section is deep-linkable). A search box at the top filters
-fields and cards across all sections, and a save bar slides up from the
-bottom when there are unsaved changes, with a per-section dirty dot on the
-rail.
+The main web UI organizes configuration as a **Settings hub** at `/settings`
+plus one focused page per area. The hub shows a health summary (toolchain
+availability, provider/model counts, staged changes, scheduled tag jobs), a
+pipeline map — Intake → Processing → Enrichment → Storage, each with a status
+and click-through — and destination rows grouped into **Pipeline**,
+**Catalog** and **Operations**. The hub also carries the toolchain overview:
+every external tool the pipeline calls, with an available/not-installed badge
+and expandable install hints for missing tools, plus an "N of M" availability
+counter.
 
-### Overview
+| Page | Path | Covers |
+|------|------|--------|
+| Intake | `/settings/intake` | uploads & server, watched inbox, accepted file types, office converter |
+| Processing | `/settings/processing` | OCR, text extraction, PDF optimizer, thumbnails, throughput |
+| Enrichment | `/settings/enrichment` | content analyzer, tag intelligence, scheduled maintenance, capacity |
+| AI providers & models | `/settings/models` | provider/model catalog management |
+| Storage | `/settings/storage` | directories, trash, database |
+| Safety | `/settings/safety` | backups, mirror |
+| Access | `/settings/access` | sign-in, users |
+| System | `/settings/system` | logging |
 
-Toolchain health: every external tool the pipeline calls, with an
-available/not-installed badge and expandable install hints for missing
-tools, plus an "N of M" availability counter.
+Legacy links still land correctly: old section hashes (`#intake`…`#system`)
+and the `?tab=Users` parameter redirect to their page.
+
+### One save rule
+
+Every edit — configuration fields and catalog operations alike — is staged
+locally first; nothing reaches the server until **Apply Changes**. A fixed
+save bar and a staged-count pill in the settings header track the pending
+total, and each area shows its pending count on the hub. **Review** opens the
+staged-changes tray: edits grouped by page with previous and new values
+(token values are shown as "value changed", never in clear), per-change
+discard for configuration entries, and catalog operations listed in replay
+order. **Apply Changes** saves the configuration and then replays the catalog
+operations in order; an operation that fails keeps its entry staged and
+surfaces the server's reason. **Discard All** (with a confirmation dialog)
+restores the saved configuration and reloads the catalog from the server.
+Leaving the site with staged changes triggers the browser's unsaved-changes
+warning.
+
+### Settings header
+
+Every settings page shares a settings-scoped header that stays pinned to the top of the
+content area while the page scrolls: a breadcrumb back to the hub, an
+**Essentials/Advanced** toggle (persisted per browser; Essentials
+hides expert controls — request tuning, the prompt template, the tessdata
+directory, polling windows, thumbnail backfill and the database container
+name), a **Search** command palette (`/` or `Ctrl+K`) that
+navigates to pages and settings, and the staged-changes pill.
 
 ### Intake
 
@@ -3411,28 +3450,40 @@ tools, plus an "N of M" availability counter.
   measures
 - **Enrichment workers**: worker count
 
+An at-a-glance strip at the top shows the analyzer model, tags per document,
+enabled fallbacks and the tag matcher backend, with a **Manage catalog** link
+to the AI providers & models page.
+
 ### Models
 
-- **Providers**: one card per cataloged provider with its adapter badge,
-  official URL and optional session header. **Add provider** opens a form
-  with the name, an adapter selector fed from the catalog's adapters plus the
-  two built-ins, the official URL, and the optional session header;
-  **Edit** opens the adapter/URL/session-header form (the name is immutable);
-  **Remove** asks for confirmation, states how many models the provider owns,
-  and deletes them together
-- **Models**: listed under their provider with the id, display name, token
-  limits and a capability summary. **Add model** opens a form with the
-  provider preselected, the model id, display name, token limits (0 = not
-  set), reasoning efforts as a comma list, and the six capability switches
-  (disable reasoning, structured output, temperature, prompt caching,
-  max_completion_tokens, responses endpoint); **Edit** opens the same form
-  with the id immutable; **Remove** asks for confirmation
-- **Restore default catalogs**: replaces both catalog files with the embedded
-  defaults after a confirmation dialog
+The **AI providers & models** page is a master–detail catalog editor. The
+left pane is a filterable provider list (matches provider names, adapters and
+model ids) with an **Add Provider** button; the selected provider — synced to
+a `?provider=` URL parameter, so a selection is deep-linkable — shows its
+adapter badge, official URL and optional session header, plus a model table
+(model id, display name, compact context/output limits, capability chips, and
+a **Used by** column listing the enricher features that reference the model).
 
-Every change applies immediately through the catalog API — this section is
-not part of the save bar — and the enrichment selectors re-fetch the catalog
-after each change.
+- **Add Provider** opens a side panel with the name, an adapter selector fed
+  from the catalog's adapters plus the two built-ins, the official URL, and
+  the optional session header; **Edit** opens the adapter/URL/session-header
+  form (the name is immutable); **Remove** asks for confirmation, states how
+  many models the provider owns, and removes them together
+- **Add Model** opens a side panel with the provider preselected, the model
+  id, display name, token limits (0 = not set), reasoning efforts as a comma
+  list, and the six capability switches (disable reasoning, structured
+  output, temperature, prompt caching, max_completion_tokens, responses
+  endpoint); **Edit** opens the same form with the id immutable;
+  **Remove** asks for confirmation
+- **Restore Default Catalogs** sits in a separated danger section: after a
+  confirmation dialog it replaces both catalog files with the embedded
+  defaults immediately and discards staged catalog changes
+
+Add, edit and remove actions stage catalog operations instead of hitting the
+API; **Apply Changes** replays them in order (a failure keeps the entry
+staged with the server's reason) and **Discard All** reverts the draft.
+Inline validation (required fields, duplicate names/ids) appears next to the
+field and focuses the first invalid input.
 
 ### Storage
 
@@ -3468,9 +3519,10 @@ after each change.
 - **Logging**: log level ("warn" included), max size per file, max backups
   to keep, max age, compress rotated logs toggle
 
-Changes are saved via the `/wizard/config` API and trigger background
-downloads for any missing tessdata or Hugot model files. A spinner and
-pending-task counter show download progress.
+Applying staged changes saves via the `/wizard/config` API (catalog
+operations replay right after) and triggers background downloads for any
+missing tessdata or Hugot model files. A spinner and pending-task counter
+show download progress.
 
 **Tool-status warnings** appear inline beneath each engine selector when
 the selected external tool is missing from `PATH`. When the OCR engine is
@@ -3483,7 +3535,8 @@ the selected external tool is missing from `PATH`. When the OCR engine is
   `pngquant` (optional), each with install hints.
 
 A **sticky amber banner** at the top of the app layout shows whenever
-required tools are not installed, with a link to the settings page.
+required tools are not installed, with a link to the Processing settings
+page.
 
 ## Build: Setup Wizard
 

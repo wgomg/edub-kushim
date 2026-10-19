@@ -4,7 +4,7 @@
 	import Switch from './Switch.svelte';
 	import UnitField from './UnitField.svelte';
 
-	let { cfg, mimeTypeOptions = [] } = $props();
+	let { cfg, mimeTypeOptions = [], showHead = true } = $props();
 
 	function addWindow() {
 		cfg.consumer.polling.windows = [
@@ -19,11 +19,13 @@
 </script>
 
 <section id="intake" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Stage 1 · Pipeline"
-		title="Intake"
-		description="How documents get in — uploads, the watched inbox, and what the inbox accepts."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Stage 1 · Pipeline"
+			title="Intake"
+			description="How documents get in — uploads, the watched inbox, and what the inbox accepts."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card
@@ -116,7 +118,7 @@
 					wide
 					bind:value={cfg.consumer.polling.interval}
 				/>
-				<div class="field sm:col-span-2">
+				<div class="field advanced-only sm:col-span-2">
 					<span class="text-[0.8125rem] font-medium text-parchment-200"
 						>Active windows (optional)</span
 					>

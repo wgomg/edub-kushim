@@ -641,7 +641,8 @@ every mutation with the fresh `Catalog()`; its registry sits in an
 `atomic.Pointer`, so reads answer 503 when the startup load failed and a
 successful reset installs a fresh registry live. The `kushim llm` CLI verb
 mirrors `kushim config`'s grammar (dump/get/set/`--unset`), and the settings
-page's Models section drives the same endpoints. Consumer processes and the
+UI's AI providers & models page drives the same endpoints (its edits stage
+locally and replay on Apply Changes). Consumer processes and the
 queue's consume forks load the catalogs fresh per batch, so file edits reach
 the pipeline without any restart.
 

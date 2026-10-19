@@ -109,7 +109,7 @@
 			</div>
 			{#if error.includes('missing tool')}
 				<a
-					href={resolve(`/settings`)}
+					href={resolve(`/settings/processing`)}
 					class="inline-block rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600"
 					>Review settings</a
 				>

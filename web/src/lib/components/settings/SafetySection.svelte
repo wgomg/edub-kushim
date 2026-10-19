@@ -6,7 +6,7 @@
 	import Switch from './Switch.svelte';
 	import UnitField from './UnitField.svelte';
 
-	let { cfg, toolStatus = [] } = $props();
+	let { cfg, toolStatus = [], showHead = true } = $props();
 
 	let rsyncTool = $derived(toolStatus.find((t) => t.engine === 'rsync' && !t.available));
 
@@ -30,12 +30,14 @@
 </script>
 
 <section id="safety" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Operations"
-		variant="op"
-		title="Safety"
-		description="Copies of the archive — scheduled dumps and the mirror."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Operations"
+			variant="op"
+			title="Safety"
+			description="Copies of the archive — scheduled dumps and the mirror."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card

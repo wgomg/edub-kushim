@@ -400,7 +400,8 @@ missing file, after the combined result validates; an existing file is never
 overwritten by loading, so deployments edit their copies freely. Each file is
 a versioned wrapper object (`{"version": 1, ...}`) that may carry a `_comment`
 hint key, preserved across rewrites. The catalogs are managed through the
-settings page's Models section, the `kushim llm` CLI verb, and the
+settings UI's AI providers & models page (edits stage with the other settings
+and apply on Apply Changes), the `kushim llm` CLI verb, and the
 `/api/v1/llm` catalog endpoints, all driving the mutation API below; file
 edits reach running processes without a restart (the API's read endpoints
 re-read the files, and consume forks load them fresh per batch).

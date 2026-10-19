@@ -11,7 +11,7 @@
 	import GroupHead from './GroupHead.svelte';
 	import Switch from './Switch.svelte';
 
-	let { cfg } = $props();
+	let { cfg, showHead = true } = $props();
 
 	let showUserModal = $state(false);
 	let editingUser = $state(null);
@@ -149,12 +149,14 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 </script>
 
 <section id="access" class="group scroll-mt-6 pb-12">
-	<GroupHead
-		eyebrow="Operations"
-		variant="op"
-		title="Access"
-		description="Who can sign in and what they can do."
-	/>
+	{#if showHead}
+		<GroupHead
+			eyebrow="Operations"
+			variant="op"
+			title="Access"
+			description="Who can sign in and what they can do."
+		/>
+	{/if}
 
 	<div class="space-y-4">
 		<Card

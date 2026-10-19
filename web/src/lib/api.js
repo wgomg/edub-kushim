@@ -43,6 +43,7 @@ async function request(path, opts = {}) {
 async function requestRaw(path, opts = {}) {
 	try {
 		const res = await fetch(path, withAuth(opts));
+		if (res.status === 401) handleUnauthorized();
 		let data = null;
 		const contentType = res.headers.get('content-type') || '';
 		if (contentType.includes('application/json') && res.status !== 204) {
@@ -424,7 +425,7 @@ export const api = {
 		bootstrap: () => request('/wizard/bootstrap'),
 		get: () => request('/wizard/config'),
 		update: (body) =>
-			request('/wizard/config', {
+			requestRaw('/wizard/config', {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)

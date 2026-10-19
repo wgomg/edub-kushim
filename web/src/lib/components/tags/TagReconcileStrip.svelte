@@ -62,7 +62,7 @@
 	{:else if status === 'missing'}
 		<p class="text-parchment-500">
 			Tag reconciliation has never run.
-			<a href={resolve('/settings')} class={linkClass}>Open settings</a>
+			<a href={resolve('/settings/enrichment')} class={linkClass}>Open settings</a>
 		</p>
 	{:else if status === 'error'}
 		<p class="text-terracotta-500" role="alert">Failed to load the tag reconciliation report.</p>

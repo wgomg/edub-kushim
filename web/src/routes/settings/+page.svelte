@@ -1,566 +1,343 @@
 <script>
-	import { onMount, tick } from 'svelte';
-	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.js';
-	import AccessSection from '$lib/components/settings/AccessSection.svelte';
-	import EnrichmentSection from '$lib/components/settings/EnrichmentSection.svelte';
-	import IntakeSection from '$lib/components/settings/IntakeSection.svelte';
-	import ModelsSection from '$lib/components/settings/ModelsSection.svelte';
+	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import { SETTINGS_SECTION_BY_ID } from '$lib/settingsSections.js';
 	import OverviewSection from '$lib/components/settings/OverviewSection.svelte';
-	import ProcessingSection from '$lib/components/settings/ProcessingSection.svelte';
-	import SafetySection from '$lib/components/settings/SafetySection.svelte';
-	import SaveBar from '$lib/components/settings/SaveBar.svelte';
-	import SettingsRail from '$lib/components/settings/SettingsRail.svelte';
-	import SettingsSearch from '$lib/components/settings/SettingsSearch.svelte';
-	import StorageSection from '$lib/components/settings/StorageSection.svelte';
-	import SystemSection from '$lib/components/settings/SystemSection.svelte';
 
-	let cfg = $state(null);
-	let saving = $state(false);
-	let toolStatus = $state([]);
-	let statusLoaded = $state(false);
-	let llmModels = $state({ adapters: {}, providers: {} });
-	let mimeTypeOptions = $state([]);
+	const TONE_TEXT = {
+		ok: 'text-lapis-300',
+		warn: 'text-gold-500',
+		off: 'text-parchment-500'
+	};
+	const TONE_BADGE = {
+		ok: 'border-lapis-300/35 bg-lapis-300/10 text-lapis-300',
+		warn: 'border-gold-500/35 bg-gold-500/10 text-gold-500',
+		off: 'border-clay-700 text-parchment-500',
+		gold: 'border-gold-800 text-gold-500'
+	};
 
-	let snapshot = $state(null);
-	let snapshotJson = $state('');
+	let cfg = $derived(settingsStore.cfg);
+	let summary = $derived(settingsStore.toolSummary);
 
-	let searchQuery = $state('');
-	let searchEmpty = $state(false);
-	let rootEl = $state(null);
-	let matchCounts = $state({});
-	let activeGroup = $state('overview');
-	let scrollContainer = null;
+	let missingTools = $derived(settingsStore.toolStatus.filter((tool) => !tool.available).length);
 
-	function ensureAll() {
-		ensureFallbacksArray();
-		ensureThumbnailBlock();
-		ensureMirrorBlock();
-		ensureTagReconcileBlock();
-		ensureTagMeasureBlock();
-		ensureTagAuditBlock();
-		ensureTagAdjudicatorBlock();
-		ensureTagQualityBlock();
-		ensureContentAnalyzerTags();
-	}
+	let scheduledJobs = $derived(
+		[
+			cfg.enricher.tag_reconcile.enabled,
+			cfg.enricher.tag_measure.enabled,
+			cfg.enricher.tag_audit.enabled
+		].filter(Boolean).length
+	);
 
-	function ensureContentAnalyzerTags() {
-		if (!cfg) return;
-		const ca = cfg.enricher.contentanalyzer;
-		if (!(ca.min_tags > 0)) ca.min_tags = 3;
-		if (!(ca.max_tags > 0)) ca.max_tags = 5;
-	}
+	let previewChanges = $derived(
+		[
+			...settingsStore.configChanges.map((change) => ({
+				id: change.key,
+				label: change.label,
+				detail: 'configuration'
+			})),
+			...settingsStore.catalogOps.map((op) => ({
+				id: op.id,
+				label: op.label,
+				detail: 'catalog'
+			}))
+		].slice(0, 4)
+	);
 
-	function ensureFallbacksArray() {
-		if (!cfg) return;
-		const ca = cfg.enricher.contentanalyzer;
-		if (!ca.fallbacks) ca.fallbacks = [];
-	}
+	let accessSummary = $derived(cfg.server.auth_enabled ? 'sign-in on' : 'open server');
+	let systemSummary = $derived(`${cfg.app.log_level} · ${cfg.app.logging.max_backups} log files`);
+	let safetySummary = $derived(
+		`backups ${cfg.backup.enabled ? 'on' : 'off'} · mirror ${cfg.mirror.enabled ? 'on' : 'off'}`
+	);
+	let storageSummary = $derived(
+		`${cfg.storage.migration_mode} · trash ${cfg.storage.trash.retention_days}d`
+	);
+	let enrichmentModel = $derived(
+		`${cfg.enricher.contentanalyzer.llm.provider || 'no provider'} / ${cfg.enricher.contentanalyzer.llm.model || 'no model'}`
+	);
+	let processingSummary = $derived(`${cfg.consumer.ocr.engine} · ${cfg.consumer.workers} workers`);
+	let intakeSummary = $derived(
+		`:${cfg.server.port} · inbox ${cfg.consumer.polling.interval}s · ${(cfg.consumer.supported_files ?? []).length} formats`
+	);
 
-	function ensureThumbnailBlock() {
-		if (!cfg) return;
-		if (!cfg.consumer) cfg.consumer = {};
-		if (cfg.consumer.thumbnail) return;
-		cfg.consumer.thumbnail = {
-			enabled: true,
-			engine: 'mupdf',
-			dpi: 72,
-			max_width: 400,
-			quality: 80,
-			timeout: 30,
-			workers: 1,
-			backfill_interval: 0,
-			backfill_time: '02:00'
-		};
-	}
-
-	function ensureMirrorBlock() {
-		if (!cfg) return;
-		if (!cfg.mirror || !(cfg.mirror.interval > 0)) {
-			cfg.mirror = {
-				enabled: cfg.mirror?.enabled ?? false,
-				path: cfg.mirror?.path ?? '',
-				interval: 1,
-				time: cfg.mirror?.time || '02:00'
-			};
-		}
-	}
-
-	function ensureTagReconcileBlock() {
-		if (!cfg) return;
-		if (!cfg.enricher) cfg.enricher = {};
-		if (cfg.enricher.tag_reconcile) return;
-		cfg.enricher.tag_reconcile = {
-			enabled: false,
-			report_only: true,
-			interval: 7,
-			time: '02:00',
-			max_rejudge: 200,
-			max_retag: 1000,
-			dead_tag_grace_days: 7,
-			provisional_grace_days: 30
-		};
-	}
-
-	function ensureTagMeasureBlock() {
-		if (!cfg) return;
-		if (!cfg.enricher) cfg.enricher = {};
-		if (cfg.enricher.tag_measure) return;
-		cfg.enricher.tag_measure = {
-			enabled: false,
-			interval: 7,
-			time: '03:00'
-		};
-	}
-
-	function ensureTagAuditBlock() {
-		if (!cfg) return;
-		if (!cfg.enricher) cfg.enricher = {};
-		if (cfg.enricher.tag_audit) return;
-		cfg.enricher.tag_audit = {
-			enabled: false,
-			interval: 7,
-			time: '04:00'
-		};
-	}
-
-	function ensureTagAdjudicatorBlock() {
-		if (!cfg) return;
-		if (!cfg.enricher) cfg.enricher = {};
-		if (cfg.enricher.tag_adjudicator) return;
-		cfg.enricher.tag_adjudicator = {
-			enabled: false,
-			timeout: 0,
-			llm: {
-				adapter: '',
-				provider: '',
-				model: '',
-				token: '',
-				temperature: 0,
-				request_delay: 0
+	let stages = $derived.by(() => {
+		const processingStatus =
+			missingTools === 1 ? '1 tool missing' : `${missingTools} tools missing`;
+		const analyzerOn = cfg.enricher.contentanalyzer.enabled;
+		return [
+			{
+				...SETTINGS_SECTION_BY_ID.intake,
+				tone: 'ok',
+				status: 'ready',
+				summary: intakeSummary
+			},
+			{
+				...SETTINGS_SECTION_BY_ID.processing,
+				tone: missingTools > 0 ? 'warn' : 'ok',
+				status: missingTools > 0 ? processingStatus : 'ready',
+				summary: processingSummary
+			},
+			{
+				...SETTINGS_SECTION_BY_ID.enrichment,
+				tone: analyzerOn ? 'ok' : 'off',
+				status: analyzerOn ? 'analyzer on' : 'analyzer off',
+				summary: enrichmentModel
+			},
+			{
+				...SETTINGS_SECTION_BY_ID.storage,
+				tone: 'ok',
+				status: 'healthy',
+				summary: storageSummary
 			}
-		};
-	}
-
-	function ensureTagQualityBlock() {
-		if (!cfg) return;
-		if (!cfg.enricher) cfg.enricher = {};
-		if (cfg.enricher.tag_quality) return;
-		cfg.enricher.tag_quality = {
-			enabled: false,
-			timeout: 0,
-			llm: {
-				adapter: '',
-				provider: '',
-				model: '',
-				token: '',
-				temperature: 0,
-				request_delay: 0
-			}
-		};
-	}
-
-	function syncMimeCheckboxes() {
-		const types = cfg?.available_file_types;
-		const exts = cfg?.consumer?.supported_files ?? [];
-		if (!types) return;
-		mimeTypeOptions = types.map((ft) => ({
-			...ft,
-			checked: ft.required || ft.extensions.some((e) => exts.includes(e))
-		}));
-	}
-
-	function bodyFromConfig() {
-		return {
-			'server.host': cfg.server.host,
-			'server.port': Number(cfg.server.port),
-			'server.max_upload_size': Number(cfg.server.max_upload_size),
-			'server.max_download_files': Number(cfg.server.max_download_files),
-			'server.max_download_size_mb': Number(cfg.server.max_download_size_mb),
-			'server.max_concurrent_batches': Number(cfg.server.max_concurrent_batches),
-			'server.max_batch_delete': Number(cfg.server.max_batch_delete),
-			'server.auth_enabled': cfg.server.auth_enabled,
-			'consumer.ocr.engine': cfg.consumer.ocr.engine,
-			'consumer.ocr.languages': cfg.consumer.ocr.languages.filter(Boolean),
-			'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
-			'consumer.ocr.timeout': Number(cfg.consumer.ocr.timeout),
-			'consumer.ocr.ocr_workers': Number(cfg.consumer.ocr.ocr_workers),
-			'consumer.workers': Number(cfg.consumer.workers),
-			'consumer.max_files_per_batch': Number(cfg.consumer.max_files_per_batch),
-			'consumer.supported_files':
-				mimeTypeOptions.length > 0
-					? mimeTypeOptions.filter((o) => o.checked).flatMap((o) => o.extensions)
-					: (cfg.consumer.supported_files ?? []),
-			'consumer.converter.enabled': cfg.consumer.converter.enabled,
-			'consumer.converter.binary': cfg.consumer.converter.binary,
-			'consumer.converter.timeout': Number(cfg.consumer.converter.timeout),
-			'consumer.polling.enabled': cfg.consumer.polling.enabled,
-			'consumer.polling.interval': Number(cfg.consumer.polling.interval),
-			'consumer.polling.windows': cfg.consumer.polling.windows ?? [],
-			'consumer.reclaim.enabled': cfg.consumer.reclaim.enabled,
-			'consumer.reclaim.max_retries': Number(cfg.consumer.reclaim.max_retries),
-			'consumer.reclaim.stale_task_after': Number(cfg.consumer.reclaim.stale_task_after),
-			'consumer.thumbnail.enabled': cfg.consumer.thumbnail.enabled,
-			'consumer.thumbnail.engine': cfg.consumer.thumbnail.engine,
-			'consumer.thumbnail.dpi': Number(cfg.consumer.thumbnail.dpi),
-			'consumer.thumbnail.max_width': Number(cfg.consumer.thumbnail.max_width),
-			'consumer.thumbnail.quality': Number(cfg.consumer.thumbnail.quality),
-			'consumer.thumbnail.timeout': Number(cfg.consumer.thumbnail.timeout),
-			'consumer.thumbnail.workers': Number(cfg.consumer.thumbnail.workers),
-			'consumer.thumbnail.backfill_interval': Number(cfg.consumer.thumbnail.backfill_interval),
-			'consumer.thumbnail.backfill_time': cfg.consumer.thumbnail.backfill_time,
-			'consumer.pdfoptimizer.engine': cfg.consumer.pdfoptimizer.engine,
-			'consumer.pdfoptimizer.fallback': cfg.consumer.pdfoptimizer.fallback,
-			'consumer.pdfoptimizer.timeout': Number(cfg.consumer.pdfoptimizer.timeout),
-			'consumer.textextractor.engine': cfg.consumer.textextractor.engine,
-			'consumer.textextractor.timeout': Number(cfg.consumer.textextractor.timeout),
-			'enricher.workers': Number(cfg.enricher.workers),
-			'enricher.textreducer.engine': cfg.enricher.textreducer.engine,
-			'enricher.textreducer.timeout': Number(cfg.enricher.textreducer.timeout),
-			'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
-			'enricher.contentanalyzer.enabled': cfg.enricher.contentanalyzer.enabled,
-			'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
-			'enricher.contentanalyzer.min_tags': Number(cfg.enricher.contentanalyzer.min_tags),
-			'enricher.contentanalyzer.max_tags': Number(cfg.enricher.contentanalyzer.max_tags),
-			'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
-			'enricher.contentanalyzer.pause_on_credit_error':
-				cfg.enricher.contentanalyzer.pause_on_credit_error,
-			'enricher.contentanalyzer.doc_type_refinement.enabled':
-				cfg.enricher.contentanalyzer.doc_type_refinement.enabled,
-			'enricher.contentanalyzer.doc_type_refinement.head_words': Number(
-				cfg.enricher.contentanalyzer.doc_type_refinement.head_words
-			),
-			'enricher.contentanalyzer.doc_type_refinement.tail_words': Number(
-				cfg.enricher.contentanalyzer.doc_type_refinement.tail_words
-			),
-			'enricher.contentanalyzer.llm.adapter': cfg.enricher.contentanalyzer.llm.adapter,
-			'enricher.contentanalyzer.llm.provider': cfg.enricher.contentanalyzer.llm.provider,
-			'enricher.contentanalyzer.llm.model': cfg.enricher.contentanalyzer.llm.model,
-			'enricher.contentanalyzer.llm.token': cfg.enricher.contentanalyzer.llm.token,
-			'enricher.contentanalyzer.llm.temperature': Number(
-				cfg.enricher.contentanalyzer.llm.temperature
-			),
-			'enricher.contentanalyzer.llm.request_delay': Number(
-				cfg.enricher.contentanalyzer.llm.request_delay
-			),
-			'enricher.contentanalyzer.fallbacks': cfg.enricher.contentanalyzer.fallbacks ?? [],
-			'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
-			'enricher.tagmatcher.reduce_target_words': Number(
-				cfg.enricher.tagmatcher.reduce_target_words
-			),
-			'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
-			'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
-			'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
-			'enricher.tag_adjudicator.enabled': cfg.enricher.tag_adjudicator.enabled,
-			'enricher.tag_adjudicator.timeout': Number(cfg.enricher.tag_adjudicator.timeout),
-			'enricher.tag_adjudicator.llm.adapter': cfg.enricher.tag_adjudicator.llm.adapter,
-			'enricher.tag_adjudicator.llm.provider': cfg.enricher.tag_adjudicator.llm.provider,
-			'enricher.tag_adjudicator.llm.model': cfg.enricher.tag_adjudicator.llm.model,
-			'enricher.tag_adjudicator.llm.token': cfg.enricher.tag_adjudicator.llm.token,
-			'enricher.tag_adjudicator.llm.request_delay': Number(
-				cfg.enricher.tag_adjudicator.llm.request_delay
-			),
-			'enricher.tag_quality.enabled': cfg.enricher.tag_quality.enabled,
-			'enricher.tag_quality.timeout': Number(cfg.enricher.tag_quality.timeout),
-			'enricher.tag_quality.llm.adapter': cfg.enricher.tag_quality.llm.adapter,
-			'enricher.tag_quality.llm.provider': cfg.enricher.tag_quality.llm.provider,
-			'enricher.tag_quality.llm.model': cfg.enricher.tag_quality.llm.model,
-			'enricher.tag_quality.llm.token': cfg.enricher.tag_quality.llm.token,
-			'enricher.tag_quality.llm.request_delay': Number(cfg.enricher.tag_quality.llm.request_delay),
-			'enricher.tag_reconcile.enabled': cfg.enricher.tag_reconcile.enabled,
-			'enricher.tag_reconcile.report_only': cfg.enricher.tag_reconcile.report_only,
-			'enricher.tag_reconcile.interval': Number(cfg.enricher.tag_reconcile.interval),
-			'enricher.tag_reconcile.time': cfg.enricher.tag_reconcile.time,
-			'enricher.tag_reconcile.max_rejudge': Number(cfg.enricher.tag_reconcile.max_rejudge),
-			'enricher.tag_reconcile.max_retag': Number(cfg.enricher.tag_reconcile.max_retag),
-			'enricher.tag_reconcile.dead_tag_grace_days': Number(
-				cfg.enricher.tag_reconcile.dead_tag_grace_days
-			),
-			'enricher.tag_reconcile.provisional_grace_days': Number(
-				cfg.enricher.tag_reconcile.provisional_grace_days
-			),
-			'enricher.tag_measure.enabled': cfg.enricher.tag_measure.enabled,
-			'enricher.tag_measure.interval': Number(cfg.enricher.tag_measure.interval),
-			'enricher.tag_measure.time': cfg.enricher.tag_measure.time,
-			'enricher.tag_audit.enabled': cfg.enricher.tag_audit.enabled,
-			'enricher.tag_audit.interval': Number(cfg.enricher.tag_audit.interval),
-			'enricher.tag_audit.time': cfg.enricher.tag_audit.time,
-			'storage.consumption_dir': cfg.storage.consumption_dir,
-			'storage.storage_dir': cfg.storage.storage_dir,
-			'storage.migration_mode': cfg.storage.migration_mode,
-			'storage.trash.retention_days': Number(cfg.storage.trash.retention_days),
-			'database.host': cfg.database.host,
-			'database.port': Number(cfg.database.port),
-			'database.user': cfg.database.user,
-			'database.database': cfg.database.database,
-			'database.sslmode': cfg.database.sslmode,
-			'database.runtime': cfg.database.runtime,
-			'database.container': cfg.database.container,
-			'backup.enabled': cfg.backup.enabled,
-			'backup.path': cfg.backup.path,
-			'backup.schedules': cfg.backup.schedules ?? [],
-			'mirror.enabled': cfg.mirror.enabled,
-			'mirror.path': cfg.mirror.path,
-			'mirror.interval': Number(cfg.mirror.interval),
-			'mirror.time': cfg.mirror.time,
-			'app.log_level': cfg.app.log_level,
-			'app.logging.max_size': Number(cfg.app.logging.max_size),
-			'app.logging.max_backups': Number(cfg.app.logging.max_backups),
-			'app.logging.max_age': Number(cfg.app.logging.max_age),
-			'app.logging.compress': cfg.app.logging.compress
-		};
-	}
-
-	const PROCESSING_PREFIXES = [
-		'consumer.ocr.',
-		'consumer.textextractor.',
-		'consumer.pdfoptimizer.',
-		'consumer.thumbnail.',
-		'consumer.workers',
-		'consumer.max_files_per_batch',
-		'consumer.reclaim.'
-	];
-
-	function groupOfKey(key) {
-		if (key === 'server.auth_enabled') return 'access';
-		if (key.startsWith('enricher.')) return 'enrichment';
-		if (key.startsWith('storage.') || key.startsWith('database.')) return 'storage';
-		if (key.startsWith('backup.') || key.startsWith('mirror.')) return 'safety';
-		if (key.startsWith('app.')) return 'system';
-		if (PROCESSING_PREFIXES.some((prefix) => key.startsWith(prefix))) return 'processing';
-		return 'intake';
-	}
-
-	let changedKeys = $derived.by(() => {
-		if (!cfg || !snapshotJson) return [];
-		const snap = JSON.parse(snapshotJson);
-		const current = bodyFromConfig();
-		return Object.keys(current).filter(
-			(key) => JSON.stringify(current[key]) !== JSON.stringify(snap[key])
-		);
-	});
-	let dirtyCount = $derived(changedKeys.length);
-	let dirtyGroups = $derived(new Set(changedKeys.map(groupOfKey)));
-
-	let toolsSummary = $derived({
-		known: statusLoaded,
-		total: toolStatus.length,
-		available: toolStatus.filter((t) => t.available).length
-	});
-
-	function snapshotState() {
-		snapshot = $state.snapshot(cfg);
-		snapshotJson = JSON.stringify(bodyFromConfig());
-	}
-
-	function isConfigDirty() {
-		if (!cfg || !snapshotJson) return false;
-		return JSON.stringify(bodyFromConfig()) !== snapshotJson;
-	}
-
-	function handleBeforeUnload(e) {
-		if (!isConfigDirty()) return;
-		e.preventDefault();
-		e.returnValue = '';
-	}
-
-	async function checkStatus() {
-		const status = await api.config.status();
-		if (status) {
-			toolStatus = status.tools ?? [];
-			statusLoaded = true;
-		}
-	}
-
-	async function refreshLlmModels() {
-		llmModels = await api.config.llmModels();
-	}
-
-	async function save() {
-		saving = true;
-		try {
-			const res = await api.config.update(bodyFromConfig());
-			if (res?.message) {
-				toastStore.success(res.message);
-			} else {
-				toastStore.success('Settings saved.');
-			}
-			const loaded = await api.config.get();
-			if (loaded) {
-				cfg = loaded;
-				ensureAll();
-				syncMimeCheckboxes();
-				snapshotState();
-			}
-			checkStatus();
-		} catch (e) {
-			toastStore.error(e.message);
-		} finally {
-			saving = false;
-		}
-	}
-
-	function revert() {
-		if (!snapshot) return;
-		cfg = structuredClone(snapshot);
-		ensureAll();
-		syncMimeCheckboxes();
-		toastStore.info('Changes reverted.');
-	}
-
-	function onScroll() {
-		if (!rootEl) return;
-		const groups = Array.from(rootEl.querySelectorAll('.group')).filter((g) => !g.hidden);
-		if (groups.length === 0) return;
-		const containerTop =
-			scrollContainer && scrollContainer !== document.scrollingElement
-				? scrollContainer.getBoundingClientRect().top
-				: 0;
-		const threshold = containerTop + 140;
-		let current = groups[0].id;
-		for (const group of groups) {
-			if (group.getBoundingClientRect().top <= threshold) current = group.id;
-		}
-		activeGroup = current;
-	}
-
-	function handleHashChange() {
-		const id = window.location.hash.slice(1);
-		if (id) activeGroup = id;
-	}
-
-	function handleLegacyTab() {
-		const url = new URL(window.location.href);
-		const tab = url.searchParams.get('tab');
-		if (!tab) return;
-		url.searchParams.delete('tab');
-		const hash = tab.toLowerCase() === 'users' ? '#access' : '';
-		replaceState(resolve(`${url.pathname}${url.search}${hash}`));
-	}
-
-	function scrollToHash() {
-		const id = window.location.hash.slice(1);
-		if (!id) return;
-		document.getElementById(id)?.scrollIntoView({ block: 'start' });
-	}
-
-	$effect(() => {
-		const query = searchQuery.trim().toLowerCase();
-		const root = rootEl;
-		if (!root) return;
-
-		root.querySelectorAll('.field').forEach((field) => {
-			const card = field.closest('.card');
-			const cardHit = !!query && card?.dataset.name?.toLowerCase().includes(query);
-			const haystack = field.textContent.toLowerCase();
-			field.hidden = !!query && !haystack.includes(query) && !cardHit;
-		});
-
-		root.querySelectorAll('details.adv').forEach((details) => {
-			if (query) {
-				if (details.dataset.was === undefined) details.dataset.was = String(details.open);
-				details.open = true;
-			} else if (details.dataset.was !== undefined) {
-				details.open = details.dataset.was === 'true';
-				delete details.dataset.was;
-			}
-		});
-
-		const counts = {};
-		let matched = false;
-		root.querySelectorAll('.card').forEach((card) => {
-			const fields = Array.from(card.querySelectorAll('.field'));
-			let visible = fields.some((field) => !field.hidden);
-			const cardHit = !!query && card?.dataset.name?.toLowerCase().includes(query);
-			if (cardHit && !visible) {
-				fields.forEach((field) => (field.hidden = false));
-				visible = true;
-			}
-			card.hidden = !!query && !visible;
-			if (query && visible) {
-				matched = true;
-				const group = card.closest('.group');
-				if (group) {
-					counts[group.id] =
-						(counts[group.id] ?? 0) + fields.filter((field) => !field.hidden).length;
-				}
-			}
-		});
-
-		root.querySelectorAll('.group').forEach((group) => {
-			const anyCard = Array.from(group.querySelectorAll('.card')).some((card) => !card.hidden);
-			group.hidden = !!query && !anyCard;
-		});
-
-		matchCounts = counts;
-		searchEmpty = !!query && !matched;
-		onScroll();
-	});
-
-	onMount(async () => {
-		const loaded = await api.config.get();
-		if (loaded) {
-			cfg = loaded;
-			ensureAll();
-			syncMimeCheckboxes();
-			snapshotState();
-			checkStatus();
-		}
-		llmModels = await api.config.llmModels();
-
-		handleLegacyTab();
-		window.addEventListener('beforeunload', handleBeforeUnload);
-		window.addEventListener('hashchange', handleHashChange);
-		scrollContainer = document.getElementById('main-content') ?? document.scrollingElement;
-		scrollContainer?.addEventListener('scroll', onScroll, { passive: true });
-		await tick();
-		scrollToHash();
-		onScroll();
-
-		return () => {
-			window.removeEventListener('beforeunload', handleBeforeUnload);
-			window.removeEventListener('hashchange', handleHashChange);
-			scrollContainer?.removeEventListener('scroll', onScroll);
-		};
+		];
 	});
 </script>
 
-{#if authStore.authEnabled() && !authStore.isAdmin()}
-	<p class="text-parchment-500">You do not have permission to view this page.</p>
-{:else if !cfg}
-	<div class="text-parchment-500">Loading settings…</div>
-{:else}
-	<div class="mx-auto max-w-5xl pb-24" bind:this={rootEl}>
-		<div class="mb-7 max-w-3xl">
-			<h1 class="text-[1.625rem] font-semibold tracking-[-0.01em] text-parchment-200">Settings</h1>
-			<p class="mt-1.5 mb-4 text-parchment-500">
-				Every knob of the pipeline, grouped the way a document travels through it.
-			</p>
-			<SettingsSearch bind:value={searchQuery} />
-		</div>
+<div class="mb-7 max-w-3xl">
+	<h1 class="text-[1.625rem] font-semibold tracking-[-0.01em] text-parchment-200">Settings</h1>
+	<p class="mt-1.5 text-parchment-500">
+		Set up the library, connect AI, and keep the pipeline healthy — one focused workspace at a time.
+	</p>
+</div>
 
-		<div class="grid gap-10 lg:grid-cols-[13.75rem_minmax(0,1fr)] lg:items-start">
-			<SettingsRail active={activeGroup} {dirtyGroups} counts={matchCounts} tools={toolsSummary} />
-			<div class="max-w-184 min-w-0">
-				<OverviewSection tools={toolStatus} statusKnown={statusLoaded} />
-				<IntakeSection {cfg} {mimeTypeOptions} />
-				<ProcessingSection {cfg} {toolStatus} statusKnown={statusLoaded} />
-				<EnrichmentSection {cfg} {llmModels} {toolStatus} statusKnown={statusLoaded} />
-				<ModelsSection onChanged={refreshLlmModels} />
-				<StorageSection {cfg} />
-				<SafetySection {cfg} {toolStatus} statusKnown={statusLoaded} />
-				<AccessSection {cfg} />
-				<SystemSection {cfg} />
-				{#if searchEmpty}
-					<div class="py-12 text-center text-parchment-500">
-						<p>No settings match "{searchQuery.trim()}".</p>
-					</div>
-				{/if}
-			</div>
+<div class="mb-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+	<div class="rounded-xl border border-clay-800 bg-clay-900 px-4 py-3.5">
+		<div
+			class="flex items-center gap-1.5 font-mono text-[0.625rem] font-semibold tracking-[0.12em] text-parchment-500 uppercase"
+		>
+			<span class="size-[0.45rem] rounded-full bg-gold-500"></span> Toolchain
+		</div>
+		<div class="mt-1 text-[1.05rem] font-semibold text-parchment-200">
+			{summary.known ? `${summary.available} / ${summary.total} ready` : 'checking…'}
+		</div>
+		<div class="mt-0.5 text-xs text-parchment-500">
+			{missingTools > 0 ? `${missingTools} tool(s) missing` : 'all tools available'}
 		</div>
 	</div>
-	<SaveBar count={dirtyCount} {saving} onSave={save} onRevert={revert} />
-{/if}
+	<div class="rounded-xl border border-clay-800 bg-clay-900 px-4 py-3.5">
+		<div
+			class="flex items-center gap-1.5 font-mono text-[0.625rem] font-semibold tracking-[0.12em] text-parchment-500 uppercase"
+		>
+			<span class="size-[0.45rem] rounded-full bg-lapis-300"></span> AI providers
+		</div>
+		<div class="mt-1 text-[1.05rem] font-semibold text-parchment-200">
+			{settingsStore.providerCount} providers · {settingsStore.modelCount} models
+		</div>
+		<div class="mt-0.5 text-xs text-parchment-500">one catalog for every stage</div>
+	</div>
+	<div class="rounded-xl border border-clay-800 bg-clay-900 px-4 py-3.5">
+		<div
+			class="flex items-center gap-1.5 font-mono text-[0.625rem] font-semibold tracking-[0.12em] text-parchment-500 uppercase"
+		>
+			<span
+				class="size-[0.45rem] rounded-full {settingsStore.pendingCount > 0
+					? 'bg-gold-500'
+					: 'bg-parchment-600'}"
+			></span>
+			Staged changes
+		</div>
+		<div class="mt-1 text-[1.05rem] font-semibold text-parchment-200">
+			{settingsStore.pendingCount} pending
+		</div>
+		<div class="mt-0.5 text-xs text-parchment-500">review before applying</div>
+	</div>
+	<div class="rounded-xl border border-clay-800 bg-clay-900 px-4 py-3.5">
+		<div
+			class="flex items-center gap-1.5 font-mono text-[0.625rem] font-semibold tracking-[0.12em] text-parchment-500 uppercase"
+		>
+			<span class="size-[0.45rem] rounded-full bg-lapis-300"></span> Scheduled jobs
+		</div>
+		<div class="mt-1 text-[1.05rem] font-semibold text-parchment-200">
+			{scheduledJobs} enabled
+		</div>
+		<div class="mt-0.5 text-xs text-parchment-500">tag maintenance</div>
+	</div>
+</div>
+
+<div class="mb-3 flex flex-wrap items-end justify-between gap-3">
+	<div>
+		<p class="font-mono text-[0.625rem] font-semibold tracking-[0.14em] text-gold-500 uppercase">
+			The pipeline
+		</p>
+		<h2 class="mt-1 text-xl font-semibold text-balance text-parchment-200">How a Document Moves</h2>
+	</div>
+	<span class="text-xs text-parchment-500">Click a stage to configure it</span>
+</div>
+
+<div class="mb-8 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+	{#each stages as stage (stage.id)}
+		<a
+			href={resolve(stage.path)}
+			class="group flex min-h-28 flex-col rounded-xl border border-clay-800 bg-clay-900 p-4 transition-colors hover:border-gold-800 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+		>
+			<div class="flex items-center justify-between">
+				<span
+					class="grid size-5 place-items-center rounded-full border border-clay-700 bg-clay-950 font-mono text-[0.6875rem] font-semibold text-parchment-500"
+					>{stage.number}</span
+				>
+				<span class="font-mono text-[0.6875rem] {TONE_TEXT[stage.tone]}">{stage.status}</span>
+			</div>
+			<span class="mt-2 text-sm font-semibold text-parchment-200">{stage.title}</span>
+			<span class="text-xs text-parchment-500">{stage.short}</span>
+		</a>
+	{/each}
+</div>
+
+<div class="grid gap-8 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
+	<div>
+		{#snippet destination({ section, icon, value, status, tone, group })}
+			<a
+				href={resolve(section.path)}
+				class="group grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3.5 rounded-xl border border-clay-800 bg-clay-900 px-3.5 py-3 transition-colors hover:border-gold-800 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			>
+				<span
+					class="grid size-8 place-items-center rounded-lg border border-clay-700 bg-clay-950 font-mono text-xs font-semibold text-parchment-500"
+					>{icon}</span
+				>
+				<span class="flex min-w-0 flex-col">
+					<span class="text-sm font-semibold text-parchment-200">{section.title}</span>
+					<span class="truncate text-xs text-parchment-500">{section.description}</span>
+				</span>
+				<span class="flex flex-wrap items-center justify-end gap-2">
+					<span class="hidden font-mono text-[0.6875rem] text-parchment-500 lg:inline">{value}</span
+					>
+					<span
+						class="rounded-full border px-2 py-0.5 text-[0.6875rem] whitespace-nowrap {TONE_BADGE[
+							tone
+						]}">{status}</span
+					>
+					{#if settingsStore.groupCounts[group]}
+						<span
+							class="grid h-[1.1rem] min-w-[1.1rem] place-items-center rounded-full bg-gold-500 px-1 font-mono text-[0.625rem] font-bold text-clay-950"
+							>{settingsStore.groupCounts[group]}</span
+						>
+					{/if}
+				</span>
+				<span class="text-clay-600 transition-colors group-hover:text-gold-500" aria-hidden="true"
+					>→</span
+				>
+			</a>
+		{/snippet}
+
+		<div
+			class="mb-2 font-mono text-[0.625rem] font-semibold tracking-[0.14em] text-gold-500 uppercase"
+		>
+			The pipeline
+		</div>
+		<div class="mb-6 flex flex-col gap-2">
+			{#each stages as stage (stage.id)}
+				{@render destination({
+					section: stage,
+					icon: stage.number,
+					value: stage.summary,
+					status: stage.status,
+					tone: stage.tone,
+					group: stage.id
+				})}
+			{/each}
+		</div>
+
+		<div
+			class="mb-2 font-mono text-[0.625rem] font-semibold tracking-[0.14em] text-gold-500 uppercase"
+		>
+			Catalog
+		</div>
+		<div class="mb-6 flex flex-col gap-2">
+			{@render destination({
+				section: SETTINGS_SECTION_BY_ID.models,
+				icon: 'AI',
+				value: `${settingsStore.providerCount} providers · ${settingsStore.modelCount} models`,
+				status: 'catalog',
+				tone: 'gold',
+				group: 'models'
+			})}
+		</div>
+
+		<div
+			class="mb-2 font-mono text-[0.625rem] font-semibold tracking-[0.14em] text-parchment-500 uppercase"
+		>
+			Operations
+		</div>
+		<div class="flex flex-col gap-2">
+			{@render destination({
+				section: SETTINGS_SECTION_BY_ID.safety,
+				icon: 'S',
+				value: safetySummary,
+				status: 'healthy',
+				tone: 'ok',
+				group: 'safety'
+			})}
+			{@render destination({
+				section: SETTINGS_SECTION_BY_ID.access,
+				icon: 'A',
+				value: accessSummary,
+				status: cfg.server.auth_enabled ? 'protected' : 'open',
+				tone: cfg.server.auth_enabled ? 'ok' : 'warn',
+				group: 'access'
+			})}
+			{@render destination({
+				section: SETTINGS_SECTION_BY_ID.system,
+				icon: 'Y',
+				value: systemSummary,
+				status: 'healthy',
+				tone: 'ok',
+				group: 'system'
+			})}
+		</div>
+	</div>
+
+	<aside class="flex flex-col gap-3 xl:sticky xl:top-16">
+		<div class="rounded-xl border border-clay-800 bg-clay-900 px-4 py-3.5">
+			<div class="flex items-center justify-between gap-3">
+				<h3 class="text-sm font-semibold text-parchment-200">Staged Changes</h3>
+				<button
+					type="button"
+					onclick={() => settingsStore.openTray()}
+					class="text-xs text-lapis-300 hover:text-lapis-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					Review
+				</button>
+			</div>
+			{#if previewChanges.length === 0}
+				<p class="mt-2 text-xs text-parchment-500">
+					Nothing staged. Changes appear here as you edit.
+				</p>
+			{:else}
+				<ul class="mt-2 flex flex-col gap-2">
+					{#each previewChanges as change (change.id)}
+						<li class="border-l-2 border-gold-800 pl-2 text-xs">
+							<strong
+								class="block font-mono text-[0.6875rem] font-medium break-all text-parchment-300"
+								>{change.label}</strong
+							>
+							<span class="font-mono text-[0.6875rem] text-parchment-500">{change.detail}</span>
+						</li>
+					{/each}
+				</ul>
+				<button
+					type="button"
+					onclick={() => settingsStore.applyAll()}
+					disabled={settingsStore.busy}
+					class="mt-3 w-full rounded-lg bg-gold-500 px-3 py-1.5 text-sm font-semibold text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+				>
+					{settingsStore.saving ? 'Applying…' : 'Apply Changes'}
+				</button>
+			{/if}
+		</div>
+
+		<div class="rounded-xl border border-gold-500/20 bg-gold-500/5 px-4 py-3.5">
+			<p class="text-xs text-parchment-400">
+				<strong class="text-parchment-200">One rule for saving.</strong> Configuration and catalog edits
+				are staged first. Apply them together when you are ready; nothing reaches the server before that.
+			</p>
+		</div>
+	</aside>
+</div>
+
+<section class="mt-8">
+	<OverviewSection
+		tools={settingsStore.toolStatus}
+		statusKnown={settingsStore.statusLoaded}
+		showHead={false}
+	/>
+</section>
