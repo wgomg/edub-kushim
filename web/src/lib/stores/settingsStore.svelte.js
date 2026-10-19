@@ -537,7 +537,7 @@ async function applyAll() {
 
 async function discardAll() {
 	if (busy || !snapshot) return;
-	cfg = structuredClone(snapshot);
+	cfg = $state.snapshot(snapshot);
 	ensureAll();
 	syncMimeCheckboxes();
 	catalogOps = [];
