@@ -505,8 +505,15 @@ tags page.
 - **Dead-name pass** — `TagVerdictPairsWithMissingTags` classifies pairs with
   a missing side: dead-target pairs have their fresh verdict rows deleted
   (`DeleteFreshTagVerdictsForPairs`, so a cached `same` can never re-create a
-  deleted target); dead-query pairs whose latest verdict is not `same` are
-  re-adjudicated (a `same` latest means stable absorption — skipped).
+  deleted target — apply runs only; a report-only run skips the delete, and the
+  pair is re-adjudicated and invalidated again on every run); dead-query pairs
+  whose latest verdict is not `same` are re-adjudicated (a `same` latest means
+  stable absorption — skipped). The dead-query collection ignores verdict
+  freshness — a pair whose query is gone and whose latest verdict is `variant`
+  or `related` re-enters the worklist on every run, in report-only and apply
+  runs alike, and never settles: the re-confirmed verdict is upserted, but the
+  pair is collected by its missing query, not by freshness, so the next run
+  re-adjudicates it again.
 - **Stale/unjudged** — `TagVerdictPairsWithoutFreshVerdict`: no fresh row at
   the current `policy.Version` (older version → stale; current version with
   NULL `verdict_model` → unjudged).
@@ -670,24 +677,35 @@ runs count would-promote/would-re-judge and touch nothing. The counts land in
 `Report.Provisional` (`worklist`, `zero_assignment`, `promoted`, `rejudged`,
 `deferred`, `no_judge`, `skipped`, `failed`).
 
-**Identity-evidence sweep**: after the provisional sweep, the same run resolves
-pending identity evidence up to `max_rejudge` rows through the shared resolver
-(`internal/tags/admission/identity_resolve.go`). Candidate criteria are judged in
-batches, same-intent pairs adjudicated, and the dispositions applied: a
+**Identity evidence**: the reconcile no longer resolves identity claims
+itself — Stage I retired the sweep (D49). The twin arm inserts pending
+`same_intent` evidence (write runs; report-only runs count the would-insert
+rows without writing), and the separate scheduled `tagidentity` pass resolves
+them through the shared resolver
+(`internal/tags/admission/identity_resolve.go`): candidate criteria are judged
+in batches, same-intent pairs adjudicated, and the dispositions applied — a
 confirmed fold renames the tag (or aliases it when the folded name already
 exists), a same-intent loser becomes an alias of its winner, a deleted fold
-target is skipped, and a deferral stays for review. The per-pair verdict cache settles
-each claim once, so the triggered run and this sweep converge on whichever
-runs first. Report-only runs skip the sweep. The counts land in
-`Report.Identity` (`pending`, `resolved`, `folded`, `aliased`, `deferred`,
-`failed`); with the adjudicator disabled the sweep only counts the backlog.
+target is skipped, and a deferral stays for review. The per-pair verdict cache
+settles each claim once, so the twin arm's insert and the identity pass
+converge on whichever runs first.
 
 **Report-only**: the first run is always report-only
 (`GetLastCompletedTagReconcileTask` finds no completed prior run), regardless
 of the flag — it executes the full evidence/evaluation path and logs every
-would-be action without applying anything. With the adjudicator disabled,
-runs log the worklist snapshot and complete without LLM calls or writes; the
-daemon warns when reconciliation is enabled without the adjudicator.
+would-be action without applying anything. What it withholds is the store
+action set: alias application, compound splits, keep-flip writes, twin
+pending-row inserts, promotions, demotions, orphan deletions, and the
+dead-target verdict deletion. The sweep's own judgment evidence still persists
+(the compound scan's `tag_composition_event`, phrase-fold, and part-dimension
+rows, plus a confirmed pair verdict that flips nothing), which is what lets
+the compound scan resume from cache instead of re-judging on a later run —
+the pair worklist's dead-query entries are the exception, since they re-enter
+the worklist by their missing query rather than by freshness. With the
+adjudicator disabled, runs log the worklist snapshot and complete without LLM
+calls; the only store action is the twin arm's mechanical variant aliases
+(planned, not applied, in report-only). The daemon warns when reconciliation
+is enabled without the adjudicator.
 
 ---
 

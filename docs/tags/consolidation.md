@@ -448,11 +448,13 @@ anti-oscillating:
 - **Bounds:** `max_rejudge` pairs and `max_retag` documents per run; the
   provisional re-judge and the twin arm share the `max_rejudge` budget, the
   compound scan and the twin aliases share the `max_retag` budget, and the
-  demotion arm's revocations draw on the same per-run bound as its re-judgments,
+   demotion arm's revocations draw on the same per-run bound as its re-judgments,
   the deferral counted as capped. The first run
-  is always **report-only** (it lists would-be actions and touches nothing),
-  regardless of the `report_only` flag. A failed hold, alias, settled, or mass
-  lookup aborts the twin arm for the run rather than degrading its safety gates.
+  is always **report-only** (it takes no store action — would-be actions are
+  listed instead of applied, though the sweep's own judgment evidence still
+  persists), regardless of the `report_only` flag. A failed hold, alias,
+  settled, or mass lookup aborts the twin arm for the run rather than degrading
+  its safety gates.
 - **Provisional hygiene:** the same run re-checks provisional tags older than
   `provisional_grace_days` (default 30), oldest first. A stored verdict the
   decision re-derives as admit
@@ -495,8 +497,9 @@ anti-oscillating:
   demoted and planned entries naming each value and its reason) — surfaced in the
   web UI on the task detail page and as a status strip on the tags page.
 - With the adjudicator disabled, runs log the worklist snapshot and complete
-  without LLM calls or writes. The queue daemon warns when reconciliation is
-  enabled without the adjudicator.
+  without LLM calls; the only store action is the twin arm's mechanical variant
+  aliases (report-only runs plan even those). The queue daemon warns when
+  reconciliation is enabled without the adjudicator.
 
 ---
 
@@ -524,7 +527,7 @@ enricher:
   #     request_delay: 1
   # tag_reconcile:               # scheduled re-adjudication of stored tag verdicts
   #   enabled: false             # disabled by default
-  #   report_only: true          # snapshot-only runs (no writes); the first run is always report-only
+  #   report_only: true          # plans instead of acting (judgment evidence still persists); the first run is always report-only
   #   interval: 7                # days between runs
   #   time: "02:00"              # preferred time of day (HH:MM)
   #   max_rejudge: 200           # max pairs re-evaluated per run
