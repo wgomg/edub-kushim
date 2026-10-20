@@ -229,7 +229,6 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 	}
 
 	newDSN := config.BuildPostgresDSN(config.DatabaseConfig{
-		Type:     "postgres",
 		Host:     p.Host,
 		Port:     port,
 		User:     p.User,

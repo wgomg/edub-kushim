@@ -46,29 +46,27 @@ type AppConfig struct {
 	ConfigDir string        `yaml:"-" json:"config_dir"`
 }
 
-// ServerConfig is the API server section: bind address, timeouts, upload
-// and download limits, batch limits, and the authentication toggle and
-// secret.
+// ServerConfig is the API server section: bind address, timeouts in seconds, upload and download limits,
+// batch limits, and the authentication toggle and secret.
 type ServerConfig struct {
-	Host                 string        `mapstructure:"host" yaml:"host" json:"host"`
-	Port                 int           `mapstructure:"port" yaml:"port" json:"port"`
-	ReadTimeout          time.Duration `mapstructure:"read_timeout" yaml:"read_timeout" json:"read_timeout"`
-	WriteTimeout         time.Duration `mapstructure:"write_timeout" yaml:"write_timeout" json:"write_timeout"`
-	IdleTimeout          time.Duration `mapstructure:"idle_timeout" yaml:"idle_timeout" json:"idle_timeout"`
-	MaxUploadSize        int64         `mapstructure:"max_upload_size" yaml:"max_upload_size" json:"max_upload_size"`
-	MaxConcurrentBatches int           `mapstructure:"max_concurrent_batches" yaml:"max_concurrent_batches" json:"max_concurrent_batches"`
-	MaxDownloadFiles     int           `mapstructure:"max_download_files" yaml:"max_download_files" json:"max_download_files"`
-	MaxDownloadSizeMB    int64         `mapstructure:"max_download_size_mb" yaml:"max_download_size_mb" json:"max_download_size_mb"`
-	MaxBatchDelete       int           `mapstructure:"max_batch_delete" yaml:"max_batch_delete" json:"max_batch_delete"`
-	AuthEnabled          bool          `mapstructure:"auth_enabled" yaml:"auth_enabled" json:"auth_enabled"`
-	SessionSecret        string        `mapstructure:"session_secret" yaml:"session_secret" json:"session_secret"`
+	Host                 string `mapstructure:"host" yaml:"host" json:"host"`
+	Port                 int    `mapstructure:"port" yaml:"port" json:"port"`
+	ReadTimeout          int    `mapstructure:"read_timeout" yaml:"read_timeout" json:"read_timeout"`
+	WriteTimeout         int    `mapstructure:"write_timeout" yaml:"write_timeout" json:"write_timeout"`
+	IdleTimeout          int    `mapstructure:"idle_timeout" yaml:"idle_timeout" json:"idle_timeout"`
+	MaxUploadSize        int64  `mapstructure:"max_upload_size" yaml:"max_upload_size" json:"max_upload_size"`
+	MaxConcurrentBatches int    `mapstructure:"max_concurrent_batches" yaml:"max_concurrent_batches" json:"max_concurrent_batches"`
+	MaxDownloadFiles     int    `mapstructure:"max_download_files" yaml:"max_download_files" json:"max_download_files"`
+	MaxDownloadSizeMB    int64  `mapstructure:"max_download_size_mb" yaml:"max_download_size_mb" json:"max_download_size_mb"`
+	MaxBatchDelete       int    `mapstructure:"max_batch_delete" yaml:"max_batch_delete" json:"max_batch_delete"`
+	AuthEnabled          bool   `mapstructure:"auth_enabled" yaml:"auth_enabled" json:"auth_enabled"`
+	SessionSecret        string `mapstructure:"session_secret" yaml:"session_secret" json:"session_secret"`
 }
 
 // DatabaseConfig is the PostgreSQL section: a discrete connection or a
 // full DSN, the container runtime used by the database-backed tests, and
 // the idempotent seeders to apply.
 type DatabaseConfig struct {
-	Type      string   `mapstructure:"type" yaml:"type" json:"type"`
 	Host      string   `yaml:"host,omitempty" json:"host"`
 	Port      int      `yaml:"port,omitempty" json:"port"`
 	User      string   `yaml:"user,omitempty" json:"user"`
@@ -279,14 +277,13 @@ type DocTypeRefinementConfig struct {
 	TailWords int  `mapstructure:"tail_words" yaml:"tail_words" json:"tail_words"`
 }
 
-// ContentAnalyzerConfig is the LLM document analysis section: enablement,
-// timeout, tag bounds, the primary model, its fallbacks, the optional
-// prompt template, the type-refinement pass, and the credit-pause policy.
+// ContentAnalyzerConfig is the LLM document analysis section: enablement, timeout, the minimum tag count,
+// the primary model, its fallbacks, the optional prompt template, the type-refinement pass, and the
+// credit-pause policy.
 type ContentAnalyzerConfig struct {
 	Enabled            bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout            int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	MinTags            int                     `mapstructure:"min_tags" yaml:"min_tags" json:"min_tags"`
-	MaxTags            int                     `mapstructure:"max_tags" yaml:"max_tags" json:"max_tags"`
 	Llm                LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
 	Fallbacks          []FallbackConfig        `mapstructure:"fallbacks" yaml:"fallbacks" json:"fallbacks,omitempty"`
 	PromptTemplate     string                  `mapstructure:"prompt_template" yaml:"prompt_template" json:"prompt_template,omitempty"`
@@ -427,15 +424,15 @@ type HugotConfig struct {
 }
 
 // TagMatcherConfig is the semantic matching section: timeouts, the reduce target and chunk size, the
-// embedding model, the user-settable suggestion-injection bar, and the identity-candidate floor (filled
-// at load from the model's pinned values).
+// embedding model, the user-settable suggestion-injection bar and suggestion count (never below three),
+// and the model-pinned min_similarity and identity-candidate floors (filled at load).
 type TagMatcherConfig struct {
 	Timeout                     int         `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
 	ReduceTargetWords           int         `mapstructure:"reduce_target_words" yaml:"reduce_target_words" json:"reduce_target_words"`
 	ChunkSize                   int         `mapstructure:"chunk_size" yaml:"chunk_size" json:"chunk_size"`
 	Hugot                       HugotConfig `mapstructure:"hugot" yaml:"hugot" json:"hugot"`
 	MinSuggestionSimilarity     float64     `mapstructure:"min_suggestion_similarity" yaml:"min_suggestion_similarity" json:"min_suggestion_similarity"`
-	TopN                        int         `yaml:"-" json:"top_n"`
+	TopN                        int         `mapstructure:"top_n" yaml:"top_n" json:"top_n"`
 	MinSimilarity               float64     `yaml:"-" json:"min_similarity"`
 	IdentityCandidateSimilarity float64     `yaml:"-" json:"identity_candidate_similarity"`
 }
@@ -601,9 +598,9 @@ func DefaultConfig(configDir string) *Config {
 		Srv: ServerConfig{
 			Host:                 "0.0.0.0",
 			Port:                 3000,
-			ReadTimeout:          60 * time.Second,
-			WriteTimeout:         60 * time.Second,
-			IdleTimeout:          60 * time.Second,
+			ReadTimeout:          60,
+			WriteTimeout:         60,
+			IdleTimeout:          60,
 			MaxUploadSize:        100,
 			MaxConcurrentBatches: 4,
 			MaxDownloadFiles:     50,
@@ -612,7 +609,6 @@ func DefaultConfig(configDir string) *Config {
 			AuthEnabled:          true,
 		},
 		Db: DatabaseConfig{
-			Type:     "postgres",
 			Host:     "localhost",
 			Port:     5432,
 			User:     "edub",
@@ -687,7 +683,6 @@ func DefaultConfig(configDir string) *Config {
 				Enabled:            false,
 				Timeout:            120,
 				MinTags:            3,
-				MaxTags:            5,
 				PromptTemplate:     "",
 				PauseOnCreditError: true,
 				Llm: LlmConfig{
@@ -702,6 +697,7 @@ func DefaultConfig(configDir string) *Config {
 			TagMatcher: TagMatcherConfig{
 				Timeout:           120,
 				ReduceTargetWords: 4000,
+				TopN:              15,
 				// 4096 tokens keeps per-request inference memory bounded
 				// (~2.2–2.5 GB idle, ~4–6 GB peak with BGE-M3). The model's
 				// full context (0 = max_position_embeddings, 8180 tokens for
@@ -740,7 +736,7 @@ func DefaultConfig(configDir string) *Config {
 				Enabled:    false,
 				Interval:   7,
 				Time:       "04:00",
-				SampleSize: 25,
+				SampleSize: 150,
 			},
 		},
 	}
@@ -787,13 +783,8 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	if cfg.Enricher.ContentAnalyzer.MinTags == 0 {
 		cfg.Enricher.ContentAnalyzer.MinTags = 3
 	}
-	if cfg.Enricher.ContentAnalyzer.MaxTags == 0 {
-		cfg.Enricher.ContentAnalyzer.MaxTags = 5
-	}
-	if cfg.Enricher.ContentAnalyzer.MinTags < 1 ||
-		cfg.Enricher.ContentAnalyzer.MinTags > cfg.Enricher.ContentAnalyzer.MaxTags ||
-		cfg.Enricher.ContentAnalyzer.MaxTags > 20 {
-		return fmt.Errorf("enricher.contentanalyzer.min_tags and max_tags must satisfy 1 <= min_tags <= max_tags <= 20")
+	if cfg.Enricher.ContentAnalyzer.MinTags < 1 || cfg.Enricher.ContentAnalyzer.MinTags > 20 {
+		return fmt.Errorf("enricher.contentanalyzer.min_tags must satisfy 1 <= min_tags <= 20")
 	}
 	if len(cfg.Consumer.OCR.Languages) == 0 {
 		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --languages eng,spa,...' first")
@@ -810,6 +801,9 @@ func finalizeConfig(cfg *Config, configDir string) error {
 
 	if cfg.Srv.MaxBatchDelete < 1 {
 		return fmt.Errorf("server.max_batch_delete must be >= 1")
+	}
+	if cfg.Srv.ReadTimeout < 0 || cfg.Srv.WriteTimeout < 0 || cfg.Srv.IdleTimeout < 0 {
+		return fmt.Errorf("server.read_timeout, server.write_timeout and server.idle_timeout must be >= 0")
 	}
 
 	if err := ValidateDatabaseRuntime(cfg.Db.Runtime, cfg.Db.Container); err != nil {
@@ -858,6 +852,9 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.TagMatcher.MinSuggestionSimilarity < 0 {
 		return fmt.Errorf("enricher.tagmatcher.min_suggestion_similarity must be > 0 (leave unset for the model default)")
+	}
+	if cfg.Enricher.TagMatcher.TopN < 3 {
+		return fmt.Errorf("enricher.tagmatcher.top_n must be >= 3")
 	}
 
 	if cfg.Enricher.ContentAnalyzer.DocTypeRefinement.HeadWords < 0 {
@@ -933,7 +930,7 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		return fmt.Errorf("enricher.tag_audit.time: %w", err)
 	}
 	if cfg.Enricher.TagAudit.SampleSize <= 0 {
-		cfg.Enricher.TagAudit.SampleSize = 25
+		cfg.Enricher.TagAudit.SampleSize = 150
 	}
 	if cfg.Enricher.TagQuality.Enabled {
 		q := cfg.ResolvedQualityLlm()
@@ -953,7 +950,6 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	modelParts := strings.Split(cfg.Enricher.TagMatcher.Hugot.Model, "/")
 	modelShortName := modelParts[len(modelParts)-1]
 	cfg.Enricher.TagMatcher.Hugot.ModelPath = filepath.Join(configDir, "tagmatcher", "hugot", "models", modelShortName)
-	cfg.Enricher.TagMatcher.TopN = 3 * cfg.Enricher.ContentAnalyzer.MaxTags
 	cfg.Enricher.TagMatcher.MinSimilarity = defaultMinSimilarity(modelShortName)
 	cfg.Enricher.TagMatcher.IdentityCandidateSimilarity = defaultIdentityCandidateSimilarity(modelShortName)
 	// zero reads as unset: the model default re-applies, so kushim config

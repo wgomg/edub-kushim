@@ -201,17 +201,6 @@
 						hint="Lower bound requested from the analyzer."
 						bind:value={cfg.enricher.contentanalyzer.min_tags}
 					/>
-					<UnitField
-						id="content-analyzer-max-tags"
-						label="Max tags"
-						unit="tags"
-						type="number"
-						inputmode="numeric"
-						min="1"
-						max="20"
-						hint="Upper bound per document; also scales how many tag suggestions the matcher feeds the prompt."
-						bind:value={cfg.enricher.contentanalyzer.max_tags}
-					/>
 					<div class="sm:col-span-2">
 						<Switch
 							id="content-analyzer-pause-credit"
@@ -234,14 +223,6 @@
 						directory.
 					</Note>
 				</div>
-
-				{#if cfg.enricher.contentanalyzer.min_tags > cfg.enricher.contentanalyzer.max_tags}
-					<div class="mt-4">
-						<Note variant="warn" title="Tag range inverted.">
-							Min tags must be less than or equal to max tags; the save will be rejected.
-						</Note>
-					</div>
-				{/if}
 
 				<details
 					class="adv advanced-only mt-[1.125rem] border-t border-dashed border-clay-700 pt-3"
@@ -516,6 +497,16 @@
 					inputmode="numeric"
 					min="0"
 					bind:value={cfg.enricher.tagmatcher.chunk_size}
+				/>
+				<UnitField
+					id="tag-matcher-top-n"
+					label="Top suggestions"
+					unit="tags"
+					type="number"
+					inputmode="numeric"
+					min="3"
+					hint="Matcher suggestions above the similarity threshold sent to the analyzer; minimum 3."
+					bind:value={cfg.enricher.tagmatcher.top_n}
 				/>
 				<div class="field">
 					<label
@@ -905,6 +896,16 @@
 					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
 					hint="HH:MM, 24-hour."
 					bind:value={cfg.enricher.tag_audit.time}
+				/>
+				<UnitField
+					id="tag-audit-sample-size"
+					label="Sample size"
+					unit="docs"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					hint="Documents sampled per run from the sweep register."
+					bind:value={cfg.enricher.tag_audit.sample_size}
 				/>
 			</div>
 		</Card>

@@ -52,7 +52,7 @@ func TestBuildPrompt_DefaultTemplate(t *testing.T) {
 	}
 	tagSuggestions := []string{"ai", "ml"}
 
-	result := BuildPrompt("sample text", docTypes, peopleTypes, tagSuggestions, "", 3, 5)
+	result := BuildPrompt("sample text", docTypes, peopleTypes, tagSuggestions, "", 3)
 
 	if !strings.Contains(result, "sample text") {
 		t.Error("expected output to contain the input text")
@@ -112,7 +112,7 @@ func TestDefaultPromptTemplate_StaysWholeClause(t *testing.T) {
 
 func TestBuildPrompt_CustomTemplate(t *testing.T) {
 	custom := "Custom prompt: {{.Text}} and {{.DocTypePrompt}}"
-	result := BuildPrompt("hello world", nil, nil, nil, custom, 3, 5)
+	result := BuildPrompt("hello world", nil, nil, nil, custom, 3)
 
 	expected := "Custom prompt: hello world and - Document type: choose one of the following:\n"
 	if result != expected {
@@ -121,7 +121,7 @@ func TestBuildPrompt_CustomTemplate(t *testing.T) {
 }
 
 func TestBuildPrompt_MalformedTemplateFallsBack(t *testing.T) {
-	result := BuildPrompt("text", nil, nil, nil, "{{.Invalid", 3, 5)
+	result := BuildPrompt("text", nil, nil, nil, "{{.Invalid", 3)
 
 	if !strings.Contains(result, "text") {
 		t.Error("expected fallback to default template with input text")
@@ -132,7 +132,7 @@ func TestBuildPrompt_MalformedTemplateFallsBack(t *testing.T) {
 }
 
 func TestBuildPrompt_ExecutionErrorFallsBack(t *testing.T) {
-	result := BuildPrompt("text", nil, nil, nil, "{{.Nonexistent}}", 3, 5)
+	result := BuildPrompt("text", nil, nil, nil, "{{.Nonexistent}}", 3)
 
 	if !strings.Contains(result, "text") {
 		t.Error("expected fallback to default template with input text")
@@ -154,7 +154,7 @@ func TestBuildPrompt_EmptyTagSuggestions(t *testing.T) {
 	docTypes := []TypeRef{
 		{Name: "article", Description: "A written composition"},
 	}
-	result := BuildPrompt("sample text", docTypes, nil, nil, "", 3, 5)
+	result := BuildPrompt("sample text", docTypes, nil, nil, "", 3)
 
 	if !strings.Contains(result, "sample text") {
 		t.Error("expected output to contain the input text")
@@ -166,7 +166,7 @@ func TestBuildPrompt_EmptyTagSuggestions(t *testing.T) {
 }
 
 func TestBuildPrompt_WhitespaceCustomTemplateUsesDefault(t *testing.T) {
-	result := BuildPrompt("text", nil, nil, nil, "   \n  ", 3, 5)
+	result := BuildPrompt("text", nil, nil, nil, "   \n  ", 3)
 
 	if !strings.Contains(result, "Analyze the excerpts") {
 		t.Error("expected whitespace-only template to use default")

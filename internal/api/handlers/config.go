@@ -917,6 +917,7 @@ type EnricherConfigResponse struct {
 	TagQuality      TagQualityConfigResponse     `json:"tag_quality"`
 	TagReconcile    TagReconcileConfigResponse   `json:"tag_reconcile"`
 	TagMeasure      TagMeasureConfigResponse     `json:"tag_measure"`
+	TagAudit        TagAuditConfigResponse       `json:"tag_audit"`
 }
 
 // TagQualityConfigResponse is the quality judge's API view.
@@ -961,6 +962,14 @@ type TagMeasureConfigResponse struct {
 	Time     string  `json:"time"`
 }
 
+// TagAuditConfigResponse is the coverage audit section's API view.
+type TagAuditConfigResponse struct {
+	Enabled    bool    `json:"enabled"`
+	Interval   float64 `json:"interval"`
+	Time       string  `json:"time"`
+	SampleSize int     `json:"sample_size"`
+}
+
 // TextReducerResponse is the reducer section's API view.
 type TextReducerResponse struct {
 	Engine      string `json:"engine"`
@@ -980,7 +989,6 @@ type ContentAnalyzerResponse struct {
 	Enabled            bool                      `json:"enabled"`
 	Timeout            int                       `json:"timeout"`
 	MinTags            int                       `json:"min_tags"`
-	MaxTags            int                       `json:"max_tags"`
 	Llm                LlmConfigResponse         `json:"llm"`
 	Fallbacks          []FallbackConfigResponse  `json:"fallbacks,omitempty"`
 	PromptTemplate     string                    `json:"prompt_template,omitempty"`
@@ -1010,6 +1018,7 @@ type TagMatcherResponse struct {
 	Timeout           int           `json:"timeout"`
 	ReduceTargetWords int           `json:"reduce_target_words"`
 	ChunkSize         int           `json:"chunk_size"`
+	TopN              int           `json:"top_n"`
 	Hugot             HugotResponse `json:"hugot"`
 }
 
@@ -1106,7 +1115,6 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.ContentAnalyzer.Enabled = cfg.Enricher.ContentAnalyzer.Enabled
 	resp.Enricher.ContentAnalyzer.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
 	resp.Enricher.ContentAnalyzer.MinTags = cfg.Enricher.ContentAnalyzer.MinTags
-	resp.Enricher.ContentAnalyzer.MaxTags = cfg.Enricher.ContentAnalyzer.MaxTags
 	resp.Enricher.ContentAnalyzer.PromptTemplate = cfg.Enricher.ContentAnalyzer.PromptTemplate
 	resp.Enricher.ContentAnalyzer.PauseOnCreditError = cfg.Enricher.ContentAnalyzer.PauseOnCreditError
 	resp.Enricher.ContentAnalyzer.DocTypeRefinement = DocTypeRefinementResponse{
@@ -1139,6 +1147,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMatcher.Timeout = cfg.Enricher.TagMatcher.Timeout
 	resp.Enricher.TagMatcher.ReduceTargetWords = cfg.Enricher.TagMatcher.ReduceTargetWords
 	resp.Enricher.TagMatcher.ChunkSize = cfg.Enricher.TagMatcher.ChunkSize
+	resp.Enricher.TagMatcher.TopN = cfg.Enricher.TagMatcher.TopN
 	resp.Enricher.TagMatcher.Hugot.Model = cfg.Enricher.TagMatcher.Hugot.Model
 	resp.Enricher.TagMatcher.Hugot.Backend = cfg.Enricher.TagMatcher.Hugot.Backend
 	resp.Enricher.TagAdjudicator.Enabled = cfg.Enricher.TagAdjudicator.Enabled
@@ -1166,6 +1175,10 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMeasure.Enabled = cfg.Enricher.TagMeasure.Enabled
 	resp.Enricher.TagMeasure.Interval = cfg.Enricher.TagMeasure.Interval
 	resp.Enricher.TagMeasure.Time = cfg.Enricher.TagMeasure.Time
+	resp.Enricher.TagAudit.Enabled = cfg.Enricher.TagAudit.Enabled
+	resp.Enricher.TagAudit.Interval = cfg.Enricher.TagAudit.Interval
+	resp.Enricher.TagAudit.Time = cfg.Enricher.TagAudit.Time
+	resp.Enricher.TagAudit.SampleSize = cfg.Enricher.TagAudit.SampleSize
 	resp.Storage.ConsumptionDir = cfg.Storage.ConsumptionDir
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
 	resp.Storage.MigrationMode = cfg.Storage.MigrationMode

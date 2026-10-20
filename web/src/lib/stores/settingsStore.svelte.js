@@ -42,13 +42,19 @@ function ensureAll() {
 	ensureTagAdjudicatorBlock();
 	ensureTagQualityBlock();
 	ensureContentAnalyzerTags();
+	ensureTagMatcherTopN();
 }
 
 function ensureContentAnalyzerTags() {
 	if (!cfg) return;
 	const ca = cfg.enricher.contentanalyzer;
 	if (!(ca.min_tags > 0)) ca.min_tags = 3;
-	if (!(ca.max_tags > 0)) ca.max_tags = 5;
+}
+
+function ensureTagMatcherTopN() {
+	if (!cfg) return;
+	if (!cfg.enricher.tagmatcher) cfg.enricher.tagmatcher = {};
+	if (!(cfg.enricher.tagmatcher.top_n >= 3)) cfg.enricher.tagmatcher.top_n = 15;
 }
 
 function ensureFallbacksArray() {
@@ -113,7 +119,7 @@ function ensureTagAuditBlock() {
 	if (!cfg) return;
 	if (!cfg.enricher) cfg.enricher = {};
 	if (cfg.enricher.tag_audit) return;
-	cfg.enricher.tag_audit = { enabled: false, interval: 7, time: '04:00' };
+	cfg.enricher.tag_audit = { enabled: false, interval: 7, time: '04:00', sample_size: 150 };
 }
 
 function ensureTagAdjudicatorBlock() {
@@ -199,7 +205,6 @@ function bodyFromConfig() {
 		'enricher.contentanalyzer.enabled': cfg.enricher.contentanalyzer.enabled,
 		'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
 		'enricher.contentanalyzer.min_tags': Number(cfg.enricher.contentanalyzer.min_tags),
-		'enricher.contentanalyzer.max_tags': Number(cfg.enricher.contentanalyzer.max_tags),
 		'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
 		'enricher.contentanalyzer.pause_on_credit_error':
 			cfg.enricher.contentanalyzer.pause_on_credit_error,
@@ -225,6 +230,7 @@ function bodyFromConfig() {
 		'enricher.tagmatcher.timeout': Number(cfg.enricher.tagmatcher.timeout),
 		'enricher.tagmatcher.reduce_target_words': Number(cfg.enricher.tagmatcher.reduce_target_words),
 		'enricher.tagmatcher.chunk_size': Number(cfg.enricher.tagmatcher.chunk_size),
+		'enricher.tagmatcher.top_n': Number(cfg.enricher.tagmatcher.top_n),
 		'enricher.tagmatcher.hugot.model': cfg.enricher.tagmatcher.hugot.model,
 		'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
 		'enricher.tag_adjudicator.enabled': cfg.enricher.tag_adjudicator.enabled,
@@ -261,6 +267,7 @@ function bodyFromConfig() {
 		'enricher.tag_audit.enabled': cfg.enricher.tag_audit.enabled,
 		'enricher.tag_audit.interval': Number(cfg.enricher.tag_audit.interval),
 		'enricher.tag_audit.time': cfg.enricher.tag_audit.time,
+		'enricher.tag_audit.sample_size': Number(cfg.enricher.tag_audit.sample_size),
 		'storage.consumption_dir': cfg.storage.consumption_dir,
 		'storage.storage_dir': cfg.storage.storage_dir,
 		'storage.migration_mode': cfg.storage.migration_mode,

@@ -1,6 +1,6 @@
 app:
   environment: development
-  log_level: debug
+  log_level: info
   logging:
     max_size: 100      # MB per file before rotation
     max_backups: 7     # rotated files to keep
@@ -19,10 +19,9 @@ server:
   max_download_size_mb: 500 # max total size in MB for batch download
   max_batch_delete: 50 # max documents in a single batch delete
   session_secret: '' # 64-char hex key for JWT signing; auto-generated if empty (logged as WARNING on startup)
-  auth_enabled: false # when false, API endpoints bypass JWT auth
+  auth_enabled: true # setup writes false on first run; when false, API endpoints bypass JWT auth
 
 database:
-  type: postgres
   # dsn: "postgres://edub:edub@localhost:5432/edub?sslmode=disable"
   host: localhost
   port: 5432
@@ -45,7 +44,8 @@ storage:
 consumer:
   workers: 1
   max_files_per_batch: 10
-  supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.docx', '.odt']
+  supported_files: ['.pdf']  # built-in default; the setup wizard records your selection
+  # supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.docx', '.odt']
   polling:
     enabled: false
     interval: 5  # minutes
@@ -101,6 +101,8 @@ enricher:
   contentanalyzer:
     enabled: false
     timeout: 120
+    min_tags: 3  # lower bound requested from the analyzer
+    pause_on_credit_error: true # pause the batch when the provider reports a credit/balance error
     # prompt_template: ""  # optional custom LLM prompt; see docs for placeholders
     # doc_type_refinement:
     #   enabled: true
@@ -108,8 +110,8 @@ enricher:
     #   tail_words: 400
     llm:
       adapter: 'openai-compatible' # openai-compatible | anthropic
-      provider: 'openai'           # auto-populated from model catalog
-      model: 'gpt-4o'              # auto-populated from model catalog
+      # provider: 'openai'           # auto-populated from the model catalog
+      # model: 'gpt-4o'              # auto-populated from the model catalog
       # token: ''
       # temperature: 0.0
       # request_delay: 1  # seconds to sleep after each LLM request (0 = off)
@@ -141,6 +143,8 @@ enricher:
     # injection bar for matcher suggestions: only suggestions at or above
     # it reach the emission prompt; 0 = the per-model default (0.52 on BGE-M3).
     min_suggestion_similarity: 0.52
+    # suggestions above the injection bar sent to the analyzer (minimum 3)
+    top_n: 15
     hugot:
       model: BAAI/bge-m3
       backend: ort
@@ -179,6 +183,12 @@ enricher:
   #   enabled: false             # disabled by default
   #   interval: 7                # days between runs
   #   time: "03:00"              # preferred time of day (HH:MM)
+
+  # tag_audit:                   # scheduled tag coverage audit (verify and repair application recall)
+  #   enabled: false             # disabled by default
+  #   interval: 7                # days between runs
+  #   time: "04:00"              # preferred time of day (HH:MM)
+  #   sample_size: 150           # documents sampled per run
 
 backup:
   # enabled: true

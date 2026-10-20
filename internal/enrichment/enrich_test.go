@@ -235,7 +235,7 @@ func TestEnrich_SuggestionInjectionBar(t *testing.T) {
 		client := database.NewTestClient(t)
 		cfg := &config.Config{
 			Enricher: config.EnricherConfig{
-				TagMatcher: config.TagMatcherConfig{MinSuggestionSimilarity: bar},
+				TagMatcher: config.TagMatcherConfig{MinSuggestionSimilarity: bar, TopN: 15},
 			},
 		}
 		recorder := &suggestionRecorder{}

@@ -155,9 +155,9 @@ func (s *Server) rebuild(client *database.Client) {
 		s.httpServer = &http.Server{
 			Addr:         s.addr,
 			Handler:      handler,
-			ReadTimeout:  cfg.Srv.ReadTimeout,
-			WriteTimeout: cfg.Srv.WriteTimeout,
-			IdleTimeout:  cfg.Srv.IdleTimeout,
+			ReadTimeout:  time.Duration(cfg.Srv.ReadTimeout) * time.Second,
+			WriteTimeout: time.Duration(cfg.Srv.WriteTimeout) * time.Second,
+			IdleTimeout:  time.Duration(cfg.Srv.IdleTimeout) * time.Second,
 		}
 	} else {
 		s.httpServer.Handler = handler

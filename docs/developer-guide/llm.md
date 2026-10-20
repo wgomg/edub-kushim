@@ -209,9 +209,10 @@ Design points:
   comma-joined).
 - **Tag count is a floor, not a range**: the prompt asks for "At least
   `min_tags`" tags (`enricher.contentanalyzer.min_tags`, default 3) and the
-  post-processing filter applies no count cap; `max_tags` no longer bounds
-  emissions (it still scales the matcher's suggestion list, `TopN = 3 ×
-  max_tags`). The prompt forbids merging concepts with a conjunction and
+  post-processing filter applies no count cap; the size of the matcher
+  suggestion list reaching the prompt is bounded by
+  `enricher.tagmatcher.top_n` (default 15, minimum 3). The prompt forbids
+  merging concepts with a conjunction and
   instructs compound decomposition — when each part of a phrase would work as
   a tag on its own, the parts are emitted instead of the phrase, while fixed
   names and set phrases stay whole. It also states the facet rule — tags

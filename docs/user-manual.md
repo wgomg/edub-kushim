@@ -2013,7 +2013,6 @@ Three-phase API:
   "enricher.contentanalyzer.enabled": true,
   "enricher.contentanalyzer.timeout": 120,
   "enricher.contentanalyzer.min_tags": 3,
-  "enricher.contentanalyzer.max_tags": 5,
   "enricher.contentanalyzer.prompt_template": "",
   "enricher.contentanalyzer.pause_on_credit_error": true,
   "enricher.contentanalyzer.doc_type_refinement.enabled": true,
@@ -2040,6 +2039,7 @@ Three-phase API:
   "enricher.tagmatcher.timeout": 120,
   "enricher.tagmatcher.reduce_target_words": 4000,
   "enricher.tagmatcher.chunk_size": 4096,
+  "enricher.tagmatcher.top_n": 15,
   "enricher.tagmatcher.hugot.model": "BAAI/bge-m3",
   "enricher.tagmatcher.hugot.backend": "ort"
 }
@@ -2833,9 +2833,9 @@ app:
 server:
   host: 0.0.0.0
   port: 3000
-  read_timeout: 60s
-  write_timeout: 60s
-  idle_timeout: 60s
+  read_timeout: 60
+  write_timeout: 60
+  idle_timeout: 60
   max_concurrent_batches: 4 # max concurrent worker processes (enforced by the queue daemon)
   max_upload_size: 100 # max multipart upload size in MB
   max_download_files: 50 # max files in a single batch download
@@ -2916,7 +2916,6 @@ enricher:
     enabled: false # disabled by default — enable after configuring LLM
     timeout: 120
     # min_tags: 3  # lower bound requested from the analyzer (default 3)
-    # max_tags: 5  # scales the matcher's suggestion list (default 5, max 20); emitted tags are not capped
     # pause_on_credit_error: true  # pause batch on LLM provider credit/balance errors
     # prompt_template: ''  # optional custom LLM prompt; see docs for available placeholders
     # doc_type_refinement:
@@ -2943,6 +2942,7 @@ enricher:
     timeout: 120
     reduce_target_words: 4000 # text reduction before tag matching
     chunk_size: 4096 # max tokens per inference chunk; 0 = model max (8180 for bge-m3) — see docs/tags/matcher.md
+    top_n: 15 # suggestions above the matcher's injection bar sent to the analyzer (minimum 3)
     hugot:
       model: 'BAAI/bge-m3'
       backend: 'ort' # ort (ONNX Runtime) | GO
@@ -2983,7 +2983,7 @@ enricher:
   #   enabled: false             # disabled by default
   #   interval: 7                # days between runs
   #   time: "04:00"              # preferred time of day (HH:MM)
-  #   sample_size: 25            # documents sampled per run (plus the below-floor flagged set; the sweep register bounds each)
+  #   sample_size: 150           # documents sampled per run (plus the below-floor flagged set; the sweep register bounds each)
 
 backup:
   # enabled: true
@@ -3043,8 +3043,7 @@ mirror:
 | `enricher.textreducer`         | Text summarization before LLM (TextRank)                               |
 | `enricher.contentanalyzer`     | LLM-based document classification (adapter/provider/model)                         |
 | `enricher.contentanalyzer.llm` | Adapter/provider/model config (flat structure with capability flags)                |
-| `enricher.contentanalyzer.min_tags` | Lower bound of thematic tags requested from the analyzer (default `3`; validated `1 ≤ min ≤ max ≤ 20`) |
-| `enricher.contentanalyzer.max_tags` | Scales how many tag suggestions the matcher feeds the prompt (`TopN = 3 × max_tags`; default `5`, max `20`). No longer caps emitted tags: the analyzer asks for at least `min_tags` and the filter applies no count cap |
+| `enricher.contentanalyzer.min_tags` | Lower bound of thematic tags requested from the analyzer (default `3`; validated `1 ≤ min_tags ≤ 20`). The analyzer asks for at least this many tags and the post-processing filter applies no count cap |
 | `enricher.contentanalyzer.prompt_template` | Custom Go `text/template` for the LLM prompt; empty = built-in default |
 | `enricher.contentanalyzer.pause_on_credit_error` | Pause the batch when the LLM provider returns a credit/balance error — content analysis and the judged steps alike (default `true`) |
 | `enricher.contentanalyzer.llm.request_delay` | Seconds to sleep after each LLM request (default `1`; `0` = off, max `60`) — for rate-limited providers |
@@ -3052,12 +3051,13 @@ mirror:
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
 | `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tags/matcher.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
+| `enricher.tagmatcher.top_n`    | Suggestions the matcher returns above the injection bar (`min_suggestion_similarity`) that reach the analyzer's prompt (default `15`; validation requires `≥ 3`) |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for the identity gate: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, proposed folds are confirmed against three criteria (base form, fold preservation, conventional written form) and candidate neighbours are classified `same`/`variant`/`related` with a direction for `same`; verdicts are cached per claim in `tag_identity_event`, `same` aliases the losing name onto the winner, and claims a partial reply leaves without a verdict stay pending — their candidates born provisional — for the identity pass (`kushim tagidentity`, on demand or on its own daily schedule). The same adjudicator also runs the language guard: detected non-English emissions are rewritten to their judged English canonical form (a value returned unchanged is already English) and an uncertain translation is held for review with `reason=language_review` |
 | `enricher.tag_quality`         | Optional admission decision for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary are decided by the pinned rule set over their features: the judge's four rubric answers — `subject_matter`, `not_person`, `atomic`, `not_form_genre`, plus the optional `defer` abstention — together with the `dimension` verdict the parts pass owns (read from the shared parts cache and stamped onto the row), and the emission's deterministic signals (a detail annotated `other`, a best store similarity below the internal no-anchor cut). The decision defers on the judge's abstention, rejects on two or more failing signals, defers on exactly one (the gray band), and admits when nothing fails; verdicts are cached per name in `tag_quality_event` with the recorded outcome, rejections drop the tag for that document — never stored — and are logged as `tagquality[v6]` lines, and a transient judge failure retries once while parse failures, incomplete replies, output-cap hits, credit exhaustion, token-limit, content-too-large and context errors are never retried — a reply that omits verdicts for some candidates salvages the entries it returned (each decided and cached) and defers only the missing candidates with `judge_unavailable`, while every other non-credit failure keeps every novel tag with a defer decision, and a credit-exhaustion failure pauses the batch. Kept tags are **provisional**: attached and searchable from birth, but excluded from the embedding store — and therefore from suggestions, consolidation targets, and the suggestion fallback — until the admission decision admits them and assignments on ≥10 distinct live (non-trashed) documents clear the promotion floor and promote them inline (logged as `tagquality[v6]: promote …`); a verdict-less birth (judge outage) or re-emitted legacy provisional never gets a verdict row — a name in the tag table is not novel, so the judge never sees it again — and stays out of the vocabulary until the scheduled reconciliation sweep re-derives the decision from its stored verdict or re-judges it, or an operator promotes it from the review queue. A fold the gate refuses beside a live store value holds the birth for review — the queue shows the anchor and promotion waits until an operator resolves it. The decision thresholds are internal pinned constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
 | `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`; also the identity pass's per-run budget), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (disposed through the composition decision when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored verdict the decision re-derives as admit plus ≥10 live documents promotes the name immediately, defer and reject verdicts stay queued for the review surface on the tags page, verdict-less names are re-judged under the `max_rejudge` cap and promoted when admitted (report-only runs list the would-be promotions and verdicts). Requires the tag adjudicator for the judged arms — without it, a run changes nothing beyond the twin arm's mechanical variant aliases (which report-only runs plan instead of applying). `enabled` gates only the automatic scheduled enqueuing: the queue pool runs unconditionally, so `kushim tagreconcile` and any run already queued are always claimed. Pending identity evidence is resolved by the identity pass (`kushim tagidentity`), not by this sweep |
 
 | `enricher.tag_measure`         | Scheduled tag extension measurement: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `03:00`). The queue daemon enqueues a `tagmeasure` task when due (anchored on the most recent completed run); the pass reads one REPEATABLE READ snapshot and appends versioned evidence records (`tag_measurement`) for per-value mass, pairwise overlap with Jaccard/overlap/containment coefficients, compound reconstructibility against mechanically derived parts, and part coverage, plus the derived composition-review worklists (`≈` twin candidates, compound split proposals, near-contained siblings) as evidence only — nothing is promoted, merged, split, or deleted. `kushim tagmeasure` enqueues a run through the queue (dedup key `tagmeasure`); the pool always claims, so the flag gates only automatic enqueuing |
-| `enricher.tag_audit`           | Scheduled tag coverage audit: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `04:00`), `sample_size` (documents sampled per run, default `25`; `≤ 0` resets to the default). The queue daemon enqueues a `tagaudit` task when due (anchored on the most recent completed run); the pass draws a sample plus the below-floor documents from the sweep register, suggests dimensions the document is about but does not carry (matcher trigger, then lexical narrowing), confirms them with the applicability judge, fills the confirmed gaps, and records the durable coverage classes plus per-dimension coverage counts. A document is audited at most once per sweep. `kushim tagaudit` and `POST /api/v1/tags/audit/reevaluate` enqueue a run through the queue (dedup key `tagaudit`); the pool always claims, so these runs execute regardless of the schedule, which gates only automatic enqueuing. The trigger bar is a pinned constant, not a setting |
+| `enricher.tag_audit`           | Scheduled tag coverage audit: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `04:00`), `sample_size` (documents sampled per run, default `150`; `≤ 0` resets to the default). The queue daemon enqueues a `tagaudit` task when due (anchored on the most recent completed run); the pass draws a sample plus the below-floor documents from the sweep register, suggests dimensions the document is about but does not carry (matcher trigger, then lexical narrowing), confirms them with the applicability judge, fills the confirmed gaps, and records the durable coverage classes plus per-dimension coverage counts. A document is audited at most once per sweep. `kushim tagaudit` and `POST /api/v1/tags/audit/reevaluate` enqueue a run through the queue (dedup key `tagaudit`); the pool always claims, so these runs execute regardless of the schedule, which gates only automatic enqueuing. The trigger bar is a pinned constant, not a setting |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
 > takes effect at the closest upcoming occurrence of the new timing; if that
@@ -3080,18 +3080,18 @@ worker indefinitely.
 
 ### Server timeouts
 
-`server.read_timeout`, `server.write_timeout`, `server.idle_timeout` (default: 60s)
+`server.read_timeout`, `server.write_timeout`, `server.idle_timeout` (default: `60`; plain integer seconds)
 
 These control the HTTP server connection lifecycle and protect against slow
 clients, not against processing duration.
 
 | Field | What it guards | Becomes premature below |
 |---|---|---|
-| `read_timeout` | Time to receive the full request (headers + body) | **5s** — a 100 MB multipart upload at moderate bandwidth needs at least 30s |
-| `write_timeout` | Time to send the full response | **5s** — large JSON responses (search results, batch listings) can take several seconds |
-| `idle_timeout` | Time a keep-alive connection stays idle | **1s** — keep-alive becomes useless, causing connection churn |
+| `read_timeout` | Time to receive the full request (headers + body) | **5** — a 100 MB multipart upload at moderate bandwidth needs at least 30s |
+| `write_timeout` | Time to send the full response | **5** — large JSON responses (search results, batch listings) can take several seconds |
+| `idle_timeout` | Time a keep-alive connection stays idle | **1** — keep-alive becomes useless, causing connection churn |
 
-The default 60s is fine for most deployments. Lower `read_timeout` if you
+The default 60 is fine for most deployments. Lower `read_timeout` if you
 control client upload speeds and want tighter slow-loris protection.
 
 ### Pipeline stage timeouts

@@ -295,7 +295,8 @@ sort.Slice(matches, func(i, j int) bool {
 })
 ```
 
-The result is capped at `TopN` (15). The top scores are logged for debugging
+The result is capped at `TopN` (user-settable via `enricher.tagmatcher.top_n`,
+default 15). The top scores are logged for debugging
 (`hugot.go:307-316`) — useful when tuning thresholds.
 
 ---
@@ -621,7 +622,7 @@ All knobs live under `enricher.tagmatcher` in the config
 | `hugot.backend` | `ort` | `ort` or `go` |
 | `hugot.chunk_size` | `4096` | max tokens per embedding chunk (clamped to model limit − 12) |
 | `hugot.cpu_mem_arena` / `mem_pattern` | `false` | ORT memory knobs (§2) |
-| `top_n` | `15` (derived) | max suggestions returned |
+| `top_n` | `15` | suggestion count above the injection bar returned to the enricher (validation requires ≥ 3) |
 | `min_similarity` | model-derived | document→tag threshold |
 | `min_suggestion_similarity` | model-derived (`0.52` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `identity_candidate_similarity` | model-derived | tag→tag identity-candidate floor: candidate neighbours at or above it are the only pairs the identity gate considers |
@@ -757,8 +758,10 @@ catalog/derivation, add it to every switch statement.
   `if h == nil { return fmt.Errorf("tag matcher not initialized") }` — the
   matcher can be absent when unconfigured; callers must treat that as a
   graceful no-op, not a panic.
-- **`topN == 0` or empty store short-circuits** (`hugot.go:286-288`): a
-  zero `top_n` disables suggestions entirely.
+- **`topN == 0` or empty store short-circuits** (`hugot.go:286-288`): the
+  zero short-circuit is only reachable through programmatic zero-values —
+  `enricher.tagmatcher.top_n` validates ≥ 3 at load, so a config can no
+  longer disable suggestions.
 - **Consolidation with `consolidationSim == 0.0` passes through** — that's
   the documented "disable consolidation" knob, not a bug.
 - **The adjudicator is disabled by default** — folds are not applied and

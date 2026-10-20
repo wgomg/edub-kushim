@@ -764,3 +764,27 @@ func TestFinalizeConfig_TagReconcile(t *testing.T) {
 		}
 	})
 }
+
+// TestFinalizeConfig_ServerTimeouts pins the plain-int timeout contract: the built-in defaults
+// validate, and a negative value is rejected before it can become an already-expired deadline
+// handed to http.Server.
+func TestFinalizeConfig_ServerTimeouts(t *testing.T) {
+	t.Run("defaults are valid", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := finalizeConfig(DefaultConfig(dir), dir); err != nil {
+			t.Fatalf("finalizeConfig on defaults: %v", err)
+		}
+	})
+
+	t.Run("negative read_timeout rejected", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Srv.ReadTimeout = -1
+		err := finalizeConfig(cfg, t.TempDir())
+		if err == nil {
+			t.Fatal("a negative read_timeout must fail")
+		}
+		if !strings.Contains(err.Error(), "server.read_timeout") {
+			t.Errorf("error %q does not name the offending key", err)
+		}
+	})
+}

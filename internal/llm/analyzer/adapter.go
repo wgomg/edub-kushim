@@ -97,7 +97,7 @@ type AnalysisResult struct {
 // anthropic maps to the Anthropic adapter, anything else to the
 // OpenAI-compatible one. The registry supplies the capability gates; the
 // adapters skip them when the model is not cataloged.
-func NewContentAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (ContentAnalyzer, error) {
+func NewContentAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags int, reg *llm.Registry) (ContentAnalyzer, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("registry is required for %q adapter", llmCfg.Adapter)
 	}
@@ -105,8 +105,8 @@ func NewContentAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *confi
 
 	switch llmCfg.Adapter {
 	case "anthropic":
-		return NewLlmAnthropic(logger, cfg, llmCfg, caps, promptTemplate, minTags, maxTags, reg)
+		return NewLlmAnthropic(logger, cfg, llmCfg, caps, promptTemplate, minTags, reg)
 	default:
-		return NewLlmOpenAiCompatible(logger, cfg, llmCfg, caps, promptTemplate, minTags, maxTags, reg)
+		return NewLlmOpenAiCompatible(logger, cfg, llmCfg, caps, promptTemplate, minTags, reg)
 	}
 }

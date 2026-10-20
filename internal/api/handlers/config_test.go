@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -142,6 +144,59 @@ func TestConfigResponseFrom_PauseOnCreditError(t *testing.T) {
 	resp = ConfigResponseFrom(cfg)
 	if resp.Enricher.ContentAnalyzer.PauseOnCreditError {
 		t.Error("PauseOnCreditError should be false after setting")
+	}
+}
+
+// TestConfigResponseFrom_TagMatcherAndAuditSurfaced pins the fields the settings UI reads back
+// from GET /config: the matcher suggestion count and the whole tag_audit section, defaults first
+// and overridden values second.
+func TestConfigResponseFrom_TagMatcherAndAuditSurfaced(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if resp.Enricher.TagMatcher.TopN != 15 {
+		t.Errorf("default TopN = %d, want 15", resp.Enricher.TagMatcher.TopN)
+	}
+	if resp.Enricher.TagAudit.Enabled {
+		t.Error("default TagAudit.Enabled should be false")
+	}
+	if resp.Enricher.TagAudit.Interval != 7 {
+		t.Errorf("default TagAudit.Interval = %v, want 7", resp.Enricher.TagAudit.Interval)
+	}
+	if resp.Enricher.TagAudit.Time != "04:00" {
+		t.Errorf("default TagAudit.Time = %q, want 04:00", resp.Enricher.TagAudit.Time)
+	}
+	if resp.Enricher.TagAudit.SampleSize != 150 {
+		t.Errorf("default TagAudit.SampleSize = %d, want 150", resp.Enricher.TagAudit.SampleSize)
+	}
+
+	cfg.Enricher.TagMatcher.TopN = 42
+	cfg.Enricher.TagAudit.Enabled = true
+	cfg.Enricher.TagAudit.Interval = 3
+	cfg.Enricher.TagAudit.Time = "05:15"
+	cfg.Enricher.TagAudit.SampleSize = 300
+	resp = ConfigResponseFrom(cfg)
+
+	if resp.Enricher.TagMatcher.TopN != 42 {
+		t.Errorf("TopN = %d, want 42 after setting", resp.Enricher.TagMatcher.TopN)
+	}
+	if !resp.Enricher.TagAudit.Enabled ||
+		resp.Enricher.TagAudit.Interval != 3 ||
+		resp.Enricher.TagAudit.Time != "05:15" ||
+		resp.Enricher.TagAudit.SampleSize != 300 {
+		t.Errorf("TagAudit = %+v, want the overridden values", resp.Enricher.TagAudit)
+	}
+}
+
+// TestConfigResponseFrom_OmitsMaxTags pins the removed max_tags field: the settings payload
+// must never carry it again, or the web UI would show a knob the backend no longer reads.
+func TestConfigResponseFrom_OmitsMaxTags(t *testing.T) {
+	data, err := json.Marshal(ConfigResponseFrom(config.DefaultConfig("/tmp/test")).Enricher.ContentAnalyzer)
+	if err != nil {
+		t.Fatalf("marshal ContentAnalyzerResponse: %v", err)
+	}
+	if strings.Contains(string(data), "max_tags") {
+		t.Errorf("content analyzer response carries the removed max_tags field: %s", data)
 	}
 }
 

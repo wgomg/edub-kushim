@@ -282,3 +282,24 @@ describe('settingsStore model list refresh', () => {
 		expect(settingsStore.llmModels).toEqual(seed);
 	});
 });
+
+describe('settingsStore tag matcher and audit keys', () => {
+	it('heals a missing top_n to the built-in default', async () => {
+		await loadSettings(fullCfg());
+
+		expect(settingsStore.cfg.enricher.tagmatcher.top_n).toBe(15);
+	});
+
+	it('saves top_n and tag_audit sample_size and never max_tags', async () => {
+		await loadSettings(fullCfg());
+
+		settingsStore.cfg.enricher.tagmatcher.top_n = 42;
+		settingsStore.cfg.enricher.tag_audit.sample_size = 75;
+		await settingsStore.applyAll();
+
+		const body = apiMocks.configUpdate.mock.calls[0][0];
+		expect(body['enricher.tagmatcher.top_n']).toBe(42);
+		expect(body['enricher.tag_audit.sample_size']).toBe(75);
+		expect(body).not.toHaveProperty('enricher.contentanalyzer.max_tags');
+	});
+});

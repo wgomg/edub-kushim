@@ -4,7 +4,6 @@ import "testing"
 
 func TestDatabaseConnectionChanged(t *testing.T) {
 	base := DatabaseConfig{
-		Type:     "postgres",
 		Host:     "localhost",
 		Port:     5432,
 		User:     "edub",
@@ -36,7 +35,7 @@ func TestDatabaseConnectionChanged(t *testing.T) {
 		{name: "dsn mode vs different database", old: DatabaseConfig{DSN: "postgres://edub:edub@localhost:5432/edub?sslmode=disable"}, new: DatabaseConfig{DSN: "postgres://edub:edub@localhost:5432/other?sslmode=disable"}, want: true},
 		{name: "runtime changed", old: base, new: withField(base, func(c *DatabaseConfig) { c.Runtime = "docker" }), want: false},
 		{name: "container changed", old: withField(base, func(c *DatabaseConfig) { c.Runtime = "docker" }), new: withField(base, func(c *DatabaseConfig) { c.Runtime = "docker"; c.Container = "edub-postgres" }), want: false},
-		{name: "runtime and container both changed", old: base, new: DatabaseConfig{Type: "postgres", Host: "localhost", Port: 5432, User: "edub", Password: "edub", Database: "edub", SSLMode: "disable", Runtime: "podman", Container: "other-postgres"}, want: false},
+		{name: "runtime and container both changed", old: base, new: DatabaseConfig{Host: "localhost", Port: 5432, User: "edub", Password: "edub", Database: "edub", SSLMode: "disable", Runtime: "podman", Container: "other-postgres"}, want: false},
 	}
 
 	for _, tc := range cases {

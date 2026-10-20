@@ -26,14 +26,12 @@ type promptData struct {
 	PeoplePrompt  string
 	Text          string
 	MinTags       int
-	MaxTags       int
 }
 
-// BuildPrompt renders the analysis prompt through the custom template
-// when one is given (falling back to the default on template errors),
-// with the excerpts, the offered type options and the tag bounds; the
-// default template renders only the minimum count.
-func BuildPrompt(text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string, customTemplate string, minTags, maxTags int) string {
+// BuildPrompt renders the analysis prompt through the custom template when one is given (falling back to
+// the default on template errors), with the excerpts, the offered type options, and the minimum tag
+// count; the default template renders only that minimum.
+func BuildPrompt(text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string, customTemplate string, minTags int) string {
 	docTypePrompt := documentTypePrompt(docTypes)
 	peoplePrompt := peopleTypePrompt(peopleTypes)
 	tagsPrompt := tagsPrompt(tagSuggestions)
@@ -54,7 +52,6 @@ func BuildPrompt(text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSugg
 		PeoplePrompt:  peoplePrompt,
 		Text:          text,
 		MinTags:       minTags,
-		MaxTags:       maxTags,
 	}
 
 	var buf bytes.Buffer

@@ -78,7 +78,7 @@ func (f *judgedFixture) openAI(t *testing.T, caps *llm.ModelCapability) *LlmOpen
 	a, err := NewLlmOpenAiCompatible(log.NewDiscardLogger(), config.ToolConfig{}, &config.LlmConfig{
 		Provider: "testprovider",
 		Model:    "test-model",
-	}, caps, "", 0, 0, f.reg)
+	}, caps, "", 0, f.reg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func (f *judgedFixture) anthropic(t *testing.T, caps *llm.ModelCapability) *LlmA
 	a, err := NewLlmAnthropic(log.NewDiscardLogger(), config.ToolConfig{}, &config.LlmConfig{
 		Provider: "testprovider",
 		Model:    "test-model",
-	}, caps, "", 0, 0, f.reg)
+	}, caps, "", 0, f.reg)
 	if err != nil {
 		t.Fatal(err)
 	}

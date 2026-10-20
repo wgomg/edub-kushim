@@ -26,7 +26,6 @@ type LlmAnthropic struct {
 	caps           *llm.ModelCapability
 	promptTemplate string
 	minTags        int
-	maxTags        int
 	client         *http.Client
 	reg            *llm.Registry
 }
@@ -103,7 +102,7 @@ type anthropicResponse struct {
 
 // NewLlmAnthropic wires the adapter; caps may be nil, in which case the
 // capability gates are skipped.
-func NewLlmAnthropic(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags, maxTags int, reg *llm.Registry) (*LlmAnthropic, error) {
+func NewLlmAnthropic(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, caps *llm.ModelCapability, promptTemplate string, minTags int, reg *llm.Registry) (*LlmAnthropic, error) {
 	return &LlmAnthropic{
 		logger:         logger,
 		config:         cfg,
@@ -111,7 +110,6 @@ func NewLlmAnthropic(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.L
 		caps:           caps,
 		promptTemplate: promptTemplate,
 		minTags:        minTags,
-		maxTags:        maxTags,
 		client:         &http.Client{},
 		reg:            reg,
 	}, nil
@@ -241,7 +239,7 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 
 // Analyze runs the document analysis call against the Anthropic API.
 func (l *LlmAnthropic) Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error) {
-	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate, l.minTags, l.maxTags)
+	prompt := BuildPrompt(text, docTypes, peopleTypes, tagSuggestions, l.promptTemplate, l.minTags)
 
 	if err := checkContentTooLarge(l.caps, SystemMessage+"\n"+prompt); err != nil {
 		return nil, err

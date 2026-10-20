@@ -238,14 +238,14 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 			}
 			r.textReducer = tr
 		case "contentanalyzer":
-			ca, caErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
+			ca, caErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, reg)
 			if caErr != nil {
 				logger.Error("", "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
 			if cfg.Enricher.TagAdjudicator.Enabled {
 				adjLlm := cfg.ResolvedAdjudicatorLlm()
-				adj, adjErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
+				adj, adjErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, reg)
 				if adjErr != nil {
 					logger.Error("", "create tag adjudicator: %v", adjErr)
 				} else {
@@ -255,7 +255,7 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 			}
 			if cfg.Enricher.TagQuality.Enabled {
 				qLlm := cfg.ResolvedQualityLlm()
-				q, qErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, 0, reg)
+				q, qErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, reg)
 				if qErr != nil {
 					logger.Error("", "create tag quality judge: %v", qErr)
 				} else {
@@ -267,7 +267,7 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 				if !fb.Enabled {
 					continue
 				}
-				fbCa, fbErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, cfg.Enricher.ContentAnalyzer.MaxTags, reg)
+				fbCa, fbErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, reg)
 				if fbErr != nil {
 					logger.Error("", "create fallback content analyzer: %v", fbErr)
 					continue
