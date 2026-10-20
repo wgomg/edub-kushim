@@ -825,6 +825,17 @@ reported instead. `--run <batch-id>` is how the queue daemon executes that task
 — the child takes no lock (the claiming task holds it and already drained) and
 prints the report line the handler stores as the task result.
 
+The pass is a no-op when nothing changed and nothing is due: it reads its
+store-changed flag in `system_signal`, and with the flag clear, a completed run
+behind it and every work probe empty — the pair re-check categories (stale,
+unjudged, drifted, aged), the twins worklist, the stored-compound scan, the
+orphan and provisional grace sweeps, promoted-tag demotion, and the bootstrap
+log ingest — it prints a zero-work report (`zero_work: true`) without the
+store-wide reads. Time still creates work: an aged pair or a tag whose grace
+window has elapsed makes the next run full even with no mutation. Every
+tag-store mutation re-arms the flag, so the next run recomputes, and a failed
+run re-arms it too.
+
 The queue pool claims reconciliation tasks unconditionally, so a manual enqueue
 runs even with the schedule off; `enricher.tag_reconcile.enabled` gates only the
 automatic scheduled enqueuing.
@@ -890,6 +901,11 @@ reading is taken and the documents stay eligible for the next run. Scheduling
 enqueuing; the queue pool always claims audit tasks, so a manual
 `kushim tagaudit` or a `POST /api/v1/tags/audit/reevaluate` run executes even
 with the schedule off.
+
+An unchanged vocabulary trims the run's store-wide part: with the audit's
+store-changed flag clear, the pending-coverage derivation is skipped and the
+durable rows already written stand — the sample still draws from the sweep
+register as usual, so coverage never stalls. A failed run re-arms the flag.
 
 ### `kushim restore`
 
@@ -1589,7 +1605,9 @@ Response `200`:
   them (a run with no flips has no `planned_keep_flips`). Each pair entry carries
   `reason` (the policy guard that decided it, or `adjudicated` for LLM-judged pairs)
   and `creates_tag` (true when a keep flip creates the query tag; always present in
-  new reports).
+  new reports). `zero_work` is `true` when the pass skipped to a zero-work report —
+  the store unchanged since the last completed run with no work due — and the other
+  fields are then absent.
 - `404` — no completed `tagreconcile` run exists yet.
 
 ### Overlapping Tags

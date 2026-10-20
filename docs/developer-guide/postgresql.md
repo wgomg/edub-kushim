@@ -79,8 +79,9 @@ this schema: **database-invented IDs are identity, externally-invented IDs
 are TEXT PKs.**
 
 Shared singleton state — the maintenance lock, the tag-audit sweep counter, and
-the four tag store-changed flags — lives in the `system_signal` table
-(`00041_system_signal.sql`, extended by `00044_tag_store_change_record.sql`) —
+the three tag store-changed flags — lives in the `system_signal` table
+(`00041_system_signal.sql`, extended by `00044_tag_store_change_record.sql` and
+narrowed by `00045_drop_tag_identity_changed.sql`) —
 the **signal store** pattern: one row per signal keyed by a unique `name`,
 carrying its value as text plus an optional JSONB `data` object for structured
 fields. Adding a signal is a seed row and its queries, not a new table; the
@@ -423,8 +424,9 @@ Zero rows affected = the lock was already held — same `:execrows` discipline
 as the task claim (§7).
 
 The store-changed flags are the counterexample where the mechanism is a
-**trigger, not a gate**: `tag_store_changed()` (migration `00044`) upserts the
-four `system_signal` flags to `'true'` whenever a row changes in `tag`,
+**trigger, not a gate**: `tag_store_changed()` (migration `00044`, narrowed to
+the three remaining flags by `00045`) upserts the `system_signal` flags to
+`'true'` whenever a row changes in `tag`,
 `document_tag`, `tag_alias`, or `deleted_tag`, fired by AFTER row triggers so
 the set rides the mutating statement's own transaction. Table-owned setting is
 deliberate: the vocabulary has ~23 mutating queries called from the enricher's

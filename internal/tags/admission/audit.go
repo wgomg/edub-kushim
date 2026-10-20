@@ -45,8 +45,9 @@ const auditCaveatSampled = "sampled"
 const coverageInsertChunk = 1000
 
 // AuditReport is one completeness audit run's counters and coverage tallies, keyed to the sweep it drew
-// from.
+// from. ZeroWork marks a run that skipped the pending-coverage derivation and drew no documents.
 type AuditReport struct {
+	ZeroWork        bool           `json:"zero_work"`
 	RunID           string         `json:"run_id"`
 	CriteriaVersion string         `json:"criteria_version"`
 	SweepCount      int64          `json:"sweep_count"`
@@ -137,8 +138,18 @@ type resolvedVerdict struct {
 
 // Run performs one completeness audit: it derives the durable pending-coverage rows store-wide, audits a
 // sample and the flag-material documents, disposes each coverage reading, and records the per-dimension
-// coverage measurement. runID identifies the run in the stored rows and the report.
+// coverage measurement. runID identifies the run in the stored rows and the report. An unchanged store
+// skips the store-wide derivation and reuses the durable rows already written; a failed run re-arms the
+// store-changed signal for the next one.
 func (a *AuditRunner) Run(ctx context.Context, runID uuid.UUID) (*AuditReport, error) {
+	report, err := a.run(ctx, runID)
+	if err != nil {
+		return report, tags.RearmStoreSignal(ctx, a.client, tags.SignalAuditChanged, err)
+	}
+	return report, nil
+}
+
+func (a *AuditRunner) run(ctx context.Context, runID uuid.UUID) (*AuditReport, error) {
 	cfg := a.cfg()
 	report := &AuditReport{
 		RunID:           runID.String(),
@@ -146,12 +157,9 @@ func (a *AuditRunner) Run(ctx context.Context, runID uuid.UUID) (*AuditReport, e
 		Coverage:        map[string]int{},
 	}
 
-	// a mid-run mutation re-arms the flag, so no change is swallowed by this open
-	if err := a.client.Queries.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
-		Name:  tags.SignalAuditChanged,
-		Value: tags.SignalClear,
-	}); err != nil {
-		return nil, fmt.Errorf("clear store-changed signal: %w", err)
+	changed, err := tags.OpenStoreSignal(ctx, a.client, tags.SignalAuditChanged)
+	if err != nil {
+		return nil, err
 	}
 
 	view, err := a.loadStoreView(ctx)
@@ -164,11 +172,17 @@ func (a *AuditRunner) Run(ctx context.Context, runID uuid.UUID) (*AuditReport, e
 		return nil, err
 	}
 
-	pending, err := a.derivePendingCoverage(ctx, view)
-	if err != nil {
-		return nil, err
+	// a clear signal means every mutation the derivation reads landed before its last run: the derivable rows
+	// stand and the store-wide read is skipped. A policy-version bump with no store mutation is invisible to
+	// the signal; the staleness it leaves is accepted and heals on the next mutation
+	var pending pendingCoverage
+	if changed {
+		pending, err = a.derivePendingCoverage(ctx, view)
+		if err != nil {
+			return nil, err
+		}
+		report.PendingCoverage = pending.Total
 	}
-	report.PendingCoverage = pending.Total
 
 	limit := int32(cfg.Enricher.TagAudit.SampleSize)
 	floor := int64(cfg.Enricher.ContentAnalyzer.MinTags)
@@ -180,6 +194,7 @@ func (a *AuditRunner) Run(ctx context.Context, runID uuid.UUID) (*AuditReport, e
 	report.EligiblePool = worklist.EligiblePool
 	report.Sampled = worklist.Sampled
 	report.Flagged = worklist.Flagged
+	report.ZeroWork = !changed && worklist.Sampled == 0 && worklist.Flagged == 0
 
 	bar := auditTriggerSimilarity
 	var records []tags.CoverageRecord

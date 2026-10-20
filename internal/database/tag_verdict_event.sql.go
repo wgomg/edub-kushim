@@ -269,6 +269,103 @@ func (q *Queries) TagPairEvidenceStats(ctx context.Context, arg TagPairEvidenceS
 	return items, nil
 }
 
+const tagVerdictAgedPairProbe = `-- name: TagVerdictAgedPairProbe :one
+SELECT EXISTS (
+    SELECT 1
+    FROM tag_verdict_event
+    WHERE policy_version = $1::text
+      AND verdict_model IS NOT NULL
+      AND verdict_at < $2::timestamptz
+)
+`
+
+type TagVerdictAgedPairProbeParams struct {
+	PolicyVersion string
+	VerdictBefore time.Time
+}
+
+func (q *Queries) TagVerdictAgedPairProbe(ctx context.Context, arg TagVerdictAgedPairProbeParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, tagVerdictAgedPairProbe, arg.PolicyVersion, arg.VerdictBefore)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const tagVerdictDriftProbe = `-- name: TagVerdictDriftProbe :one
+WITH kept AS (
+    SELECT DISTINCT ON (query, target) query, target
+    FROM tag_verdict_event
+    WHERE policy_version = $3::text
+      AND verdict_model IS NOT NULL
+      AND verdict IN ('variant', 'related')
+    ORDER BY query, target, verdict_at DESC
+),
+ev AS (
+    SELECT k.query, k.target,
+           (SELECT COUNT(DISTINCT e.document_id) FROM tag_verdict_event e
+            WHERE e.query = k.query AND e.target = k.target) AS documents
+    FROM kept k
+)
+SELECT EXISTS (
+    SELECT 1
+    FROM ev
+    JOIN tag tq ON tq.name = ev.query
+    JOIN tag tt ON tt.name = ev.target
+    WHERE ev.documents >= $1::bigint
+      AND ev.documents >= $2::float8 * LEAST(
+            (SELECT COUNT(*) FROM document_tag dt WHERE dt.tag_id = tq.id),
+            (SELECT COUNT(*) FROM document_tag dt WHERE dt.tag_id = tt.id))
+)
+`
+
+type TagVerdictDriftProbeParams struct {
+	MinOverlap    int64
+	OverlapRatio  float64
+	PolicyVersion string
+}
+
+func (q *Queries) TagVerdictDriftProbe(ctx context.Context, arg TagVerdictDriftProbeParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, tagVerdictDriftProbe, arg.MinOverlap, arg.OverlapRatio, arg.PolicyVersion)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const tagVerdictMissingTagProbe = `-- name: TagVerdictMissingTagProbe :one
+SELECT EXISTS (
+    SELECT 1
+    WHERE EXISTS (
+        SELECT 1
+        FROM tag_verdict_event tve
+        WHERE NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = tve.target)
+          AND EXISTS (
+              SELECT 1 FROM tag_verdict_event f
+              WHERE f.query = tve.query AND f.target = tve.target
+                AND f.verdict_model IS NOT NULL
+          )
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM (
+            SELECT DISTINCT ON (query, target) query, target, verdict
+            FROM tag_verdict_event
+            ORDER BY query, target, verdict_at DESC
+        ) latest
+        WHERE NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = latest.query)
+          AND latest.verdict <> 'same'
+    )
+)
+`
+
+// the arm's actionable missing-tag work, not its raw source: a dead target with fresh verdict rows to
+// invalidate, or a dead query whose latest verdict is not "same" (a same verdict is already settled)
+func (q *Queries) TagVerdictMissingTagProbe(ctx context.Context) (bool, error) {
+	row := q.db.QueryRowContext(ctx, tagVerdictMissingTagProbe)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const tagVerdictPairsByVerdict = `-- name: TagVerdictPairsByVerdict :many
 SELECT DISTINCT ON (query, target)
        query, target, document_id, sim, verdict, verdict_model, policy_version, verdict_at
@@ -475,6 +572,28 @@ func (q *Queries) TagVerdictPairsWithoutFreshVerdict(ctx context.Context, policy
 		return nil, err
 	}
 	return items, nil
+}
+
+const tagVerdictPendingPairProbe = `-- name: TagVerdictPendingPairProbe :one
+
+SELECT EXISTS (
+    SELECT 1
+    FROM tag_verdict_event tve
+    WHERE NOT EXISTS (
+        SELECT 1 FROM tag_verdict_event f
+        WHERE f.query = tve.query AND f.target = tve.target
+          AND f.policy_version = $1::text AND f.verdict_model IS NOT NULL
+    )
+)
+`
+
+// the reconcile opening gate's probes: each answers whether its worklist source is non-empty, mirroring
+// the source query beside it, so a signal-clear pass can report zero work without building the store view
+func (q *Queries) TagVerdictPendingPairProbe(ctx context.Context, policyVersion string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, tagVerdictPendingPairProbe, policyVersion)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const tagVerdictQueriesWithRows = `-- name: TagVerdictQueriesWithRows :many

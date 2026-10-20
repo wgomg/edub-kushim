@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -94,5 +96,87 @@ func TestMigrationSystemSignalCarriesState(t *testing.T) {
 	}
 	if legacy != 0 {
 		t.Errorf("legacy singleton tables = %d, want none: 00041 replaces them with system_signal", legacy)
+	}
+}
+
+// TestMigrationStoreChangeRecordNarrowsToThreeFlags pins the 00044 → 00045 boundary of the store-change
+// record: 00044 seeds its four flags and its trigger upserts all four, and after 00045 the identity flag
+// is gone while the same mutation sets exactly the three remaining flags.
+func TestMigrationStoreChangeRecordNarrowsToThreeFlags(t *testing.T) {
+	ctx := context.Background()
+	base := TestDSN(t)
+	name := "edub_test_" + testPackageDir() + "_store_signal"
+	release := acquireTestDB(base, name)
+	defer release()
+
+	db, err := NewPostgresDB(replaceDBName(base, name))
+	if err != nil {
+		t.Fatalf("open a fresh schema database: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close schema database: %v", err)
+		}
+	}()
+
+	flagValue := func(flag string) (string, bool) {
+		t.Helper()
+		var value string
+		err := db.QueryRowContext(ctx, "SELECT value FROM system_signal WHERE name = $1", flag).Scan(&value)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false
+		}
+		if err != nil {
+			t.Fatalf("read flag %s: %v", flag, err)
+		}
+		return value, true
+	}
+	clearFlags := func(flags ...string) {
+		t.Helper()
+		for _, flag := range flags {
+			if _, err := db.ExecContext(ctx, "UPDATE system_signal SET value = 'false' WHERE name = $1", flag); err != nil {
+				t.Fatalf("clear flag %s: %v", flag, err)
+			}
+		}
+	}
+	mutateAndRequire := func(tagName string, flags ...string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, "INSERT INTO tag (name) VALUES ($1)", tagName); err != nil {
+			t.Fatalf("insert %q under the trigger: %v", tagName, err)
+		}
+		for _, flag := range flags {
+			if value, ok := flagValue(flag); !ok || value != "true" {
+				t.Errorf("flag %s = (%q, present=%v) after the mutation, want set to true",
+					flag, value, ok)
+			}
+		}
+	}
+
+	goose.SetBaseFS(SchemaFS)
+	goose.SetDialect("postgres")
+	if err := goose.UpTo(db, "sql/schema/migrations", 44); err != nil {
+		t.Fatalf("apply migrations up to 00044: %v", err)
+	}
+
+	all := []string{"tag_measure_changed", "tag_reconcile_changed", "tag_identity_changed", "tag_audit_changed"}
+	for _, flag := range all {
+		if _, ok := flagValue(flag); !ok {
+			t.Fatalf("flag %s missing after 00044: the record must seed it", flag)
+		}
+	}
+	clearFlags(all...)
+	mutateAndRequire("pre 00045 probe", all...)
+
+	if err := goose.Up(db, "sql/schema/migrations"); err != nil {
+		t.Fatalf("apply 00045: %v", err)
+	}
+	if _, ok := flagValue("tag_identity_changed"); ok {
+		t.Error("tag_identity_changed survived 00045: the migration must delete the row")
+	}
+	remaining := []string{"tag_measure_changed", "tag_reconcile_changed", "tag_audit_changed"}
+	clearFlags(remaining...)
+	mutateAndRequire("post 00045 probe", remaining...)
+	if _, ok := flagValue("tag_identity_changed"); ok {
+		t.Error("the narrowed trigger re-seeded tag_identity_changed")
 	}
 }

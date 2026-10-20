@@ -50,6 +50,7 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 // Report is the stored audit of one reconcile run. It is serialized as the task result and parsed by the web
 // UI, so its JSON vocabulary is a compatibility surface rather than free to rename.
 type Report struct {
+	ZeroWork              bool                 `json:"zero_work"`
 	ReportOnly            bool                 `json:"report_only"`
 	Worklist              WorklistCounts       `json:"worklist"`
 	Judged                int                  `json:"judged"`
@@ -206,35 +207,53 @@ type entry struct {
 	skipReason   string
 }
 
-// Run performs one reconciliation pass: it sweeps the recorded evidence,
-// re-judges what changed, and applies or plans the outcomes. progress, if
-// nil, is ignored; report-only runs fill the planned lists without
-// applying anything.
+// Run performs one reconciliation pass: it sweeps the recorded evidence, re-judges what changed, and applies
+// or plans the outcomes. progress, if nil, is ignored; report-only runs fill the planned lists without
+// applying anything. A store unchanged since the last completed run with no work due reports ZeroWork
+// without building the store view, and a failed run re-arms the store-changed signal for the next one.
 func (r *Reconciler) Run(ctx context.Context, progress task.ProgressFunc) (Report, error) {
+	report, err := r.run(ctx, progress)
+	if err != nil {
+		return report, tags.RearmStoreSignal(ctx, r.client, tags.SignalReconcileChanged, err)
+	}
+	return report, nil
+}
+
+func (r *Reconciler) run(ctx context.Context, progress task.ProgressFunc) (Report, error) {
 	cfg := r.getConfig()
 	report := Report{ReportOnly: cfg.Enricher.TagReconcile.ReportOnly, Skips: map[string]int{}}
 	if progress == nil {
 		progress = func(string, string, float64) {}
 	}
 
-	// a mid-run mutation re-arms the flag, so no change is swallowed by this open
-	if err := r.client.Queries.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
-		Name:  tags.SignalReconcileChanged,
-		Value: tags.SignalClear,
-	}); err != nil {
-		return report, fmt.Errorf("clear store-changed signal: %w", err)
+	changed, err := tags.OpenStoreSignal(ctx, r.client, tags.SignalReconcileChanged)
+	if err != nil {
+		return report, err
 	}
 
-	_, err := r.client.GetLastCompletedTagReconcileTask(ctx)
+	_, err = r.client.GetLastCompletedTagReconcileTask(ctx)
+	completed := true
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return report, fmt.Errorf("get last completed tag reconcile task: %w", err)
 		}
+		completed = false
 		report.ReportOnly = true
 	}
 
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		report.ReportOnly = true
+	}
+
+	if !changed && completed {
+		due, err := r.hasDueWork(ctx, cfg)
+		if err != nil {
+			return report, err
+		}
+		if !due {
+			report.ZeroWork = true
+			return report, nil
+		}
 	}
 
 	allTags, err := r.tag.ListAll(ctx)

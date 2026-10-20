@@ -1,4 +1,5 @@
--- The store-changed flags (read by the measurement's opening gate, cleared by each tag run as it opens); the rows are seeded by migration 00044, so the queries are UPDATE-only, like the sweep counter's
+-- The store-changed flags, read and cleared by the measurement's, reconcile's, and audit's opening gates;
+-- the rows are seeded by migration 00044, so the queries are UPDATE-only, like the sweep counter's
 -- name: GetTagStoreSignal :one
 SELECT value FROM system_signal WHERE name = $1;
 

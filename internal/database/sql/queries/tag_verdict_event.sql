@@ -87,3 +87,79 @@ VALUES (@document_id, @query, @target, @sim, @verdict, @verdict_model, @policy_v
 ON CONFLICT (query, target, policy_version) WHERE verdict_model IS NOT NULL
 DO UPDATE SET verdict = EXCLUDED.verdict, verdict_model = EXCLUDED.verdict_model,
               sim = EXCLUDED.sim, verdict_at = now();
+
+-- the reconcile opening gate's probes: each answers whether its worklist source is non-empty, mirroring
+-- the source query beside it, so a signal-clear pass can report zero work without building the store view
+
+-- name: TagVerdictPendingPairProbe :one
+SELECT EXISTS (
+    SELECT 1
+    FROM tag_verdict_event tve
+    WHERE NOT EXISTS (
+        SELECT 1 FROM tag_verdict_event f
+        WHERE f.query = tve.query AND f.target = tve.target
+          AND f.policy_version = @policy_version::text AND f.verdict_model IS NOT NULL
+    )
+);
+
+-- name: TagVerdictMissingTagProbe :one
+-- the arm's actionable missing-tag work, not its raw source: a dead target with fresh verdict rows to
+-- invalidate, or a dead query whose latest verdict is not "same" (a same verdict is already settled)
+SELECT EXISTS (
+    SELECT 1
+    WHERE EXISTS (
+        SELECT 1
+        FROM tag_verdict_event tve
+        WHERE NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = tve.target)
+          AND EXISTS (
+              SELECT 1 FROM tag_verdict_event f
+              WHERE f.query = tve.query AND f.target = tve.target
+                AND f.verdict_model IS NOT NULL
+          )
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM (
+            SELECT DISTINCT ON (query, target) query, target, verdict
+            FROM tag_verdict_event
+            ORDER BY query, target, verdict_at DESC
+        ) latest
+        WHERE NOT EXISTS (SELECT 1 FROM tag t WHERE t.name = latest.query)
+          AND latest.verdict <> 'same'
+    )
+);
+
+-- name: TagVerdictAgedPairProbe :one
+SELECT EXISTS (
+    SELECT 1
+    FROM tag_verdict_event
+    WHERE policy_version = @policy_version::text
+      AND verdict_model IS NOT NULL
+      AND verdict_at < @verdict_before::timestamptz
+);
+
+-- name: TagVerdictDriftProbe :one
+WITH kept AS (
+    SELECT DISTINCT ON (query, target) query, target
+    FROM tag_verdict_event
+    WHERE policy_version = sqlc.arg(policy_version)::text
+      AND verdict_model IS NOT NULL
+      AND verdict IN ('variant', 'related')
+    ORDER BY query, target, verdict_at DESC
+),
+ev AS (
+    SELECT k.query, k.target,
+           (SELECT COUNT(DISTINCT e.document_id) FROM tag_verdict_event e
+            WHERE e.query = k.query AND e.target = k.target) AS documents
+    FROM kept k
+)
+SELECT EXISTS (
+    SELECT 1
+    FROM ev
+    JOIN tag tq ON tq.name = ev.query
+    JOIN tag tt ON tt.name = ev.target
+    WHERE ev.documents >= sqlc.arg(min_overlap)::bigint
+      AND ev.documents >= sqlc.arg(overlap_ratio)::float8 * LEAST(
+            (SELECT COUNT(*) FROM document_tag dt WHERE dt.tag_id = tq.id),
+            (SELECT COUNT(*) FROM document_tag dt WHERE dt.tag_id = tt.id))
+);

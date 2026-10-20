@@ -890,15 +890,25 @@ runs unconditionally — `enricher.tag_reconcile.enabled` gates only the schedul
 that enqueues runs automatically, while a manual `kushim tagreconcile` enqueues
 through the queue the same way.
 
-Each of the four tag passes opens by clearing its own store-changed flag in
-`system_signal` (`tag_measure_changed`, `tag_identity_changed`,
-`tag_audit_changed`, `tag_reconcile_changed`) before it reads its work set, so a
-mutation landing during a run re-arms the flag for the next one. Only the
-measurement gates on its flag; a pass's own applies re-arm the flags through the
-table triggers (migration `00044`), which is the record's honest reading of
-"changed since it last ran". The identity pass clears only when it actually
-opens: with the adjudicator off it counts the backlog and returns without
-clearing.
+The three tag passes with a store-changed flag open through `tags.OpenStoreSignal`
+(`internal/tags/store_signal.go`): one committed transaction reads the pass's
+flag (`tag_measure_changed`, `tag_reconcile_changed`, `tag_audit_changed`) and
+clears it when set, so a mutation landing during a run re-arms the flag for the
+next one, and a failed run re-arms it so the failure is never read as an
+unchanged store. Only the measurement gates its work on the flag alone — no
+completed run under the current rule set also forces a sweep. The reconcile
+needs the signal plus a work-probe set (`reconcile/gate.go`): aged pairs, grace
+windows and capped remainders are work a quiet store still owes, so the signal
+alone cannot rule work out; a clear flag with every probe empty reports
+`zero_work` and skips the store-wide reads. The audit gates only its store-wide
+pending-coverage derivation on the flag — the sweep itself stays pool-driven (a
+document is audited at most once per sweep), and an unchanged vocabulary reuses
+the durable pending-coverage rows already written. The identity pass reads no
+flag: its work set is the pending-event count, already its first read, and a
+signal gate would strand capped remainders in a quiet store. A pass's own
+applies re-arm the flags through the table triggers (migration `00044`;
+`00045` removed the identity flag), which is the record's honest reading of
+"changed since it last ran".
 
 The **thumbbackfill** task (`internal/documents/consumption/thumbnail_backfill.go`, a thin
 wrapper that adds drain-wait + heartbeat around the per-document

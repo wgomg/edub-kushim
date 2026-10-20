@@ -659,6 +659,43 @@ func (q *Queries) ListStoreTagKeys(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listStoredCompoundCandidates = `-- name: ListStoredCompoundCandidates :many
+
+SELECT name, promoted_at FROM tag
+WHERE NOT seeded
+ORDER BY name
+`
+
+type ListStoredCompoundCandidatesRow struct {
+	Name       string
+	PromotedAt sql.NullTime
+}
+
+// the reconcile opening gate's probes: each answers whether its arm's work set is non-empty, mirroring the
+// arm query beside it, so a signal-clear pass can report zero work without building the store view
+func (q *Queries) ListStoredCompoundCandidates(ctx context.Context) ([]ListStoredCompoundCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listStoredCompoundCandidates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStoredCompoundCandidatesRow
+	for rows.Next() {
+		var i ListStoredCompoundCandidatesRow
+		if err := rows.Scan(&i.Name, &i.PromotedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTagIDsByNames = `-- name: ListTagIDsByNames :many
 SELECT id, name FROM tag WHERE name = ANY($1::text[])
 `
@@ -808,6 +845,23 @@ func (q *Queries) MarkOrphanTags(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+const orphanTagProbe = `-- name: OrphanTagProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.orphaned_since IS NOT NULL
+      AND t.orphaned_since < $1::timestamptz
+      AND NOT t.seeded
+      AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+)
+`
+
+func (q *Queries) OrphanTagProbe(ctx context.Context, orphanedBefore time.Time) (bool, error) {
+	row := q.db.QueryRowContext(ctx, orphanTagProbe, orphanedBefore)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const promoteTags = `-- name: PromoteTags :execrows
 UPDATE tag SET
     promoted_at = now(),
@@ -824,6 +878,59 @@ func (q *Queries) PromoteTags(ctx context.Context, tagIds []int64) (int64, error
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const promotedTagMassDecayProbe = `-- name: PromotedTagMassDecayProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NOT NULL
+      AND NOT t.seeded
+      AND (SELECT COUNT(*)
+           FROM document_tag dt
+           JOIN document d ON d.id = dt.document_id
+           WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) < $1::bigint
+)
+`
+
+func (q *Queries) PromotedTagMassDecayProbe(ctx context.Context, floor int64) (bool, error) {
+	row := q.db.QueryRowContext(ctx, promotedTagMassDecayProbe, floor)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const promotedTagRejudgeProbe = `-- name: PromotedTagRejudgeProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NOT NULL
+      AND NOT t.seeded
+      AND NOT EXISTS (
+          SELECT 1 FROM tag_quality_event e
+          WHERE e.tag_name = t.name AND e.policy_version = $1::text
+      )
+)
+`
+
+func (q *Queries) PromotedTagRejudgeProbe(ctx context.Context, policyVersion string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, promotedTagRejudgeProbe, policyVersion)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const provisionalTagProbe = `-- name: ProvisionalTagProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NULL
+      AND t.created_at < $1::timestamptz
+)
+`
+
+func (q *Queries) ProvisionalTagProbe(ctx context.Context, cutoff time.Time) (bool, error) {
+	row := q.db.QueryRowContext(ctx, provisionalTagProbe, cutoff)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const searchTagsByName = `-- name: SearchTagsByName :many

@@ -12,20 +12,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 )
 
-// SignalMeasureChanged and its siblings name the store-changed flags of system_signal.
-const (
-	SignalMeasureChanged   = "tag_measure_changed"
-	SignalReconcileChanged = "tag_reconcile_changed"
-	SignalIdentityChanged  = "tag_identity_changed"
-	SignalAuditChanged     = "tag_audit_changed"
-)
-
-// SignalSet and SignalClear are the store-changed flags' two values.
-const (
-	SignalSet   = "true"
-	SignalClear = "false"
-)
-
 // Runner runs measurement sweeps over the tag store: one Run snapshots the
 // promoted tags under a repeatable-read transaction, records evidence
 // readings for every tag and pair (alias-collapsed through the reader),
@@ -86,53 +72,27 @@ func (r *Runner) Run(ctx context.Context, runID uuid.UUID) (*Report, error) {
 
 	report, err := r.sweep(ctx, runID)
 	if err != nil {
-		if cerr := r.client.Queries.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
-			Name:  SignalMeasureChanged,
-			Value: SignalSet,
-		}); cerr != nil {
-			return nil, fmt.Errorf("%w (re-arming the store-changed signal failed: %v)", err, cerr)
-		}
-		return nil, err
+		return nil, RearmStoreSignal(ctx, r.client, SignalMeasureChanged, err)
 	}
 	return report, nil
 }
 
+// open begins the measurement's opening gate: it reports whether the store changed since the last completed
+// sweep under the current rule set. The flag's clear commits before the sweep opens, and a rule-set change
+// re-measures even when no mutation re-armed the flag.
 func (r *Runner) open(ctx context.Context) (bool, error) {
-	// the clear commits before the sweep opens, so a mutation landing mid-run re-arms the flag
-	tx, err := r.client.BeginTx(ctx, nil)
+	changed, err := OpenStoreSignal(ctx, r.client, SignalMeasureChanged)
 	if err != nil {
-		return false, fmt.Errorf("begin tag measure opening transaction: %w", err)
+		return false, err
 	}
-	defer tx.Rollback()
-
-	q := r.client.Queries.WithTx(tx)
-
-	value, err := q.GetTagStoreSignal(ctx, SignalMeasureChanged)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("read store-changed signal: %w", err)
-	}
-	changed := err != nil || value != SignalClear
-
-	if !changed {
-		run, err := q.LatestTagWorklistRun(ctx)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return false, fmt.Errorf("latest tag worklist run: %w", err)
-		}
-		changed = errors.Is(err, sql.ErrNoRows) || run.RuleSetVersion != RuleSetVersion
-	}
-
 	if changed {
-		if err := q.SetTagStoreSignal(ctx, database.SetTagStoreSignalParams{
-			Name:  SignalMeasureChanged,
-			Value: SignalClear,
-		}); err != nil {
-			return false, fmt.Errorf("clear store-changed signal: %w", err)
-		}
+		return true, nil
 	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit tag measure opening transaction: %w", err)
+	run, err := r.client.Queries.LatestTagWorklistRun(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("latest tag worklist run: %w", err)
 	}
-	return changed, nil
+	return errors.Is(err, sql.ErrNoRows) || run.RuleSetVersion != RuleSetVersion, nil
 }
 
 func (r *Runner) zeroWorkReport(ctx context.Context, runID uuid.UUID) (*Report, error) {

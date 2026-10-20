@@ -264,48 +264,21 @@ func (r *Reconciler) buildWorklist(ctx context.Context, cfg *config.Config, stor
 	return worklist, invalidated, nil
 }
 
+// bootstrapLogDir names the log directory the bootstrap ingest parses.
+func bootstrapLogDir(cfg *config.Config) string {
+	return cfg.App.ConfigDir + "/logs"
+}
+
 func (r *Reconciler) bootstrapWorklist(ctx context.Context, cfg *config.Config, worklist *[]*entry, collected map[string]bool) {
-	parsed := parseBootstrapLogs(cfg.App.ConfigDir+"/logs", r.logger)
+	parsed := parseBootstrapLogs(bootstrapLogDir(cfg), r.logger)
 	if len(parsed) == 0 {
 		return
 	}
 
-	var pairQueries, pairTargets []string
-	var bandQueries []string
-	for _, p := range parsed {
-		if p.target != "" {
-			pairQueries = append(pairQueries, p.query)
-			pairTargets = append(pairTargets, p.target)
-		} else {
-			bandQueries = append(bandQueries, p.query)
-		}
-	}
-
-	presentPairs := make(map[string]bool)
-	if len(pairQueries) > 0 {
-		pairs := make([]tags.PairNames, 0, len(pairQueries))
-		for i := range pairQueries {
-			pairs = append(pairs, tags.PairNames{Query: pairQueries[i], Target: pairTargets[i]})
-		}
-		stats, err := tags.NewStore(r.client.Queries).PairVerdictStats(ctx, pairs)
-		if err != nil {
-			r.logger.Error("", "tag reconcile bootstrap: pair presence check failed: %v", err)
-			return
-		}
-		for _, s := range stats {
-			presentPairs[orderedPairKey(s.Query, s.Target)] = true
-		}
-	}
-	presentQueries := make(map[string]bool)
-	if len(bandQueries) > 0 {
-		rows, err := r.client.TagVerdictQueriesWithRows(ctx, bandQueries)
-		if err != nil {
-			r.logger.Error("", "tag reconcile bootstrap: query presence check failed: %v", err)
-			return
-		}
-		for _, q := range rows {
-			presentQueries[q] = true
-		}
+	presentPairs, presentQueries, err := r.bootstrapPresence(ctx, parsed)
+	if err != nil {
+		r.logger.Error("", "tag reconcile bootstrap: %v", err)
+		return
 	}
 
 	docIDs := r.resolveDocIDs(ctx, parsed)
@@ -345,6 +318,48 @@ func (r *Reconciler) bootstrapWorklist(ctx context.Context, cfg *config.Config, 
 		*worklist = append(*worklist, e)
 		collected[key] = true
 	}
+}
+
+// bootstrapPresence reads which parsed log pairs and band queries the recorded evidence already holds: a
+// parsed pair is owed an ingest entry only when these maps do not cover it, which is the predicate both the
+// ingest arm and the opening gate's probe rest on.
+func (r *Reconciler) bootstrapPresence(ctx context.Context, parsed map[string]*parsedPair) (map[string]bool, map[string]bool, error) {
+	var pairQueries, pairTargets []string
+	var bandQueries []string
+	for _, p := range parsed {
+		if p.target != "" {
+			pairQueries = append(pairQueries, p.query)
+			pairTargets = append(pairTargets, p.target)
+		} else {
+			bandQueries = append(bandQueries, p.query)
+		}
+	}
+
+	presentPairs := make(map[string]bool)
+	if len(pairQueries) > 0 {
+		pairs := make([]tags.PairNames, 0, len(pairQueries))
+		for i := range pairQueries {
+			pairs = append(pairs, tags.PairNames{Query: pairQueries[i], Target: pairTargets[i]})
+		}
+		stats, err := tags.NewStore(r.client.Queries).PairVerdictStats(ctx, pairs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("pair presence check: %w", err)
+		}
+		for _, s := range stats {
+			presentPairs[orderedPairKey(s.Query, s.Target)] = true
+		}
+	}
+	presentQueries := make(map[string]bool)
+	if len(bandQueries) > 0 {
+		rows, err := r.client.TagVerdictQueriesWithRows(ctx, bandQueries)
+		if err != nil {
+			return nil, nil, fmt.Errorf("query presence check: %w", err)
+		}
+		for _, q := range rows {
+			presentQueries[q] = true
+		}
+	}
+	return presentPairs, presentQueries, nil
 }
 
 func (r *Reconciler) resolveDocIDs(ctx context.Context, parsed map[string]*parsedPair) map[string][]int64 {

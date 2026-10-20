@@ -219,3 +219,49 @@ WHERE t.orphaned_since IS NOT NULL
   AND NOT t.seeded
   AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
 RETURNING t.name;
+
+-- the reconcile opening gate's probes: each answers whether its arm's work set is non-empty, mirroring the
+-- arm query beside it, so a signal-clear pass can report zero work without building the store view
+
+-- name: ListStoredCompoundCandidates :many
+SELECT name, promoted_at FROM tag
+WHERE NOT seeded
+ORDER BY name;
+
+-- name: OrphanTagProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.orphaned_since IS NOT NULL
+      AND t.orphaned_since < @orphaned_before::timestamptz
+      AND NOT t.seeded
+      AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+);
+
+-- name: ProvisionalTagProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NULL
+      AND t.created_at < @cutoff::timestamptz
+);
+
+-- name: PromotedTagMassDecayProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NOT NULL
+      AND NOT t.seeded
+      AND (SELECT COUNT(*)
+           FROM document_tag dt
+           JOIN document d ON d.id = dt.document_id
+           WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) < @floor::bigint
+);
+
+-- name: PromotedTagRejudgeProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NOT NULL
+      AND NOT t.seeded
+      AND NOT EXISTS (
+          SELECT 1 FROM tag_quality_event e
+          WHERE e.tag_name = t.name AND e.policy_version = @policy_version::text
+      )
+);

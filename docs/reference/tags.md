@@ -101,13 +101,16 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
 
 ## Runs
 
+- `store_signal.go` — the store-changed record's shared surface: the flag names
+  (`SignalMeasureChanged`, `SignalReconcileChanged`, `SignalAuditChanged`) and
+  values (`SignalSet`/`SignalClear`), `OpenStoreSignal` (a pass's opening gate —
+  the read-then-clear of its flag in one committed transaction, an absent row
+  counting as changed) and `RearmStoreSignal` (a failed run's re-arm). One
+  protocol, three flag-owning passes.
 - `measure.go` — `Runner`/`NewRunner`, `Report` (with `ZeroWork`),
-  `WorklistCounts`, `ReportPrefix`, the store-changed signal names
-  (`SignalMeasureChanged`, `SignalReconcileChanged`, `SignalIdentityChanged`,
-  `SignalAuditChanged`) and values (`SignalSet`/`SignalClear`); `Run` opens on
-  the store-changed gate — the flag set, or no completed run under the current
-  `RuleSetVersion` — clears its flag in that opening transaction, and re-arms it
-  if the sweep fails, reporting `ZeroWork` when it skips.
+  `WorklistCounts`, `ReportPrefix`; `Run` opens on the store-changed gate — the
+  flag set, or no completed run under the current `RuleSetVersion` — reporting
+  `ZeroWork` when it skips.
 - `tagmeasure.go` — `TagMeasureTaskHandler`/`NewTagMeasureTaskHandler`,
   `TagMeasureDedupKey`, `ForkAndExtractReport`, `ExtractReport`
 
@@ -124,9 +127,10 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   policy, identity planning, quality gating), `IdentityResolver`/
   `NewIdentityResolver`, `AuditRunner`/`NewAuditRunner`, the identity and audit
   task handlers, `VerdictStore`/`NewVerdictStore` and `PartDimensionFeature`,
-  `PhraseFoldKey`/`PhraseFoldVerdict`; the identity and audit passes clear
-  their store-changed flags (`SignalIdentityChanged`/`SignalAuditChanged`) as
-  they open.
+  `PhraseFoldKey`/`PhraseFoldVerdict`; the audit pass opens on its store-changed
+  gate — an unchanged vocabulary skips the store-wide pending-coverage
+  derivation and the durable rows already written stand, while the pool-driven
+  sweep always draws — and a failed run re-arms the flag.
 - `policy/` — pure candidate generation: `Evaluate`, `Decision`, `Version` (no
   logging, no config, no I/O).
 - `reconcile/` — `Reconciler`/`NewReconciler` and its `Run`, the report types
@@ -134,9 +138,12 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   `WorklistCounts`, `CompoundSplitEntry`, `DemotionCounts`, `DemotionEntry`,
   `FlipCounts`, `PairEntry`), the worklist/evidence/apply paths, the sweeps (twin
   canonicalization, orphan, provisional, promoted-mass
-  demotion), the stored-compound scan, `bootstrap.go` (historical log ingest),
-  and `TagReconcileTaskHandler`/`NewTagReconcileTaskHandler`; `Run` clears its
-  store-changed flag (`SignalReconcileChanged`) as it opens.
+  demotion), the stored-compound scan, `gate.go` (the opening gate's work
+  probes), `bootstrap.go` (historical log ingest),
+  and `TagReconcileTaskHandler`/`NewTagReconcileTaskHandler`; `Run` opens on its
+  store-changed gate — a clear flag with a completed run behind it and every
+  work probe empty reports `ZeroWork` without the store-view reads — and a
+  failed run re-arms the flag.
 
 ## Tests
 

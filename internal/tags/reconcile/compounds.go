@@ -67,37 +67,18 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 
 	entries := make([]*compoundEntry, 0, len(names))
 	for _, name := range names {
-		if anchor, ok := held[name]; ok {
-			report.Skips["identity_hold"]++
-			r.logger.Debug("", "tag reconcile: compound %q is identity-held (anchor=%q) — left for review", name, anchor)
+		entry, skip := compoundEntryFor(name, promoted[name], tagCounts[name], held, compositionHeld, states)
+		if entry != nil {
+			entries = append(entries, entry)
 			continue
 		}
-		state, ok := states[tags.StoredName(name)]
-		if ok && state.Decided && state.Disposition == tags.CompositionSplit {
-			// a split may still owe an application
-			entries = append(entries, &compoundEntry{name: name, docCount: tagCounts[name], pendingApply: true})
-			continue
+		report.Skips[skip]++
+		switch skip {
+		case "identity_hold":
+			r.logger.Debug("", "tag reconcile: compound %q is identity-held (anchor=%q) — left for review", name, held[name])
+		case "composition_hold":
+			r.logger.Debug("", "tag reconcile: compound %q is composition-held (reason=%s) — left for review", name, compositionHeld[name])
 		}
-		if ok && state.Decided && state.Disposition == tags.CompositionDrop {
-			// a decided drop whose influence still stands: revoke it, not split it
-			// every drop reason is a hold reason, so the held map carries the demotion reason
-			if promoted[name] {
-				entries = append(entries, &compoundEntry{name: name, docCount: tagCounts[name], demote: true, reason: compositionHeld[name]})
-			} else {
-				report.Skips["decided"]++
-			}
-			continue
-		}
-		if reason, ok := compositionHeld[name]; ok {
-			report.Skips["composition_hold"]++
-			r.logger.Debug("", "tag reconcile: compound %q is composition-held (reason=%s) — left for review", name, reason)
-			continue
-		}
-		if ok && state.Decided {
-			report.Skips["decided"]++
-			continue
-		}
-		entries = append(entries, &compoundEntry{name: name, docCount: tagCounts[name]})
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].pendingApply != entries[j].pendingApply {
@@ -112,6 +93,35 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 		return entries[i].name < entries[j].name
 	})
 	return entries
+}
+
+// compoundEntryFor classifies one stored compound candidate into the work it represents: an application owed
+// for a decided split, a demotion owed for a decided drop still promoted, or a judgment owed otherwise. A nil
+// entry comes with the tally key naming why the sweep has nothing to do. The compound arm and the opening
+// gate's probe read membership through it, so the two cannot disagree about what work is due.
+func compoundEntryFor(name string, promoted bool, docCount int64, held, compositionHeld map[string]string,
+	states map[string]tags.CompositionState) (*compoundEntry, string) {
+	if _, ok := held[name]; ok {
+		return nil, "identity_hold"
+	}
+	state, ok := states[tags.StoredName(name)]
+	if ok && state.Decided && state.Disposition == tags.CompositionSplit {
+		return &compoundEntry{name: name, docCount: docCount, pendingApply: true}, ""
+	}
+	if ok && state.Decided && state.Disposition == tags.CompositionDrop {
+		if promoted {
+			// every drop reason is a hold reason, so the held map carries the demotion reason
+			return &compoundEntry{name: name, docCount: docCount, demote: true, reason: compositionHeld[name]}, ""
+		}
+		return nil, "decided"
+	}
+	if _, ok := compositionHeld[name]; ok {
+		return nil, "composition_hold"
+	}
+	if ok && state.Decided {
+		return nil, "decided"
+	}
+	return &compoundEntry{name: name, docCount: docCount}, ""
 }
 
 // Stored compounds are judged through the same entry point the emission gate uses, so a verdict binds

@@ -167,7 +167,7 @@ The `maintenance_lock` row of `system_signal`: `IsMaintenanceLocked` (the `is_ma
 
 ### Store-change record
 
-The four `system_signal` store-changed flags (`tag_measure_changed`, `tag_reconcile_changed`, `tag_identity_changed`, `tag_audit_changed`): `GetTagStoreSignal` (`:one` — the flag's `value` by name; the measurement's opening gate reads it and treats `ErrNoRows` as changed) and `SetTagStoreSignal` (`:exec` — writes `value` and bumps `modified_at`; clears a flag at a run's open and re-arms the measurement's flag when a sweep fails after its clear). Setting is table-owned, not query-owned: the `tag_store_changed()` trigger function, fired by row triggers on `tag`, `document_tag`, `tag_alias`, and `deleted_tag` (migration `00044`), upserts all four flags to `'true'` inside the mutating statement's own transaction, so every writer is covered — the 23 vocabulary queries regardless of caller, the seeders, and manual SQL. The WHEN guards on the UPDATE triggers compare the semantic columns (`tag`: name, promoted_at, demoted_at, demoted_reason; `document_tag`: tag_id, source; `tag_alias`: alias_name, canonical_tag_id), so orphan-mark bookkeeping and the seeder's no-op `ON CONFLICT` rewrites stay silent; the INSERT/DELETE triggers carry no guard (a `WHEN` referencing `OLD` is illegal on a trigger that can fire for INSERT), and `deleted_tag` needs none because both of its write shapes always change the row.
+The three `system_signal` store-changed flags (`tag_measure_changed`, `tag_reconcile_changed`, `tag_audit_changed`): `GetTagStoreSignal` (`:one` — the flag's `value` by name; the measurement's, reconcile's, and audit's opening gates read it and treat `ErrNoRows` as changed) and `SetTagStoreSignal` (`:exec` — writes `value` and bumps `modified_at`; an opening gate clears its own flag, and a failed run re-arms it). The gate protocol is shared, not per-pass: `tags.OpenStoreSignal`/`tags.RearmStoreSignal` (`internal/tags/store_signal.go`) wrap the read-then-clear in one committed transaction and the failure re-arm, so each pass owns only its flag name and the absent-row-counts-as-changed rule lives in one place. Setting is table-owned, not query-owned: the `tag_store_changed()` trigger function, fired by row triggers on `tag`, `document_tag`, `tag_alias`, and `deleted_tag` (migration `00044`, narrowed to the three flags by `00045`), upserts all three flags to `'true'` inside the mutating statement's own transaction, so every writer is covered — the 23 vocabulary queries regardless of caller, the seeders, and manual SQL. The WHEN guards on the UPDATE triggers compare the semantic columns (`tag`: name, promoted_at, demoted_at, demoted_reason; `document_tag`: tag_id, source; `tag_alias`: alias_name, canonical_tag_id), so orphan-mark bookkeeping and the seeder's no-op `ON CONFLICT` rewrites stay silent; the INSERT/DELETE triggers carry no guard (a `WHEN` referencing `OLD` is illegal on a trigger that can fire for INSERT), and `deleted_tag` needs none because both of its write shapes always change the row. The identity pass holds no flag: its work set is the pending-event count, already its first read, so a store-changed record would have nothing to gate.
 
 ### Batch
 
@@ -459,7 +459,7 @@ the document was last audited in, read as `stamp < current sweep` for eligibilit
 cascading on document delete) and the `tag_audit_sweep` counter, whose row lives in
 `system_signal` since `00041_system_signal.sql`).
 `system_signal` holds the migration-seeded signal rows (the sweep counter, the
-maintenance lock, and the four store-changed flags), so it is excluded from the
+maintenance lock, and the three store-changed flags), so it is excluded from the
 schema-and-data dump and its rows are re-created by the migration replay on restore. `00039_tag_demotion.sql` adds the demotion record and the seeded marker
 (`tag.demoted_at`, `tag.demoted_reason`, `tag.seeded`) plus the partial index
 `idx_tag_promoted_demotable` on `(promoted_at) WHERE promoted_at IS NOT NULL AND NOT
@@ -479,7 +479,10 @@ rows take the migration instant) and the store-changed record: it seeds the four
 `system_signal` flags (`tag_measure_changed`, `tag_reconcile_changed`,
 `tag_identity_changed`, `tag_audit_changed`) and creates the `tag_store_changed()`
 trigger function with its row triggers on `tag`, `document_tag`, `tag_alias`, and
-`deleted_tag`. Goose tracks
+`deleted_tag`. `00045_drop_tag_identity_changed.sql` deletes the
+`tag_identity_changed` flag and redefines `tag_store_changed()` over the three
+remaining flags — the identity pass has no store-wide read for a signal to gate.
+Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
 ## Migration Version Table
