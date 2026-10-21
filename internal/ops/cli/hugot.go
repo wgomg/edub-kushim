@@ -82,6 +82,14 @@ func serveHugotHandler(c *container.Container, args []string) error {
 	}
 	hugot.SetStore(embStore)
 
+	textCache := matcher.NewTextEmbeddingCache(c.GetLogger(), client.Queries, hugot.EmbeddingFingerprint())
+	hugot.SetTextCache(textCache)
+	if cleared, clearErr := textCache.ClearStaleGeneration(context.Background()); clearErr != nil {
+		c.GetLogger().Warn("", "clear stale matcher text embeddings: %v", clearErr)
+	} else if cleared {
+		c.GetLogger().Info("", "cleared matcher text embeddings for a new embedding generation")
+	}
+
 	bodyCap := matcher.MaxMatchBodyBytes(c.GetConfig().Enricher.TagMatcher.ReduceTargetWords)
 
 	mux := http.NewServeMux()

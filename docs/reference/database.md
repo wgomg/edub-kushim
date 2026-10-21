@@ -64,11 +64,11 @@ Migrations run automatically on startup (no manual CLI command needed):
 
 The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim backup`, `kushim restore`, the `migrate-db` config task, and the `migrate-storage` config task):
 
-- `DumpSchemaAndData(ctx, db, schemaFS, w)` — Writes a complete SQL dump to `w`: a single `BEGIN...COMMIT` transaction that recreates the schema from the embedded migrations (preamble drops the public schema), recreates the `goose_db_version` table from the live schema (introspection-based DDL) and carries its rows across the dump so a restored database can be reconnected without goose re-applying migrations, then batch-inserts all table data (excluding the application-managed tables `goose_db_version` and `system_signal` — the latter's seeded signal rows are recreated by the migration replay).
+- `DumpSchemaAndData(ctx, db, schemaFS, w)` — Writes a complete SQL dump to `w`: a single `BEGIN...COMMIT` transaction that recreates the schema from the embedded migrations (preamble drops the public schema), recreates the `goose_db_version` table from the live schema (introspection-based DDL) and carries its rows across the dump so a restored database can be reconnected without goose re-applying migrations, then batch-inserts all table data (excluding the application-managed tables — `goose_db_version` and `system_signal`, whose seeded signal rows the migration replay recreates, and `matcher_text_embedding`, a rebuildable derived cache whose `bytea` values cannot round-trip the plain-literal value formatter and would yield an unrestorable dump).
 - `SQLDumpToFile(ctx, db, schemaFS, destPath)` — Gzipped variant (the gzip footer is flushed before the file is closed); used for the pre-migration safety snapshot.
 - `CheckRestoreTooling(runtime, container)` — Verifies the external tooling for a restore under the configured `database.runtime`: `psql` on PATH (`host`), the `docker`/`podman` binary plus a non-empty container name, or refuses outright for `remote` with manual-restore guidance. Runs before any destructive step.
 - `RestoreDumpViaPSQL(ctx, runtime, container, dsn, dumpPath)` — Pipes a plain SQL dump file into `psql`, executed on the host (`psql -X -v ON_ERROR_STOP=1 -f <dump> <dsn>`, password via `PGPASSWORD` so it never appears on argv) or inside the container (`<runtime> exec -i -e PGPASSWORD=<pw> <container> psql -X -v ON_ERROR_STOP=1 -h localhost -U <user> -d <db>`, dump piped to stdin; `-h localhost` forces TCP + password auth inside the container). The dump's own `BEGIN/COMMIT` keeps the restore atomic and `ON_ERROR_STOP=1` fails fast; stderr is captured into the error message.
-- `ValidateMigrationDestination(ctx, db)` — Refuses the destructive restore when the destination holds tables without edub migration history (goose version table present with rows); the application-managed tables `goose_db_version` and `system_signal` are ignored (the shared `appManagedTables` list), so a mistyped/reused database name is never silently wiped.
+- `ValidateMigrationDestination(ctx, db)` — Refuses the destructive restore when the destination holds tables without edub migration history (goose version table present with rows); the application-managed tables `goose_db_version`, `system_signal`, and `matcher_text_embedding` are ignored (the shared `appManagedTables` list), so a mistyped/reused database name is never silently wiped.
 - `RewriteStoragePaths(ctx, db, oldDir, newDir)` — Rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` from `oldDir` to `newDir` in a single transaction (LIKE-escaped prefix match); used by restore and the `migrate-storage` task.
 - `RewriteTaskPayloadPaths(ctx, db, oldConsumptionDir, newConsumptionDir)` — Rewrites `file_path` inside pending `consume` task payloads (JSON) from the old consumption dir to the new one via `jsonb_set` with a strict-prefix match; runs before files move so queued work references the new inbox paths.
 - `WaitForTaskDrain(ctx, queries, logger, what, onWait ...func(count int64))` — Polls `CountProcessingTasks` (5s ticker) until no consume/enrich task is processing; the caller must hold the maintenance lock, which blocks new claims, so it converges. `onWait`, when non-nil, observes the in-flight count on each poll.
@@ -96,6 +96,7 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 - `Batch` — `ID`, `Source`, `Status` (queued/processing/completed/failed/cancelled), `CreatedAt sql.NullTime`
 - `BatchOwner` — `BatchID`, `OwnerID`, `Pid`, `AcquiredAt`, `LastHeartbeat`
 - `SystemSignal` — `ID int16`, `Name`, `Type`, `Value string`, `Data *json.RawMessage` (JSONB), `ModifiedAt time.Time`
+- `MatcherTextEmbedding` — `Fingerprint`, `InputHash []byte` (bytea), `Embedding []byte` (bytea), `CreatedAt time.Time`
 - `OrphanedFile` — `ID`, `DocumentKey`, `DocumentKeyType` (uuid/dbid), `FilePath`, `OriginalPath`, `SourceDir` (originals/processed), `FileSize`, `OriginalType`, `DetectedAt`, `Status` (pending/deleted/restored/reingested), `ActionAt`, `ActionType`
 - `TagVerdictEvent` — `ID`, `DocumentID int64` (FK → `document.id`, ON DELETE CASCADE), `Query`, `Target`, `Sim float64`, `Verdict types.TagVerdict` (`same`/`variant`/`related`), `VerdictModel sql.NullString` (NULL for cache-applied rows), `PolicyVersion`, `VerdictAt time.Time`
 - `TagQualityEvent` — `ID`, `DocumentID int64` (FK → `document.id`, ON DELETE CASCADE), `TagName`, `Criteria json.RawMessage` (JSONB, the rubric booleans — the judge's four answers plus the `dimension` stamped from the parts pass), `Pass bool`, `VerdictModel sql.NullString` (NULL for cache-applied rows), `PolicyVersion`, `VerdictAt time.Time`
@@ -168,6 +169,10 @@ The `maintenance_lock` row of `system_signal`: `IsMaintenanceLocked` (the `is_ma
 ### Store-change record
 
 The three `system_signal` store-changed flags (`tag_measure_changed`, `tag_reconcile_changed`, `tag_audit_changed`): `GetTagStoreSignal` (`:one` — the flag's `value` by name; the measurement's, reconcile's, and audit's opening gates read it and treat `ErrNoRows` as changed) and `SetTagStoreSignal` (`:exec` — writes `value` and bumps `modified_at`; an opening gate clears its own flag, and a failed run re-arms it). The gate protocol is shared, not per-pass: `tags.OpenStoreSignal`/`tags.RearmStoreSignal` (`internal/tags/store_signal.go`) wrap the read-then-clear in one committed transaction and the failure re-arm, so each pass owns only its flag name and the absent-row-counts-as-changed rule lives in one place. Setting is table-owned, not query-owned: the `tag_store_changed()` trigger function, fired by row triggers on `tag`, `document_tag`, `tag_alias`, and `deleted_tag` (migration `00044`, narrowed to the three flags by `00045`), upserts all three flags to `'true'` inside the mutating statement's own transaction, so every writer is covered — the 23 vocabulary queries regardless of caller, the seeders, and manual SQL. The WHEN guards on the UPDATE triggers compare the semantic columns (`tag`: name, promoted_at, demoted_at, demoted_reason; `document_tag`: tag_id, source; `tag_alias`: alias_name, canonical_tag_id), so orphan-mark bookkeeping and the seeder's no-op `ON CONFLICT` rewrites stay silent; the INSERT/DELETE triggers carry no guard (a `WHEN` referencing `OLD` is illegal on a trigger that can fire for INSERT), and `deleted_tag` needs none because both of its write shapes always change the row. The identity pass holds no flag: its work set is the pending-event count, already its first read, so a store-changed record would have nothing to gate.
+
+### Matcher text embedding cache
+
+`matcher_text_embedding` (migration `00046`) — the matcher daemon's memo of one pooled BGE-M3 vector per distinct chunked input text, keyed `(fingerprint, input_hash)`: `GetMatcherTextEmbedding` (`:one` — the row's `embedding` bytea; `ErrNoRows` is the ordinary miss), `InsertMatcherTextEmbedding` (`:exec` — `ON CONFLICT (fingerprint, input_hash) DO NOTHING`, so concurrent encoders of the same text converge on the first write), `GetMatcherTextEmbeddingGeneration` and `SetMatcherTextEmbeddingGeneration` (read and upsert of the `matcher_text_embedding_generation` marker row's value in `system_signal` — the embedding-stack fingerprint the stored rows were produced under), and `TruncateMatcherTextEmbedding` (`:exec`). The daemon consults the cache before tokenizing and writes the pooled vector on a miss; the fingerprint absorbs every embedding-stack change, so a changed stack invalidates every vector at once and the daemon clears the table through the marker at startup instead of scanning it (mechanics in `docs/developer-guide/semantic-matching.md`). Rows are rebuildable derived data — the table is excluded from dumps and deleted, not re-encoded, when the stack changes.
 
 ### Batch
 
@@ -320,6 +325,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `tag_part_dimension_event` — Append-only part-dimension verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE; nullable — NULL on a row written with no emitting document, such as one the stored-compound sweep produces), `value` (canonical form), `criteria` (JSONB — the dimension reading; `defer` lives in the payload, never as a column), `dimensional` (whether the part names a retrievable dimension), `verdict_model` (nullable — NULL for cache-applied rows), `policy_version`, `verdict_at`. A partial unique index on `(value, policy_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
 - `tag_compound_status_event` — Append-only compound-status verdicts: `document_id` (FK → `document.id`, ON DELETE CASCADE; nullable — NULL on a row written with no emitting document, such as one the stored-compound sweep produces), `candidate` (canonical form), `status` (`named_unit`/`composition`/`no_dimension`/`defer`, CHECK constrained), `criteria` (JSONB), `verdict_model` (nullable — NULL for cache-applied rows), `split_criteria_version`, `verdict_at`. A partial unique index on `(candidate, split_criteria_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
 - `tag_phrase_fold_event` — Append-only residual phrase-context fold verdicts (migration `00034`): `document_id` (nullable FK → `document.id`, ON DELETE CASCADE), `phrase`, `part`, `anchor`, `criteria` (JSONB — the fold/abstention reading), `fold` (whether the part denotes the anchor in the phrase), `verdict_model` (nullable — NULL for cache-applied rows), `criteria_version` (`analyzer.TagPhraseFoldVersion`), `verdict_at`. A partial unique index on `(phrase, part, anchor, criteria_version) WHERE verdict_model IS NOT NULL` deduplicates fresh verdicts across concurrent workers.
+- `matcher_text_embedding` — The matcher daemon's text-embedding cache (migration `00046`): `fingerprint text + input_hash bytea` (composite PK; sha256 of the exact input text × a fingerprint of the embedding stack), `embedding bytea NOT NULL` (the pooled BGE-M3 vector for one chunked input text, little-endian float32), `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`. One row per distinct long input text per embedding stack — written by the daemon on an encode miss, read instead of a re-embed when the same text is matched again; only texts over the chunk threshold land here (tag names and rank queries ride the batched short path). Rebuildable derived data: excluded from dumps, truncated when the generation marker in `system_signal` records a changed embedding stack.
 
 ## Junction Tables
 
@@ -344,6 +350,7 @@ The last 4 methods back the dashboard analytics panel. `LanguageDistribution` an
 - `batch`: `status`
 - `batch_owner`: `owner_id`, `last_heartbeat`
 - `orphaned_file`: `status`, `detected_at`
+- `matcher_text_embedding`: PK `(fingerprint, input_hash)` — both match-path lookups and writes are indexed point reads
 
 ## Schema Idempotency
 
@@ -459,8 +466,10 @@ the document was last audited in, read as `stamp < current sweep` for eligibilit
 cascading on document delete) and the `tag_audit_sweep` counter, whose row lives in
 `system_signal` since `00041_system_signal.sql`).
 `system_signal` holds the migration-seeded signal rows (the sweep counter, the
-maintenance lock, and the three store-changed flags), so it is excluded from the
-schema-and-data dump and its rows are re-created by the migration replay on restore. `00039_tag_demotion.sql` adds the demotion record and the seeded marker
+maintenance lock, and the three store-changed flags; the matcher daemon also
+records its `matcher_text_embedding_generation` marker there at runtime), so
+the table is excluded from the
+schema-and-data dump and the migration replay recreates its seeded rows on restore. `00039_tag_demotion.sql` adds the demotion record and the seeded marker
 (`tag.demoted_at`, `tag.demoted_reason`, `tag.seeded`) plus the partial index
 `idx_tag_promoted_demotable` on `(promoted_at) WHERE promoted_at IS NOT NULL AND NOT
 seeded`, serving the demotion worklist. `00040_tag_composition_reading.sql` adds the
@@ -482,6 +491,13 @@ trigger function with its row triggers on `tag`, `document_tag`, `tag_alias`, an
 `deleted_tag`. `00045_drop_tag_identity_changed.sql` deletes the
 `tag_identity_changed` flag and redefines `tag_store_changed()` over the three
 remaining flags — the identity pass has no store-wide read for a signal to gate.
+`00046_matcher_text_embedding.sql` creates the matcher daemon's text-embedding
+cache — `matcher_text_embedding` (`fingerprint text`, `input_hash bytea`,
+`embedding bytea NOT NULL`, PK `(fingerprint, input_hash)`) — one pooled BGE-M3
+vector per distinct chunked input text, written by the daemon on an encode miss
+and read in place of a re-embed when the same text is matched again; its Down
+section deletes the `matcher_text_embedding_generation` marker row it may have
+written into `system_signal`.
 Goose tracks
 which versions have been applied in the `goose_db_version` table.
 

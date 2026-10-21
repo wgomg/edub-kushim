@@ -24,7 +24,8 @@ tags get suggested.
 9. [The matcher daemon](#9-the-matcher-daemon)
 10. [Thresholds and configuration](#10-thresholds-and-configuration)
 11. [Where it plugs into the pipeline](#11-where-it-plugs-into-the-pipeline)
-12. [Gotchas](#12-gotchas)
+12. [The text-embedding cache](#12-the-text-embedding-cache)
+13. [Gotchas](#13-gotchas)
 
 ---
 
@@ -257,6 +258,15 @@ chunkOverlap := effectiveChunkSize / 10
 margin accounts for special tokens. Overlap is 10% of the chunk size
 (`chunkOverlap := effectiveChunkSize / 10`), so a 4096-token chunk slides by
 ~3686 tokens per step.
+
+### Long-input memoization
+
+The chunked path is expensive — two to four inference calls of up to 4096
+tokens each — and the same long text is embedded more than once in a document's
+life (§12). It is therefore memoized: the chunked path is the text-embedding
+cache's only writer and its biggest consumer, serving a repeat input from
+Postgres instead of re-encoding. Short texts (tag names, rank queries) ride the
+batched path and are never cached.
 
 ---
 
@@ -589,7 +599,8 @@ is implemented by `matcher.TagEmbeddingStore` and by the test double
 model once and serves RPC over a Unix socket (`<config-dir>/kushim-hugot.sock`).
 
 - **Startup**: removes a stale socket, builds the tag cache
-  (`matcher.BuildTagCache`), opens the listener, serves HTTP with a 30s
+  (`matcher.BuildTagCache`), attaches the text-embedding cache (§12) and clears
+  a stale generation, opens the listener, serves HTTP with a 30s
   read/idle timeout and a `WriteTimeout` mirrored from
   `enricher.tagmatcher.timeout` (0 = no deadline), read once at startup.
 - **`--bg`** re-execs itself detached with stdio nulled (same pattern as
@@ -727,7 +738,76 @@ catalog/derivation, add it to every switch statement.
 
 ---
 
-## 12. Gotchas
+## 12. The text-embedding cache
+
+The chunked encode of a long input costs multiple inference calls, and the same
+long text is embedded more than once in the system: the enricher matches a
+document's reduced tag text at consume time, and the completeness audit
+(`enricher.tag_audit`) re-matches that same text — same deterministic TextRank
+reduction, same `reduce_target_words` — when the document is sampled later.
+`matcher_text_embedding` (migration `00046`) removes the repeat: the daemon
+stores one pooled vector per distinct input text, so a re-match is a single
+indexed read plus a cosine rank over the tag vectors instead of a full encoding
+pass.
+
+### Key and value
+
+A row is keyed by `(fingerprint, input_hash)`:
+
+- **input_hash** — sha256 of the exact input text the daemon received. Every
+  upstream change that alters the text — reducer behavior,
+  `reduce_target_words`, the reduction-failure fallback to raw text, the
+  client's body-cap truncation — produces a different text and therefore a
+  different key, so the text side of invalidation needs no wiring.
+- **fingerprint** — `embeddingFingerprint`
+  (`internal/matcher/text_embedding_cache.go`): sha256 over the model's
+  `model.onnx` bytes (streamed once per daemon start), the backend name, the
+  effective chunk size and overlap, the pinned ORT archive hash
+  (`onnxRuntimeTgzSHA256`) for the `ort` backend, and the
+  `embeddingCacheGeneration` constant. Everything the embedding depends on and
+  the code can hash is in the key.
+
+The value is the pooled vector as little-endian float32 `bytea`
+(`encodeEmbedding`/`decodeEmbedding`) — ~4 KB for BGE-M3's 1024 dimensions.
+
+### Ownership and lifecycle
+
+`matcher.TextEmbeddingCache` owns the table access. The `kushim hugot` wiring
+builds it from the same DB client `BuildTagCache` runs on, and
+`Hugot.SetTextCache` attaches it — mirroring the `SetStore` seam.
+`encodeChunked` consults the cache before tokenizing and writes the pooled
+vector on a miss; `Match` and `Rank` are unchanged, which is the load-bearing
+part: the ranking always runs against the live tag store, so only the input
+vector is memoized and a store change (a tag added, promoted, deleted, renamed,
+demoted) is reflected on the next match without any cache interaction.
+
+The table carries a generation marker row
+(`matcher_text_embedding_generation`) in `system_signal`.
+`ClearStaleGeneration` runs once at daemon startup: a steady-state start —
+marker equal to the current fingerprint — is a single indexed read, while a
+missing or different marker truncates the table and records the new
+fingerprint. After a stack change (model, backend, chunk size, hugot upgrade)
+every long text re-embeds on demand and the cache refills as documents flow
+through enrichment.
+
+### Failure and backup behavior
+
+The cache is fail-open: a read or write error, a malformed row (length not a
+multiple of four), or an empty vector is logged and treated as a miss, so a
+match outcome never depends on the cache answering; a cache left unwired (nil
+receiver) disables it entirely. Because the fingerprint is part of the row key,
+even an error inside the startup clear leaves nothing reachable from the old
+stack — stale rows are dead weight, never stale answers. Backups skip the
+table's rows (`appManagedTables` in `internal/database/dump.go`): `bytea`
+cannot round-trip the dump's plain-literal value formatter, and the rows are
+rebuildable data — the migration replay recreates the empty table and the
+daemon repopulates it. Growth follows the number of distinct long texts: rows
+for texts no document produces anymore are never read again and are removed
+only by a generation change.
+
+---
+
+## 13. Gotchas
 
 - **Tag names are canonical before they reach the store** — `textnorm.NormalizeTag`
   (`internal/textnorm/tagname.go`) runs at every tag-name write site: the DB save
@@ -777,7 +857,14 @@ catalog/derivation, add it to every switch statement.
 - **Verdicts are cache-scoped to `policy.Version`** — bumping the policy
   version invalidates every cached verdict at once (old rows stay in the event
   table for analysis, they are simply never read for the new version).
+- **Short texts are never cached** — store builds (`BuildTagCache`), tag CRUD
+  re-embeds (`AddToStore`), and identity-rank queries (`Rank`) ride the batched
+  short path; only long document texts enter `matcher_text_embedding`.
+- **Bump `embeddingCacheGeneration`** (`internal/matcher/text_embedding_cache.go`)
+  whenever the embedding runtime changes in a way the fingerprint cannot see —
+  a hugot or tokenizer upgrade, a pipeline-options change — or cached vectors
+  from the previous stack keep serving matches (§12).
 
 ---
 
-*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-21. If code and doc disagree, code wins.*

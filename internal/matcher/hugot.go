@@ -43,6 +43,8 @@ type Hugot struct {
 	chunkSize      int     // effective max tokens per chunk
 	chunkOverlap   int     // overlap in tokens between consecutive chunks
 	store          EmbeddingStore
+	textCache      *TextEmbeddingCache
+	fingerprint    string
 }
 
 type match struct {
@@ -95,6 +97,16 @@ func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string
 	}
 	chunkOverlap := effectiveChunkSize / 10
 
+	runtimePin := ""
+	if isORTBackend(tmCfg.Hugot.Backend) {
+		runtimePin = onnxRuntimeTgzSHA256
+	}
+	fingerprint, err := embeddingFingerprint(modelPath, tmCfg.Hugot.Backend, effectiveChunkSize, chunkOverlap, runtimePin)
+	if err != nil {
+		session.Destroy()
+		return nil, err
+	}
+
 	logger.Debug("", "hugot: chunk_size=%d overlap=%d topN=%d min_sim=%.2f",
 		effectiveChunkSize, chunkOverlap, topN, minSim)
 
@@ -107,6 +119,7 @@ func NewHugot(logger *log.Logger, tmCfg config.TagMatcherConfig, pipeName string
 		chunkSize:      effectiveChunkSize,
 		chunkOverlap:   chunkOverlap,
 		candidateFloor: tmCfg.IdentityCandidateSimilarity,
+		fingerprint:    fingerprint,
 	}, nil
 }
 
@@ -116,6 +129,21 @@ const rankCandidates = 2
 // the daemon serves requests.
 func (h *Hugot) SetStore(s EmbeddingStore) {
 	h.store = s
+}
+
+// SetTextCache attaches the text-embedding cache encodeChunked consults; a nil cache, the default, disables
+// caching. Like SetStore it must be called before the daemon serves requests.
+func (h *Hugot) SetTextCache(c *TextEmbeddingCache) {
+	h.textCache = c
+}
+
+// EmbeddingFingerprint identifies the embedding stack a cached vector must have been produced by; the daemon
+// wiring keys the text-embedding cache on it. It is empty on a nil receiver.
+func (h *Hugot) EmbeddingFingerprint() string {
+	if h == nil {
+		return ""
+	}
+	return h.fingerprint
 }
 
 // AddToStore embeds the named tags and adds them to the store. AddToStore and RemoveFromStore are what
@@ -312,9 +340,15 @@ func (h *Hugot) Encode(ctx context.Context, docId string, texts []string) ([][]f
 	return result, nil
 }
 
-// encodeChunked embeds a single long input by splitting token IDs into
-// overlapping chunks, embedding each chunk, and mean-pooling the results.
+// encodeChunked embeds a single long input by splitting token IDs into overlapping chunks, embedding each
+// chunk, and mean-pooling the results. It consults the text-embedding cache first and, on a miss, stores
+// the pooled vector so a later call with the same text skips tokenization and inference.
 func (h *Hugot) encodeChunked(ctx context.Context, docId string, input string) ([]float32, error) {
+	if cached, ok := h.textCache.Get(ctx, input); ok {
+		h.logger.Debug(docId, "hugot: chunked path — cache hit")
+		return cached, nil
+	}
+
 	tk := h.pipeline.Model.Tokenizer
 	if tk == nil {
 		return nil, fmt.Errorf("tokenizer not available")
@@ -356,7 +390,9 @@ func (h *Hugot) encodeChunked(ctx context.Context, docId string, input string) (
 		return nil, nil
 	}
 
-	return meanPool(allEmbeddings), nil
+	pooled := meanPool(allEmbeddings)
+	h.textCache.Put(ctx, input, pooled)
+	return pooled, nil
 }
 
 // tokenize returns the token IDs for the given input text using the Go tokenizer.
@@ -441,11 +477,17 @@ func readMaxPositionEmbeddings(path string) (int, error) {
 	return cfg.MaxPositionEmbeddings, nil
 }
 
+// isORTBackend reports whether the configured backend name selects onnxruntime; the name is matched
+// case-insensitively and this is the single place the decision is made.
+func isORTBackend(name string) bool {
+	return strings.EqualFold(name, "ort")
+}
+
 func getBackendSession(tmCfg config.TagMatcherConfig, logger *log.Logger) (*hugot.Session, error) {
-	switch strings.ToLower(tmCfg.Hugot.Backend) {
+	switch {
 	// case "XLA":
 	// 	session, err = hugot.NewXLASession(context.Background())
-	case "ort":
+	case isORTBackend(tmCfg.Hugot.Backend):
 		soPath := filepath.Join(tmCfg.Hugot.BackendLibPath, "libonnxruntime.so")
 		if err := downloadLib(tmCfg.Hugot.BackendLibPath, soPath, logger); err != nil {
 			return nil, err

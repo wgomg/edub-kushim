@@ -1,12 +1,14 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -2027,4 +2029,35 @@ func TestTagVerdictEvent_RoundTrip(t *testing.T) {
 	assertEqual(t, string(anarchism.Verdict), "related", "second pair matched")
 	assertEqual(t, anarchism.VerdictModel.Valid, true, "non-NULL model round-trips as valid")
 	assertEqual(t, anarchism.VerdictModel.String, "model-a", "model preserved")
+}
+
+func TestDumpSkipsMatcherTextEmbedding(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	if err := q.InsertMatcherTextEmbedding(ctx, InsertMatcherTextEmbeddingParams{
+		Fingerprint: "fp-dump-test",
+		InputHash:   []byte{1, 2, 3},
+		Embedding:   []byte{0x00, 0x00, 0x80, 0x3F},
+	}); err != nil {
+		t.Fatalf("seed cache row: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := DumpSchemaAndData(ctx, db, SchemaFS, &buf); err != nil {
+		t.Fatalf("DumpSchemaAndData: %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, `INSERT INTO "matcher_text_embedding"`) {
+		t.Fatal("cache rows leaked into the dump: bytea data cannot round-trip the literal value " +
+			"formatter, so an unrestorable backup results if a bytea table is not excluded from data dumps")
+	}
+	if !strings.Contains(out, `INSERT INTO "document_type"`) {
+		t.Fatal("dump carries no document_type rows — the exclusion assertion above is vacuous without data in the dump")
+	}
+	if !strings.Contains(out, "CREATE TABLE matcher_text_embedding") {
+		t.Fatal("schema preamble lost matcher_text_embedding — a restore must recreate the table the daemon populates")
+	}
 }

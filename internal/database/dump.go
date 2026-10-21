@@ -297,10 +297,12 @@ func writeIdentityRestore(ctx context.Context, tx *sql.Tx, tableName string, w i
 	return rows.Err()
 }
 
-// appManagedTables are the tables the application or its migration framework owns rather than user data: a
-// dump skips them so the restore's migration replay does not collide on the rows the replay re-seeds, and
-// destination validation ignores them so a database holding only these tables still counts as replaceable.
-var appManagedTables = []string{"goose_db_version", "system_signal"}
+// appManagedTables are the tables the application or its migration framework owns rather than user data:
+// a dump skips them so the restore's migration replay does not collide on the rows the replay re-seeds,
+// and destination validation ignores them so a database that holds only these tables still counts as
+// replaceable. matcher_text_embedding is a rebuildable derived cache, and its bytea columns cannot be
+// replayed through the plain-literal value formatter.
+var appManagedTables = []string{"goose_db_version", "system_signal", "matcher_text_embedding"}
 
 func getTableNames(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `

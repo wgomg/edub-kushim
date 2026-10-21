@@ -323,6 +323,13 @@ type DocumentType struct {
 	CreatedAt   sql.NullTime
 }
 
+type MatcherTextEmbedding struct {
+	Fingerprint string
+	InputHash   []byte
+	Embedding   []byte
+	CreatedAt   time.Time
+}
+
 type OrphanedFile struct {
 	ID              int64
 	DocumentKey     string

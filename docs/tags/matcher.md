@@ -150,6 +150,23 @@ in your headroom.
   most documents embed in a single 4096-token call and only long documents
   take the chunked path.
 
+### Repeat matches and the text-embedding cache
+
+The daemon caches the pooled embedding of every long text it embeds in
+PostgreSQL (table `matcher_text_embedding`). The cache key is the exact input
+text plus a fingerprint of the embedding stack — model file, backend, chunk
+size, and overlap — so switching model, backend, or `chunk_size` clears the
+cache on the matcher's first start after the change and every text re-embeds on
+demand; there is nothing to do by hand. A repeat match of an already-seen text
+(the coverage audit re-matching a document the enrichment pass already matched,
+or a re-enriched document) ranks the cached vector against the tag store with
+no inference at all. Short texts — tag names and identity-rank queries — are
+always embedded fresh and never cached.
+
+Sizing consequence: inference cost concentrates on first-time embeddings, so
+audit and re-enrich workloads over already-embedded documents cost almost
+nothing until the embedding stack changes.
+
 ---
 
 ## Backends: `ort` vs `go`
@@ -210,6 +227,7 @@ process; the rest of the system keeps running. Adjust the values to your
 | My 8 GB host OOMs during enrichment — what now? | Set `enricher.tagmatcher.chunk_size: 2048` and restart `kushim hugot`. Idle RSS drops toward ~2 GB, peaks to ~3–4 GB. |
 | I want the best matching quality and have 32 GB+. | `chunk_size: 0` — full 8180-token context, no chunking. |
 | Why is the matcher using 2.2 GB when idle? | That is the model resident in RAM — it is loaded once and stays hot for the lifetime of the process. |
+| I switched `hugot.backend`, the model, or `chunk_size` — what happens to cached embeddings? | The matcher detects the stack change on its first start after it and clears its text-embedding cache; texts re-embed on demand. |
 | Does the web UI expose these settings? | The Settings → Enricher → Tag matcher section edits `timeout`, `reduce_target_words`, `chunk_size`, model, and backend. |
 
 ---

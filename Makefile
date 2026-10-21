@@ -320,6 +320,7 @@ test-cgo-db:
 		./internal/ops/consume/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
+		./internal/matcher/ \
 		./internal/tags/ \
 		./internal/tags/admission/ \
 		./internal/tags/curation/ \
