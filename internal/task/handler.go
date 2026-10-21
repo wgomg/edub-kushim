@@ -1,9 +1,8 @@
-// Package task is the task system: the lifecycle store, the claim and
-// complete protocol with claim tokens, batch ownership with heartbeats, the
-// registry of task-type handlers, the runner that drives claims, the worker
-// pool, the dispatcher that enqueues, and the progress tracker. The
-// lifecycle, batch-ownership and queue-semantics contracts are documented
-// in docs/developer-guide/task-system.md; this package implements them.
+// Package task is the task system: the lifecycle store, the claim and complete protocol with claim tokens,
+// batch ownership with heartbeats, the registry of task-type handlers, the runner that drives claims, the
+// worker pool, the dispatcher that enqueues, the task type definition model and its enqueue contract, and
+// the progress tracker. The lifecycle, batch-ownership and queue-semantics contracts are documented in
+// docs/developer-guide/task-system.md; this package implements them.
 package task
 
 import (

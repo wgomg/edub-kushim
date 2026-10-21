@@ -33,6 +33,18 @@ func TestValid(t *testing.T) {
 			t.Errorf("BatchSource(%q).Valid() = %v, want %v", s, got, want)
 		}
 	}
+	originCases := map[string]bool{
+		string(Batch.Origin.CLI):      true,
+		string(Batch.Origin.Schedule): true,
+		string(Batch.Origin.Wizard):   true,
+		"upload":                      false,
+		"unknown":                     false,
+	}
+	for s, want := range originCases {
+		if got := BatchOrigin(s).Valid(); got != want {
+			t.Errorf("BatchOrigin(%q).Valid() = %v, want %v", s, got, want)
+		}
+	}
 	taskCases := map[string]bool{
 		string(Task.Status.Pending):   true,
 		string(Task.Status.Discarded): true,

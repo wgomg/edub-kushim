@@ -1,11 +1,10 @@
-// Package types is the single Go declaration point for the task-system
-// vocabulary: the batch sources and statuses, the task types and
-// statuses, and the tag verdicts, exposed as namespaced constant bags
-// (types.Batch.Source, types.Task.Type) with parse helpers for the wire
-// form. The database's enum columns mirror these values. It also holds
-// the shared CRUD result envelope (CreateResult, UpdateResult,
-// DeleteResult and their status types) and the TaskCreator and
-// BatchCreator interfaces the enqueue paths accept.
+// Package types is the single Go declaration point for the task-system vocabulary: the batch sources,
+// origins and statuses, the task types and statuses, the tag verdicts, and the closed set of resource
+// locks (LockMaintenance, LockStorage), all exposed as namespaced constant bags: types.Batch.Source,
+// types.Batch.Origin and types.Task.Type, with parse helpers for the wire form. The database's enum
+// columns mirror these values. It also holds the shared CRUD result envelope (CreateResult, UpdateResult,
+// DeleteResult and their status types) and the TaskCreator and BatchCreator interfaces the enqueue paths
+// accept.
 package types
 
 import (
@@ -15,6 +14,20 @@ import (
 
 // BatchSource says which flow created a batch.
 type BatchSource string
+
+// BatchOrigin names the entry point that requested a batch; it is requester metadata only, never the
+// dispatch policy.
+type BatchOrigin string
+
+// LockName names one of the closed set of resource locks an execution holds or waits for.
+type LockName string
+
+// The declared resource locks. Only these names exist: LockMaintenance pauses pipeline work while a
+// maintenance run executes; LockStorage serialises bulk storage writes with per-document writes.
+const (
+	LockMaintenance LockName = "maintenance"
+	LockStorage     LockName = "storage"
+)
 
 // BatchStatus is the lifecycle state of a batch.
 type BatchStatus string
@@ -28,7 +41,7 @@ type TaskStatus string
 // TagVerdict is the judgement the pair evidence recorded.
 type TagVerdict string
 
-// Batch groups the batch source and status wire values.
+// Batch groups the batch source, origin and status wire values.
 var Batch = struct {
 	Source struct {
 		CLI             BatchSource
@@ -45,6 +58,14 @@ var Batch = struct {
 		TagMeasure      BatchSource
 		TagIdentity     BatchSource
 		TagAudit        BatchSource
+	}
+	Origin struct {
+		CLI      BatchOrigin
+		API      BatchOrigin
+		Polling  BatchOrigin
+		Schedule BatchOrigin
+		Setup    BatchOrigin
+		Wizard   BatchOrigin
 	}
 	Status struct {
 		Queued     BatchStatus
@@ -85,6 +106,21 @@ var Batch = struct {
 		TagMeasure:      "tagmeasure",
 		TagIdentity:     "tagidentity",
 		TagAudit:        "tagaudit",
+	},
+	Origin: struct {
+		CLI      BatchOrigin
+		API      BatchOrigin
+		Polling  BatchOrigin
+		Schedule BatchOrigin
+		Setup    BatchOrigin
+		Wizard   BatchOrigin
+	}{
+		CLI:      "cli",
+		API:      "api",
+		Polling:  "polling",
+		Schedule: "schedule",
+		Setup:    "setup",
+		Wizard:   "wizard",
 	},
 	Status: struct {
 		Queued     BatchStatus
@@ -243,6 +279,11 @@ func (s BatchSource) Valid() bool {
 	return slices.Contains(allBatchSources, s)
 }
 
+// Valid reports whether the origin is declared.
+func (o BatchOrigin) Valid() bool {
+	return slices.Contains(allBatchOrigins, o)
+}
+
 // Valid reports whether the status is declared.
 func (s BatchStatus) Valid() bool {
 	return slices.Contains(allBatchStatuses, s)
@@ -328,6 +369,15 @@ var nonConsumeBatchSources = []BatchSource{
 	Batch.Source.TagMeasure,
 	Batch.Source.TagIdentity,
 	Batch.Source.TagAudit,
+}
+
+var allBatchOrigins = []BatchOrigin{
+	Batch.Origin.CLI,
+	Batch.Origin.API,
+	Batch.Origin.Polling,
+	Batch.Origin.Schedule,
+	Batch.Origin.Setup,
+	Batch.Origin.Wizard,
 }
 
 var allBatchStatuses = []BatchStatus{
