@@ -15,58 +15,50 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-type BatchSource string
+type BatchOrigin string
 
 const (
-	BatchSourceCli             BatchSource = "cli"
-	BatchSourceApi             BatchSource = "api"
-	BatchSourceUpload          BatchSource = "upload"
-	BatchSourcePolling         BatchSource = "polling"
-	BatchSourceReenrich        BatchSource = "reenrich"
-	BatchSourceOrphanedRestore BatchSource = "orphaned-restore"
-	BatchSourceThumbbackfill   BatchSource = "thumbbackfill"
-	BatchSourceBackup          BatchSource = "backup"
-	BatchSourceMirror          BatchSource = "mirror"
-	BatchSourceConfig          BatchSource = "config"
-	BatchSourceTagreconcile    BatchSource = "tagreconcile"
-	BatchSourceTagmeasure      BatchSource = "tagmeasure"
-	BatchSourceTagidentity     BatchSource = "tagidentity"
-	BatchSourceTagaudit        BatchSource = "tagaudit"
+	BatchOriginCli      BatchOrigin = "cli"
+	BatchOriginApi      BatchOrigin = "api"
+	BatchOriginPolling  BatchOrigin = "polling"
+	BatchOriginSchedule BatchOrigin = "schedule"
+	BatchOriginSetup    BatchOrigin = "setup"
+	BatchOriginWizard   BatchOrigin = "wizard"
 )
 
-func (e *BatchSource) Scan(src interface{}) error {
+func (e *BatchOrigin) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = BatchSource(s)
+		*e = BatchOrigin(s)
 	case string:
-		*e = BatchSource(s)
+		*e = BatchOrigin(s)
 	default:
-		return fmt.Errorf("unsupported scan type for BatchSource: %T", src)
+		return fmt.Errorf("unsupported scan type for BatchOrigin: %T", src)
 	}
 	return nil
 }
 
-type NullBatchSource struct {
-	BatchSource BatchSource
-	Valid       bool // Valid is true if BatchSource is not NULL
+type NullBatchOrigin struct {
+	BatchOrigin BatchOrigin
+	Valid       bool // Valid is true if BatchOrigin is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullBatchSource) Scan(value interface{}) error {
+func (ns *NullBatchOrigin) Scan(value interface{}) error {
 	if value == nil {
-		ns.BatchSource, ns.Valid = "", false
+		ns.BatchOrigin, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.BatchSource.Scan(value)
+	return ns.BatchOrigin.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullBatchSource) Value() (driver.Value, error) {
+func (ns NullBatchOrigin) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.BatchSource), nil
+	return string(ns.BatchOrigin), nil
 }
 
 type BatchStatus string
@@ -208,17 +200,19 @@ func (ns NullTaskStatus) Value() (driver.Value, error) {
 type TaskType string
 
 const (
-	TaskTypeConsume       TaskType = "consume"
-	TaskTypeEnrich        TaskType = "enrich"
-	TaskTypeThumbnail     TaskType = "thumbnail"
-	TaskTypeBackup        TaskType = "backup"
-	TaskTypeMirror        TaskType = "mirror"
-	TaskTypeConfig        TaskType = "config"
-	TaskTypeTagreconcile  TaskType = "tagreconcile"
-	TaskTypeThumbbackfill TaskType = "thumbbackfill"
-	TaskTypeTagmeasure    TaskType = "tagmeasure"
-	TaskTypeTagidentity   TaskType = "tagidentity"
-	TaskTypeTagaudit      TaskType = "tagaudit"
+	TaskTypeConsume        TaskType = "consume"
+	TaskTypeEnrich         TaskType = "enrich"
+	TaskTypeThumbnail      TaskType = "thumbnail"
+	TaskTypeBackup         TaskType = "backup"
+	TaskTypeMirror         TaskType = "mirror"
+	TaskTypeConfig         TaskType = "config"
+	TaskTypeTagreconcile   TaskType = "tagreconcile"
+	TaskTypeThumbbackfill  TaskType = "thumbbackfill"
+	TaskTypeTagmeasure     TaskType = "tagmeasure"
+	TaskTypeTagidentity    TaskType = "tagidentity"
+	TaskTypeTagaudit       TaskType = "tagaudit"
+	TaskTypeMigrateDb      TaskType = "migrate-db"
+	TaskTypeMigrateStorage TaskType = "migrate-storage"
 )
 
 func (e *TaskType) Scan(src interface{}) error {
@@ -258,9 +252,10 @@ func (ns NullTaskType) Value() (driver.Value, error) {
 
 type Batch struct {
 	ID        string
-	Source    types.BatchSource
 	Status    types.BatchStatus
 	CreatedAt sql.NullTime
+	Origin    types.BatchOrigin
+	Schedule  sql.NullString
 }
 
 type BatchOwner struct {

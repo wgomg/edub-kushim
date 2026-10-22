@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -27,25 +27,31 @@ import (
 type ConsumeHandler struct {
 	getConfig func() *config.Config
 	logger    *log.Logger
-	workStore *task.Store
+	enqueuer  *task.Enqueuer
 	queries   *database.Queries
 	services  *service.CrudServices
 }
 
-// NewConsumeHandler wires the intake handler to the dynamic config, the
-// task store, the queries and the services.
-func NewConsumeHandler(getConfig func() *config.Config, logger *log.Logger, workStore *task.Store, queries *database.Queries, services *service.CrudServices) *ConsumeHandler {
+// NewConsumeHandler wires the intake handler to the dynamic config, the transactional enqueuer, the
+// queries and the services.
+func NewConsumeHandler(getConfig func() *config.Config, logger *log.Logger, enqueuer *task.Enqueuer, queries *database.Queries, services *service.CrudServices) *ConsumeHandler {
 	return &ConsumeHandler{
 		getConfig: getConfig,
 		logger:    logger,
-		workStore: workStore,
+		enqueuer:  enqueuer,
 		queries:   queries,
 		services:  services,
 	}
 }
 
-func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, paths []string, reqID string) (enqueued int) {
+// enqueueBatchFiles enqueues one batch for the accepted paths, with the consume task plus its waiting
+// enrich and thumbnail children per file. It returns how many files were actually queued, since files
+// skipped as existing documents, or whose consume task lost a dedup conflict, do not count.
+func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, spec task.BatchSpec, paths []string, reqID string) (result task.EnqueueResult, enqueued int, err error) {
 	thumbnailsEnabled := h.getConfig().Consumer.Thumbnail.Enabled
+
+	var tasks []task.TaskSpec
+	consumeTaskIDs := make(map[string]struct{}, len(paths))
 	for i, path := range paths {
 		md5hash, md5Err := storage.CalculateMD5(path)
 		if md5Err != nil {
@@ -59,57 +65,31 @@ func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, batchID string, 
 			continue
 		}
 
-		consumeTaskID := uuid.New().String()
-		enrichTaskID := uuid.New().String()
-		thumbnailTaskID := uuid.New().String()
-		documentID := uuid.New().String()
-
-		consumePayloadMap := map[string]any{
-			"file_path":    path,
-			"file_index":   i + 1,
-			"on_completed": enrichTaskID,
-			"document_id":  documentID,
-		}
-		if thumbnailsEnabled {
-			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
-		}
-		consumePayload, _ := json.Marshal(consumePayloadMap)
-		_, err := h.workStore.CreateTask(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID, types.Task.Status.Pending, "consume:"+md5hash)
-		if err != nil {
-			h.logger.Error(reqID, "enqueue %s: %v", path, err)
-			continue
-		}
-
-		enrichPayload, _ := json.Marshal(map[string]any{
-			"waiting_for": consumeTaskID,
-			"file_name":   filepath.Base(path),
-			"file_index":  i + 1,
-			"document_id": documentID,
-		})
-		if _, err := h.workStore.CreateTask(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting, ""); err != nil {
-			h.logger.Error(reqID, "create enrich task for %s: %v", path, err)
-			continue
-		}
-
-		if thumbnailsEnabled {
-			thumbnailPayload, _ := json.Marshal(map[string]any{
-				"waiting_for": consumeTaskID,
-				"file_name":   filepath.Base(path),
-				"file_index":  i + 1,
-			})
-			if _, err := h.workStore.CreateTask(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting, ""); err != nil {
-				h.logger.Error(reqID, "create thumbnail task for %s: %v", path, err)
-			}
-		}
-		enqueued++
+		fileTasks := consumption.IngestTaskSpecs(consumption.IngestFile{
+			Path:       path,
+			Index:      i + 1,
+			MD5:        md5hash,
+			DocumentID: uuid.New().String(),
+		}, thumbnailsEnabled)
+		consumeTaskIDs[fileTasks[0].TaskID] = struct{}{}
+		tasks = append(tasks, fileTasks...)
 	}
-	return enqueued
+
+	result, err = h.enqueuer.EnqueueBatch(ctx, spec, tasks)
+	if err != nil {
+		return task.EnqueueResult{}, 0, err
+	}
+	for _, taskID := range result.TaskIDs {
+		if _, ok := consumeTaskIDs[taskID]; ok {
+			enqueued++
+		}
+	}
+	return result, enqueued, nil
 }
 
-// Consume scans the consumption directory and enqueues a batch: one
-// consume task per new file with its waiting enrich (and thumbnail)
-// children, deduplicating by MD5. Unprocessable when required tools are
-// missing; an empty inbox reports no batch.
+// Consume scans the consumption directory and enqueues one batch: one consume task per new file with
+// its waiting enrich (and thumbnail) children, deduplicating by MD5 content. Unprocessable when the
+// required tools are missing; an empty inbox reports no batch.
 func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
@@ -145,16 +125,20 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	batchID := uuid.New().String()
-
-	if err := h.services.Batch.Create(ctx, batchID, types.Batch.Source.API, types.Batch.Status.Queued); err != nil {
-		writeServiceError(w, h.logger, reqID, "create batch", err)
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		h.logger.Error(reqID, "build batch spec: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	enqueued := h.enqueueBatchFiles(ctx, batchID, paths, reqID)
+	result, enqueued, err := h.enqueueBatchFiles(ctx, spec, paths, reqID)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "enqueue consume batch", err)
+		return
+	}
 
-	if enqueued == 0 {
+	if result.BatchID == "" {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": "no files could be enqueued",
 		})
@@ -162,15 +146,15 @@ func (h *ConsumeHandler) Consume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"batch_id":    batchID,
+		"batch_id":    result.BatchID,
 		"total_files": len(paths),
 		"enqueued":    enqueued,
 		"_links": map[string]string{
-			"tasks": "/api/v1/tasks?batch=" + batchID,
+			"tasks": "/api/v1/tasks?batch=" + result.BatchID,
 		},
 	})
 
-	h.logger.Info(reqID, "enqueued batch %s (%d files, %d enqueued)", batchID, len(paths), enqueued)
+	h.logger.Info(reqID, "enqueued batch %s (%d files, %d enqueued)", result.BatchID, len(paths), enqueued)
 }
 
 // Upload writes an uploaded file into the consumption directory and
@@ -314,18 +298,23 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	batchID := uuid.New().String()
-	if err := h.services.Batch.Create(ctx, batchID, types.Batch.Source.Upload, types.Batch.Status.Queued); err != nil {
-		h.logger.Error(reqID, "create batch %s: %v", batchID, err)
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		h.logger.Error(reqID, "build batch spec: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	enqueued := h.enqueueBatchFiles(ctx, batchID, accepted, reqID)
+	result, enqueued, err := h.enqueueBatchFiles(ctx, spec, accepted, reqID)
+	if err != nil {
+		h.logger.Error(reqID, "enqueue upload batch: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	acceptedPaths = nil
 
-	if enqueued == 0 {
+	if result.BatchID == "" {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": "no files could be enqueued",
 		})
@@ -333,13 +322,13 @@ func (h *ConsumeHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"batch_id": batchID,
+		"batch_id": result.BatchID,
 		"accepted": len(accepted),
 		"rejected": rejected,
 		"_links": map[string]string{
-			"tasks": "/api/v1/tasks?batch=" + batchID,
+			"tasks": "/api/v1/tasks?batch=" + result.BatchID,
 		},
 	})
 
-	h.logger.Info(reqID, "upload batch %s: %d accepted, %d rejected", batchID, len(accepted), len(rejected))
+	h.logger.Info(reqID, "upload batch %s: %d accepted, %d enqueued, %d rejected", result.BatchID, len(accepted), enqueued, len(rejected))
 }

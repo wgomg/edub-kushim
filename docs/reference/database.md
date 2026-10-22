@@ -497,7 +497,17 @@ cache — `matcher_text_embedding` (`fingerprint text`, `input_hash bytea`,
 vector per distinct chunked input text, written by the daemon on an encode miss
 and read in place of a re-embed when the same text is matched again; its Down
 section deletes the `matcher_text_embedding_generation` marker row it may have
-written into `system_signal`.
+written into `system_signal`. `00047_batch_origin_schedule.sql` replaces
+`batch.source` (the `batch_source` enum) with `batch.origin` — the `batch_origin`
+enum `cli`/`api`/`polling`/`schedule`/`setup`/`wizard` — and adds the nullable
+`batch.schedule` text column: existing rows are mapped deterministically
+(`upload`/`reenrich`/`orphaned-restore` → `api`, the scheduled types →
+`schedule`, `config` → `setup`), `migrate-db` and `migrate-storage` are added
+to the `task_type` enum, and the Down mapping is deliberately lossy (the
+schedule origin is approximated from the batch's first task type).
+`00048_rekey_migrate_tasks.sql` re-keys pending/failed `config` migration tasks
+onto the new `migrate-db`/`migrate-storage` task types and dedup keys (Down
+restores the `op` payload field and the `config:` key prefix).
 Goose tracks
 which versions have been applied in the `goose_db_version` table.
 

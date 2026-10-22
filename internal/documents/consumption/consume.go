@@ -279,13 +279,3 @@ func (h *ConsumeTaskHandler) recoverOnCompleted(payload json.RawMessage) (onComp
 	_ = json.Unmarshal(payload, &p)
 	return p.OnCompleted, p.OnCompletedThumbnail
 }
-
-// DedupKey is the payload's file path, so the same file never enqueues
-// twice concurrently.
-func (h *ConsumeTaskHandler) DedupKey(payload json.RawMessage) string {
-	var p struct {
-		FilePath string `json:"file_path"`
-	}
-	_ = json.Unmarshal(payload, &p)
-	return p.FilePath
-}

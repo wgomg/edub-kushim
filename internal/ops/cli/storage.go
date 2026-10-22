@@ -9,7 +9,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 type orphanAction func(ctx context.Context, id int64) error
@@ -41,9 +40,11 @@ func newOrphanedService(c *container.Container) (*service.Orphaned, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	store := task.NewStore(client)
-	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	return service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), store, batchSvc), nil
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return nil, fmt.Errorf("enqueuer: %w", err)
+	}
+	return service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), enqueuer), nil
 }
 
 func thumbnailsHandler(c *container.Container, args []string) error {
@@ -121,7 +122,13 @@ func orphansHandler(c *container.Container, args []string) error {
 	case "delete":
 		return parseAndRun(svc, remaining, svc.Delete)
 	case "restore":
-		return parseAndRun(svc, remaining, svc.Restore)
+		spec, err := cliBatchSpec()
+		if err != nil {
+			return err
+		}
+		return parseAndRun(svc, remaining, func(ctx context.Context, id int64) error {
+			return svc.Restore(ctx, spec, id)
+		})
 	case "move-to-inbox":
 		return parseAndRunOrAll(svc, remaining, svc.MoveToInbox, svc.MoveAllToInbox)
 	case "delete-all":

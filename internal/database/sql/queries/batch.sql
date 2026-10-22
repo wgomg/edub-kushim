@@ -1,5 +1,5 @@
 -- name: CreateBatch :exec
-INSERT INTO batch (id, source, status) VALUES ($1, $2, $3)
+INSERT INTO batch (id, origin, schedule, status) VALUES ($1, $2, $3, $4)
 ON CONFLICT (id) DO NOTHING;
 
 -- name: GetBatchOwner :one
@@ -72,25 +72,27 @@ ORDER BY created_at LIMIT 1;
 SELECT * FROM batch WHERE id = $1;
 
 -- name: CountQueuedConsumeBatches :one
--- The non-consume sources (which own their lifecycle in their handlers and never occupy a consume slot) are
--- owned by the registry and passed in, so this list cannot drift from types.NonConsumeBatchSources.
-SELECT COUNT(*) FROM batch
-WHERE status = 'queued' AND source::text <> ALL(@non_consume_sources::text[]);
+-- The non-consume task types (whose batches own their lifecycle in their handlers and never occupy a
+-- consume slot) are owned by the registry and passed in, so this list cannot drift from
+-- types.NonConsumeTaskTypes.
+SELECT COUNT(*) FROM batch b
+WHERE b.status = 'queued'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = b.id AND t.task_type::text = ANY(@non_consume_types::text[])
+  );
 
 -- name: GetNextQueuedBatch :one
 -- See CountQueuedConsumeBatches: the non-consume exclusion is passed in from the registry, not enumerated.
-SELECT * FROM batch
-WHERE status = 'queued' AND source::text <> ALL(@non_consume_sources::text[])
-ORDER BY created_at LIMIT 1;
-
--- name: DeleteBatch :exec
-DELETE FROM batch WHERE id = $1;
-
--- name: ListEmptyQueuedBatches :many
-SELECT id FROM batch b
+SELECT b.* FROM batch b
 WHERE b.status = 'queued'
-  AND b.created_at < now() - ($1::int * INTERVAL '1 minute')
-  AND NOT EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id);
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = b.id AND t.task_type::text = ANY(@non_consume_types::text[])
+  )
+ORDER BY b.created_at LIMIT 1;
 
 -- name: RequeueBatch :exec
 UPDATE batch SET status = 'queued' WHERE id = $1;
@@ -125,10 +127,17 @@ AND EXISTS (SELECT 1 FROM task t
 SELECT task_id, payload FROM task
 WHERE batch_id = $1 AND status = 'failed' AND error LIKE 'Max retries exceeded%';
 
+-- name: BatchHasNonConsumeTask :one
+SELECT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = $1 AND t.task_type::text = ANY(@non_consume_types::text[])
+);
+
 -- name: ListBatchOverviews :many
 SELECT
     b.id AS batch_id,
-    b.source,
+    b.origin,
+    b.schedule,
     b.created_at AS batch_created_at,
     b.status AS batch_status,
     COALESCE(sub.total, 0) AS total,
@@ -142,7 +151,11 @@ SELECT
     sub.first_started_at AS first_started_at,
     sub.last_completed_at AS last_completed_at,
     bo.last_heartbeat AS owner_last_heartbeat,
-    bo.pid AS owner_pid
+    bo.pid AS owner_pid,
+    EXISTS (
+        SELECT 1 FROM task t2
+        WHERE t2.batch_id = b.id AND t2.task_type::text = ANY(@non_consume_types::text[])
+    ) AS non_consume
 FROM batch b
 LEFT JOIN LATERAL (
     SELECT
@@ -169,51 +182,59 @@ SELECT COUNT(*) FROM batch WHERE status = 'paused';
 SELECT id FROM batch WHERE status = 'paused' ORDER BY created_at;
 
 -- name: CountActiveThumbnailBackfillBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'thumbbackfill' AND status IN ('queued', 'processing');
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill');
 
 -- name: GetLastThumbnailBackfillBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'thumbbackfill'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill')
+ORDER BY b.created_at DESC
 LIMIT 1;
 
 -- name: CountActiveTagReconcileBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagreconcile' AND status IN ('queued', 'processing');
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile');
 
 -- name: GetLastTagReconcileBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagreconcile'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile')
+ORDER BY b.created_at DESC
 LIMIT 1;
 
 -- name: CountActiveTagMeasureBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagmeasure' AND status IN ('queued', 'processing');
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure');
 
 -- name: GetLastTagMeasureBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagmeasure' AND status = 'completed'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE b.status = 'completed'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure')
+ORDER BY b.created_at DESC
 LIMIT 1;
 
 -- name: CountActiveTagAuditBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagaudit' AND status IN ('queued', 'processing');
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagaudit');
 
 -- name: GetLastTagAuditBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagaudit' AND status = 'completed'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE b.status = 'completed'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagaudit')
+ORDER BY b.created_at DESC
 LIMIT 1;
 
 -- name: CountActiveTagIdentityBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagidentity' AND status IN ('queued', 'processing');
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagidentity');
 
 -- name: GetLastTagIdentityBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagidentity' AND status = 'completed'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE b.status = 'completed'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagidentity')
+ORDER BY b.created_at DESC
 LIMIT 1;

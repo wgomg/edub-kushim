@@ -10,7 +10,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 const enrichHelpText = "Usage: kushim enrich [<document-id>] [--limit N | --all]\n\n" +
@@ -83,7 +82,12 @@ func enrichDocument(c *container.Container, documentID string) error {
 		return err
 	}
 
-	batchID, err := svc.ReEnrich(context.Background(), documentID)
+	spec, err := cliBatchSpec()
+	if err != nil {
+		return err
+	}
+
+	batchID, err := svc.ReEnrich(context.Background(), spec, documentID)
 	if err != nil {
 		kind := errs.KindOf(err)
 		switch kind {
@@ -106,7 +110,12 @@ func enrichMany(c *container.Container, limit int64) error {
 		return err
 	}
 
-	batchID, enqueued, skipped, err := svc.ReEnrichMany(context.Background(), limit)
+	spec, err := cliBatchSpec()
+	if err != nil {
+		return err
+	}
+
+	batchID, enqueued, skipped, err := svc.ReEnrichMany(context.Background(), spec, limit)
 	if err != nil {
 		return fmt.Errorf("re-enrich: %w", err)
 	}
@@ -134,7 +143,9 @@ func newReEnrichService(c *container.Container) (*service.ReEnrich, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	store := task.NewStore(client)
-	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	return service.NewReEnrich(client.Queries, store, batchSvc), nil
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return nil, fmt.Errorf("enqueuer: %w", err)
+	}
+	return service.NewReEnrich(client.Queries, enqueuer), nil
 }

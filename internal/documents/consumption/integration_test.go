@@ -472,7 +472,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: batchID, Source: types.Batch.Source.CLI, Status: types.Batch.Status.Processing,
+			ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -539,7 +539,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: batchID, Source: types.Batch.Source.CLI, Status: types.Batch.Status.Processing,
+			ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -571,7 +571,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		batchID := uuid.New().String()
 		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: batchID, Source: types.Batch.Source.CLI, Status: types.Batch.Status.Processing,
+			ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
 		})
 		testutil.AssertNoError(t, err, "create batch")
 

@@ -39,6 +39,25 @@ func (q *Queries) AcquireBatchOwnerForce(ctx context.Context, arg AcquireBatchOw
 	return result.RowsAffected()
 }
 
+const batchHasNonConsumeTask = `-- name: BatchHasNonConsumeTask :one
+SELECT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = $1 AND t.task_type::text = ANY($2::text[])
+)
+`
+
+type BatchHasNonConsumeTaskParams struct {
+	BatchID         sql.NullString
+	NonConsumeTypes []string
+}
+
+func (q *Queries) BatchHasNonConsumeTask(ctx context.Context, arg BatchHasNonConsumeTaskParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, batchHasNonConsumeTask, arg.BatchID, pq.Array(arg.NonConsumeTypes))
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const cleanupCompletedBatches = `-- name: CleanupCompletedBatches :execrows
 DELETE FROM batch_owner WHERE batch_id IN (
   SELECT b.batch_id FROM batch_owner b
@@ -58,8 +77,9 @@ func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
 }
 
 const countActiveTagAuditBatches = `-- name: CountActiveTagAuditBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagaudit' AND status IN ('queued', 'processing')
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagaudit')
 `
 
 func (q *Queries) CountActiveTagAuditBatches(ctx context.Context) (int64, error) {
@@ -70,8 +90,9 @@ func (q *Queries) CountActiveTagAuditBatches(ctx context.Context) (int64, error)
 }
 
 const countActiveTagIdentityBatches = `-- name: CountActiveTagIdentityBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagidentity' AND status IN ('queued', 'processing')
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagidentity')
 `
 
 func (q *Queries) CountActiveTagIdentityBatches(ctx context.Context) (int64, error) {
@@ -82,8 +103,9 @@ func (q *Queries) CountActiveTagIdentityBatches(ctx context.Context) (int64, err
 }
 
 const countActiveTagMeasureBatches = `-- name: CountActiveTagMeasureBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagmeasure' AND status IN ('queued', 'processing')
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure')
 `
 
 func (q *Queries) CountActiveTagMeasureBatches(ctx context.Context) (int64, error) {
@@ -94,8 +116,9 @@ func (q *Queries) CountActiveTagMeasureBatches(ctx context.Context) (int64, erro
 }
 
 const countActiveTagReconcileBatches = `-- name: CountActiveTagReconcileBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'tagreconcile' AND status IN ('queued', 'processing')
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile')
 `
 
 func (q *Queries) CountActiveTagReconcileBatches(ctx context.Context) (int64, error) {
@@ -106,8 +129,9 @@ func (q *Queries) CountActiveTagReconcileBatches(ctx context.Context) (int64, er
 }
 
 const countActiveThumbnailBackfillBatches = `-- name: CountActiveThumbnailBackfillBatches :one
-SELECT COUNT(*) FROM batch
-WHERE source = 'thumbbackfill' AND status IN ('queued', 'processing')
+SELECT COUNT(*) FROM batch b
+WHERE b.status IN ('queued', 'processing')
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill')
 `
 
 func (q *Queries) CountActiveThumbnailBackfillBatches(ctx context.Context) (int64, error) {
@@ -141,41 +165,44 @@ func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
 }
 
 const countQueuedConsumeBatches = `-- name: CountQueuedConsumeBatches :one
-SELECT COUNT(*) FROM batch
-WHERE status = 'queued' AND source::text <> ALL($1::text[])
+SELECT COUNT(*) FROM batch b
+WHERE b.status = 'queued'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = b.id AND t.task_type::text = ANY($1::text[])
+  )
 `
 
-// The non-consume sources (which own their lifecycle in their handlers and never occupy a consume slot) are
-// owned by the registry and passed in, so this list cannot drift from types.NonConsumeBatchSources.
-func (q *Queries) CountQueuedConsumeBatches(ctx context.Context, nonConsumeSources []string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches, pq.Array(nonConsumeSources))
+// The non-consume task types (whose batches own their lifecycle in their handlers and never occupy a
+// consume slot) are owned by the registry and passed in, so this list cannot drift from
+// types.NonConsumeTaskTypes.
+func (q *Queries) CountQueuedConsumeBatches(ctx context.Context, nonConsumeTypes []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches, pq.Array(nonConsumeTypes))
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const createBatch = `-- name: CreateBatch :exec
-INSERT INTO batch (id, source, status) VALUES ($1, $2, $3)
+INSERT INTO batch (id, origin, schedule, status) VALUES ($1, $2, $3, $4)
 ON CONFLICT (id) DO NOTHING
 `
 
 type CreateBatchParams struct {
-	ID     string
-	Source types.BatchSource
-	Status types.BatchStatus
+	ID       string
+	Origin   types.BatchOrigin
+	Schedule sql.NullString
+	Status   types.BatchStatus
 }
 
 func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) error {
-	_, err := q.db.ExecContext(ctx, createBatch, arg.ID, arg.Source, arg.Status)
-	return err
-}
-
-const deleteBatch = `-- name: DeleteBatch :exec
-DELETE FROM batch WHERE id = $1
-`
-
-func (q *Queries) DeleteBatch(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteBatch, id)
+	_, err := q.db.ExecContext(ctx, createBatch,
+		arg.ID,
+		arg.Origin,
+		arg.Schedule,
+		arg.Status,
+	)
 	return err
 }
 
@@ -192,7 +219,7 @@ func (q *Queries) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string)
 }
 
 const getBatch = `-- name: GetBatch :one
-SELECT id, source, status, created_at FROM batch WHERE id = $1
+SELECT id, status, created_at, origin, schedule FROM batch WHERE id = $1
 `
 
 func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
@@ -200,9 +227,10 @@ func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
 	var i Batch
 	err := row.Scan(
 		&i.ID,
-		&i.Source,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Origin,
+		&i.Schedule,
 	)
 	return i, err
 }
@@ -225,9 +253,10 @@ func (q *Queries) GetBatchOwner(ctx context.Context, batchID string) (BatchOwner
 }
 
 const getLastTagAuditBatchCreatedAt = `-- name: GetLastTagAuditBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagaudit' AND status = 'completed'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE b.status = 'completed'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagaudit')
+ORDER BY b.created_at DESC
 LIMIT 1
 `
 
@@ -239,9 +268,10 @@ func (q *Queries) GetLastTagAuditBatchCreatedAt(ctx context.Context) (sql.NullTi
 }
 
 const getLastTagIdentityBatchCreatedAt = `-- name: GetLastTagIdentityBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagidentity' AND status = 'completed'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE b.status = 'completed'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagidentity')
+ORDER BY b.created_at DESC
 LIMIT 1
 `
 
@@ -253,9 +283,10 @@ func (q *Queries) GetLastTagIdentityBatchCreatedAt(ctx context.Context) (sql.Nul
 }
 
 const getLastTagMeasureBatchCreatedAt = `-- name: GetLastTagMeasureBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagmeasure' AND status = 'completed'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE b.status = 'completed'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure')
+ORDER BY b.created_at DESC
 LIMIT 1
 `
 
@@ -267,9 +298,9 @@ func (q *Queries) GetLastTagMeasureBatchCreatedAt(ctx context.Context) (sql.Null
 }
 
 const getLastTagReconcileBatchCreatedAt = `-- name: GetLastTagReconcileBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'tagreconcile'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile')
+ORDER BY b.created_at DESC
 LIMIT 1
 `
 
@@ -281,9 +312,9 @@ func (q *Queries) GetLastTagReconcileBatchCreatedAt(ctx context.Context) (sql.Nu
 }
 
 const getLastThumbnailBackfillBatchCreatedAt = `-- name: GetLastThumbnailBackfillBatchCreatedAt :one
-SELECT created_at FROM batch
-WHERE source = 'thumbbackfill'
-ORDER BY created_at DESC
+SELECT b.created_at FROM batch b
+WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill')
+ORDER BY b.created_at DESC
 LIMIT 1
 `
 
@@ -316,20 +347,26 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 }
 
 const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
-SELECT id, source, status, created_at FROM batch
-WHERE status = 'queued' AND source::text <> ALL($1::text[])
-ORDER BY created_at LIMIT 1
+SELECT b.id, b.status, b.created_at, b.origin, b.schedule FROM batch b
+WHERE b.status = 'queued'
+  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = b.id AND t.task_type::text = ANY($1::text[])
+  )
+ORDER BY b.created_at LIMIT 1
 `
 
 // See CountQueuedConsumeBatches: the non-consume exclusion is passed in from the registry, not enumerated.
-func (q *Queries) GetNextQueuedBatch(ctx context.Context, nonConsumeSources []string) (Batch, error) {
-	row := q.db.QueryRowContext(ctx, getNextQueuedBatch, pq.Array(nonConsumeSources))
+func (q *Queries) GetNextQueuedBatch(ctx context.Context, nonConsumeTypes []string) (Batch, error) {
+	row := q.db.QueryRowContext(ctx, getNextQueuedBatch, pq.Array(nonConsumeTypes))
 	var i Batch
 	err := row.Scan(
 		&i.ID,
-		&i.Source,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Origin,
+		&i.Schedule,
 	)
 	return i, err
 }
@@ -382,7 +419,8 @@ func (q *Queries) HeartbeatBatchOwner(ctx context.Context, ownerID string) (int6
 const listBatchOverviews = `-- name: ListBatchOverviews :many
 SELECT
     b.id AS batch_id,
-    b.source,
+    b.origin,
+    b.schedule,
     b.created_at AS batch_created_at,
     b.status AS batch_status,
     COALESCE(sub.total, 0) AS total,
@@ -396,7 +434,11 @@ SELECT
     sub.first_started_at AS first_started_at,
     sub.last_completed_at AS last_completed_at,
     bo.last_heartbeat AS owner_last_heartbeat,
-    bo.pid AS owner_pid
+    bo.pid AS owner_pid,
+    EXISTS (
+        SELECT 1 FROM task t2
+        WHERE t2.batch_id = b.id AND t2.task_type::text = ANY($3::text[])
+    ) AS non_consume
 FROM batch b
 LEFT JOIN LATERAL (
     SELECT
@@ -418,13 +460,15 @@ LIMIT $1 OFFSET $2
 `
 
 type ListBatchOverviewsParams struct {
-	Limit  int32
-	Offset int32
+	Limit           int32
+	Offset          int32
+	NonConsumeTypes []string
 }
 
 type ListBatchOverviewsRow struct {
 	BatchID            string
-	Source             types.BatchSource
+	Origin             types.BatchOrigin
+	Schedule           sql.NullString
 	BatchCreatedAt     sql.NullTime
 	BatchStatus        types.BatchStatus
 	Total              int64
@@ -439,10 +483,11 @@ type ListBatchOverviewsRow struct {
 	LastCompletedAt    interface{}
 	OwnerLastHeartbeat sql.NullTime
 	OwnerPid           sql.NullInt64
+	NonConsume         bool
 }
 
 func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviewsParams) ([]ListBatchOverviewsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listBatchOverviews, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listBatchOverviews, arg.Limit, arg.Offset, pq.Array(arg.NonConsumeTypes))
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +497,8 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 		var i ListBatchOverviewsRow
 		if err := rows.Scan(
 			&i.BatchID,
-			&i.Source,
+			&i.Origin,
+			&i.Schedule,
 			&i.BatchCreatedAt,
 			&i.BatchStatus,
 			&i.Total,
@@ -467,40 +513,11 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 			&i.LastCompletedAt,
 			&i.OwnerLastHeartbeat,
 			&i.OwnerPid,
+			&i.NonConsume,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listEmptyQueuedBatches = `-- name: ListEmptyQueuedBatches :many
-SELECT id FROM batch b
-WHERE b.status = 'queued'
-  AND b.created_at < now() - ($1::int * INTERVAL '1 minute')
-  AND NOT EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
-`
-
-func (q *Queries) ListEmptyQueuedBatches(ctx context.Context, dollar_1 int32) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listEmptyQueuedBatches, dollar_1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

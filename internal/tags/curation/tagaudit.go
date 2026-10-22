@@ -7,7 +7,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -21,15 +20,14 @@ const TagAuditDedupKey = "tagaudit"
 // TagAudit enqueues completeness audits and serves the coverage review surface: the flags list and the
 // apply, dismiss, and create-value actions.
 type TagAudit struct {
-	queries      *database.Queries
-	taskCreator  types.TaskCreator
-	batchCreator types.BatchCreator
+	queries  *database.Queries
+	enqueuer *task.Enqueuer
 }
 
-// NewTagAudit wires the audit enqueue path and review surface to the queries and the batch and task
-// creators.
-func NewTagAudit(queries *database.Queries, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *TagAudit {
-	return &TagAudit{queries: queries, taskCreator: taskCreator, batchCreator: batchCreator}
+// NewTagAudit wires the audit enqueue path and the review surface to the queries and the transactional
+// enqueuer.
+func NewTagAudit(queries *database.Queries, enqueuer *task.Enqueuer) *TagAudit {
+	return &TagAudit{queries: queries, enqueuer: enqueuer}
 }
 
 // CoverageFlag is one open coverage review item, as the review surface lists it.
@@ -44,9 +42,9 @@ type CoverageFlag struct {
 	CreatedAt     time.Time
 }
 
-// Enqueue queues a completeness audit batch and its task, or reports alreadyQueued when one is still
-// active.
-func (s *TagAudit) Enqueue(ctx context.Context) (batchID string, alreadyQueued bool, err error) {
+// Enqueue queues a completeness audit batch and its task through spec, or reports alreadyQueued when one
+// is still active.
+func (s *TagAudit) Enqueue(ctx context.Context, spec task.BatchSpec) (batchID string, alreadyQueued bool, err error) {
 	active, err := s.queries.CountActiveTagAuditBatches(ctx)
 	if err != nil {
 		return "", false, errs.FromDB(err, "count active tag audit batches")
@@ -55,23 +53,18 @@ func (s *TagAudit) Enqueue(ctx context.Context) (batchID string, alreadyQueued b
 		return "", true, nil
 	}
 
-	batchID = uuid.New().String()
-	taskID := uuid.New().String()
-
-	// a unique violation on the active-dedup index means another audit task already owns the slot (the count
-	// above lost a race); anything else is a real failure and must not be reported as already queued
-	if _, err := s.taskCreator.CreateTask(ctx, types.Task.Type.TagAudit, batchID, json.RawMessage("{}"), taskID, types.Task.Status.Pending, TagAuditDedupKey); err != nil {
-		if errs.IsConstraint(err) {
-			return "", true, nil
-		}
+	result, err := s.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{
+		Type:    types.Task.Type.TagAudit,
+		Payload: json.RawMessage("{}"),
+	})
+	if err != nil {
 		return "", false, errs.FromDB(err, "create tag audit task")
 	}
-
-	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.TagAudit, types.Batch.Status.Queued); err != nil {
-		return "", false, errs.FromDB(errors.Join(err, task.DeleteBatchTasks(context.Background(), s.queries, batchID)), "create tag audit batch")
+	if result.BatchID == "" {
+		return "", true, nil
 	}
 
-	return batchID, false, nil
+	return result.BatchID, false, nil
 }
 
 // ListFlags returns the open coverage flags, newest first, with the total count.

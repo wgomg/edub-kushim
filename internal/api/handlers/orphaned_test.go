@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/testutil"
-	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func newOrphanedHandler(t *testing.T) (*OrphanedHandler, *config.Config) {
@@ -32,20 +30,10 @@ func newOrphanedHandler(t *testing.T) (*OrphanedHandler, *config.Config) {
 	os.MkdirAll(filepath.Join(cfg.Storage.StorageDir, "processed"), 0755)
 	os.MkdirAll(cfg.Storage.ConsumptionDir, 0755)
 
-	mock := &mockTaskCreator{}
-	svc := service.NewOrphaned(client.Queries, cfg, logger, mock, mock)
+	mock := newHandlerTestEnqueuer(client)
+	svc := service.NewOrphaned(client.Queries, cfg, logger, mock)
 	h := NewOrphanedHandler(svc, logger)
 	return h, cfg
-}
-
-type mockTaskCreator struct{}
-
-func (m *mockTaskCreator) CreateTask(_ context.Context, _ types.TaskType, _ string, _ json.RawMessage, _ string, _ types.TaskStatus, _ string) (string, error) {
-	return "", nil
-}
-
-func (m *mockTaskCreator) Create(_ context.Context, _ string, _ types.BatchSource, _ types.BatchStatus) error {
-	return nil
 }
 
 func createOrphanedPDF(t *testing.T, storageDir, sourceDir, filename string) string {

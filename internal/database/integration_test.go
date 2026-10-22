@@ -211,7 +211,7 @@ func TestSavedSearchCRUD(t *testing.T) {
 func TestBatchOwnerOps(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	err := q.CreateBatch(ctx, CreateBatchParams{ID: "bo-test", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Queued})
+	err := q.CreateBatch(ctx, CreateBatchParams{ID: "bo-test", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued})
 	assertNoError(t, err, "create batch")
 	_, err = q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: "bo-test", OwnerID: "o1", Pid: 123})
 	assertNoError(t, err, "insert owner")
@@ -221,7 +221,7 @@ func TestBatchOwnerOps(t *testing.T) {
 func TestDeleteBatchOwnerByBatchID(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	err := q.CreateBatch(ctx, CreateBatchParams{ID: "del-test", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Queued})
+	err := q.CreateBatch(ctx, CreateBatchParams{ID: "del-test", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued})
 	assertNoError(t, err, "create batch")
 	_, err = q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: "del-test", OwnerID: "o1", Pid: 100})
 	assertNoError(t, err, "insert owner")
@@ -264,7 +264,7 @@ func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
 	resetDB(t, q)
 	ctx := context.Background()
 
-	err := q.CreateBatch(ctx, CreateBatchParams{ID: "gq-batch", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Processing})
+	err := q.CreateBatch(ctx, CreateBatchParams{ID: "gq-batch", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing})
 	assertNoError(t, err, "create batch")
 
 	gqPayload := json.RawMessage(`{"file_path":"/tmp/test.pdf","on_completed":"enrich-1"}`)
@@ -1289,7 +1289,7 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 
 	t.Run("gated with owner also blocked when locked", func(t *testing.T) {
 		batchID := "gate-batch"
-		q.CreateBatch(ctx, CreateBatchParams{ID: batchID, Source: types.Batch.Source.CLI, Status: types.Batch.Status.Queued})
+		q.CreateBatch(ctx, CreateBatchParams{ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued})
 		q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: batchID, OwnerID: "gate-owner", Pid: 999})
 
 		q.CreateTask(ctx, CreateTaskParams{
@@ -1315,16 +1315,16 @@ func TestCountPausedBatches(t *testing.T) {
 	assertEqual(t, count, int64(0), "no paused batches initially")
 
 	// paused batch
-	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-1", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Paused}), "create paused")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-1", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Paused}), "create paused")
 	// non-paused batches
-	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "queued-1", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Queued}), "create queued")
-	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "completed-1", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Completed}), "create completed")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "queued-1", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued}), "create queued")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "completed-1", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Completed}), "create completed")
 
 	count, err = q.CountPausedBatches(ctx)
 	assertNoError(t, err, "count paused")
 	assertEqual(t, count, int64(1), "one paused batch")
 
-	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-2", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Paused}), "create paused 2")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-2", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Paused}), "create paused 2")
 	count, err = q.CountPausedBatches(ctx)
 	assertNoError(t, err, "count paused after second")
 	assertEqual(t, count, int64(2), "two paused batches")
@@ -1340,9 +1340,9 @@ func TestListPausedBatches(t *testing.T) {
 	assertNoError(t, err, "list paused (empty)")
 	assertEqual(t, len(ids), 0, "no paused batches initially")
 
-	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-a", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Paused}), "create paused a")
-	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "queued-x", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Queued}), "create queued")
-	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-b", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Paused}), "create paused b")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-a", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Paused}), "create paused a")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "queued-x", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued}), "create queued")
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{ID: "paused-b", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Paused}), "create paused b")
 
 	ids, err = q.ListPausedBatches(ctx)
 	assertNoError(t, err, "list paused")

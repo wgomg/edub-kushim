@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,36 +10,32 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
-	"github.com/wgomg/edub-kushim/internal/types"
+	"github.com/wgomg/edub-kushim/internal/task"
 )
 
-// Orphaned administers the quarantined files the orphaned sweep finds:
-// list, quarantine, delete, move back into the consumption directory, and
-// re-consume through the task creators. It also owns the orphaned-thumbnail
-// sweep, which deletes thumbnail files whose document is gone.
+// Orphaned administers the quarantined files the orphaned sweep finds: list, quarantine, delete, move
+// them back into the consumption directory, and re-consume them through the enqueuer. It also owns the
+// orphaned-thumbnail sweep, which deletes thumbnail files whose document is gone.
 type Orphaned struct {
-	queries      *database.Queries
-	cfg          *config.Config
-	logger       *log.Logger
-	taskCreator  types.TaskCreator
-	batchCreator types.BatchCreator
+	queries  *database.Queries
+	cfg      *config.Config
+	logger   *log.Logger
+	enqueuer *task.Enqueuer
 }
 
-// NewOrphaned wires the admin to the storage config and the task and
-// batch creators.
-func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *log.Logger, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *Orphaned {
+// NewOrphaned wires the admin to the storage config and the transactional enqueuer.
+func NewOrphaned(queries *database.Queries, cfg *config.Config, logger *log.Logger, enqueuer *task.Enqueuer) *Orphaned {
 	return &Orphaned{
-		queries:      queries,
-		cfg:          cfg,
-		logger:       logger,
-		taskCreator:  taskCreator,
-		batchCreator: batchCreator,
+		queries:  queries,
+		cfg:      cfg,
+		logger:   logger,
+		enqueuer: enqueuer,
 	}
 }
 
@@ -148,10 +143,9 @@ func (s *Orphaned) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// Restore re-consumes one quarantined file through the task creators in
-// a fresh batch; only uuid-named files restore, and a name that resolves
-// to a live document is refused.
-func (s *Orphaned) Restore(ctx context.Context, id int64) error {
+// Restore re-consumes one quarantined file through the transactional enqueuer in a fresh batch; only
+// uuid-named files restore, and a name that resolves to a live document is refused.
+func (s *Orphaned) Restore(ctx context.Context, spec task.BatchSpec, id int64) error {
 	row, err := s.queries.GetOrphanedFile(ctx, id)
 	if err != nil {
 		return errs.FromDB(err, "get orphaned file")
@@ -179,57 +173,21 @@ func (s *Orphaned) Restore(ctx context.Context, id int64) error {
 		return fmt.Errorf("compute md5: %w", err)
 	}
 
-	batchID := uuid.New().String()
-	consumeTaskID := uuid.New().String()
-	enrichTaskID := uuid.New().String()
-	thumbnailTaskID := uuid.New().String()
+	tasks := consumption.IngestTaskSpecs(consumption.IngestFile{
+		Path:       destPath,
+		Index:      1,
+		MD5:        md5,
+		DocumentID: row.DocumentKey,
+	}, s.cfg.Consumer.Thumbnail.Enabled)
 
-	consumePayloadMap := map[string]any{
-		"file_path":    destPath,
-		"file_index":   1,
-		"on_completed": enrichTaskID,
-		"document_id":  row.DocumentKey,
-	}
-	if s.cfg.Consumer.Thumbnail.Enabled {
-		consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
-	}
-	consumePayload, _ := json.Marshal(consumePayloadMap)
-
-	_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID, types.Task.Status.Pending, "consume:"+md5)
+	result, err := s.enqueuer.EnqueueBatch(ctx, spec, tasks)
 	if err != nil {
 		storage.RemoveOrphanedFile(destPath)
-		return fmt.Errorf("create consume task: %w", err)
+		return fmt.Errorf("enqueue restore batch: %w", err)
 	}
-
-	enrichPayload, _ := json.Marshal(map[string]any{
-		"waiting_for": consumeTaskID,
-		"file_name":   filepath.Base(destPath),
-		"file_index":  1,
-		"document_id": row.DocumentKey,
-	})
-
-	_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting, "")
-	if err != nil {
+	if result.BatchID == "" {
 		storage.RemoveOrphanedFile(destPath)
-		return fmt.Errorf("create enrich task: %w", err)
-	}
-
-	if s.cfg.Consumer.Thumbnail.Enabled {
-		thumbnailPayload, _ := json.Marshal(map[string]any{
-			"waiting_for": consumeTaskID,
-			"file_name":   filepath.Base(destPath),
-			"file_index":  1,
-		})
-		_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting, "")
-		if err != nil {
-			storage.RemoveOrphanedFile(destPath)
-			return fmt.Errorf("create thumbnail task: %w", err)
-		}
-	}
-
-	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.OrphanedRestore, types.Batch.Status.Queued); err != nil {
-		storage.RemoveOrphanedFile(destPath)
-		return fmt.Errorf("create batch: %w", err)
+		return errs.EConflict("restore orphaned file", fmt.Errorf("a consume task for this file is already queued"))
 	}
 
 	if err := s.queries.MarkOrphanedFileRestored(ctx, id); err != nil {

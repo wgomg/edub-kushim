@@ -439,10 +439,10 @@ re-pointed count), skipped ones under the `alias_skip` skip reason.
 ## 8. Scheduled reconciliation
 
 `internal/tags/reconcile` + the task plumbing. Migration
-`00018_tag_reconcile_vocabulary.sql` adds `tagreconcile` to the `task_type` and
-`batch_source` enums; the `internal/types` registry declares it **blocking**
+`00018_tag_reconcile_vocabulary.sql` adds `tagreconcile` to the `task_type`
+enum; the `internal/types` registry declares it **blocking**
 (acquires the maintenance lock at claim time, drains in-flight tasks, and
-heartbeats the lock during the run), and it joins `nonConsumeBatchSources` so
+heartbeats the lock during the run), and it joins `NonConsumeTaskTypes` so
 its batches never occupy a consume slot.
 
 **Scheduling** — the anchored scheduler (`maybeScheduleAnchored` with `tagReconcileSpec`, `internal/ops/queue/queue.go`)

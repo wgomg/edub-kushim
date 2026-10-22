@@ -24,8 +24,12 @@ func TestTagIdentityBatchQueries(t *testing.T) {
 	}
 
 	if _, err := q.db.ExecContext(ctx,
-		"INSERT INTO batch (id, source, status) VALUES ('foreign-b1', 'tagmeasure', 'completed')"); err != nil {
+		"INSERT INTO batch (id, origin, status) VALUES ('foreign-b1', 'schedule', 'completed')"); err != nil {
 		t.Fatalf("insert foreign batch: %v", err)
+	}
+	if _, err := q.db.ExecContext(ctx,
+		"INSERT INTO task (task_id, task_type, status, batch_id, completed_at) VALUES ('foreign-t1', 'tagmeasure', 'completed', 'foreign-b1', now())"); err != nil {
+		t.Fatalf("insert foreign task: %v", err)
 	}
 	if n, err := q.CountActiveTagIdentityBatches(ctx); err != nil || n != 0 {
 		t.Errorf("another source's batch counted as an active identity run: %d, %v", n, err)
@@ -35,8 +39,12 @@ func TestTagIdentityBatchQueries(t *testing.T) {
 	}
 
 	if _, err := q.db.ExecContext(ctx,
-		"INSERT INTO batch (id, source, status) VALUES ('ti-b1', 'tagidentity', 'queued')"); err != nil {
+		"INSERT INTO batch (id, origin, status) VALUES ('ti-b1', 'schedule', 'queued')"); err != nil {
 		t.Fatalf("insert batch: %v", err)
+	}
+	if _, err := q.db.ExecContext(ctx,
+		"INSERT INTO task (task_id, task_type, status, batch_id, dedup_key) VALUES ('ti-t1', 'tagidentity', 'pending', 'ti-b1', 'tagidentity')"); err != nil {
+		t.Fatalf("insert task: %v", err)
 	}
 	if n, err := q.CountActiveTagIdentityBatches(ctx); err != nil || n != 1 {
 		t.Fatalf("active batches = %d, %v", n, err)

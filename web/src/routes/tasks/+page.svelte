@@ -4,7 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
-	import { sourceBadgeClasses, statusChipClasses } from '$lib/utils/statusChip.js';
+	import { originBadgeClasses, statusChipClasses } from '$lib/utils/statusChip.js';
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
@@ -35,12 +35,15 @@
 			}
 		},
 		{
-			key: 'source',
-			label: 'Source',
+			key: 'origin',
+			label: 'Origin',
 			sortable: true,
-			cell: (v) => {
-				const cls = sourceBadgeClasses(v);
-				return `<span class="inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}">${escapeHtml(v || '—')}</span>`;
+			cell: (v, row) => {
+				const cls = originBadgeClasses(v);
+				const schedule = row?.schedule
+					? ` <span class="ml-1 font-mono text-xs text-parchment-500">${escapeHtml(row.schedule)}</span>`
+					: '';
+				return `<span class="inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}">${escapeHtml(v || '—')}</span>${schedule}`;
 			},
 			minWidth: '110px'
 		},

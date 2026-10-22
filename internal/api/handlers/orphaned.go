@@ -8,6 +8,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // OrphanedHandler is the orphaned-files API: list, scan-and-quarantine,
@@ -113,7 +115,13 @@ func (h *OrphanedHandler) RestoreOrphaned(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.svc.Restore(ctx, id); err != nil {
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.svc.Restore(ctx, spec, id); err != nil {
 		writeServiceError(w, h.logger, reqID, "restore orphaned file", err)
 		return
 	}

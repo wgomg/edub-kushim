@@ -1,8 +1,7 @@
-// Package container is the composition root of the kushim process: it
-// owns the dynamic configuration, the database connection and reconnect
-// protocol, the task dispatcher and runner with the handler registry, the
-// pools per task type, and the lazily built services. Everything the CLI
-// verbs and the queue consume reads from here.
+// Package container is the composition root of the kushim process: it owns the dynamic configuration,
+// the database connection and its own reconnect protocol, the task type catalog with the transactional
+// enqueuer, the runner with the handler registry, the pools per task type, and all the lazily built
+// services. Everything the CLI verbs and the queue consume reads from here.
 package container
 
 import (
@@ -40,7 +39,8 @@ type Container struct {
 	db             *sql.DB
 	client         *database.Client
 	engine         *search.Engine
-	dispatcher     *task.Dispatcher
+	catalog        *Catalog
+	enqueuer       *task.Enqueuer
 	runner         *task.Runner
 	store          *task.Store
 	services       *service.CrudServices
@@ -70,14 +70,16 @@ var poolSpecs = map[types.TaskType]poolSpec{
 		workers:  func(cfg *config.Config) int { return max(cfg.Consumer.Thumbnail.Workers, 1) },
 		interval: 2 * time.Second,
 	},
-	types.Task.Type.ThumbBackfill: {workers: singleWorker, interval: 2 * time.Second},
-	types.Task.Type.Config:        {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.Backup:        {workers: singleWorker, interval: 60 * time.Second},
-	types.Task.Type.Mirror:        {workers: singleWorker, interval: 60 * time.Second},
-	types.Task.Type.TagReconcile:  {workers: singleWorker, interval: 60 * time.Second},
-	types.Task.Type.TagMeasure:    {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.TagIdentity:   {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.TagAudit:      {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.ThumbBackfill:  {workers: singleWorker, interval: 2 * time.Second},
+	types.Task.Type.Config:         {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.MigrateDB:      {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.MigrateStorage: {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.Backup:         {workers: singleWorker, interval: 60 * time.Second},
+	types.Task.Type.Mirror:         {workers: singleWorker, interval: 60 * time.Second},
+	types.Task.Type.TagReconcile:   {workers: singleWorker, interval: 60 * time.Second},
+	types.Task.Type.TagMeasure:     {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.TagIdentity:    {workers: singleWorker, interval: 5 * time.Second},
+	types.Task.Type.TagAudit:       {workers: singleWorker, interval: 5 * time.Second},
 }
 
 // NewContainer builds a container without a database; the DB attaches
@@ -116,7 +118,7 @@ func (c *Container) GetLogger() *log.Logger {
 // GetTagService lazily builds the curation tag service, embedding
 // through the matcher client; errors when the config lacks a model.
 func (c *Container) GetTagService() (*curation.Tag, error) {
-	if err := c.ensureDispatcher(); err != nil {
+	if err := c.ensureTaskWiring(); err != nil {
 		return nil, err
 	}
 	return c.tag, nil
@@ -162,7 +164,8 @@ func (c *Container) InvalidateDB() {
 		c.db = nil
 	}
 	c.client = nil
-	c.dispatcher = nil
+	c.catalog = nil
+	c.enqueuer = nil
 	c.runner = nil
 	c.engine = nil
 	c.store = nil
@@ -226,10 +229,10 @@ func (c *Container) LogFileConfig(name string) log.LogFileConfig {
 	}
 }
 
-// The dispatcher, runner, store, and tag services are built together so
-// GetDispatcher, GetRunner, and GetTagService work in any call order.
-func (c *Container) ensureDispatcher() error {
-	if c.dispatcher != nil {
+// The runner, store, catalog, enqueuer and tag services are all built together, so that GetEnqueuer,
+// GetRunner and GetTagService work in any call order.
+func (c *Container) ensureTaskWiring() error {
+	if c.runner != nil {
 		return nil
 	}
 
@@ -266,6 +269,8 @@ func (c *Container) ensureDispatcher() error {
 	registry.Register(types.Task.Type.Thumbnail, thumbnailHandler)
 	registry.Register(types.Task.Type.ThumbBackfill, consumption.NewThumbnailBackfillTaskHandler(thumbnailHandler, client.Queries, c.logger))
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.logger))
+	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, c.logger))
+	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.Backup, backup.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register(types.Task.Type.Mirror, backup.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
 	registry.Register(types.Task.Type.TagReconcile, reconcile.NewTagReconcileTaskHandler(client.Queries, c.logger))
@@ -273,24 +278,32 @@ func (c *Container) ensureDispatcher() error {
 	registry.Register(types.Task.Type.TagIdentity, admission.NewTagIdentityTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.TagAudit, admission.NewTagAuditTaskHandler(client.Queries, c.logger))
 
-	c.dispatcher = task.NewDispatcher(store, registry)
+	c.catalog = NewCatalog(client.Queries)
+	c.enqueuer = task.NewEnqueuer(client, c.catalog)
 	c.runner = task.NewRunner(store, registry, c.logger)
 
 	return nil
 }
 
-// GetDispatcher lazily builds the task dispatcher with the handler
-// registry.
-func (c *Container) GetDispatcher() (*task.Dispatcher, error) {
-	if err := c.ensureDispatcher(); err != nil {
+// GetCatalog lazily builds the task type catalog.
+func (c *Container) GetCatalog() (*Catalog, error) {
+	if err := c.ensureTaskWiring(); err != nil {
 		return nil, err
 	}
-	return c.dispatcher, nil
+	return c.catalog, nil
+}
+
+// GetEnqueuer lazily builds the transactional enqueue over the catalog.
+func (c *Container) GetEnqueuer() (*task.Enqueuer, error) {
+	if err := c.ensureTaskWiring(); err != nil {
+		return nil, err
+	}
+	return c.enqueuer, nil
 }
 
 // GetRunner lazily builds the claim runner over the registry.
 func (c *Container) GetRunner() (*task.Runner, error) {
-	if err := c.ensureDispatcher(); err != nil {
+	if err := c.ensureTaskWiring(); err != nil {
 		return nil, err
 	}
 	return c.runner, nil

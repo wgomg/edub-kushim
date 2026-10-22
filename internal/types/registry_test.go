@@ -3,36 +3,24 @@ package types
 import "testing"
 
 func TestAllCounts(t *testing.T) {
-	if got, want := len(AllBatchSources()), 14; got != want {
-		t.Errorf("AllBatchSources len = %d, want %d", got, want)
+	if got, want := len(allBatchOrigins), 6; got != want {
+		t.Errorf("batch origins len = %d, want %d", got, want)
 	}
 	if got, want := len(AllBatchStatuses()), 6; got != want {
 		t.Errorf("AllBatchStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskTypes()), 11; got != want {
+	if got, want := len(AllTaskTypes()), 13; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
 	if got, want := len(AllTaskStatuses()), 7; got != want {
 		t.Errorf("AllTaskStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(NonConsumeBatchSources()), 7; got != want {
-		t.Errorf("NonConsumeBatchSources len = %d, want %d", got, want)
+	if got, want := len(NonConsumeTaskTypes()), 9; got != want {
+		t.Errorf("NonConsumeTaskTypes len = %d, want %d", got, want)
 	}
 }
 
 func TestValid(t *testing.T) {
-	batchCases := map[string]bool{
-		string(Batch.Source.CLI):           true,
-		string(Batch.Source.Upload):        true,
-		string(Batch.Source.Thumbbackfill): true,
-		"test":                             false,
-		"unknown":                          false,
-	}
-	for s, want := range batchCases {
-		if got := BatchSource(s).Valid(); got != want {
-			t.Errorf("BatchSource(%q).Valid() = %v, want %v", s, got, want)
-		}
-	}
 	originCases := map[string]bool{
 		string(Batch.Origin.CLI):      true,
 		string(Batch.Origin.Schedule): true,
@@ -59,15 +47,6 @@ func TestValid(t *testing.T) {
 }
 
 func TestParseRoundTrip(t *testing.T) {
-	for _, src := range AllBatchSources() {
-		got, err := ParseBatchSource(string(src))
-		if err != nil {
-			t.Errorf("ParseBatchSource(%q) error: %v", src, err)
-		}
-		if got != src {
-			t.Errorf("ParseBatchSource round-trip mismatch: got %q, want %q", got, src)
-		}
-	}
 	for _, st := range AllTaskStatuses() {
 		got, err := ParseTaskStatus(string(st))
 		if err != nil {
@@ -77,39 +56,45 @@ func TestParseRoundTrip(t *testing.T) {
 			t.Errorf("ParseTaskStatus round-trip mismatch: got %q, want %q", got, st)
 		}
 	}
-	if _, err := ParseBatchSource("test"); err == nil {
-		t.Error("ParseBatchSource(\"test\") expected error")
-	}
 	if _, err := ParseTaskStatus("active"); err == nil {
 		t.Error("ParseTaskStatus(\"active\") expected error")
 	}
 }
 
 func TestAllReturnsClone(t *testing.T) {
-	a := AllBatchSources()
-	b := AllBatchSources()
+	a := AllTaskTypes()
+	b := AllTaskTypes()
 	if &a[0] == &b[0] {
-		t.Error("AllBatchSources returned the same backing slice twice")
+		t.Error("AllTaskTypes returned the same backing slice twice")
 	}
-	a[0] = BatchSource("mutated")
-	if AllBatchSources()[0] == BatchSource("mutated") {
-		t.Error("AllBatchSources did not return an independent clone")
+	a[0] = TaskType("mutated")
+	if AllTaskTypes()[0] == TaskType("mutated") {
+		t.Error("AllTaskTypes did not return an independent clone")
 	}
 }
 
-func TestNonConsumeBatchSources(t *testing.T) {
-	want := map[BatchSource]bool{
-		Batch.Source.Config:       true,
-		Batch.Source.Backup:       true,
-		Batch.Source.Mirror:       true,
-		Batch.Source.TagReconcile: true,
-		Batch.Source.TagMeasure:   true,
-		Batch.Source.TagIdentity:  true,
-		Batch.Source.TagAudit:     true,
+func TestNonConsumeTaskTypes(t *testing.T) {
+	want := map[TaskType]bool{
+		Task.Type.Config:         true,
+		Task.Type.MigrateDB:      true,
+		Task.Type.MigrateStorage: true,
+		Task.Type.Backup:         true,
+		Task.Type.Mirror:         true,
+		Task.Type.TagReconcile:   true,
+		Task.Type.TagMeasure:     true,
+		Task.Type.TagIdentity:    true,
+		Task.Type.TagAudit:       true,
 	}
-	for _, src := range NonConsumeBatchSources() {
-		if !want[src] {
-			t.Errorf("unexpected non-consume source: %q", src)
+	values := NonConsumeTaskTypeValues()
+	if len(values) != len(want) {
+		t.Fatalf("NonConsumeTaskTypeValues len = %d, want %d", len(values), len(want))
+	}
+	for i, typ := range NonConsumeTaskTypes() {
+		if !want[typ] {
+			t.Errorf("unexpected non-consume task type: %q", typ)
+		}
+		if values[i] != string(typ) {
+			t.Errorf("value %q does not match type %q", values[i], typ)
 		}
 	}
 }

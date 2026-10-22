@@ -17,6 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
+	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -27,7 +28,7 @@ type Server struct {
 	httpServer *http.Server
 	logger     *log.Logger
 	addr       string
-	pool       *task.Pool
+	pools      []*task.Pool
 	db         *sql.DB
 }
 
@@ -52,11 +53,11 @@ func (s *Server) Start() error {
 	if configDir, err := config.ConfigDir(); err == nil {
 		if config.ConfigExists(*configDir) {
 			s.logger.Info("", "existing config found at %s — auto-resuming", *configDir)
-			if cfg, client, dispatcher, err := s.bootstrap(*configDir); err != nil {
+			if cfg, client, enqueuer, err := s.bootstrap(*configDir); err != nil {
 				s.logger.Error("", "auto-resume bootstrap: %v", err)
 			} else {
 				onConfigSet(cfg)
-				configHandler.SetServices(client, dispatcher)
+				configHandler.SetServices(client, enqueuer)
 			}
 		}
 	}
@@ -82,7 +83,7 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, *task.Dispatcher, error) {
+func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, *task.Enqueuer, error) {
 	if s.db != nil {
 		return nil, nil, nil, fmt.Errorf("already bootstrapped")
 	}
@@ -106,17 +107,26 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	store := task.NewStore(client)
 	registry := task.NewRegistry()
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
+	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, s.logger))
+	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, s.logger))
 
-	dispatcher := task.NewDispatcher(store, registry)
+	catalog := container.NewCatalog(client.Queries)
+	enqueuer := task.NewEnqueuer(client, catalog)
 	runner := task.NewRunner(store, registry, s.logger)
-	s.pool = task.NewPool(s.logger, runner, 1, 5*time.Second, "config")
-	s.pool.Start(context.Background())
+	s.pools = []*task.Pool{
+		task.NewPool(s.logger, runner, 1, 5*time.Second, types.Task.Type.Config),
+		task.NewPool(s.logger, runner, 1, 5*time.Second, types.Task.Type.MigrateDB),
+		task.NewPool(s.logger, runner, 1, 5*time.Second, types.Task.Type.MigrateStorage),
+	}
+	for _, pool := range s.pools {
+		pool.Start(context.Background())
+	}
 
-	return cfg, client, dispatcher, nil
+	return cfg, client, enqueuer, nil
 }
 
-// Shutdown drains the HTTP server, stops the config pool and closes the
-// database. Safe before Start.
+// Shutdown drains the HTTP server, stops the config-host pools and closes the database. Safe before
+// Start.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.httpServer == nil {
 		return nil
@@ -126,10 +136,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return err
 	}
 
-	if s.pool != nil {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		s.pool.Stop(stopCtx)
+	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, pool := range s.pools {
+		pool.Stop(stopCtx)
 	}
 	if s.db != nil {
 		_ = s.db.Close()

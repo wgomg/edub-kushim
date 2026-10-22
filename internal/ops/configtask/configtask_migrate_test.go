@@ -106,7 +106,6 @@ func TestMigrateDBTask(t *testing.T) {
 	targetDBName := srcDBName + "_migrate"
 
 	payload, _ := json.Marshal(MigrateDBPayload{
-		Op:        opMigrateDB,
 		ConfigDir: configDir,
 		Host:      u.Hostname(),
 		Port:      strconv.Itoa(port),
@@ -116,7 +115,7 @@ func TestMigrateDBTask(t *testing.T) {
 		SSLMode:   u.Query().Get("sslmode"),
 	})
 
-	h := NewConfigTaskHandler(queries, testutil.NewTestLogger())
+	h := NewMigrateDBTaskHandler(queries, testutil.NewTestLogger())
 	if _, err := h.Handle(ctx, task.Task{TaskID: "migrate-test", Payload: payload}); err != nil {
 		t.Fatalf("Handle(migrate-db): %v", err)
 	}
@@ -271,7 +270,6 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 	t.Cleanup(func() { dropTestDatabase(t, baseDSN, foreignName) })
 
 	payload, _ := json.Marshal(MigrateDBPayload{
-		Op:        opMigrateDB,
 		ConfigDir: configDir,
 		Host:      u.Hostname(),
 		Port:      strconv.Itoa(port),
@@ -281,7 +279,7 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 		SSLMode:   u.Query().Get("sslmode"),
 	})
 
-	h := NewConfigTaskHandler(queries, testutil.NewTestLogger())
+	h := NewMigrateDBTaskHandler(queries, testutil.NewTestLogger())
 	if _, err := h.Handle(ctx, task.Task{TaskID: "migrate-foreign", Payload: payload}); err == nil {
 		t.Fatal("Handle(migrate-db) against a foreign database succeeded, want refusal")
 	}
@@ -415,7 +413,6 @@ func TestMigrateStorageTask(t *testing.T) {
 			}
 
 			payload, _ := json.Marshal(MigrateStoragePayload{
-				Op:                opMigrateStorage,
 				ConfigDir:         configDir,
 				OldStorageDir:     oldStorage,
 				NewStorageDir:     newStorage,
@@ -423,7 +420,7 @@ func TestMigrateStorageTask(t *testing.T) {
 				NewConsumptionDir: newInbox,
 			})
 
-			h := NewConfigTaskHandler(queries, testutil.NewTestLogger())
+			h := NewMigrateStorageTaskHandler(queries, testutil.NewTestLogger())
 			if _, err := h.Handle(ctx, task.Task{TaskID: "migrate-storage-test", Payload: payload}); err != nil {
 				t.Fatalf("Handle(migrate-storage): %v", err)
 			}

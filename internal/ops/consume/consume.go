@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -23,6 +22,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
@@ -60,8 +60,8 @@ type poolSet struct {
 	thumbbackfill *task.Pool
 }
 
-func (p poolSet) forSource(source types.BatchSource) []*task.Pool {
-	if source == types.Batch.Source.Thumbbackfill {
+func (p poolSet) forThumbbackfill(thumbbackfill bool) []*task.Pool {
+	if thumbbackfill {
 		return []*task.Pool{p.thumbbackfill}
 	}
 	return []*task.Pool{p.consume, p.enrich, p.thumbnail}
@@ -93,12 +93,12 @@ func fetchPools(c *container.Container) (poolSet, error) {
 }
 
 type batchRun struct {
-	client  *database.Client
-	owner   *task.Owner
-	ownerID string
-	batchID string
-	source  types.BatchSource
-	pools   poolSet
+	client        *database.Client
+	owner         *task.Owner
+	ownerID       string
+	batchID       string
+	thumbbackfill bool
+	pools         poolSet
 }
 
 // Run is the kushim consume verb: with "cancel" it drives the batch
@@ -179,9 +179,9 @@ func Run(c *container.Container, args []string) error {
 			return nil
 		}
 
-		batchSource := types.Batch.Source.CLI
-		if batchErr == nil {
-			batchSource = batch.Source
+		thumbbackfill, tbfErr := batchRunsThumbbackfill(ctx, client, batchIDParam)
+		if tbfErr != nil {
+			return fmt.Errorf("inspect batch tasks: %w", tbfErr)
 		}
 
 		ownerID := uuid.New().String()
@@ -218,12 +218,12 @@ func Run(c *container.Container, args []string) error {
 		}
 
 		return runBatchThroughPools(ctx, cancel, c, batchRun{
-			client:  client,
-			owner:   owner,
-			ownerID: ownerID,
-			batchID: batchIDParam,
-			source:  batchSource,
-			pools:   pools,
+			client:        client,
+			owner:         owner,
+			ownerID:       ownerID,
+			batchID:       batchIDParam,
+			thumbbackfill: thumbbackfill,
+			pools:         pools,
 		})
 	}
 
@@ -259,61 +259,9 @@ func Run(c *container.Container, args []string) error {
 		return nil
 	}
 
-	dispatcher, err := c.GetDispatcher()
+	enqueuer, err := c.GetEnqueuer()
 	if err != nil {
-		return fmt.Errorf("failed to get dispatcher: %w", err)
-	}
-
-	batchID := uuid.New().String()
-	enqueued := 0
-	thumbnailsEnabled := c.GetConfig().Consumer.Thumbnail.Enabled
-	for i, f := range files {
-		consumeTaskID := uuid.New().String()
-		enrichTaskID := uuid.New().String()
-		thumbnailTaskID := uuid.New().String()
-		documentID := uuid.New().String()
-
-		consumePayloadMap := map[string]any{
-			"file_path":    f.OriginalPath,
-			"file_index":   i + 1,
-			"on_completed": enrichTaskID,
-			"document_id":  documentID,
-		}
-		if thumbnailsEnabled {
-			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
-		}
-		consumePayload, _ := json.Marshal(consumePayloadMap)
-		_, err := dispatcher.Enqueue(ctx, types.Task.Type.Consume, batchID, consumePayload, consumeTaskID)
-		if err != nil {
-			c.GetLogger().Error(documentID, "enqueue %s: %v", f.OriginalPath, err)
-			continue
-		}
-		enqueued++
-
-		enrichPayload, _ := json.Marshal(map[string]any{
-			"waiting_for": consumeTaskID,
-			"file_name":   filepath.Base(f.OriginalPath),
-			"file_index":  i + 1,
-		})
-		if _, err := dispatcher.Enqueue(ctx, types.Task.Type.Enrich, batchID, enrichPayload, enrichTaskID, types.Task.Status.Waiting); err != nil {
-			c.GetLogger().Error(documentID, "create enrich task for %s: %v", f.OriginalPath, err)
-		}
-
-		if thumbnailsEnabled {
-			thumbnailPayload, _ := json.Marshal(map[string]any{
-				"waiting_for": consumeTaskID,
-				"file_name":   filepath.Base(f.OriginalPath),
-				"file_index":  i + 1,
-			})
-			if _, err := dispatcher.Enqueue(ctx, types.Task.Type.Thumbnail, batchID, thumbnailPayload, thumbnailTaskID, types.Task.Status.Waiting); err != nil {
-				c.GetLogger().Error(documentID, "create thumbnail task for %s: %v", f.OriginalPath, err)
-			}
-		}
-	}
-
-	if enqueued == 0 {
-		fmt.Printf("No new files to consume\n")
-		return nil
+		return fmt.Errorf("failed to get enqueuer: %w", err)
 	}
 
 	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
@@ -323,14 +271,53 @@ func Run(c *container.Container, args []string) error {
 		return fmt.Errorf("failed to check queue: %w", err)
 	}
 
-	if err := client.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: types.Batch.Source.CLI,
-		Status: types.Batch.Status.Queued,
-	}); err != nil {
-		return fmt.Errorf("create batch: %w", err)
+	thumbnailsEnabled := c.GetConfig().Consumer.Thumbnail.Enabled
+	var tasks []task.TaskSpec
+	consumeTaskIDs := make(map[string]struct{}, len(files))
+	for i, f := range files {
+		md5hash, md5Err := storage.CalculateMD5(f.OriginalPath)
+		if md5Err != nil {
+			c.GetLogger().Error("", "md5 %s: %v", f.OriginalPath, md5Err)
+			continue
+		}
+
+		fileTasks := consumption.IngestTaskSpecs(consumption.IngestFile{
+			Path:       f.OriginalPath,
+			Index:      i + 1,
+			MD5:        md5hash,
+			DocumentID: uuid.New().String(),
+		}, thumbnailsEnabled)
+		consumeTaskIDs[fileTasks[0].TaskID] = struct{}{}
+		tasks = append(tasks, fileTasks...)
 	}
 
+	if len(tasks) == 0 {
+		fmt.Printf("No new files to consume\n")
+		return nil
+	}
+
+	spec, err := task.NewBatchSpec(types.Batch.Origin.CLI, "")
+	if err != nil {
+		return fmt.Errorf("build batch spec: %w", err)
+	}
+
+	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
+	if err != nil {
+		return fmt.Errorf("enqueue batch: %w", err)
+	}
+
+	enqueued := 0
+	for _, taskID := range result.TaskIDs {
+		if _, ok := consumeTaskIDs[taskID]; ok {
+			enqueued++
+		}
+	}
+	if enqueued == 0 || result.BatchID == "" {
+		fmt.Printf("No new files to consume\n")
+		return nil
+	}
+
+	batchID := result.BatchID
 	fmt.Printf("Batch: %s\n", batchID)
 
 	if countBefore > 0 {
@@ -352,13 +339,27 @@ func Run(c *container.Container, args []string) error {
 	}
 
 	return runBatchThroughPools(ctx, cancel, c, batchRun{
-		client:  client,
-		owner:   owner,
-		ownerID: ownerID,
-		batchID: batchID,
-		source:  types.Batch.Source.CLI,
-		pools:   pools,
+		client:        client,
+		owner:         owner,
+		ownerID:       ownerID,
+		batchID:       batchID,
+		thumbbackfill: false,
+		pools:         pools,
 	})
+}
+
+// batchRunsThumbbackfill reports whether the batch carries thumbbackfill tasks, which select the backfill
+// pool instead of the consume family.
+func batchRunsThumbbackfill(ctx context.Context, client *database.Client, batchID string) (bool, error) {
+	tasks, err := task.ListFiltered(ctx, client.Queries, task.TaskFilter{
+		BatchID:  batchID,
+		TaskType: string(types.Task.Type.ThumbBackfill),
+		Limit:    1,
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(tasks) > 0, nil
 }
 
 // The post-acquire sequence both halves of Run share.
@@ -527,7 +528,7 @@ func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
 	logger.SetLevel(log.LevelSilent)
 
 	queries := run.client.Queries
-	pools := run.pools.forSource(run.source)
+	pools := run.pools.forThumbbackfill(run.thumbbackfill)
 	for _, p := range pools {
 		p.Start(ctx)
 	}
@@ -544,7 +545,7 @@ func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
 	previousProgress := make(map[string]string)
 
 	tickInterval := 500 * time.Millisecond
-	if run.source == types.Batch.Source.Thumbbackfill {
+	if run.thumbbackfill {
 		tickInterval = 2 * time.Second
 	}
 	ticker := time.NewTicker(tickInterval)
@@ -731,9 +732,12 @@ func triggerOrphanScan(c *container.Container) {
 		c.GetLogger().Error("", "orphan scan: get client: %v", err)
 		return
 	}
-	store := task.NewStore(client)
-	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	svc := service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), store, batchSvc)
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		c.GetLogger().Error("", "orphan scan: get enqueuer: %v", err)
+		return
+	}
+	svc := service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), enqueuer)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	count, err := svc.ScanAndQuarantine(ctx)

@@ -2,10 +2,7 @@ package consumption
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,17 +10,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ScanAndEnqueue scans the consumption directory and enqueues one consume
-// task (with its waiting enrich and, when thumbnails are enabled, thumbnail
-// child) per new file, deduplicating by MD5 plus SHA-512 parity against
-// existing documents and within the scan itself. The batch row is created
-// only after all tasks are committed, so the queue never sees an empty or
-// partial batch. Any paused batch skips the scan entirely, returning
-// empty with a nil error.
-func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Client, logger *log.Logger) (batchID string, enqueued int, err error) {
+// ScanAndEnqueue scans the consumption directory and enqueues one consume task (with its own waiting
+// enrich and, when thumbnails are enabled, a thumbnail child) per new file through the transactional
+// enqueuer, deduplicating by MD5 plus SHA-512 parity against existing documents and within the scan
+// itself. The batch and its tasks commit together, and a dedup-skipped consume task takes its linked
+// children with it. Any paused batch skips the scan entirely, returning empty with a nil error.
+func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer, logger *log.Logger) (batchID string, enqueued int, err error) {
 	pausedCount, err := client.Queries.CountPausedBatches(ctx)
 	if err != nil {
 		return "", 0, fmt.Errorf("count paused batches: %w", err)
@@ -46,9 +42,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		return "", 0, nil
 	}
 
-	batchID = uuid.New().String()
-
-	// Compute MD5 for all files, skipping unreadable ones.
+	// compute MD5 for all files, skipping unreadable ones
 	type fileEntry struct {
 		path  string
 		md5   string
@@ -68,7 +62,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		return "", 0, nil
 	}
 
-	// Batch dedup: single query for all MD5 hashes instead of one per file.
+	// batch dedup: single query for all MD5 hashes instead of one per file
 	md5hashes := make([]string, len(entries))
 	for i, e := range entries {
 		md5hashes[i] = e.md5
@@ -79,9 +73,12 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		duplicates = make(map[string]duplicateInfo)
 	}
 
-	// MD5s already enqueued earlier in this scan; the consume task's dedup
-	// key ("consume:<md5>") would reject a second copy anyway
+	// hashes already enqueued earlier in this scan; the consume task's dedup key ("consume:<md5>") would
+	// reject a second copy anyway
 	seen := make(map[string]bool)
+
+	var tasks []task.TaskSpec
+	consumeTaskIDs := make(map[string]struct{}, len(entries))
 
 	for _, e := range entries {
 		if seen[e.md5] {
@@ -99,98 +96,40 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 				MoveFailedFile(cfg.Storage.StorageDir, e.path, "duplicate", logger, nil)
 				continue
 			}
-			// MD5 collision with a differing SHA512 — enqueue normally
+			// collision on MD5 but a differing SHA512 — enqueue normally
 		}
 
-		consumeTaskID := uuid.New().String()
-		enrichTaskID := uuid.New().String()
-		thumbnailTaskID := uuid.New().String()
-		documentID := uuid.New().String()
-
-		consumePayloadMap := map[string]any{
-			"file_path":    e.path,
-			"file_index":   e.index,
-			"on_completed": enrichTaskID,
-			"document_id":  documentID,
-		}
-		if cfg.Consumer.Thumbnail.Enabled {
-			consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
-		}
-		consumePayload, _ := json.Marshal(consumePayloadMap)
-		consumePayloadPtr := json.RawMessage(consumePayload)
-		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   consumeTaskID,
-			TaskType: types.Task.Type.Consume,
-			Status:   types.Task.Status.Pending,
-			BatchID:  sql.NullString{String: batchID, Valid: true},
-			Payload:  &consumePayloadPtr,
-			DedupKey: sql.NullString{String: "consume:" + e.md5, Valid: true},
-		})
-		if err != nil {
-			logger.Error("", "scan: create consume task for %s: %v", e.path, err)
-			continue
-		}
+		fileTasks := IngestTaskSpecs(IngestFile{
+			Path:       e.path,
+			Index:      e.index,
+			MD5:        e.md5,
+			DocumentID: uuid.New().String(),
+		}, cfg.Consumer.Thumbnail.Enabled)
+		consumeTaskIDs[fileTasks[0].TaskID] = struct{}{}
+		tasks = append(tasks, fileTasks...)
 		seen[e.md5] = true
-
-		enrichPayload, _ := json.Marshal(map[string]any{
-			"waiting_for": consumeTaskID,
-			"file_name":   filepath.Base(e.path),
-			"file_index":  e.index,
-			"document_id": documentID,
-		})
-		enrichPayloadPtr := json.RawMessage(enrichPayload)
-		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   enrichTaskID,
-			TaskType: types.Task.Type.Enrich,
-			Status:   types.Task.Status.Waiting,
-			BatchID:  sql.NullString{String: batchID, Valid: true},
-			Payload:  &enrichPayloadPtr,
-			DedupKey: sql.NullString{Valid: false},
-		})
-		if err != nil {
-			logger.Error("", "scan: create enrich task for %s: %v", e.path, err)
-			continue
-		}
-
-		if cfg.Consumer.Thumbnail.Enabled {
-			thumbnailPayload, _ := json.Marshal(map[string]any{
-				"waiting_for": consumeTaskID,
-				"file_name":   filepath.Base(e.path),
-				"file_index":  e.index,
-			})
-			thumbnailPayloadPtr := json.RawMessage(thumbnailPayload)
-			_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-				TaskID:   thumbnailTaskID,
-				TaskType: types.Task.Type.Thumbnail,
-				Status:   types.Task.Status.Waiting,
-				BatchID:  sql.NullString{String: batchID, Valid: true},
-				Payload:  &thumbnailPayloadPtr,
-				DedupKey: sql.NullString{Valid: false},
-			})
-			if err != nil {
-				logger.Error("", "scan: create thumbnail task for %s: %v", e.path, err)
-			}
-		}
-		enqueued++
 	}
 
-	// If all files were duplicates, return empty — no batch created.
-	if enqueued == 0 {
+	if len(tasks) == 0 {
 		return "", 0, nil
 	}
 
-	// Create the batch only after all tasks are committed. This prevents the
-	// consumer loop from picking up an incomplete or empty batch (race fix).
-	err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: types.Batch.Source.Polling,
-		Status: types.Batch.Status.Queued,
-	})
+	spec, err := task.NewBatchSpec(types.Batch.Origin.Polling, "")
+	if err != nil {
+		return "", 0, fmt.Errorf("build polling batch spec: %w", err)
+	}
+
+	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
 	if err != nil {
 		return "", 0, err
 	}
+	for _, taskID := range result.TaskIDs {
+		if _, ok := consumeTaskIDs[taskID]; ok {
+			enqueued++
+		}
+	}
 
-	return batchID, enqueued, nil
+	return result.BatchID, enqueued, nil
 }
 
 // duplicateInfo pairs an existing document's ID with its stored SHA512 for

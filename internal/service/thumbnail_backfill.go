@@ -6,117 +6,54 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
-	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const backfillPageSize = 500
-
-// ThumbnailBackfill enqueues thumbnail tasks for documents that lack a
-// thumbnail: everything, one batch's worth, or a single document. It pages
-// the candidate documents and creates the tasks with per-document dedup
-// keys, skipping the ones already covered by pending thumbnail tasks.
+// ThumbnailBackfill enqueues thumbnail tasks for documents that lack a thumbnail: one batch's worth,
+// or a single document. The all-documents scan belongs to the thumbbackfill type definition's shared
+// builder, which the CLI and the scheduler both use.
 type ThumbnailBackfill struct {
-	queries      *database.Queries
-	logger       *log.Logger
-	taskCreator  types.TaskCreator
-	batchCreator types.BatchCreator
+	queries  *database.Queries
+	enqueuer *task.Enqueuer
 }
 
-// NewThumbnailBackfill wires the enqueue path to the queries and the
-// task and batch creators.
-func NewThumbnailBackfill(queries *database.Queries, logger *log.Logger, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *ThumbnailBackfill {
+// NewThumbnailBackfill wires the enqueue path to the queries and the transactional enqueuer.
+func NewThumbnailBackfill(queries *database.Queries, enqueuer *task.Enqueuer) *ThumbnailBackfill {
 	return &ThumbnailBackfill{
-		queries:      queries,
-		logger:       logger,
-		taskCreator:  taskCreator,
-		batchCreator: batchCreator,
+		queries:  queries,
+		enqueuer: enqueuer,
 	}
-}
-
-// BackfillAll enqueues thumbnails for every live document missing one,
-// skipping documents with a pending thumbnail task; documents with a
-// thumbnail on disk are ignored. An all-skipped run creates no batch.
-func (s *ThumbnailBackfill) BackfillAll(ctx context.Context) (batchID string, enqueued, skipped int, err error) {
-	runBatchID := uuid.New().String()
-	batchCreated := false
-	defer func() {
-		if !batchCreated && enqueued > 0 {
-			s.cleanupUnbatched(runBatchID)
-		}
-	}()
-	var lastID int64
-	for {
-		rows, err := s.queries.ListDocumentsWithoutThumbnails(ctx, database.ListDocumentsWithoutThumbnailsParams{
-			ID:    lastID,
-			Limit: backfillPageSize,
-		})
-		if err != nil {
-			return "", enqueued, skipped, errs.FromDB(err, "list documents without thumbnails")
-		}
-		if len(rows) == 0 {
-			break
-		}
-
-		for _, row := range rows {
-			lastID = row.ID
-			if s.addDocument(ctx, runBatchID, row.DocumentID, row.StoragePath) {
-				enqueued++
-			} else {
-				skipped++
-			}
-		}
-	}
-
-	if enqueued == 0 {
-		return "", 0, skipped, nil
-	}
-	if err := s.batchCreator.Create(ctx, runBatchID, types.Batch.Source.Thumbbackfill, types.Batch.Status.Queued); err != nil {
-		return "", enqueued, skipped, errs.FromDB(err, "create batch")
-	}
-	batchCreated = true
-	return runBatchID, enqueued, skipped, nil
 }
 
 // BackfillBatch enqueues thumbnails for the documents of one past batch.
-func (s *ThumbnailBackfill) BackfillBatch(ctx context.Context, batchID string) (newBatchID string, enqueued, skipped int, err error) {
+func (s *ThumbnailBackfill) BackfillBatch(ctx context.Context, spec task.BatchSpec, batchID string) (newBatchID string, enqueued, skipped int, err error) {
 	rows, err := s.queries.ListDocumentsWithoutThumbnailsByBatch(ctx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
 		return "", 0, 0, errs.FromDB(err, "list documents without thumbnails by batch")
 	}
 
-	runBatchID := uuid.New().String()
-	batchCreated := false
-	defer func() {
-		if !batchCreated && enqueued > 0 {
-			s.cleanupUnbatched(runBatchID)
-		}
-	}()
+	tasks := make([]task.TaskSpec, 0, len(rows))
 	for _, row := range rows {
-		if s.addDocument(ctx, runBatchID, row.DocumentID, row.StoragePath) {
-			enqueued++
-		} else {
-			skipped++
-		}
+		payload, _ := json.Marshal(map[string]any{
+			"document_id":  row.DocumentID,
+			"storage_path": row.StoragePath,
+		})
+		tasks = append(tasks, task.TaskSpec{Type: types.Task.Type.ThumbBackfill, Payload: payload})
 	}
 
-	if enqueued == 0 {
-		return "", 0, skipped, nil
+	result, err := s.enqueuer.EnqueueBatch(ctx, spec, tasks)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("enqueue thumbnail tasks: %w", err)
 	}
-	if err := s.batchCreator.Create(ctx, runBatchID, types.Batch.Source.Thumbbackfill, types.Batch.Status.Queued); err != nil {
-		return "", enqueued, skipped, errs.FromDB(err, "create batch")
-	}
-	batchCreated = true
-	return runBatchID, enqueued, skipped, nil
+	return result.BatchID, len(result.TaskIDs), result.Skipped, nil
 }
 
-// BackfillDocument enqueues one document's thumbnail task; documents
-// that already have a thumbnail are refused with a conflict.
-func (s *ThumbnailBackfill) BackfillDocument(ctx context.Context, documentUUID string) (batchID string, err error) {
+// BackfillDocument enqueues one document's thumbnail task; documents that already have a thumbnail,
+// or whose task is already queued, are refused with a conflict.
+func (s *ThumbnailBackfill) BackfillDocument(ctx context.Context, spec task.BatchSpec, documentUUID string) (batchID string, err error) {
 	_, err = s.queries.GetDocument(ctx, documentUUID)
 	if err != nil {
 		return "", errs.FromDB(err, "get document")
@@ -130,42 +67,19 @@ func (s *ThumbnailBackfill) BackfillDocument(ctx context.Context, documentUUID s
 		return "", errs.FromDB(err, "get document without thumbnail")
 	}
 
-	runBatchID := uuid.New().String()
-	taskCreated := s.addDocument(ctx, runBatchID, row.DocumentID, row.StoragePath)
-	if !taskCreated {
+	payload, _ := json.Marshal(map[string]any{
+		"document_id":  row.DocumentID,
+		"storage_path": row.StoragePath,
+	})
+	result, err := s.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{
+		Type:    types.Task.Type.ThumbBackfill,
+		Payload: payload,
+	})
+	if err != nil {
+		return "", fmt.Errorf("enqueue thumbnail task: %w", err)
+	}
+	if result.BatchID == "" {
 		return "", errs.EConflict("backfill thumbnail", fmt.Errorf("document %s already has a thumbnail or a task is already queued", documentUUID))
 	}
-	if err := s.batchCreator.Create(ctx, runBatchID, types.Batch.Source.Thumbbackfill, types.Batch.Status.Queued); err != nil {
-		s.cleanupUnbatched(runBatchID)
-		return "", errs.FromDB(err, "create batch")
-	}
-	return runBatchID, nil
-}
-
-// cleanupUnbatched removes a batch's tasks after its creation failed, so
-// the orphaned tasks do not keep their dedup keys and block later runs.
-// The detached context is deliberate: the request that created the tasks
-// may already be cancelled, and the cleanup must still run.
-func (s *ThumbnailBackfill) cleanupUnbatched(batchID string) {
-	if err := task.DeleteBatchTasks(context.Background(), s.queries, batchID); err != nil {
-		s.logger.Error("", "cleanup of unbatched thumbnail tasks: %v", err)
-	}
-}
-
-func (s *ThumbnailBackfill) addDocument(ctx context.Context, batchID, documentID, storagePath string) bool {
-	payload, _ := json.Marshal(map[string]any{
-		"document_id":  documentID,
-		"storage_path": storagePath,
-	})
-	_, err := s.taskCreator.CreateTask(ctx, types.Task.Type.ThumbBackfill, batchID, payload, uuid.New().String(), types.Task.Status.Pending, "thumbnail:doc:"+documentID)
-	if err != nil {
-		err = errs.FromDB(err, "create thumbnail task")
-		if errs.KindOf(err) == errs.KindConflict {
-			s.logger.Warn(documentID, "thumbnail task already pending for %s, skipping", documentID)
-			return false
-		}
-		s.logger.Error(documentID, "thumbnail task creation failed for %s: %v", documentID, err)
-		return false
-	}
-	return true
+	return result.BatchID, nil
 }

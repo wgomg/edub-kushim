@@ -45,8 +45,7 @@ type handlerTestEnv struct {
 	docTypeSvc    *service.DocumentType
 	userSvc       *service.User
 	services      *service.CrudServices
-	workStore     *task.Store
-	dispatcher    *task.Dispatcher
+	enqueuer      *task.Enqueuer
 	registry      *task.Registry
 }
 
@@ -85,15 +84,15 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	userSvc := service.NewUser(client.Queries)
 
 	batchSvc := service.NewBatch(client, 3)
-	workStore := task.NewStore(client)
-	reenrichSvc := service.NewReEnrich(client.Queries, workStore, batchSvc)
+	enqueuer := newHandlerTestEnqueuer(client)
+	reenrichSvc := service.NewReEnrich(client.Queries, enqueuer)
 
 	trashCfg := config.DefaultConfig("/tmp/test")
-	orphanedSvc := service.NewOrphaned(client.Queries, trashCfg, logger, workStore, batchSvc)
+	orphanedSvc := service.NewOrphaned(client.Queries, trashCfg, logger, enqueuer)
 	trashSvc := service.NewTrash(client, trashCfg, logger, orphanedSvc)
 
-	tagIdentity := curation.NewTagIdentity(client.Queries, workStore, batchSvc)
-	tagAudit := curation.NewTagAudit(client.Queries, workStore, batchSvc)
+	tagIdentity := curation.NewTagIdentity(client.Queries, enqueuer)
+	tagAudit := curation.NewTagAudit(client.Queries, enqueuer)
 
 	services := &service.CrudServices{
 		Batch:        batchSvc,
@@ -107,7 +106,6 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 
 	registry := task.NewRegistry()
 	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, logger))
-	dispatcher := task.NewDispatcher(workStore, registry)
 
 	return &handlerTestEnv{
 		client:        client,
@@ -121,10 +119,85 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		docTypeSvc:    docTypeSvc,
 		userSvc:       userSvc,
 		services:      services,
-		workStore:     workStore,
-		dispatcher:    dispatcher,
+		enqueuer:      enqueuer,
 		registry:      registry,
 	}
+}
+
+// handlerTestCatalog is the task type table the handler tests enqueue
+// against: identity plus the dedup derivations the handlers rely on.
+type handlerTestCatalog struct {
+	defs map[itypes.TaskType]task.TypeDefinition
+}
+
+func (c handlerTestCatalog) Definition(taskType itypes.TaskType) (task.TypeDefinition, error) {
+	def, ok := c.defs[taskType]
+	if !ok {
+		return task.TypeDefinition{}, fmt.Errorf("unknown task type: %q", taskType)
+	}
+	return def, nil
+}
+
+func newHandlerTestEnqueuer(client *database.Client) *task.Enqueuer {
+	documentID := func(payload json.RawMessage) string {
+		var p struct {
+			DocumentID string `json:"document_id"`
+		}
+		_ = json.Unmarshal(payload, &p)
+		return p.DocumentID
+	}
+	md5Key := func(payload json.RawMessage) string {
+		var p struct {
+			MD5 string `json:"md5"`
+		}
+		_ = json.Unmarshal(payload, &p)
+		if p.MD5 == "" {
+			return ""
+		}
+		return "consume:" + p.MD5
+	}
+	enrichKey := func(payload json.RawMessage) string {
+		if id := documentID(payload); id != "" {
+			return "enrich:doc:" + id
+		}
+		return ""
+	}
+	thumbnailKey := func(payload json.RawMessage) string {
+		if id := documentID(payload); id != "" {
+			return "thumbnail:doc:" + id
+		}
+		return ""
+	}
+	configKey := func(payload json.RawMessage) string {
+		var p struct {
+			Op   string `json:"op"`
+			Lang string `json:"lang"`
+		}
+		_ = json.Unmarshal(payload, &p)
+		switch p.Op {
+		case configtask.OpTessdata:
+			return "config:tessdata:" + p.Lang
+		case configtask.OpHugot:
+			return "config:hugot"
+		default:
+			return ""
+		}
+	}
+	constant := func(key string) func(json.RawMessage) string {
+		return func(json.RawMessage) string { return key }
+	}
+
+	catalog := handlerTestCatalog{defs: map[itypes.TaskType]task.TypeDefinition{
+		itypes.Task.Type.Consume:        {Type: itypes.Task.Type.Consume, DedupKey: md5Key},
+		itypes.Task.Type.Enrich:         {Type: itypes.Task.Type.Enrich, DedupKey: enrichKey},
+		itypes.Task.Type.Thumbnail:      {Type: itypes.Task.Type.Thumbnail, DedupKey: thumbnailKey},
+		itypes.Task.Type.Config:         {Type: itypes.Task.Type.Config, DedupKey: configKey},
+		itypes.Task.Type.MigrateDB:      {Type: itypes.Task.Type.MigrateDB, DedupKey: constant(configtask.DedupKeyMigrateDB)},
+		itypes.Task.Type.MigrateStorage: {Type: itypes.Task.Type.MigrateStorage, DedupKey: constant(configtask.DedupKeyMigrateStorage)},
+		itypes.Task.Type.TagIdentity:    {Type: itypes.Task.Type.TagIdentity, DedupKey: constant(curation.TagIdentityDedupKey)},
+		itypes.Task.Type.TagAudit:       {Type: itypes.Task.Type.TagAudit, DedupKey: constant(curation.TagAuditDedupKey)},
+	}}
+	return task.NewEnqueuer(client, catalog)
 }
 
 func req(t *testing.T, method, path string, body []byte) *http.Request {
@@ -648,7 +721,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 	t.Run("cancel batch with pending tasks", func(t *testing.T) {
 		batchID := "cancel-pending-test"
-		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued})
+		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued})
 		testutil.AssertNoError(t, err, "create batch")
 
 		pendPayload := json.RawMessage(`{}`)
@@ -675,7 +748,7 @@ func TestTaskEndpoints(t *testing.T) {
 
 	t.Run("cancel batch with dead owner", func(t *testing.T) {
 		batchID := "cancel-dead-owner"
-		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued})
+		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued})
 		testutil.AssertNoError(t, err, "create batch")
 
 		deadPayload := json.RawMessage(`{}`)
@@ -729,7 +802,7 @@ func TestGetTagReconcileReport(t *testing.T) {
 
 	t.Run("completed task with result returns 200", func(t *testing.T) {
 		err := env.client.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "rc-report-b1", Source: "tagreconcile", Status: "queued",
+			ID: "rc-report-b1", Origin: itypes.Batch.Origin.Schedule, Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -799,7 +872,7 @@ func TestGetTagReconcileReport(t *testing.T) {
 
 	t.Run("completed task without result returns result null", func(t *testing.T) {
 		err := env.client.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "rc-report-b2", Source: "tagreconcile", Status: "queued",
+			ID: "rc-report-b2", Origin: itypes.Batch.Origin.Schedule, Status: "queued",
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
@@ -1002,12 +1075,12 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	database.CreateTestDocument(t, env.client.Queries, "ph-doc.pdf")
 
 	err := env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "ph-batch-1", Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued,
+		ID: "ph-batch-1", Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued,
 	})
 	testutil.AssertNoError(t, err, "create batch 1")
 
 	err = env.client.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "ph-batch-2", Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued,
+		ID: "ph-batch-2", Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued,
 	})
 	testutil.AssertNoError(t, err, "create batch 2")
 
@@ -1183,7 +1256,7 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := config.DefaultConfig("/tmp/test")
-	h := NewConsumeHandler(func() *config.Config { return cfg }, env.logger, env.workStore, env.client.Queries, nil)
+	h := NewConsumeHandler(func() *config.Config { return cfg }, env.logger, env.enqueuer, env.client.Queries, nil)
 
 	t.Run("enqueues new file", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -1192,12 +1265,18 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		batchID := uuid.New().String()
-		if err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued}); err != nil {
+		spec, err := task.NewBatchSpec(itypes.Batch.Origin.API, "")
+		if err != nil {
 			t.Fatal(err)
 		}
 
-		enqueued := h.enqueueBatchFiles(ctx, batchID, []string{filePath}, "test-req")
+		result, enqueued, err := h.enqueueBatchFiles(ctx, spec, []string{filePath}, "test-req")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.BatchID == "" {
+			t.Fatal("expected a batch")
+		}
 		if enqueued != 1 {
 			t.Fatalf("expected 1 enqueued, got %d", enqueued)
 		}
@@ -1234,12 +1313,18 @@ func TestEnqueueBatchFilesDedup(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		batchID := uuid.New().String()
-		if err := h.queries.CreateBatch(ctx, database.CreateBatchParams{ID: batchID, Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued}); err != nil {
+		spec, err := task.NewBatchSpec(itypes.Batch.Origin.API, "")
+		if err != nil {
 			t.Fatal(err)
 		}
 
-		enqueued := h.enqueueBatchFiles(ctx, batchID, []string{filePath}, "test-req")
+		result, enqueued, err := h.enqueueBatchFiles(ctx, spec, []string{filePath}, "test-req")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.BatchID != "" {
+			t.Fatalf("expected no batch when every file is skipped, got %s", result.BatchID)
+		}
 		if enqueued != 0 {
 			t.Fatalf("expected 0 enqueued (skipped), got %d", enqueued)
 		}
@@ -1461,14 +1546,14 @@ func TestUserCrud(t *testing.T) {
 	})
 }
 
-func newTestConfigHandler(cfg *config.Config, client *database.Client, logger *log.Logger, dispatcher *task.Dispatcher) *ConfigHandler {
+func newTestConfigHandler(cfg *config.Config, client *database.Client, logger *log.Logger, enqueuer *task.Enqueuer) *ConfigHandler {
 	var ptr atomic.Pointer[config.Config]
 	if cfg != nil {
 		ptr.Store(cfg)
 	}
 	getConfig := func() *config.Config { return ptr.Load() }
 	onConfigSet := func(c *config.Config) { ptr.Store(c) }
-	return NewConfigHandler(getConfig, onConfigSet, client, logger, dispatcher, nil)
+	return NewConfigHandler(getConfig, onConfigSet, client, logger, enqueuer, nil)
 }
 
 func TestConfigHandlerCreateAdminUser(t *testing.T) {
@@ -1768,7 +1853,7 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return cfg })
 
 	ctx := context.Background()
-	err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Source: itypes.Batch.Source.CLI, Status: itypes.Batch.Status.Queued})
+	err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued})
 	testutil.AssertNoError(t, err, "create batch")
 
 	reqID := "missing-tools"
@@ -2363,17 +2448,17 @@ func TestPutConfig(t *testing.T) {
 			func(c *config.Config) { setCfg.Store(c) },
 			env.client,
 			env.logger,
-			env.dispatcher,
+			env.enqueuer,
 			env.services,
 		), configDir
 	}
 
-	countTasks := func(t *testing.T, dedupKey string) int64 {
+	countTasks := func(t *testing.T, taskType itypes.TaskType, dedupKey string) int64 {
 		t.Helper()
 		var count int64
 		if err := env.client.DB().QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM task WHERE task_type = 'config' AND dedup_key = $1",
-			dedupKey,
+			"SELECT COUNT(*) FROM task WHERE task_type = $1 AND dedup_key = $2",
+			taskType, dedupKey,
 		).Scan(&count); err != nil {
 			t.Fatalf("count tasks: %v", err)
 		}
@@ -2401,7 +2486,7 @@ func TestPutConfig(t *testing.T) {
 			t.Errorf("pending_tasks = %v, want %v", got, want)
 		}
 
-		if got := countTasks(t, configtask.DedupKeyMigrateStorage); got != 1 {
+		if got := countTasks(t, itypes.Task.Type.MigrateStorage, configtask.DedupKeyMigrateStorage); got != 1 {
 			t.Errorf("migrate-storage task count = %d, want 1", got)
 		}
 
@@ -2440,7 +2525,7 @@ func TestPutConfig(t *testing.T) {
 		if reloaded.App.LogLevel != "debug" {
 			t.Errorf("log_level = %q, want %q", reloaded.App.LogLevel, "debug")
 		}
-		if countTasks(t, configtask.DedupKeyMigrateStorage) != 0 {
+		if countTasks(t, itypes.Task.Type.MigrateStorage, configtask.DedupKeyMigrateStorage) != 0 {
 			t.Error("a migrate-storage task was enqueued for a non-migration change")
 		}
 	})
@@ -2459,7 +2544,7 @@ func TestPutConfig(t *testing.T) {
 		h.PutConfig(w, r)
 
 		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
-		if countTasks(t, configtask.DedupKeyMigrateDB) == 0 {
+		if countTasks(t, itypes.Task.Type.MigrateDB, configtask.DedupKeyMigrateDB) == 0 {
 			t.Error("expected migrate-db task to be queued for the db.host change")
 		}
 
@@ -2485,10 +2570,10 @@ func TestPutConfig(t *testing.T) {
 
 		// Seed a migrate-storage task that's already in 'processing' so the
 		// PUT must be rejected with 409.
-		seeded := `{"op":"migrate-storage","config_dir":"` + strings.ReplaceAll(t.TempDir(), `"`, `\"`) + `","old_storage_dir":"` + strings.ReplaceAll(t.TempDir(), `"`, `\"`) + `","new_storage_dir":"` + strings.ReplaceAll(newStorage, `"`, `\"`) + `","old_consumption_dir":"","new_consumption_dir":""}`
+		seeded := `{"config_dir":"` + strings.ReplaceAll(t.TempDir(), `"`, `\"`) + `","old_storage_dir":"` + strings.ReplaceAll(t.TempDir(), `"`, `\"`) + `","new_storage_dir":"` + strings.ReplaceAll(newStorage, `"`, `\"`) + `","old_consumption_dir":"","new_consumption_dir":""}`
 		if _, err := env.client.DB().ExecContext(ctx, `
 			INSERT INTO task (task_id, task_type, status, dedup_key, payload, started_at)
-			VALUES ('seeded-processing', 'config', 'processing', $1, $2::jsonb, CURRENT_TIMESTAMP)
+			VALUES ('seeded-processing', 'migrate-storage', 'processing', $1, $2::jsonb, CURRENT_TIMESTAMP)
 		`, configtask.DedupKeyMigrateStorage, seeded); err != nil {
 			t.Fatalf("seed processing task: %v", err)
 		}
@@ -2568,7 +2653,7 @@ func TestEnqueueConfigTasks(t *testing.T) {
 			func(c *config.Config) { setCfg.Store(c) },
 			env.client,
 			env.logger,
-			env.dispatcher,
+			env.enqueuer,
 			env.services,
 		), configDir
 	}
@@ -2576,7 +2661,9 @@ func TestEnqueueConfigTasks(t *testing.T) {
 	countBatches := func(t *testing.T) (int64, []string) {
 		t.Helper()
 		rows, err := env.client.DB().QueryContext(ctx,
-			`SELECT id FROM batch WHERE source = 'config'`)
+			`SELECT b.id FROM batch b WHERE EXISTS (
+				SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'config'
+			)`)
 		if err != nil {
 			t.Fatalf("list config batches: %v", err)
 		}
@@ -2623,7 +2710,7 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		oldBatchID := "00000000-0000-0000-0000-000000000001"
 		if err := env.client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID:     oldBatchID,
-			Source: itypes.Batch.Source.Config,
+			Origin: itypes.Batch.Origin.Wizard,
 			Status: itypes.Batch.Status.Completed,
 		}); err != nil {
 			t.Fatalf("seed old batch: %v", err)

@@ -10,10 +10,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
-	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
-	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 const tagReconcileHelpText = "Usage: kushim tagreconcile [--run <batch-id>]\n\n" +
@@ -53,9 +51,15 @@ func enqueueTagReconcile(c *container.Container) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	store := task.NewStore(client)
-	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	batchID, alreadyQueued, err := curation.NewTagReconcile(client.Queries, store, batchSvc).Enqueue(context.Background())
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return fmt.Errorf("enqueuer: %w", err)
+	}
+	spec, err := cliBatchSpec()
+	if err != nil {
+		return err
+	}
+	batchID, alreadyQueued, err := curation.NewTagReconcile(client.Queries, enqueuer).Enqueue(context.Background(), spec)
 	if err != nil {
 		return fmt.Errorf("enqueue tag reconcile: %w", err)
 	}

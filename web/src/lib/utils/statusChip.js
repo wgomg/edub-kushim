@@ -8,14 +8,13 @@ const statusClasses = {
 	discarded: 'bg-terracotta-600/10 text-terracotta-400'
 };
 
-const sourceClasses = {
-	polling: 'bg-lapis-600/20 text-lapis-600',
+const originClasses = {
 	cli: 'bg-emerald-600/20 text-emerald-500',
-	config: 'bg-amber-600/20 text-amber-400',
-	backup: 'bg-terracotta-600/20 text-terracotta-500',
-	mirror: 'bg-violet-600/20 text-violet-400',
-	thumbbackfill: 'bg-parchment-500/20 text-parchment-400',
-	tagreconcile: 'bg-cyan-600/20 text-cyan-400'
+	api: 'bg-lapis-600/20 text-lapis-600',
+	polling: 'bg-cyan-600/20 text-cyan-400',
+	schedule: 'bg-amber-600/20 text-amber-400',
+	setup: 'bg-terracotta-600/20 text-terracotta-500',
+	wizard: 'bg-violet-600/20 text-violet-400'
 };
 
 const bandClasses = {
@@ -36,6 +35,6 @@ export function statusChipClasses(status) {
 	return statusClasses[status] ?? 'bg-parchment-500/10 text-parchment-500';
 }
 
-export function sourceBadgeClasses(source) {
-	return sourceClasses[source] ?? 'bg-parchment-500/10 text-parchment-500';
+export function originBadgeClasses(origin) {
+	return originClasses[origin] ?? 'bg-parchment-500/10 text-parchment-500';
 }

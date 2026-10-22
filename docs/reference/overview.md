@@ -172,8 +172,9 @@ internal/
 ├── ops/                    # Process layer: CLI verbs, queue daemon, consume child, setup, composition root
 │   ├── cli/                # Command table and the `kushim` verbs
 │   │   ├── commands.go     # Command definitions and runner
-│   │   ├── backup.go       # Backup and restore commands
-│   │   ├── config.go       # `kushim config` command (dump/get/set/unset/validate/path)
+ │   │   ├── backup.go       # Backup and restore commands
+ │   │   ├── batch.go        # `kushim batch create <task>` enqueue command
+ │   │   ├── config.go       # `kushim config` command (dump/get/set/unset/validate/path)
 │   │   ├── enrich.go       # Enrich command (single document, --limit N, or --all)
 │   │   ├── hugot.go        # Matcher RPC server over Unix socket (encode, match, rank, store ops)
 │   │   ├── migrate.go      # `kushim migrate` database/storage migration commands
@@ -187,8 +188,9 @@ internal/
 │   │   ├── task.go         # Task commands (list, status, retry)
 │   │   ├── thumbnails.go   # `kushim thumbnails <mode>` backfill enqueue
 │   │   └── user.go         # User commands (create)
-│   ├── container/          # Dependency injection container
-│   │   └── container.go    # DB, pools, cache, dispatcher, task-handler registry; config/logger/services accessors
+ │   ├── container/          # Dependency injection container
+ │   │   ├── container.go    # DB, pools, cache, task-type catalog, enqueuer, task-handler registry; config/logger/services accessors
+ │   │   └── task_type_definitions.go # Task type catalog: one definition per type (locks, dedup key, builder) + build inputs
 │   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
 │   │   ├── queue.go        # Daemon loop: scheduling, stale reclamation, pool lifecycle, config hot-reload
 │   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
@@ -199,15 +201,15 @@ internal/
 │   │   └── setup.go
 │   ├── flags/              # CLI flag parser (shared by the ops packages)
 │   │   └── flags.go
-│   └── configtask/         # Config task handler
-│       └── configtask.go   # ConfigTaskHandler — downloads tessdata/Hugot model in background; migrate-db op copies the database when connection settings change, migrate-storage op relocates files when storage dirs change ("config" task type)
+ │   └── configtask/         # Config task handlers
+ │       └── configtask.go   # ConfigTaskHandler (asset downloads) plus MigrateDBTaskHandler/MigrateStorageTaskHandler — separate task types that copy the database or relocate files when connection/storage settings change
 ├── search/                 # Full-text search engine
 │   └── search.go           # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── service/                # Shared domain service package (people, document types, batches, trash, users)
 │   ├── people.go           # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go       # PeopleType service (NewPeopleType, batch CRUD)
 │   ├── document_type.go    # DocumentType service (NewDocumentType, batch CRUD)
-│   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, Create, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
+ │   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
 │   ├── orphaned.go         # Orphaned file service (scan, list, delete, restore, move-to-inbox, orphaned-thumbnail sweep)
 │   ├── trash.go            # Trash service (soft delete, restore, permanent delete, purge + hourly background purge)
 │   ├── errored.go          # Errored file service (list on disk, get path, delete, delete-all)
@@ -256,18 +258,18 @@ internal/
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
-│   ├── batch.go            # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
-│   ├── crud.go             # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
-│   ├── dispatcher.go       # Task dispatcher (Enqueue with custom taskID/status)
-│   ├── errors.go           # Error wrapper carrying ReqID for log correlation
-│   ├── handler.go          # Handler + Dedupable interfaces; RunBlocking — shared blocking-task lifecycle
+ │   ├── batch.go            # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
+ │   ├── crud.go             # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
+ │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; TypeDefinition contract
+ │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
+ │   ├── handler.go          # Handler interface; RunBlocking — shared blocking-task lifecycle
 │   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
 │   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
 │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
 │   ├── registry.go         # Task type → handler registry
 │   ├── runner.go           # Worker poll loop (claim → execute → complete with retry fallback)
-│   ├── store.go            # Task persistence (CreateTask, ClaimNextPending, CompleteTask, FailTask, SetPending, Discard)
+ │   ├── store.go            # Task persistence (ClaimNextPending, CompleteTask, FailTask, SetPending, Discard)
 │   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
 ├── textnorm/               # Tag and DB-key canonicalization
@@ -279,11 +281,10 @@ internal/
 │   └── textreducer/        # Text summarization
 │       ├── adapter.go      # TextReducer interface + factory
 │       └── textrank.go     # TextRank: chunking, TF-IDF, weighted PageRank, diversity penalty
-├── types/                  # Closed task-system vocabulary registry
-│   ├── registry.go         # Batch sources, task types, statuses, validity/parse helpers
-│   ├── status.go           # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus, PromoteStatus)
-│   ├── result.go           # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
-│   └── creators.go         # TaskCreator and BatchCreator interfaces the enqueue paths accept
+ ├── types/                  # Closed task-system vocabulary registry
+ │   ├── registry.go         # Batch origins, task types, statuses, validity/parse helpers
+ │   ├── status.go           # Shared CRUD enums (CreateStatus, UpdateStatus, DeleteStatus, PromoteStatus)
+ │   └── result.go           # Generic result types (CreateResult[T], UpdateResult[T], DeleteResult)
 └── version/                # Application version
     └── version.go          # var Version = "3.0.0"
 
@@ -411,7 +412,7 @@ The system uses two linked binaries with **worker forking**:
 - [API Layer](api.md) — HTTP handlers, routes, response types
 - [CLI Commands](cli.md) — Command definitions, container, flags
 - [Pipeline](pipeline.md) — Consumption and enrichment engines
-- [Task System](task-system.md) — Pool, dispatcher, CRUD, task handlers
+- [Task System](task-system.md) — Pool, transactional enqueue, CRUD, task handlers
 - [Database](database.md) — Schema, queries, tsvector
 - [Search](search.md) — Search engine, structured search, autocomplete
 - [Tags](tags.md) — Tag subsystem: measurement substrate, identity, decisions, store reads

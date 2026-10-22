@@ -2,8 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,32 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-type mockTaskCreator struct {
-	calls     []mockTaskCall
-	createErr error
-}
-
-type mockTaskCall struct {
-	TaskType string
-	BatchID  string
-	Payload  json.RawMessage
-	TaskID   string
-	Status   string
-	DedupKey string
-	Source   string
-}
-
-func (m *mockTaskCreator) CreateTask(_ context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
-	m.calls = append(m.calls, mockTaskCall{TaskType: string(taskType), BatchID: batchID, Payload: payload, TaskID: taskID, Status: string(status), DedupKey: dedupKey})
-	return taskID, nil
-}
-
-func (m *mockTaskCreator) Create(_ context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
-	m.calls = append(m.calls, mockTaskCall{BatchID: id, Source: string(source), Status: string(status)})
-	return m.createErr
-}
-
-func newTestOrphaned(t *testing.T) (*Orphaned, *config.Config, *database.Client, *mockTaskCreator, func()) {
+func newTestOrphaned(t *testing.T) (*Orphaned, *config.Config, *database.Client, func()) {
 	t.Helper()
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
@@ -57,11 +32,10 @@ func newTestOrphaned(t *testing.T) (*Orphaned, *config.Config, *database.Client,
 	os.MkdirAll(filepath.Join(cfg.Storage.StorageDir, "originals"), 0755)
 	os.MkdirAll(filepath.Join(cfg.Storage.StorageDir, "processed"), 0755)
 
-	mock := &mockTaskCreator{}
-	svc := NewOrphaned(client.Queries, cfg, logger, mock, mock)
+	svc := NewOrphaned(client.Queries, cfg, logger, newServiceEnqueuer(t, client))
 
 	cleanup := func() { client.DB().Close() }
-	return svc, cfg, client, mock, cleanup
+	return svc, cfg, client, cleanup
 }
 
 func createTestOrphanFile(t *testing.T, storageDir, sourceDir, filename string) string {
@@ -76,7 +50,7 @@ func createTestOrphanFile(t *testing.T, storageDir, sourceDir, filename string) 
 }
 
 func TestOrphaned_ScanAndQuarantine_QuarantinesOrphans(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -103,7 +77,7 @@ func TestOrphaned_ScanAndQuarantine_QuarantinesOrphans(t *testing.T) {
 }
 
 func TestOrphaned_ScanAndQuarantine_SkipsKnownDocuments(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -119,7 +93,7 @@ func TestOrphaned_ScanAndQuarantine_SkipsKnownDocuments(t *testing.T) {
 }
 
 func TestOrphaned_ScanAndQuarantine_SkipsDBIDNamedFiles(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -136,7 +110,7 @@ func TestOrphaned_ScanAndQuarantine_SkipsDBIDNamedFiles(t *testing.T) {
 }
 
 func TestOrphaned_Delete(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -155,7 +129,7 @@ func TestOrphaned_Delete(t *testing.T) {
 }
 
 func TestOrphaned_Delete_NotFound(t *testing.T) {
-	svc, _, _, _, cleanup := newTestOrphaned(t)
+	svc, _, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -164,70 +138,80 @@ func TestOrphaned_Delete_NotFound(t *testing.T) {
 }
 
 func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
-	svc, cfg, _, mock, cleanup := newTestOrphaned(t)
+	svc, cfg, client, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	uuid := "550e8400-e29b-41d4-a716-446655440000"
-	createTestOrphanFile(t, cfg.Storage.StorageDir, "originals", uuid+".pdf")
+	uuidValue := "550e8400-e29b-41d4-a716-446655440000"
+	createTestOrphanFile(t, cfg.Storage.StorageDir, "originals", uuidValue+".pdf")
 	svc.ScanAndQuarantine(ctx)
 	files, _ := svc.List(ctx)
 	testutil.AssertEqual(t, len(files), 1, "quarantined")
 
-	err := svc.Restore(ctx, files[0].ID)
+	err := svc.Restore(ctx, testBatchSpec(t, types.Batch.Origin.API), files[0].ID)
 	testutil.AssertNoError(t, err, "restore")
 
 	files, _ = svc.List(ctx)
 	testutil.AssertEqual(t, len(files), 0, "status changed from pending")
 
-	destPath := filepath.Join(cfg.Storage.ConsumptionDir, uuid+".pdf")
+	destPath := filepath.Join(cfg.Storage.ConsumptionDir, uuidValue+".pdf")
 	if _, err := os.Stat(destPath); os.IsNotExist(err) {
 		t.Fatal("file should be copied to consumption dir")
 	}
 
-	md5, err := storage.CalculateMD5(destPath)
+	md5hash, err := storage.CalculateMD5(destPath)
 	testutil.AssertNoError(t, err, "compute md5")
 
-	testutil.AssertEqual(t, len(mock.calls), 4, "should have 4 mock calls (consume + enrich + thumbnail + batch)")
+	consumeTask, err := client.Queries.GetConfigTaskByDedupKey(ctx, database.GetConfigTaskByDedupKeyParams{
+		TaskType: types.Task.Type.Consume,
+		DedupKey: sql.NullString{String: "consume:" + md5hash, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "find consume task")
+	testutil.AssertEqual(t, consumeTask.DedupKey.String, "consume:"+md5hash, "consume dedup key")
 
-	consumeCall := mock.calls[0]
-	testutil.AssertEqual(t, consumeCall.TaskType, "consume", "call 1 type")
-	testutil.AssertEqual(t, consumeCall.Status, "pending", "consume status")
-	testutil.AssertEqual(t, consumeCall.DedupKey, "consume:"+md5, "consume dedup key")
+	tasks, err := client.Queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
+		BatchID: sql.NullString{String: consumeTask.BatchID.String, Valid: true},
+		Limit:   100,
+	})
+	testutil.AssertNoError(t, err, "list batch tasks")
+	testutil.AssertEqual(t, len(tasks), 3, "consume, enrich and thumbnail")
+
+	byType := make(map[types.TaskType]database.Task, len(tasks))
+	for _, created := range tasks {
+		byType[created.TaskType] = created
+	}
+	consume := byType[types.Task.Type.Consume]
+	enrich := byType[types.Task.Type.Enrich]
+	thumbnail := byType[types.Task.Type.Thumbnail]
+
+	testutil.AssertEqual(t, string(consume.Status), "pending", "consume status")
+	testutil.AssertEqual(t, string(enrich.Status), "waiting", "enrich status")
+	testutil.AssertEqual(t, string(thumbnail.Status), "waiting", "thumbnail status")
+	testutil.AssertEqual(t, enrich.BatchID.String, consume.BatchID.String, "enrich shares the consume batch")
+	testutil.AssertEqual(t, thumbnail.BatchID.String, consume.BatchID.String, "thumbnail shares the consume batch")
 
 	var consumePayload map[string]any
-	json.Unmarshal(consumeCall.Payload, &consumePayload)
-
-	enrichCall := mock.calls[1]
-	testutil.AssertEqual(t, enrichCall.TaskType, "enrich", "call 2 type")
-	testutil.AssertEqual(t, enrichCall.Status, "waiting", "enrich status")
-	testutil.AssertEqual(t, enrichCall.BatchID, consumeCall.BatchID, "enrich should share batch id with consume")
-
+	json.Unmarshal(*consume.Payload, &consumePayload)
 	var enrichPayload map[string]any
-	json.Unmarshal(enrichCall.Payload, &enrichPayload)
-	testutil.AssertEqual(t, enrichPayload["waiting_for"], consumeCall.TaskID, "enrich waiting_for references consume task")
-	testutil.AssertEqual(t, consumePayload["on_completed"], enrichCall.TaskID, "consume on_completed references enrich task")
-	testutil.AssertEqual(t, consumePayload["document_id"], uuid, "consume document_id")
-	testutil.AssertEqual(t, enrichPayload["document_id"], uuid, "enrich document_id")
-
-	thumbnailCall := mock.calls[2]
-	testutil.AssertEqual(t, thumbnailCall.TaskType, "thumbnail", "call 3 type")
-	testutil.AssertEqual(t, thumbnailCall.Status, "waiting", "thumbnail status")
-	testutil.AssertEqual(t, thumbnailCall.BatchID, consumeCall.BatchID, "thumbnail should share batch id with consume")
-
+	json.Unmarshal(*enrich.Payload, &enrichPayload)
 	var thumbnailPayload map[string]any
-	json.Unmarshal(thumbnailCall.Payload, &thumbnailPayload)
-	testutil.AssertEqual(t, thumbnailPayload["waiting_for"], consumeCall.TaskID, "thumbnail waiting_for references consume task")
-	testutil.AssertEqual(t, consumePayload["on_completed_thumbnail"], thumbnailCall.TaskID, "consume on_completed_thumbnail references thumbnail task")
+	json.Unmarshal(*thumbnail.Payload, &thumbnailPayload)
 
-	batchCall := mock.calls[3]
-	testutil.AssertEqual(t, batchCall.Source, "orphaned-restore", "batch source")
-	testutil.AssertEqual(t, batchCall.Status, "queued", "batch status")
-	testutil.AssertEqual(t, batchCall.BatchID, consumeCall.BatchID, "batch id matches tasks")
+	testutil.AssertEqual(t, enrichPayload["waiting_for"], consume.TaskID, "enrich waiting_for references consume task")
+	testutil.AssertEqual(t, consumePayload["on_completed"], enrich.TaskID, "consume on_completed references enrich task")
+	testutil.AssertEqual(t, consumePayload["document_id"], uuidValue, "consume document_id")
+	testutil.AssertEqual(t, enrichPayload["document_id"], uuidValue, "enrich document_id")
+	testutil.AssertEqual(t, thumbnailPayload["waiting_for"], consume.TaskID, "thumbnail waiting_for references consume task")
+	testutil.AssertEqual(t, consumePayload["on_completed_thumbnail"], thumbnail.TaskID, "consume on_completed_thumbnail references thumbnail task")
+
+	batch, err := client.Queries.GetBatch(ctx, consume.BatchID.String)
+	testutil.AssertNoError(t, err, "get batch")
+	testutil.AssertEqual(t, string(batch.Origin), "api", "batch origin")
+	testutil.AssertEqual(t, string(batch.Status), "queued", "batch status")
 }
 
 func TestOrphaned_Restore_RejectsDBID(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -236,12 +220,12 @@ func TestOrphaned_Restore_RejectsDBID(t *testing.T) {
 	files, _ := svc.List(ctx)
 	testutil.AssertEqual(t, len(files), 1, "quarantined")
 
-	err := svc.Restore(ctx, files[0].ID)
+	err := svc.Restore(ctx, testBatchSpec(t, types.Batch.Origin.API), files[0].ID)
 	testutil.AssertError(t, err, "restore dbid should fail")
 }
 
 func TestOrphaned_Restore_RejectsExistingDocument(t *testing.T) {
-	svc, cfg, client, _, cleanup := newTestOrphaned(t)
+	svc, cfg, client, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -262,35 +246,47 @@ func TestOrphaned_Restore_RejectsExistingDocument(t *testing.T) {
 		StoragePath:    "/tmp/storage.pdf",
 	})
 
-	err := svc.Restore(ctx, files[0].ID)
+	err := svc.Restore(ctx, testBatchSpec(t, types.Batch.Origin.API), files[0].ID)
 	testutil.AssertError(t, err, "restore should fail when doc exists")
 }
 
-func TestOrphaned_Restore_BatchFailure(t *testing.T) {
-	svc, cfg, _, mock, cleanup := newTestOrphaned(t)
+func TestOrphaned_Restore_QueuedConsumeConflict(t *testing.T) {
+	svc, cfg, client, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	uuid := "550e8400-e29b-41d4-a716-446655440000"
-	createTestOrphanFile(t, cfg.Storage.StorageDir, "originals", uuid+".pdf")
+	uuidValue := "550e8400-e29b-41d4-a716-446655440000"
+	sourcePath := createTestOrphanFile(t, cfg.Storage.StorageDir, "originals", uuidValue+".pdf")
+	md5hash, err := storage.CalculateMD5(sourcePath)
+	testutil.AssertNoError(t, err, "compute md5")
+
 	svc.ScanAndQuarantine(ctx)
 	files, _ := svc.List(ctx)
 	testutil.AssertEqual(t, len(files), 1, "quarantined")
 
-	mock.createErr = fmt.Errorf("batch creation failed")
-	err := svc.Restore(ctx, files[0].ID)
-	testutil.AssertError(t, err, "restore should fail on batch creation error")
+	payload := json.RawMessage(`{}`)
+	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   "pre-existing-consume",
+		TaskType: types.Task.Type.Consume,
+		Status:   types.Task.Status.Pending,
+		Payload:  &payload,
+		DedupKey: sql.NullString{String: "consume:" + md5hash, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "seed pending consume task")
 
-	if _, err := os.Stat(filepath.Join(cfg.Storage.ConsumptionDir, uuid+".pdf")); !os.IsNotExist(err) {
-		t.Fatal("consumption dir copy should be cleaned up after batch failure")
+	err = svc.Restore(ctx, testBatchSpec(t, types.Batch.Origin.API), files[0].ID)
+	testutil.AssertError(t, err, "restore should fail when the consume task is already queued")
+
+	if _, statErr := os.Stat(filepath.Join(cfg.Storage.ConsumptionDir, uuidValue+".pdf")); !os.IsNotExist(statErr) {
+		t.Fatal("consumption dir copy should be cleaned up after the enqueue conflict")
 	}
 
 	files, _ = svc.List(ctx)
-	testutil.AssertEqual(t, len(files), 1, "orphaned file not marked restored after batch failure")
+	testutil.AssertEqual(t, len(files), 1, "orphaned file not marked restored after the conflict")
 }
 
 func TestOrphaned_MoveToInbox(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -317,7 +313,7 @@ func TestOrphaned_MoveToInbox(t *testing.T) {
 }
 
 func TestOrphaned_DeleteAll(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -336,7 +332,7 @@ func TestOrphaned_DeleteAll(t *testing.T) {
 }
 
 func TestOrphaned_MoveAllToInbox(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -364,7 +360,7 @@ func TestOrphaned_MoveAllToInbox(t *testing.T) {
 }
 
 func TestOrphaned_List(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -386,9 +382,8 @@ func TestNewOrphaned(t *testing.T) {
 	logger := log.NewDiscardLogger()
 	configDir := t.TempDir()
 	cfg := config.DefaultConfig(configDir)
-	mock := &mockTaskCreator{}
 
-	svc := NewOrphaned(client.Queries, cfg, logger, mock, mock)
+	svc := NewOrphaned(client.Queries, cfg, logger, newServiceEnqueuer(t, client))
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}

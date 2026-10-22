@@ -1,19 +1,15 @@
-// Package types is the single Go declaration point for the task-system vocabulary: the batch sources,
-// origins and statuses, the task types and statuses, the tag verdicts, and the closed set of resource
-// locks (LockMaintenance, LockStorage), all exposed as namespaced constant bags: types.Batch.Source,
-// types.Batch.Origin and types.Task.Type, with parse helpers for the wire form. The database's enum
-// columns mirror these values. It also holds the shared CRUD result envelope (CreateResult, UpdateResult,
-// DeleteResult and their status types) and the TaskCreator and BatchCreator interfaces the enqueue paths
-// accept.
+// Package types is the single Go declaration point for the task-system vocabulary: the batch origins
+// and statuses, the task types and statuses, the tag verdicts, and the closed set of resource locks
+// (LockMaintenance, LockStorage), all exposed as namespaced constant bags: types.Batch.Origin and the
+// types.Task.Type bag, with parse helpers for the wire form. The database's enum columns mirror these
+// values. It also holds the shared CRUD result envelope: CreateResult, UpdateResult, DeleteResult and
+// their status types.
 package types
 
 import (
 	"fmt"
 	"slices"
 )
-
-// BatchSource says which flow created a batch.
-type BatchSource string
 
 // BatchOrigin names the entry point that requested a batch; it is requester metadata only, never the
 // dispatch policy.
@@ -41,24 +37,8 @@ type TaskStatus string
 // TagVerdict is the judgement the pair evidence recorded.
 type TagVerdict string
 
-// Batch groups the batch source, origin and status wire values.
+// Batch groups the batch origin and status wire values.
 var Batch = struct {
-	Source struct {
-		CLI             BatchSource
-		API             BatchSource
-		Upload          BatchSource
-		Polling         BatchSource
-		Reenrich        BatchSource
-		OrphanedRestore BatchSource
-		Thumbbackfill   BatchSource
-		Backup          BatchSource
-		Mirror          BatchSource
-		Config          BatchSource
-		TagReconcile    BatchSource
-		TagMeasure      BatchSource
-		TagIdentity     BatchSource
-		TagAudit        BatchSource
-	}
 	Origin struct {
 		CLI      BatchOrigin
 		API      BatchOrigin
@@ -76,37 +56,6 @@ var Batch = struct {
 		Cancelled  BatchStatus
 	}
 }{
-	Source: struct {
-		CLI             BatchSource
-		API             BatchSource
-		Upload          BatchSource
-		Polling         BatchSource
-		Reenrich        BatchSource
-		OrphanedRestore BatchSource
-		Thumbbackfill   BatchSource
-		Backup          BatchSource
-		Mirror          BatchSource
-		Config          BatchSource
-		TagReconcile    BatchSource
-		TagMeasure      BatchSource
-		TagIdentity     BatchSource
-		TagAudit        BatchSource
-	}{
-		CLI:             "cli",
-		API:             "api",
-		Upload:          "upload",
-		Polling:         "polling",
-		Reenrich:        "reenrich",
-		OrphanedRestore: "orphaned-restore",
-		Thumbbackfill:   "thumbbackfill",
-		Backup:          "backup",
-		Mirror:          "mirror",
-		Config:          "config",
-		TagReconcile:    "tagreconcile",
-		TagMeasure:      "tagmeasure",
-		TagIdentity:     "tagidentity",
-		TagAudit:        "tagaudit",
-	},
 	Origin: struct {
 		CLI      BatchOrigin
 		API      BatchOrigin
@@ -143,17 +92,19 @@ var Batch = struct {
 // handlers share.
 var Task = struct {
 	Type struct {
-		Consume       TaskType
-		Enrich        TaskType
-		Thumbnail     TaskType
-		Backup        TaskType
-		Mirror        TaskType
-		Config        TaskType
-		TagReconcile  TaskType
-		ThumbBackfill TaskType
-		TagMeasure    TaskType
-		TagIdentity   TaskType
-		TagAudit      TaskType
+		Consume        TaskType
+		Enrich         TaskType
+		Thumbnail      TaskType
+		Backup         TaskType
+		Mirror         TaskType
+		Config         TaskType
+		MigrateDB      TaskType
+		MigrateStorage TaskType
+		TagReconcile   TaskType
+		ThumbBackfill  TaskType
+		TagMeasure     TaskType
+		TagIdentity    TaskType
+		TagAudit       TaskType
 	}
 	Status struct {
 		Pending    TaskStatus
@@ -166,29 +117,33 @@ var Task = struct {
 	}
 }{
 	Type: struct {
-		Consume       TaskType
-		Enrich        TaskType
-		Thumbnail     TaskType
-		Backup        TaskType
-		Mirror        TaskType
-		Config        TaskType
-		TagReconcile  TaskType
-		ThumbBackfill TaskType
-		TagMeasure    TaskType
-		TagIdentity   TaskType
-		TagAudit      TaskType
+		Consume        TaskType
+		Enrich         TaskType
+		Thumbnail      TaskType
+		Backup         TaskType
+		Mirror         TaskType
+		Config         TaskType
+		MigrateDB      TaskType
+		MigrateStorage TaskType
+		TagReconcile   TaskType
+		ThumbBackfill  TaskType
+		TagMeasure     TaskType
+		TagIdentity    TaskType
+		TagAudit       TaskType
 	}{
-		Consume:       "consume",
-		Enrich:        "enrich",
-		Thumbnail:     "thumbnail",
-		Backup:        "backup",
-		Mirror:        "mirror",
-		Config:        "config",
-		TagReconcile:  "tagreconcile",
-		ThumbBackfill: "thumbbackfill",
-		TagMeasure:    "tagmeasure",
-		TagIdentity:   "tagidentity",
-		TagAudit:      "tagaudit",
+		Consume:        "consume",
+		Enrich:         "enrich",
+		Thumbnail:      "thumbnail",
+		Backup:         "backup",
+		Mirror:         "mirror",
+		Config:         "config",
+		MigrateDB:      "migrate-db",
+		MigrateStorage: "migrate-storage",
+		TagReconcile:   "tagreconcile",
+		ThumbBackfill:  "thumbbackfill",
+		TagMeasure:     "tagmeasure",
+		TagIdentity:    "tagidentity",
+		TagAudit:       "tagaudit",
 	},
 	Status: struct {
 		Pending    TaskStatus
@@ -207,15 +162,6 @@ var Task = struct {
 		Discarded:  "discarded",
 		Waiting:    "waiting",
 	},
-}
-
-// ParseBatchSource accepts one of the declared source values.
-func ParseBatchSource(s string) (BatchSource, error) {
-	v := BatchSource(s)
-	if !v.Valid() {
-		return "", fmt.Errorf("invalid batch source %q", s)
-	}
-	return v, nil
 }
 
 // TagVerdicts groups the verdict wire values with their canonical
@@ -274,11 +220,6 @@ func ParseTaskStatus(s string) (TaskStatus, error) {
 	return v, nil
 }
 
-// Valid reports whether the source is declared.
-func (s BatchSource) Valid() bool {
-	return slices.Contains(allBatchSources, s)
-}
-
 // Valid reports whether the origin is declared.
 func (o BatchOrigin) Valid() bool {
 	return slices.Contains(allBatchOrigins, o)
@@ -310,9 +251,6 @@ func (t TaskType) IsLockGated() bool {
 	return slices.Contains(lockGatedTaskTypes, t)
 }
 
-// AllBatchSources returns every declared source, cloned.
-func AllBatchSources() []BatchSource { return slices.Clone(allBatchSources) }
-
 // AllBatchStatuses returns every declared batch status, cloned.
 func AllBatchStatuses() []BatchStatus { return slices.Clone(allBatchStatuses) }
 
@@ -330,45 +268,30 @@ func LockGatedTaskTypes() []TaskType { return slices.Clone(lockGatedTaskTypes) }
 // with dedicated child processes and batch ownership.
 func BlockingTaskTypes() []TaskType { return slices.Clone(blockingTaskTypes) }
 
-// NonConsumeBatchSources are the sources whose batches own their lifecycle
-// in their handlers and never occupy a consume slot.
-func NonConsumeBatchSources() []BatchSource { return slices.Clone(nonConsumeBatchSources) }
+// NonConsumeTaskTypes are the task types whose batches own their lifecycle in their handlers and never
+// occupy a consume slot.
+func NonConsumeTaskTypes() []TaskType { return slices.Clone(nonConsumeTaskTypes) }
 
-// NonConsumeBatchSourceValues is NonConsumeBatchSources in plain string form, for the queued-batch
-// exclusion queries: the same registry list backs both, so the exclusion cannot drift from the sources.
-func NonConsumeBatchSourceValues() []string {
-	values := make([]string, len(nonConsumeBatchSources))
-	for i, src := range nonConsumeBatchSources {
-		values[i] = string(src)
+// NonConsumeTaskTypeValues is NonConsumeTaskTypes in plain string form, for the queued-batch exclusion
+// queries: the same registry list backs both, so the exclusion cannot drift from the task types.
+func NonConsumeTaskTypeValues() []string {
+	values := make([]string, len(nonConsumeTaskTypes))
+	for i, taskType := range nonConsumeTaskTypes {
+		values[i] = string(taskType)
 	}
 	return values
 }
 
-var allBatchSources = []BatchSource{
-	Batch.Source.CLI,
-	Batch.Source.API,
-	Batch.Source.Upload,
-	Batch.Source.Polling,
-	Batch.Source.Reenrich,
-	Batch.Source.OrphanedRestore,
-	Batch.Source.Thumbbackfill,
-	Batch.Source.Backup,
-	Batch.Source.Mirror,
-	Batch.Source.Config,
-	Batch.Source.TagReconcile,
-	Batch.Source.TagMeasure,
-	Batch.Source.TagIdentity,
-	Batch.Source.TagAudit,
-}
-
-var nonConsumeBatchSources = []BatchSource{
-	Batch.Source.Config,
-	Batch.Source.Backup,
-	Batch.Source.Mirror,
-	Batch.Source.TagReconcile,
-	Batch.Source.TagMeasure,
-	Batch.Source.TagIdentity,
-	Batch.Source.TagAudit,
+var nonConsumeTaskTypes = []TaskType{
+	Task.Type.Config,
+	Task.Type.MigrateDB,
+	Task.Type.MigrateStorage,
+	Task.Type.Backup,
+	Task.Type.Mirror,
+	Task.Type.TagReconcile,
+	Task.Type.TagMeasure,
+	Task.Type.TagIdentity,
+	Task.Type.TagAudit,
 }
 
 var allBatchOrigins = []BatchOrigin{
@@ -396,6 +319,8 @@ var allTaskTypes = []TaskType{
 	Task.Type.Backup,
 	Task.Type.Mirror,
 	Task.Type.Config,
+	Task.Type.MigrateDB,
+	Task.Type.MigrateStorage,
 	Task.Type.TagReconcile,
 	Task.Type.ThumbBackfill,
 	Task.Type.TagMeasure,

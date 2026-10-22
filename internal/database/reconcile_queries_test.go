@@ -60,7 +60,7 @@ func TestReconcileBatchAndTaskQueries(t *testing.T) {
 		t.Fatalf("initial GetLastCompletedTagReconcileTask: want ErrNoRows, got %v", err)
 	}
 
-	if _, err := q.db.ExecContext(ctx, "INSERT INTO batch (id, source, status) VALUES ('rc-b1', 'tagreconcile', 'queued')"); err != nil {
+	if _, err := q.db.ExecContext(ctx, "INSERT INTO batch (id, origin, status) VALUES ('rc-b1', 'schedule', 'queued')"); err != nil {
 		t.Fatalf("insert batch: %v", err)
 	}
 	if _, err := q.db.ExecContext(ctx,
@@ -332,13 +332,17 @@ func TestReconcileConsumeSlotExclusion(t *testing.T) {
 	resetDB(t, q)
 	ctx := context.Background()
 
-	if _, err := q.db.ExecContext(ctx, "INSERT INTO batch (id, source, status) VALUES ('rc-b', 'tagreconcile', 'queued')"); err != nil {
+	if _, err := q.db.ExecContext(ctx, "INSERT INTO batch (id, origin, status) VALUES ('rc-b', 'schedule', 'queued')"); err != nil {
 		t.Fatalf("insert tagreconcile batch: %v", err)
 	}
-	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeBatchSourceValues()); err != nil || n != 0 {
+	if _, err := q.db.ExecContext(ctx,
+		"INSERT INTO task (task_id, task_type, status, batch_id, dedup_key) VALUES ('rc-b-task', 'tagreconcile', 'pending', 'rc-b', 'tagreconcile')"); err != nil {
+		t.Fatalf("insert tagreconcile task: %v", err)
+	}
+	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeTaskTypeValues()); err != nil || n != 0 {
 		t.Fatalf("tagreconcile batch counted as consume: n=%d %v", n, err)
 	}
-	if _, err := q.GetNextQueuedBatch(ctx, types.NonConsumeBatchSourceValues()); err != sql.ErrNoRows {
+	if _, err := q.GetNextQueuedBatch(ctx, types.NonConsumeTaskTypeValues()); err != sql.ErrNoRows {
 		t.Fatalf("GetNextQueuedBatch must not return tagreconcile batch, got %v", err)
 	}
 }

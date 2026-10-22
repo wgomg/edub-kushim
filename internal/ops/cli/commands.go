@@ -50,6 +50,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Manage tasks (list, status, retry)",
 			Handler:     taskHandler,
 		},
+		"batch": {
+			Name:        "batch",
+			Description: "Enqueue work for the queue (create)",
+			Handler:     batchHandler,
+		},
 		"user": {
 			Name:        "user",
 			Description: "Manage users (create)",

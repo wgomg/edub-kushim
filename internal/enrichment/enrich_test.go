@@ -24,27 +24,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-func TestEnrichTaskHandlerDedupKey(t *testing.T) {
-	h := &EnrichTaskHandler{}
-
-	tests := []struct {
-		name    string
-		payload string
-		want    string
-	}{
-		{"document id", `{"document_id":"doc-9"}`, "enrich:doc:doc-9"},
-		{"missing document id", `{"other":"field"}`, ""},
-		{"undecodable payload", `{not json`, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := h.DedupKey(json.RawMessage(tt.payload)); got != tt.want {
-				t.Errorf("DedupKey(%s) = %q, want %q", tt.payload, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestEnrichResultEnvelope(t *testing.T) {
 	counts := DocumentCounts{Assignments: 2, Births: 1, Promotions: 1, Rejects: 1, Defers: 1, Splits: 1, Keeps: 1, Drops: 1}
 

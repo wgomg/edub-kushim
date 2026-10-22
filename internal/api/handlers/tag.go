@@ -12,6 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -433,7 +434,13 @@ func (h *TagHandler) ReevaluateIdentity(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
-	batchID, alreadyQueued, err := h.identity.Enqueue(ctx)
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	batchID, alreadyQueued, err := h.identity.Enqueue(ctx, spec)
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "enqueue tag identity run", err)
 		return
@@ -450,7 +457,13 @@ func (h *TagHandler) ReevaluateAudit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
-	batchID, alreadyQueued, err := h.audit.Enqueue(ctx)
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	batchID, alreadyQueued, err := h.audit.Enqueue(ctx, spec)
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "enqueue tag audit run", err)
 		return

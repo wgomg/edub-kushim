@@ -9,7 +9,6 @@ package service
 import (
 	"context"
 	"database/sql"
-	"slices"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -18,13 +17,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// BatchSummary is one batch's task counts by status plus its owner's
-// liveness; Orphaned is never true for the non-consume sources, which
-// have no owner row by design.
+// BatchSummary is one batch's task counts by status plus its owner's liveness; Orphaned is never true
+// for a batch with a non-consume task, which has no owner row by design.
 type BatchSummary struct {
 	BatchID    string
 	Status     string
-	Source     string
+	Origin     string
+	Schedule   string
 	Waiting    int64
 	Pending    int64
 	Processing int64
@@ -37,12 +36,13 @@ type BatchSummary struct {
 	OwnerPID   int64
 }
 
-// BatchOverview is one batch row for the list view: identity, counts,
-// owner state, and the run duration once completed.
+// BatchOverview is one batch row for the list view: identity, counts, owner state, and the total run
+// duration once completed.
 type BatchOverview struct {
 	BatchID    string
 	Status     string
-	Source     string
+	Origin     string
+	Schedule   string
 	CreatedAt  time.Time
 	Total      int64
 	Waiting    int64
@@ -66,13 +66,9 @@ type Batch struct {
 	maxRetries int32
 }
 
-// config/backup/mirror batches have no batch_owner row by design; never
-// report them as orphaned.
-var nonConsumeSources = types.NonConsumeBatchSources()
-
-// nonConsumeSourceValues is the registry-owned non-consume set as plain strings for the queued-batch
-// exclusion queries, so the registry stays the single owner of which sources never occupy a consume slot.
-var nonConsumeSourceValues = types.NonConsumeBatchSourceValues()
+// Batches with a non-consume task have no batch_owner row by design; never report them as orphaned.
+// The registry owns the task-type set, so the display rule cannot drift from the dispatch exclusion.
+var nonConsumeTaskTypeValues = types.NonConsumeTaskTypeValues()
 
 // NewBatch wires the batch service; maxRetries bounds the task-store
 // claim-contention retries.
@@ -90,7 +86,8 @@ func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, 
 		return nil, errs.FromDB(err, "get batch "+batchID)
 	}
 	summary.Status = string(batch.Status)
-	summary.Source = string(batch.Source)
+	summary.Origin = string(batch.Origin)
+	summary.Schedule = batch.Schedule.String
 
 	for _, status := range statuses {
 		count, err := s.queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
@@ -125,7 +122,14 @@ func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, 
 	} else {
 		summary.OwnerState = state.String()
 		summary.OwnerPID = pid
-		summary.Orphaned = task.IsOrphaned(state, summary.Pending, summary.Processing) && !slices.Contains(nonConsumeSources, batch.Source)
+		nonConsume, err := s.queries.BatchHasNonConsumeTask(ctx, database.BatchHasNonConsumeTaskParams{
+			BatchID:         sql.NullString{String: batchID, Valid: true},
+			NonConsumeTypes: nonConsumeTaskTypeValues,
+		})
+		if err != nil {
+			return nil, errs.FromDB(err, "classify batch "+batchID)
+		}
+		summary.Orphaned = task.IsOrphaned(state, summary.Pending, summary.Processing) && !nonConsume
 	}
 
 	return summary, nil
@@ -169,8 +173,9 @@ func (s *Batch) ListSummaries(ctx context.Context, f task.BatchFilter) ([]BatchS
 // ListOverviews pages the batch rows for the list view.
 func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]BatchOverview, error) {
 	rows, err := s.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
-		Limit:  limit,
-		Offset: offset,
+		Limit:           limit,
+		Offset:          offset,
+		NonConsumeTypes: nonConsumeTaskTypeValues,
 	})
 	if err != nil {
 		return nil, errs.FromDB(err, "list batch overviews")
@@ -199,10 +204,16 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]Batch
 			}
 		}
 
+		var schedule string
+		if row.Schedule.Valid {
+			schedule = row.Schedule.String
+		}
+
 		items = append(items, BatchOverview{
 			BatchID:    row.BatchID,
 			Status:     string(row.BatchStatus),
-			Source:     string(row.Source),
+			Origin:     string(row.Origin),
+			Schedule:   schedule,
 			CreatedAt:  createdAt,
 			Total:      row.Total,
 			Waiting:    waiting,
@@ -213,7 +224,7 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]Batch
 			Cancelled:  toInt64(row.Cancelled),
 			Discarded:  toInt64(row.Discarded),
 			OwnerState: state.String(),
-			Orphaned:   task.IsOrphaned(state, pending, processing) && !slices.Contains(nonConsumeSources, row.Source),
+			Orphaned:   task.IsOrphaned(state, pending, processing) && !row.NonConsume,
 			DurationMs: durationMs,
 		})
 	}
@@ -267,22 +278,6 @@ func (s *Batch) RetryFailed(ctx context.Context, batchID string) (int64, error) 
 	}
 
 	return count, nil
-}
-
-// Create inserts the batch row with the given source and status.
-func (s *Batch) Create(ctx context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
-	if id == "" {
-		return errs.EInvalid("create batch", sql.ErrNoRows)
-	}
-	err := s.queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     id,
-		Source: source,
-		Status: status,
-	})
-	if err != nil {
-		return errs.FromDB(err, "create batch")
-	}
-	return nil
 }
 
 // BeginCancel starts the cancel protocol: the batch flips to cancelling,
@@ -414,7 +409,7 @@ func (s *Batch) ListPausedBatches(ctx context.Context) ([]string, error) {
 
 // CountQueuedConsumeBatches counts queued consume batches.
 func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountQueuedConsumeBatches(ctx, nonConsumeSourceValues)
+	count, err := s.queries.CountQueuedConsumeBatches(ctx, nonConsumeTaskTypeValues)
 	if err != nil {
 		return 0, errs.FromDB(err, "count queued consume batches")
 	}
@@ -424,7 +419,7 @@ func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
 // GetNextQueuedBatch claims the next queued consume batch in creation
 // order; sql.ErrNoRows when the queue is empty.
 func (s *Batch) GetNextQueuedBatch(ctx context.Context) (database.Batch, error) {
-	b, err := s.queries.GetNextQueuedBatch(ctx, nonConsumeSourceValues)
+	b, err := s.queries.GetNextQueuedBatch(ctx, nonConsumeTaskTypeValues)
 	if err != nil {
 		return database.Batch{}, errs.FromDB(err, "get next queued batch")
 	}

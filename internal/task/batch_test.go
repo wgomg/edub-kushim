@@ -51,14 +51,6 @@ func TestFinalizeBatchStatusLogsCountFailure(t *testing.T) {
 	}
 }
 
-func TestDeleteBatchTasksReturnsQueryError(t *testing.T) {
-	queries := closedTestDB(t)
-
-	if err := DeleteBatchTasks(context.Background(), queries, "batch-cleanup-fail"); err == nil {
-		t.Error("a failed cleanup must surface its error to the caller, not swallow it")
-	}
-}
-
 func TestFinalizeBatchStatusSettlesAndLogsSummary(t *testing.T) {
 	_, _, queries := setupTaskTest(t)
 	ctx := context.Background()
@@ -67,7 +59,7 @@ func TestFinalizeBatchStatusSettlesAndLogsSummary(t *testing.T) {
 		t.Helper()
 		testutil.AssertNoError(t, queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID:     batchID,
-			Source: types.Batch.Source.CLI,
+			Origin: types.Batch.Origin.CLI,
 			Status: types.Batch.Status.Processing,
 		}), "create batch")
 		for i, status := range statuses {

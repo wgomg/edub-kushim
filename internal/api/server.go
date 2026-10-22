@@ -1,7 +1,6 @@
-// Package api is the REST server of edub: routing, the auth middleware
-// and role gates, the config watcher driving hot rebuilds of the handler
-// set, the matcher client, the config-reload task pool, and the embedded
-// SPA.
+// Package api is the REST server of edub: routing, auth middleware and role gates, the config watcher
+// driving hot rebuilds of the live handler set, the matcher client, the config-host task pools, and the
+// embedded SPA.
 package api
 
 import (
@@ -22,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
+	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
@@ -47,7 +47,9 @@ type Server struct {
 	db            *sql.DB
 	client        *database.Client
 	pools         struct {
-		config *task.Pool
+		config         *task.Pool
+		migrateDB      *task.Pool
+		migrateStorage *task.Pool
 	}
 }
 
@@ -96,27 +98,32 @@ func (s *Server) rebuild(client *database.Client) {
 	services.DocumentType = service.NewDocumentType(client.Queries)
 	services.User = service.NewUser(client.Queries)
 
-	workStore := task.NewStore(client)
 	configStore := task.NewStore(client)
 
-	services.Orphaned = service.NewOrphaned(client.Queries, cfg, s.logger, workStore, services.Batch)
+	catalog := container.NewCatalog(client.Queries)
+	enqueuer := task.NewEnqueuer(client, catalog)
+
+	services.Orphaned = service.NewOrphaned(client.Queries, cfg, s.logger, enqueuer)
 	services.Orphaned.ScanAndQuarantineAsync()
 
 	services.Trash = service.NewTrash(client, cfg, s.logger, services.Orphaned)
 	services.Trash.StartBackgroundPurge()
 
-	services.ReEnrich = service.NewReEnrich(client.Queries, workStore, services.Batch)
-	s.tagIdentity = curation.NewTagIdentity(client.Queries, workStore, services.Batch)
-	s.tagAudit = curation.NewTagAudit(client.Queries, workStore, services.Batch)
+	services.ReEnrich = service.NewReEnrich(client.Queries, enqueuer)
+	s.tagIdentity = curation.NewTagIdentity(client.Queries, enqueuer)
+	s.tagAudit = curation.NewTagAudit(client.Queries, enqueuer)
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	registry := task.NewRegistry()
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
+	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, s.logger))
+	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, s.logger))
 
-	dispatcher := task.NewDispatcher(workStore, registry)
 	configRunner := task.NewRunner(configStore, registry, s.logger)
 
-	s.pools.config = task.NewPool(s.logger, configRunner, 1, 5*time.Second, "config")
+	s.pools.config = task.NewPool(s.logger, configRunner, 1, 5*time.Second, types.Task.Type.Config)
+	s.pools.migrateDB = task.NewPool(s.logger, configRunner, 1, 5*time.Second, types.Task.Type.MigrateDB)
+	s.pools.migrateStorage = task.NewPool(s.logger, configRunner, 1, 5*time.Second, types.Task.Type.MigrateStorage)
 
 	onConfigSet := func(cfg *config.Config) {
 		if cfg.Srv.SessionSecret == "" {
@@ -127,7 +134,7 @@ func (s *Server) rebuild(client *database.Client) {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(s.logger, client, dispatcher, getConfigFn, onConfigSet, services, workStore, s.tag, s.tagIdentity, s.tagAudit)
+	mux := registerRoutes(s.logger, client, enqueuer, getConfigFn, onConfigSet, services, s.tag, s.tagIdentity, s.tagAudit)
 	handlers.RegisterStaticRoutes(mux, static.WebFS())
 
 	s.services = services
@@ -165,10 +172,12 @@ func (s *Server) rebuild(client *database.Client) {
 }
 
 func (s *Server) reconnectDB(newDB *sql.DB) {
-	if s.pools.config != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		s.pools.config.Stop(ctx)
-		cancel()
+	for _, pool := range []*task.Pool{s.pools.config, s.pools.migrateDB, s.pools.migrateStorage} {
+		if pool != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			pool.Stop(ctx)
+			cancel()
+		}
 	}
 	if s.tag != nil {
 		s.tag.Close()
@@ -181,16 +190,17 @@ func (s *Server) reconnectDB(newDB *sql.DB) {
 
 	s.rebuild(database.NewClient(newDB))
 	s.pools.config.Start(context.Background())
+	s.pools.migrateDB.Start(context.Background())
+	s.pools.migrateStorage.Start(context.Background())
 }
 
 func registerRoutes(
 	logger *log.Logger,
 	client *database.Client,
-	dispatcher *task.Dispatcher,
+	enqueuer *task.Enqueuer,
 	getConfig func() *config.Config,
 	onConfigSet func(*config.Config),
 	services *service.CrudServices,
-	workStore *task.Store,
 	tag *curation.Tag,
 	tagIdentity *curation.TagIdentity,
 	tagAudit *curation.TagAudit,
@@ -308,7 +318,7 @@ func registerRoutes(
 	mux.Handle("PUT /api/v1/document-types/{id}", RequireRole(editor...)(http.HandlerFunc(docTypeHandler.Update)))
 	mux.Handle("DELETE /api/v1/document-types/{id}", RequireRole(editor...)(http.HandlerFunc(docTypeHandler.Delete)))
 
-	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, workStore, client.Queries, services)
+	consumeHandler := handlers.NewConsumeHandler(getConfig, logger, enqueuer, client.Queries, services)
 	mux.Handle("POST /api/v1/consume", RequireRole(editor...)(http.HandlerFunc(consumeHandler.Consume)))
 	mux.Handle("POST /api/v1/consume/upload", RequireRole(editor...)(http.HandlerFunc(consumeHandler.Upload)))
 
@@ -325,7 +335,7 @@ func registerRoutes(
 	mux.Handle("PUT /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.RotateKey)))
 	mux.Handle("GET /api/v1/users/{id}/api-key", RequireRole(admin...)(http.HandlerFunc(apiKeyHandler.GetKeyStatus)))
 
-	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client, logger, dispatcher, services)
+	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, client, logger, enqueuer, services)
 	mux.HandleFunc("GET /wizard/bootstrap", configHandler.Bootstrap)
 	mux.Handle("GET /wizard/config", RequireRole(admin...)(http.HandlerFunc(configHandler.GetConfig)))
 	mux.Handle("PUT /wizard/config", RequireRole(admin...)(http.HandlerFunc(configHandler.PutConfig)))
@@ -381,14 +391,15 @@ func parambagMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Start probes the matcher (tag endpoints will 503 without it), starts
-// the config-reload pool and watcher, and serves until Shutdown or an
-// accept error.
+// Start probes the matcher (tag endpoints will 503 without it), starts the config-host task pools and
+// the config watcher, and serves until Shutdown or an accept error.
 func (s *Server) Start() error {
 	s.probeMatcher()
 
 	s.pools.config.Start(context.Background())
-	s.logger.Info("", "config pool started")
+	s.pools.migrateDB.Start(context.Background())
+	s.pools.migrateStorage.Start(context.Background())
+	s.logger.Info("", "config pools started")
 
 	s.configWatcher = config.NewWatcher(
 		s.cfg.Load().App.ConfigDir,
@@ -458,6 +469,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	s.pools.config.Stop(stopCtx)
+	s.pools.migrateDB.Stop(stopCtx)
+	s.pools.migrateStorage.Stop(stopCtx)
 
 	if s.tag != nil {
 		s.tag.Close()

@@ -80,7 +80,7 @@ internal/
   service/crud.go           shared aggregate struct (CrudServices)
   static/                   embedded SvelteKit build
   tags/                     tag store, measurement, coverage audit, policy, reconciliation + the tagmeasure/tagidentity/tagaudit handlers
-  task/                     task engine: registry, dispatcher, runner, worker pool, RunBlocking
+  task/                     task engine: registry, transactional enqueue, runner, worker pool, RunBlocking
   testutil/                 shared test helpers and mocks
   tools/                    the tool adapter layer + composition root (Runner)
   tools/textreducer/        TextRank-based text reduction adapter
@@ -312,25 +312,22 @@ in `internal/backup/backup_task.go:18` and `internal/enrichment/enrich.go`).
 
 ### Optional interface discovery
 
-Interfaces can be *discovered* at runtime with a type assertion. The task
-registry checks whether a handler optionally supports deduplication:
+Interfaces can be *discovered* at runtime with a type assertion. A handler
+retrieves a request-scoped bag from the context by asserting its type,
+tolerating its absence:
 
 ```go
-// internal/task/registry.go:28
-func (r *Registry) DedupKey(taskType string, payload json.RawMessage) string {
-	h, err := r.Get(taskType)
-	if err != nil {
-		return ""
+// internal/api/handlers/parambag.go:123
+func GetParamBag(r *http.Request) *ParamBag {
+	if pb, ok := r.Context().Value(paramBagKey).(*ParamBag); ok {
+		return pb
 	}
-	if dd, ok := h.(Dedupable); ok {
-		return dd.DedupKey(payload)
-	}
-	return ""
+	return nil
 }
 ```
 
-`Dedupable` (defined in `internal/task/handler.go:12`) is implemented by some
-handlers and not others; the `ok` form of the assertion handles both.
+The `ok` form of the assertion keeps a missing value a graceful no-op
+instead of a panic; the same shape appears wherever an interface is optional.
 
 ### One interface, two worlds apart
 
@@ -342,22 +339,17 @@ gets embeddings: it uses the client implementation.
 
 ### Small dependency interfaces
 
-The enqueue services accept the *minimum* interface they need:
+The worker pool polls the *minimum* interface it needs:
 
 ```go
-// internal/types/creators.go:9 — the two collaborators the enqueue paths accept
-type TaskCreator interface {
-	CreateTask(ctx context.Context, taskType TaskType, batchID string, payload json.RawMessage,
-		taskID string, status TaskStatus, dedupKey string) (string, error)
-}
-
-type BatchCreator interface {
-	Create(ctx context.Context, id string, source BatchSource, status BatchStatus) error
+// internal/task/pool.go:16 — what the pool's workers poll
+type Nexter interface {
+	Next(ctx context.Context, taskType types.TaskType) error
 }
 ```
 
-Satisfied by `*task.Store` and `*service.Batch` respectively. This is the
-"accept interfaces, return structs" rule in practice.
+Satisfied by `*task.Runner`. This is the "accept interfaces, return structs"
+rule in practice.
 
 ---
 
@@ -1406,8 +1398,8 @@ sticks to `any`.
 - **Translate at the boundary.** Services end with `errs.FromDB(err, op)`;
   handlers map kinds with `writeServiceError`.
 - **Accept interfaces, return structs.** Declare the smallest interface you need
-  (`internal/types/creators.go:9`) and add a `var _` compile-time assertion
-  where it matters.
+  (`internal/task/pool.go:16`, the `Nexter` the pool polls) and add a `var _`
+  compile-time assertion where it matters.
 - **Pass `ctx` first** and select on `ctx.Done()` in every long-running
   goroutine.
 - **Pointer receivers** for anything with mutable state or a mutex.

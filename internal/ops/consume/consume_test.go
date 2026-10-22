@@ -23,16 +23,16 @@ func payloadTask(taskType types.TaskType, payload string) database.Task {
 func assertSamePools(t *testing.T, got, want []*task.Pool) {
 	t.Helper()
 	if len(got) != len(want) {
-		t.Fatalf("forSource returned %d pools, want %d", len(got), len(want))
+		t.Fatalf("forThumbbackfill returned %d pools, want %d", len(got), len(want))
 	}
 	for i := range got {
 		if got[i] != want[i] {
-			t.Fatalf("forSource pool[%d] = %p, want %p", i, got[i], want[i])
+			t.Fatalf("forThumbbackfill pool[%d] = %p, want %p", i, got[i], want[i])
 		}
 	}
 }
 
-func TestPoolSetForSource(t *testing.T) {
+func TestPoolSetThumbbackfill(t *testing.T) {
 	consumePool := &task.Pool{}
 	enrichPool := &task.Pool{}
 	thumbnailPool := &task.Pool{}
@@ -45,18 +45,11 @@ func TestPoolSetForSource(t *testing.T) {
 	}
 
 	t.Run("a thumbnail backfill batch runs on the backfill pool alone", func(t *testing.T) {
-		assertSamePools(t, set.forSource(types.Batch.Source.Thumbbackfill), []*task.Pool{backfillPool})
+		assertSamePools(t, set.forThumbbackfill(true), []*task.Pool{backfillPool})
 	})
 
-	t.Run("other sources run the consume, enrich and thumbnail pools", func(t *testing.T) {
-		want := []*task.Pool{consumePool, enrichPool, thumbnailPool}
-		for _, source := range []types.BatchSource{
-			types.Batch.Source.CLI,
-			types.Batch.Source.Polling,
-			types.Batch.Source.Backup,
-		} {
-			assertSamePools(t, set.forSource(source), want)
-		}
+	t.Run("other batches run the consume, enrich and thumbnail pools", func(t *testing.T) {
+		assertSamePools(t, set.forThumbbackfill(false), []*task.Pool{consumePool, enrichPool, thumbnailPool})
 	})
 }
 
@@ -119,7 +112,7 @@ func TestSetBatchTerminalStatus(t *testing.T) {
 		t.Helper()
 		if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID:     id,
-			Source: types.Batch.Source.CLI,
+			Origin: types.Batch.Origin.CLI,
 			Status: status,
 		}); err != nil {
 			t.Fatalf("create batch %s: %v", id, err)
@@ -235,4 +228,55 @@ func TestLogBatchBookend(t *testing.T) {
 			t.Errorf("bookend must not carry enrich counts without decoded results, got:\n%s", out)
 		}
 	})
+}
+
+func TestBatchRunsThumbbackfill(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+
+	insert := func(t *testing.T, batchID, taskType string) {
+		t.Helper()
+		if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID:     batchID,
+			Origin: types.Batch.Origin.CLI,
+			Status: types.Batch.Status.Queued,
+		}); err != nil {
+			t.Fatalf("create batch %s: %v", batchID, err)
+		}
+		if taskType == "" {
+			return
+		}
+		if _, err := client.DB().ExecContext(ctx,
+			`INSERT INTO task (task_id, task_type, status, batch_id) VALUES ($1, $2, 'pending', $3)`,
+			batchID+"-t", taskType, batchID); err != nil {
+			t.Fatalf("insert task for %s: %v", batchID, err)
+		}
+	}
+
+	cases := []struct {
+		name     string
+		taskType string
+		want     bool
+	}{
+		{"a thumbbackfill task selects the backfill pool", "thumbbackfill", true},
+		{"consume tasks stay on the consume family", "consume", false},
+		{"a batch without tasks runs neither", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			batchID := "probe-" + c.taskType
+			insert(t, batchID, c.taskType)
+			got, err := batchRunsThumbbackfill(ctx, client, batchID)
+			if err != nil {
+				t.Fatalf("batchRunsThumbbackfill: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("batchRunsThumbbackfill = %v, want %v", got, c.want)
+			}
+		})
+	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	itypes "github.com/wgomg/edub-kushim/internal/types"
@@ -226,9 +227,10 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 
 func batchSummaryToResponse(s *service.BatchSummary) BatchSummaryResponse {
 	return BatchSummaryResponse{
-		BatchID: s.BatchID,
-		Status:  s.Status,
-		Source:  s.Source,
+		BatchID:  s.BatchID,
+		Status:   s.Status,
+		Origin:   s.Origin,
+		Schedule: s.Schedule,
 		BatchCounts: BatchCounts{
 			Total:      s.Waiting + s.Pending + s.Processing + s.Completed + s.Failed + s.Cancelled + s.Discarded,
 			Waiting:    s.Waiting,
@@ -264,7 +266,8 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 			items = append(items, BatchOverviewItem{
 				BatchID:   ov.BatchID,
 				Status:    ov.Status,
-				Source:    ov.Source,
+				Origin:    ov.Origin,
+				Schedule:  ov.Schedule,
 				CreatedAt: createdAt,
 				BatchCounts: BatchCounts{
 					Total:      ov.Total,
@@ -610,8 +613,7 @@ func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Keep in sync with configtask.DedupKey(): drift here silently degrades
-// config/backup labels to the bare task type.
+// Labels derive from the task type and, for the type-specific variants, from the dedup key.
 func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 	key := dedupKey.String
 	switch {
@@ -626,13 +628,9 @@ func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 		return "Backup (" + mode + ")"
 	case strings.HasPrefix(key, "mirror:"):
 		return "Mirror"
-	case key == "config:migrate-db":
-		return "Database migration"
-	case key == "config:migrate-storage":
-		return "Storage migration"
-	case strings.HasPrefix(key, "config:tessdata:"):
-		return "Download tessdata (" + strings.TrimPrefix(key, "config:tessdata:") + ")"
-	case key == "config:hugot":
+	case strings.HasPrefix(key, configtask.DedupKeyTessdataPrefix):
+		return "Download tessdata (" + strings.TrimPrefix(key, configtask.DedupKeyTessdataPrefix) + ")"
+	case key == configtask.DedupKeyHugot:
 		return "Download Hugot model"
 	}
 	switch taskType {
@@ -644,6 +642,10 @@ func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 		return "Thumbnail"
 	case itypes.Task.Type.ThumbBackfill:
 		return "Thumbnail backfill"
+	case itypes.Task.Type.MigrateDB:
+		return "Database migration"
+	case itypes.Task.Type.MigrateStorage:
+		return "Storage migration"
 	default:
 		return string(taskType)
 	}
@@ -787,12 +789,12 @@ type BatchCounts struct {
 	Orphaned   bool   `json:"orphaned"`
 }
 
-// BatchSummaryResponse is one batch's API view: identity, status, source
-// and the counts.
+// BatchSummaryResponse is one batch's API view: identity, status, origin, schedule and the counts.
 type BatchSummaryResponse struct {
-	BatchID string `json:"batch_id"`
-	Status  string `json:"status"`
-	Source  string `json:"source"`
+	BatchID  string `json:"batch_id"`
+	Status   string `json:"status"`
+	Origin   string `json:"origin"`
+	Schedule string `json:"schedule,omitempty"`
 	BatchCounts
 	OwnerPID int64 `json:"owner_pid,omitempty"`
 }
@@ -830,7 +832,8 @@ type StorageTrendPoint struct {
 type BatchOverviewItem struct {
 	BatchID   string `json:"batch_id"`
 	Status    string `json:"status"`
-	Source    string `json:"source"`
+	Origin    string `json:"origin"`
+	Schedule  string `json:"schedule,omitempty"`
 	CreatedAt string `json:"created_at"`
 	BatchCounts
 	DurationMs *int64 `json:"duration_ms,omitempty"`

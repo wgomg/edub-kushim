@@ -11,6 +11,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func backfillThumbnailsHandler(c *container.Container, args []string) error {
@@ -58,36 +59,42 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	store := task.NewStore(client)
-	batchSvc := service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
-	svc := service.NewThumbnailBackfill(client.Queries, c.GetLogger(), store, batchSvc)
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return fmt.Errorf("enqueuer: %w", err)
+	}
+	spec, err := cliBatchSpec()
+	if err != nil {
+		return err
+	}
+	svc := service.NewThumbnailBackfill(client.Queries, enqueuer)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	switch {
 	case all:
-		batchID, enqueued, skipped, err := svc.BackfillAll(ctx)
+		result, err := enqueueThumbnailBackfillAll(ctx, c, enqueuer, spec)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				if enqueued == 0 {
+				if len(result.TaskIDs) == 0 {
 					return fmt.Errorf("backfill thumbnails: %w — timed out before any task was queued; re-run to continue", err)
 				}
-				return fmt.Errorf("backfill thumbnails: %w — timed out after enqueueing %d task(s); re-run to continue", err, enqueued)
+				return fmt.Errorf("backfill thumbnails: %w — timed out after enqueueing %d task(s); re-run to continue", err, len(result.TaskIDs))
 			}
 			return fmt.Errorf("backfill thumbnails: %w", err)
 		}
-		if enqueued == 0 && skipped == 0 {
-			fmt.Println("No documents missing thumbnails.")
+		if result.BatchID == "" {
+			if result.Skipped == 0 {
+				fmt.Println("No documents missing thumbnails.")
+			} else {
+				fmt.Printf("%d document(s) already have a pending thumbnail task.\n", result.Skipped)
+			}
 			return nil
 		}
-		if enqueued == 0 {
-			fmt.Printf("%d document(s) already have a pending thumbnail task.\n", skipped)
-			return nil
-		}
-		fmt.Printf("Batch %s queued with %d thumbnail task(s) — run 'kushim queue' to process\n", batchID, enqueued)
+		fmt.Printf("Batch %s queued with %d thumbnail task(s) — run 'kushim queue' to process\n", result.BatchID, len(result.TaskIDs))
 	case batchID != "":
-		newBatchID, enqueued, skipped, err := svc.BackfillBatch(ctx, batchID)
+		newBatchID, enqueued, skipped, err := svc.BackfillBatch(ctx, spec, batchID)
 		if err != nil {
 			return fmt.Errorf("backfill thumbnails for batch: %w", err)
 		}
@@ -101,7 +108,7 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 		}
 		fmt.Printf("Batch %s queued with %d thumbnail task(s) — run 'kushim queue' to process\n", newBatchID, enqueued)
 	case documentID != "":
-		batchID, err := svc.BackfillDocument(ctx, documentID)
+		batchID, err := svc.BackfillDocument(ctx, spec, documentID)
 		if err != nil {
 			switch errs.KindOf(err) {
 			case errs.KindNotFound:
@@ -116,4 +123,26 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 	}
 
 	return nil
+}
+
+// enqueueThumbnailBackfillAll runs the thumbbackfill definition's builder over every document missing
+// a thumbnail and enqueues the resulting batch.
+func enqueueThumbnailBackfillAll(ctx context.Context, c *container.Container, enqueuer *task.Enqueuer, spec task.BatchSpec) (task.EnqueueResult, error) {
+	catalog, err := c.GetCatalog()
+	if err != nil {
+		return task.EnqueueResult{}, fmt.Errorf("task catalog: %w", err)
+	}
+	def, err := catalog.Definition(types.Task.Type.ThumbBackfill)
+	if err != nil {
+		return task.EnqueueResult{}, fmt.Errorf("thumbbackfill definition: %w", err)
+	}
+	tasks, err := def.BuildTasks(ctx, container.NewEmptyBuildInput(types.Task.Type.ThumbBackfill))
+	if err != nil {
+		return task.EnqueueResult{}, err
+	}
+	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }

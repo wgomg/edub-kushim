@@ -1,7 +1,6 @@
 package task
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -32,17 +31,4 @@ func (r *Registry) Get(taskType types.TaskType) (Handler, error) {
 		return nil, fmt.Errorf("unknown task type: %q", taskType)
 	}
 	return h, nil
-}
-
-// DedupKey derives the enqueue dedup key for a task type, empty when the
-// type is unknown or its handler is not Dedupable.
-func (r *Registry) DedupKey(taskType types.TaskType, payload json.RawMessage) string {
-	h, err := r.Get(taskType)
-	if err != nil {
-		return ""
-	}
-	if dd, ok := h.(Dedupable); ok {
-		return dd.DedupKey(payload)
-	}
-	return ""
 }

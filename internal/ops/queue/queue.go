@@ -8,7 +8,6 @@ package queue
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,7 +20,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -254,10 +252,6 @@ func (d *daemon) tick(ctx context.Context) {
 	d.ensureTagIdentity(ctx, cfg)
 	d.ensureTagAudit(ctx, cfg)
 
-	if err := sweepEmptyQueuedBatches(ctx, d.client.Load(), d.c.GetLogger()); err != nil {
-		d.c.GetLogger().Error("", "empty queued batch sweep: %v", err)
-	}
-
 	d.reclaimStale(ctx, cfg)
 }
 
@@ -298,7 +292,7 @@ func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config) {
 		if lockErr != nil {
 			d.c.GetLogger().Error("", "backup lock check: %v", lockErr)
 		} else if locked == 0 {
-			if err := maybeScheduleBackup(ctx, d.c, d.client.Load(), cfg); err != nil {
+			if err := maybeScheduleBackup(ctx, d.c, cfg); err != nil {
 				d.c.GetLogger().Error("", "backup scheduling: %v", err)
 			}
 		}
@@ -317,7 +311,7 @@ func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config) {
 		if lockErr != nil {
 			d.c.GetLogger().Error("", "mirror lock check: %v", lockErr)
 		} else if locked == 0 {
-			if err := maybeScheduleMirror(ctx, d.c, d.client.Load(), cfg); err != nil {
+			if err := maybeScheduleMirror(ctx, d.c, cfg); err != nil {
 				d.c.GetLogger().Error("", "mirror scheduling: %v", err)
 			}
 		}
@@ -385,22 +379,6 @@ func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
 		}
 		d.lastStaleTaskClaim = time.Now()
 	}
-}
-
-// Zero-task queued batches are never finalized and would block the polling gate.
-func sweepEmptyQueuedBatches(ctx context.Context, client *database.Client, logger *log.Logger) error {
-	ids, err := client.Queries.ListEmptyQueuedBatches(ctx, 10)
-	if err != nil {
-		return fmt.Errorf("list empty queued batches: %w", err)
-	}
-	for _, id := range ids {
-		if err := client.Queries.SetBatchFailed(ctx, id); err != nil {
-			logger.Error("", "fail empty queued batch %s: %v", id, err)
-			continue
-		}
-		logger.Info("", "reaped empty queued batch %s (no tasks after 10 minutes)", id)
-	}
-	return nil
 }
 
 func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, logger *log.Logger) error {
@@ -555,8 +533,8 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 }
 
 func pollingTick(ctx context.Context, c *container.Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int, missingTools []config.ExternalTool) {
-	// Only count batches that occupy a consume slot; config/backup/mirror
-	// batches own their lifecycle in their handlers (see GetNextQueuedBatch).
+	// only count batches that occupy a consume slot; config/backup/mirror batches own their lifecycle in
+	// their handlers (see GetNextQueuedBatch)
 	queuedCount, err := batchSvc.CountQueuedConsumeBatches(ctx)
 	if err != nil {
 		c.GetLogger().Error("", "polling: count queued batches: %v", err)
@@ -581,7 +559,13 @@ func pollingTick(ctx context.Context, c *container.Container, client *database.C
 		return
 	}
 
-	batchID, enqueued, err := consumption.ScanAndEnqueue(ctx, c.GetConfig(), client, c.GetLogger())
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		c.GetLogger().Error("", "polling: get enqueuer: %v", err)
+		return
+	}
+
+	batchID, enqueued, err := consumption.ScanAndEnqueue(ctx, c.GetConfig(), client, enqueuer, c.GetLogger())
 	if err != nil {
 		c.GetLogger().Error("", "polling: scan and enqueue: %v", err)
 		return
@@ -598,29 +582,48 @@ func pollingTick(ctx context.Context, c *container.Container, client *database.C
 	c.GetLogger().Info("", "polling: batch %s created with %d files", batchID, enqueued)
 }
 
-func enqueueOwnBatch(ctx context.Context, c *container.Container, client *database.Client, taskType types.TaskType, source types.BatchSource, payload json.RawMessage) (batchID, taskID string, err error) {
-	dispatcher, err := c.GetDispatcher()
+// The interim schedule names scheduled batches carry until schedules become declarative data on the
+// type definitions.
+const (
+	scheduleBackup            = "backup"
+	scheduleMirror            = "mirror"
+	scheduleThumbnailBackfill = "thumbnail-backfill"
+	scheduleTagReconcile      = "tagreconcile"
+	scheduleTagMeasure        = "tagmeasure"
+	scheduleTagIdentity       = "tagidentity"
+	scheduleTagAudit          = "tagaudit"
+)
+
+// enqueueScheduledBatch builds the task set of one scheduled run and enqueues it, returning the full
+// result. The schedule name and origin are set here, at the scheduler boundary.
+func enqueueScheduledBatch(ctx context.Context, c *container.Container, taskType types.TaskType, scheduleName string, input task.BuildInput) (task.EnqueueResult, error) {
+	catalog, err := c.GetCatalog()
 	if err != nil {
-		return "", "", fmt.Errorf("get dispatcher: %w", err)
+		return task.EnqueueResult{}, fmt.Errorf("get task catalog: %w", err)
 	}
-
-	batchID = uuid.New().String()
-	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID:     batchID,
-		Source: source,
-		Status: types.Batch.Status.Queued,
-	}); err != nil {
-		return "", "", fmt.Errorf("create %s batch: %w", taskType, err)
+	def, err := catalog.Definition(taskType)
+	if err != nil {
+		return task.EnqueueResult{}, fmt.Errorf("resolve %s definition: %w", taskType, err)
 	}
-
-	taskID = uuid.New().String()
-	if _, err := dispatcher.Enqueue(ctx, taskType, batchID, payload, taskID); err != nil {
-		return "", "", fmt.Errorf("enqueue %s task: %w", taskType, err)
+	if def.BuildTasks == nil {
+		return task.EnqueueResult{}, fmt.Errorf("%s has no builder", taskType)
 	}
-	return batchID, taskID, nil
+	tasks, err := def.BuildTasks(ctx, input)
+	if err != nil {
+		return task.EnqueueResult{}, fmt.Errorf("build %s tasks: %w", taskType, err)
+	}
+	spec, err := task.NewBatchSpec(types.Batch.Origin.Schedule, scheduleName)
+	if err != nil {
+		return task.EnqueueResult{}, fmt.Errorf("build %s batch spec: %w", scheduleName, err)
+	}
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return task.EnqueueResult{}, fmt.Errorf("get enqueuer: %w", err)
+	}
+	return enqueuer.EnqueueBatch(ctx, spec, tasks)
 }
 
-func maybeScheduleTask(ctx context.Context, c *container.Container, client *database.Client, taskType types.TaskType, source types.BatchSource, active func(context.Context) (int64, error), due func(context.Context) (bool, error), payload map[string]any) error {
+func maybeScheduleTask(ctx context.Context, c *container.Container, taskType types.TaskType, scheduleName string, active func(context.Context) (int64, error), due func(context.Context) (bool, error), input task.BuildInput) error {
 	activeCount, err := active(ctx)
 	if err != nil {
 		return fmt.Errorf("check active %s tasks: %w", taskType, err)
@@ -637,33 +640,40 @@ func maybeScheduleTask(ctx context.Context, c *container.Container, client *data
 		return nil
 	}
 
-	payloadJSON, _ := json.Marshal(payload)
-	batchID, taskID, err := enqueueOwnBatch(ctx, c, client, taskType, source, payloadJSON)
+	result, err := enqueueScheduledBatch(ctx, c, taskType, scheduleName, input)
 	if err != nil {
 		return err
 	}
+	if result.BatchID == "" {
+		return nil
+	}
 
-	c.GetLogger().Info("", "%s task %s scheduled (batch %s)", taskType, taskID, batchID)
+	c.GetLogger().Info("", "%s task %s scheduled (batch %s)", scheduleName, result.TaskIDs, result.BatchID)
 	return nil
 }
 
-func maybeScheduleBackup(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config) error {
+func maybeScheduleBackup(ctx context.Context, c *container.Container, cfg *config.Config) error {
 	if !cfg.Backup.Enabled {
 		return nil
 	}
 
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+
 	for _, schedule := range cfg.Backup.Schedules {
 		s := schedule
-		payload := map[string]any{
-			"mode":     s.Mode,
-			"path":     s.Path,
-			"keep":     s.Keep,
-			"schedule": backup.ScheduleTiming{Interval: s.Interval, Time: s.Time},
+		input := container.BackupBuildInput{
+			Mode:     s.Mode,
+			Path:     s.Path,
+			Keep:     s.Keep,
+			Schedule: backup.ScheduleTiming{Interval: s.Interval, Time: s.Time},
 		}
-		if err := maybeScheduleTask(ctx, c, client, types.Task.Type.Backup, types.Batch.Source.Backup,
+		if err := maybeScheduleTask(ctx, c, types.Task.Type.Backup, scheduleBackup,
 			func(ctx context.Context) (int64, error) { return client.Queries.CountActiveBackupTasks(ctx) },
 			func(ctx context.Context) (bool, error) { return backup.IsBackupDue(ctx, client.Queries, s) },
-			payload,
+			input,
 		); err != nil {
 			return err
 		}
@@ -671,20 +681,25 @@ func maybeScheduleBackup(ctx context.Context, c *container.Container, client *da
 	return nil
 }
 
-func maybeScheduleMirror(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config) error {
+func maybeScheduleMirror(ctx context.Context, c *container.Container, cfg *config.Config) error {
 	if !cfg.Mirror.Enabled {
 		return nil
 	}
 
-	payload := map[string]any{
-		"path":     cfg.Mirror.Path,
-		"interval": cfg.Mirror.Interval,
-		"schedule": backup.ScheduleTiming{Interval: cfg.Mirror.Interval, Time: cfg.Mirror.Time},
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
 	}
-	return maybeScheduleTask(ctx, c, client, types.Task.Type.Mirror, types.Batch.Source.Mirror,
+
+	input := container.MirrorBuildInput{
+		Path:     cfg.Mirror.Path,
+		Interval: cfg.Mirror.Interval,
+		Schedule: backup.ScheduleTiming{Interval: cfg.Mirror.Interval, Time: cfg.Mirror.Time},
+	}
+	return maybeScheduleTask(ctx, c, types.Task.Type.Mirror, scheduleMirror,
 		func(ctx context.Context) (int64, error) { return client.Queries.CountActiveMirrorTasks(ctx) },
 		func(ctx context.Context) (bool, error) { return backup.IsMirrorDue(ctx, client.Queries, cfg.Mirror) },
-		payload,
+		input,
 	)
 }
 
@@ -858,47 +873,50 @@ func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *
 	return spec.execute(ctx, c, client, state, timing, next)
 }
 
-func executeThumbnailBackfill(_ context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error {
-	cmd := exec.Command(os.Args[0], "thumbnails", "--all")
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		c.GetLogger().Error("", "fork kushim thumbnails --all: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
+func executeThumbnailBackfill(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error {
+	result, err := enqueueScheduledBatch(ctx, c, types.Task.Type.ThumbBackfill, scheduleThumbnailBackfill,
+		container.NewEmptyBuildInput(types.Task.Type.ThumbBackfill))
+	if err != nil {
+		c.GetLogger().Error("", "enqueue thumbnail backfill: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
 		return nil
 	}
-	go func() { _ = cmd.Wait() }()
 
-	// Advance only after a successful fork so a failed start retries next tick.
+	// advance only after a successful enqueue so a failed run retries next tick
 	state.markRun(timing)
-	c.GetLogger().Info("", "forked kushim thumbnails --all (PID %d)", cmd.Process.Pid)
-	c.GetLogger().Debug("", "thumbnail backfill: forked (pid=%d, last_run=%s)", cmd.Process.Pid, state.lastRun.Format(time.RFC3339))
+	if result.BatchID == "" {
+		c.GetLogger().Debug("", "thumbnail backfill: no documents missing thumbnails")
+		return nil
+	}
+	c.GetLogger().Info("", "thumbnail backfill batch %s scheduled (%d tasks)", result.BatchID, len(result.TaskIDs))
+	c.GetLogger().Debug("", "thumbnail backfill: enqueued (batch=%s, last_run=%s)", result.BatchID, state.lastRun.Format(time.RFC3339))
 	return nil
 }
 
-func executeTagReconcile(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagReconcile, types.Batch.Source.TagReconcile, "tag reconcile")
+func executeTagReconcile(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagReconcile, scheduleTagReconcile, "tag reconcile")
 }
 
-func executeTagMeasure(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagMeasure, types.Batch.Source.TagMeasure, "tag measure")
+func executeTagMeasure(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagMeasure, scheduleTagMeasure, "tag measure")
 }
 
-func executeTagAudit(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagAudit, types.Batch.Source.TagAudit, "tag audit")
+func executeTagAudit(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagAudit, scheduleTagAudit, "tag audit")
 }
 
-func executeTagIdentity(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, client, state, timing, types.Task.Type.TagIdentity, types.Batch.Source.TagIdentity, "tag identity")
+func executeTagIdentity(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagIdentity, scheduleTagIdentity, "tag identity")
 }
 
-func enqueueScheduled(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, taskType types.TaskType, source types.BatchSource, name string) error {
-	batchID, taskID, err := enqueueOwnBatch(ctx, c, client, taskType, source, json.RawMessage("{}"))
+func enqueueScheduled(ctx context.Context, c *container.Container, state *scheduleState, timing backup.ScheduleTiming, taskType types.TaskType, scheduleName, name string) error {
+	result, err := enqueueScheduledBatch(ctx, c, taskType, scheduleName, container.NewEmptyBuildInput(taskType))
 	if err != nil {
 		return err
 	}
-	// Advance only after a successful enqueue so a failed schedule retries next tick.
+	// advance only after a successful enqueue so a failed schedule retries next tick
 	state.markRun(timing)
-	c.GetLogger().Info("", "%s task %s scheduled (batch %s)", name, taskID, batchID)
+	if result.BatchID != "" {
+		c.GetLogger().Info("", "%s scheduled (batch %s)", name, result.BatchID)
+	}
 	return nil
 }

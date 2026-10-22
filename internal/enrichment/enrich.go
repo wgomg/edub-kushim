@@ -88,20 +88,3 @@ func CountsFromResult(result json.RawMessage) (DocumentCounts, bool) {
 	}
 	return *parsed.Counts, true
 }
-
-// DedupKey is the payload's document id, so one document never enriches
-// twice concurrently. A payload that does not decode, or carries no
-// document id, yields no key: the task then runs without deduplication
-// instead of being blocked.
-func (h *EnrichTaskHandler) DedupKey(payload json.RawMessage) string {
-	var p struct {
-		DocumentID string `json:"document_id"`
-	}
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return ""
-	}
-	if p.DocumentID == "" {
-		return ""
-	}
-	return fmt.Sprintf("enrich:doc:%s", p.DocumentID)
-}

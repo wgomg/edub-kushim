@@ -281,13 +281,13 @@ waits for in-flight consume/enrich/thumbnail tasks to drain before rendering.
 
 `consumer.thumbnail.backfill_interval` (days, `0` = disabled) and
 `consumer.thumbnail.backfill_time` (`HH:MM`, default `"02:00"`) enable an
-automatic `--all` sweep: the `kushim queue` daemon forks
-`kushim thumbnails --all` when the schedule is due and no backfill batch is
-already queued or processing. The last run is derived from the most recent
-`thumbbackfill` batch, so daemon restarts do not reset the schedule; the first
-run waits for the preferred time of day. Sub-daily intervals (e.g. `0.5` =
-every 12 hours) are supported. Both fields are exposed in the settings UI
-(Thumbnails section).
+automatic `--all` sweep: the `kushim queue` daemon enqueues a backfill batch
+(origin `schedule`, schedule name `thumbnail-backfill`) when the schedule is
+due and no backfill batch is already queued or processing. The last run is
+derived from the most recent `thumbbackfill` batch, so daemon restarts do not
+reset the schedule; the first run waits for the preferred time of day.
+Sub-daily intervals (e.g. `0.5` = every 12 hours) are supported. Both fields
+are exposed in the settings UI (Thumbnails section).
 
 ### Pre-flight Tool Check
 
@@ -510,6 +510,35 @@ Task "880e8400-e29b-41d4-a716-446655440003" retried — status reset to pending
 
 Only failed tasks can be retried. The task is picked up on the next
 worker poll cycle.
+
+### `kushim batch create <task> [args]`
+
+Enqueue a task set for the `kushim queue` daemon without running anything
+inline. Unlike the per-task commands, this only creates the queued batch —
+processing is left to the daemon.
+
+```
+kushim batch create backup --mode full
+```
+
+Supported tasks:
+
+| Task | Arguments |
+| ---- | --------- |
+| `backup` | `--mode <full\|database\|documents>`, `--path <dir>`, `--keep N` (all optional) |
+| `mirror` | `--path <dir>` (optional) |
+| `enrich` | one or more document ids |
+| `thumbnails` | none — scans every document missing a thumbnail |
+| `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` | none |
+
+Output:
+
+```
+Batch 550e8400-e29b-41d4-a716-446655440000 queued with 1 task(s) — run 'kushim queue' to process
+```
+
+When every task is already covered by a pending task (dedup), no batch is
+created and the command prints `Nothing enqueued`.
 
 ### `kushim user create`
 
@@ -2569,7 +2598,7 @@ Authorization: Bearer token or API key required. Returns `401` if unauthenticate
 GET /api/v1/dashboard
 ```
 
-Returns up to 25 active tasks (`pending`/`processing`/`waiting`, processing-first), plus the 20 most recent batches with per-batch task status summaries, owner state, orphan detection, and duration (when settled).
+Returns up to 25 active tasks (`pending`/`processing`/`waiting`, processing-first), plus the 20 most recent batches with per-batch task status summaries, origin, owner state, orphan detection, and duration (when settled).
 
 Response `200`:
 
@@ -2578,7 +2607,7 @@ Response `200`:
   "recent_batches": [
     {
       "batch_id": "550e8400-e29b-41d4-a716-446655440000",
-      "source": "web",
+      "origin": "api",
       "created_at": "2026-06-25T10:30:00Z",
       "total": 5,
       "waiting": 0,
@@ -2786,7 +2815,8 @@ Report](#tag-reconciliation-report). List endpoints and other task types omit it
 {
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",
-  "source": "polling",
+  "origin": "schedule",
+  "schedule": "backup",
   "total": 5,
   "waiting": 0,
   "pending": 2,
@@ -2799,16 +2829,18 @@ Report](#tag-reconciliation-report). List endpoints and other task types omit it
 }
 ```
 
-`source` is how the batch was created: `cli` (`kushim consume`), `api`
-(`POST /api/v1/consume`), `upload` (`POST /api/v1/consume/upload`),
-`polling` (daemon inbox scan), `reenrich`, `orphaned-restore`,
-`thumbbackfill`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`,
-`tagidentity`, `tagaudit`. The
-vocabulary is a closed Postgres enum (`batch_source`), mirrored by the Go
-registry in `internal/types`. `owner_state` (`"none"`,
-`"live"`, `"stale"`) is included when set. Batches with source
-`config`/`backup`/`mirror`/`tagreconcile`/`tagmeasure`/`tagidentity`/`tagaudit` never report `orphaned: true` —
-they have no `batch_owner` row by design (their handlers own the lifecycle).
+`origin` is the entry point that requested the batch: `cli` (`kushim consume`
+or `kushim batch create`), `api` (`POST /api/v1/consume`, uploads, re-enrich,
+orphan restore, or the tag actions), `polling` (daemon inbox scan), `schedule`
+(daemon-scheduled runs — see `schedule`), `setup` (`kushim setup`), or
+`wizard` (the setup wizard's config endpoints). Scheduled batches also carry
+`schedule`, the schedule name they ran under (omitted when absent). The
+vocabulary is a closed Postgres enum (`batch_origin`), mirrored by the Go
+registry in `internal/types`. `owner_state` (`"none"`, `"live"`, `"stale"`)
+is included when set. Batches whose tasks are all config-host types (asset
+downloads, database or storage migration, backup, mirror, or the four tag
+passes) never report `orphaned: true` — they have no `batch_owner` row by
+design (their handlers own the lifecycle).
 
 ---
 

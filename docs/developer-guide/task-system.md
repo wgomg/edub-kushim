@@ -44,7 +44,8 @@ The cast of characters:
 
 | Component | Files | Role |
 |---|---|---|
-| `Dispatcher` | `internal/task/dispatcher.go` | creates tasks (`Enqueue`) |
+| `Enqueuer` | `internal/task/enqueue.go` | the single creation path (`EnqueueBatch`/`EnqueueTask`) over `BatchSpec`/`TaskSpec` |
+| `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue contract: locks, dedup key, preconditions, builder |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
 | `Handler` | `internal/task/handler.go` | does the work, returns JSON result; `RunBlocking` wraps the blocking-task lifecycle |
 | `Runner` | `internal/task/runner.go` | claims + dispatches + completes |
@@ -53,10 +54,10 @@ The cast of characters:
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
 | consume command | `internal/ops/consume/consume.go` | runs one batch |
 
-The eleven task types (declared in `internal/types`, registered in
+The thirteen task types (declared in `internal/types`, registered in
 `internal/ops/container/container.go`): `consume`, `enrich`, `thumbnail`,
-`config`, `backup`, `mirror`, `tagreconcile`, `thumbbackfill`, `tagmeasure`,
-`tagidentity`, `tagaudit`.
+`config`, `migrate-db`, `migrate-storage`, `backup`, `mirror`,
+`tagreconcile`, `thumbbackfill`, `tagmeasure`, `tagidentity`, `tagaudit`.
 
 ---
 
@@ -87,9 +88,9 @@ Seven statuses, enforced by the `task_status` enum: `pending`, `processing`,
 `waiting`, `completed`, `failed`, `discarded`, `cancelled`. The vocabulary is
 closed at the database level (enum columns, migration `00013`) and mirrored
 by the Go registry in `internal/types` — the single declaration point in Go
-(`types.Task.Type.*`, `types.Task.Status.*`, `types.Batch.Source.*`,
+(`types.Task.Type.*`, `types.Task.Status.*`, `types.Batch.Origin.*`,
 `types.Batch.Status.*`), wired into sqlc-generated code via column
-overrides. `batch.source`, `batch.status`, `task.task_type`, and
+overrides. `batch.origin`, `batch.status`, `task.task_type`, and
 `task.status` are all enum columns; an unregistered value fails the insert
 (and migration `00013` aborts loudly on pre-existing legacy values).
 
@@ -446,13 +447,14 @@ is `processing`, it also prints live `progress.step`/`detail` updates (e.g.
 
 ### Non-consume batches: backup, mirror, config
 
-Backup and mirror tasks get real batch rows (`source = 'backup'` /
-`'mirror'`, status `queued`) so they flow through the batches UI instead of
-being invisible orphans (`maybeScheduleTask`, `queue.go:477-507`); config
-batches already did this. The queue daemon never forks consume workers for
-these batches: `GetNextQueuedBatch` excludes `config`/`backup`/`mirror`
-sources, so no watchdog holds a `max_concurrent_batches` slot for the
-duration of a long backup.
+Backup and mirror tasks get real batch rows (origin `schedule`, status
+`queued`) so they flow through the batches UI instead of being invisible
+orphans (`maybeScheduleTask`, `queue.go`); config batches already did this.
+The queue daemon never forks consume workers for these batches:
+`GetNextQueuedBatch` excludes batches carrying a non-consume task type
+(`config`, the two migrations, `backup`, `mirror`, and the four tag passes),
+so no watchdog holds a `max_concurrent_batches` slot for the duration of a
+long backup.
 
 The handlers own the lifecycle directly, keeping the status accurate even
 when `kushim queue` is not running: `MarkBatchProcessing` at start and
@@ -461,7 +463,7 @@ remain active (`internal/task/batch.go`); the settle also logs one INFO
 summary line with the final status and the completed/failed/cancelled task
 counts (a failed count query is logged and never blocks the settle).
 Because these batches have no `batch_owner` row in that case, the service
-layer forces `Orphaned = false` for `config`/`backup`/`mirror` sources —
+layer forces `Orphaned = false` for batches with a non-consume task —
 otherwise the UI would show a bogus orphan state and a Resume button that
 forks a consume worker (`internal/service/batch.go`).
 
@@ -475,20 +477,22 @@ owner/heartbeat/pollBatch sequence in-process.
 ## 8. Parent/child choreography: waiting tasks
 
 A consume task creates its enrich task *immediately*, in `waiting` state,
-with mutual references (`internal/ops/consume/consume.go:245-285`):
+with mutual references (assembly shared by every ingest boundary,
+`internal/documents/consumption/ingest.go`):
 
 ```go
 consumePayload, _ := json.Marshal(map[string]any{
-	"file_path":    f.OriginalPath,
-	"file_index":   i + 1,
+	"file_path":    file.Path,
+	"file_index":   file.Index,
 	"on_completed": enrichTaskID,      // child's task ID
 	"document_id":  documentID,
+	"md5":          md5,
 })
 enrichPayload, _ := json.Marshal(map[string]any{
 	"waiting_for": consumeTaskID,      // parent's task ID
 	...
 })
-dispatcher.Enqueue(ctx, "enrich", batchID, enrichPayload, enrichTaskID, "waiting")
+result, err := enqueuer.EnqueueBatch(ctx, spec, tasks) // the waiting child rides along
 ```
 
 On consume success, the child is **activated** (`activateChildEnrich`,
@@ -561,30 +565,28 @@ CREATE UNIQUE INDEX idx_task_dedup ON task(task_type, dedup_key)
 
 Uniqueness holds **only while the task is live** — once it completes/fails,
 the row drops out of the index and the same key becomes insertable again
-(that's how a re-ingest after a crash works). The Go side
-(`internal/task/handler.go:18-20`, `registry.go:28-37`) computes keys via the
-optional `Dedupable` interface:
-
-```go
-type Dedupable interface {
-	DedupKey(payload json.RawMessage) string
-}
-```
+(that's how a re-ingest after a crash works). The Go side derives keys in the
+task type catalog (`internal/ops/container/task_type_definitions.go`), one
+derivation per task type; `EnqueueBatch` applies it to pending tasks.
 
 Key formats in use:
 
-| Task type | Key | Source |
-|---|---|---|
-| consume | `consume:<md5>` (scan/restore paths) or the file path (direct CLI) | `scan.go:90-97`, `service/orphaned.go:183` |
-| enrich | `enrich:doc:<document_id>` | `internal/enrichment/enrich.go:62-73`, `service/enrich.go:47,72` |
-| backup | `backup:<UTC date>` | `internal/backup/backup_task.go:36-38` |
-| mirror | `mirror:<UTC date>` | `internal/backup/mirror_task.go` |
-| config | `config:tessdata:<lang>` / `config:hugot` / `config:migrate-db` / `config:migrate-storage` | `internal/ops/configtask/configtask.go` |
+| Task type | Key |
+|---|---|
+| consume | `consume:<md5>` |
+| enrich | `enrich:doc:<document_id>` |
+| thumbnail / thumbbackfill | `thumbnail:doc:<document_id>` (no key when the payload carries no document id) |
+| backup | `backup:<mode>:<UTC date>` (mode defaults to `full`) |
+| mirror | `mirror:<UTC date>` |
+| tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` |
+| config | `config:tessdata:<lang>` / `config:hugot` |
+| migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
 The waiting (child) enrich tasks store **no dedup key** — dedup only kicks in
-once activated, when the payload gains `document_id`. A duplicate insert
-surfaces as a unique-violation → `errs.KindConflict` → "re-enrich already
-queued" (`internal/ops/cli/enrich.go:92-93`).
+once activated, when the payload gains `document_id`. A duplicate enqueue
+loses the dedup conflict: `EnqueueBatch` skips the task, no batch is created,
+and the boundary reports the work as already queued ("re-enrich already
+queued", `internal/ops/cli/enrich.go`).
 
 ---
 
@@ -804,13 +806,14 @@ WHERE name = 'maintenance_lock'
   held; it **drains** in-flight
   work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on
   `CountProcessingTasks` until zero) before snapshotting, then applies
-  retention. The `migrate-db` and `migrate-storage` config tasks take the same
+  retention. The `migrate-db` and `migrate-storage` tasks (their own task
+  types) take the same
   lock through `database.TryHoldMaintenanceLock` — refusing when another process
   holds it — and drain in-flight work before copying the database or moving
   storage files.
 - Scheduling: the queue daemon's ticker enqueues a `backup` task when
-  `IsBackupDue` and the lock is free; the `backup:<date>` dedup key prevents
-  same-day duplicates. The enqueue payload records the schedule
+  `IsBackupDue` and the lock is free; the `backup:<mode>:<date>` dedup key prevents
+  same-day duplicates per mode. The enqueue payload records the schedule
   (`schedule: {interval, time}`) that produced the task; `IsBackupDue` parses
   it from the last completed task and, when it differs from the current config
   timing, re-phases the next run to the closest upcoming occurrence of the new

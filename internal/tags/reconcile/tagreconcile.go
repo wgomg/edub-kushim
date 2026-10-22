@@ -7,11 +7,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
-
-var _ task.Dedupable = (*TagReconcileTaskHandler)(nil)
 
 // ReportPrefix marks the serialized Report inside the tagreconcile command's output; the task handler
 // extracts the JSON that follows it.
@@ -28,12 +25,6 @@ type TagReconcileTaskHandler struct {
 // NewTagReconcileTaskHandler wires the handler to the queries and logger.
 func NewTagReconcileTaskHandler(queries *database.Queries, logger *log.Logger) *TagReconcileTaskHandler {
 	return &TagReconcileTaskHandler{queries: queries, logger: logger}
-}
-
-// DedupKey is fixed for all reconcile tasks: only one sweep runs at a time, so any active run blocks
-// further enqueues of the type.
-func (h *TagReconcileTaskHandler) DedupKey(payload json.RawMessage) string {
-	return curation.TagReconcileDedupKey
 }
 
 // Handle forks the tagreconcile verb for the task's batch and returns its report as the task result.

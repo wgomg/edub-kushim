@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -13,8 +12,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/version"
 )
-
-var _ task.Dedupable = (*MirrorTaskHandler)(nil)
 
 // MirrorTaskHandler mirrors the storage directory as a blocking task;
 // its dedup key is the UTC day, one mirror at most per day.
@@ -34,10 +31,12 @@ func NewMirrorTaskHandler(queries *database.Queries, getConfig func() *config.Co
 	}
 }
 
-// DedupKey is the UTC day, collapsing concurrent triggers into one
-// mirror per calendar day.
-func (h *MirrorTaskHandler) DedupKey(payload json.RawMessage) string {
-	return fmt.Sprintf("mirror:%s", time.Now().UTC().Format("2006-01-02"))
+// MirrorPayload is the enqueued mirror task's payload: the destination override, the configured interval
+// plus the timing of the schedule that triggered the run.
+type MirrorPayload struct {
+	Path     string         `json:"path"`
+	Interval float64        `json:"interval"`
+	Schedule ScheduleTiming `json:"schedule"`
 }
 
 // Handle mirrors under the maintenance lock, waiting for the lock while
@@ -50,9 +49,7 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 
 	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
 
-	var payload struct {
-		Path string `json:"path"`
-	}
+	var payload MirrorPayload
 	if len(t.Payload) > 0 {
 		if err := json.Unmarshal(t.Payload, &payload); err != nil {
 			return nil, fmt.Errorf("parse mirror payload: %w", err)

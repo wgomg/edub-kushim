@@ -1,9 +1,15 @@
 package task
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 
+	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -52,10 +58,280 @@ func (s BatchSpec) Schedule() string { return s.schedule }
 // definition derives the key from Payload, so a task cannot be created with a key its type does not
 // own. An empty TaskID asks the enqueue to generate one; an explicit id keeps linked waiting children
 // addressable. An empty Status means pending, and waiting creates a pre-linked child that activates
-// when its parent completes.
+// when its parent completes; ParentTaskID names that parent and must refer to an earlier spec in the
+// same enqueue, so a child is skipped together with a dedup-skipped parent.
 type TaskSpec struct {
-	Type    types.TaskType
-	TaskID  string
-	Payload json.RawMessage
-	Status  types.TaskStatus
+	Type         types.TaskType
+	TaskID       string
+	ParentTaskID string
+	Payload      json.RawMessage
+	Status       types.TaskStatus
+}
+
+// EnqueueResult reports what one enqueue created. BatchID is empty when nothing at all was created,
+// which happens when every task lost a dedup conflict or hung off one that did; callers must not treat
+// that as a failure. Skipped counts the tasks not created: dedup-index rejections plus the children
+// skipped because their parent lost a conflict.
+type EnqueueResult struct {
+	BatchID string
+	TaskIDs []string
+	Skipped int
+}
+
+// PreconditionError reports that a task type's environment requirement was not met at all, so the whole
+// enqueue created nothing. TaskType identifies the definition whose precondition failed, and Err is
+// the cause.
+type PreconditionError struct {
+	TaskType types.TaskType
+	Err      error
+}
+
+func (e *PreconditionError) Error() string {
+	return fmt.Sprintf("precondition failed for %q: %v", e.TaskType, e.Err)
+}
+
+func (e *PreconditionError) Unwrap() error { return e.Err }
+
+// Enqueuer is the single creation path for queued work: it turns a batch spec and all its task specs
+// into one atomic batch, deriving each task's dedup key from its own type definition. Only entry-point
+// boundaries construct a BatchSpec; services receive one as an argument.
+type Enqueuer struct {
+	client  *database.Client
+	catalog TypeCatalog
+}
+
+// NewEnqueuer wires the enqueue to the database client and to the task type catalog that is built by
+// the composition root.
+func NewEnqueuer(client *database.Client, catalog TypeCatalog) *Enqueuer {
+	return &Enqueuer{client: client, catalog: catalog}
+}
+
+// EnqueueBatch creates a batch and its tasks in one transaction: nothing is visible until commit, so
+// a batch can never exist without tasks and its tasks can never exist without their batch. The origin
+// and schedule come from spec, which is validated here and by its own constructor. The dedup keys are
+// derived per task type for pending tasks only: waiting children carry none until activation, so any
+// duplicate enqueued while they wait cannot collide with them. A task whose key already covers live
+// work is skipped, and when every task is skipped nothing at all is created and the result then carries
+// an empty BatchID. The task types in one batch must declare the same Holds; their Preconditions run
+// before any row is written and a failure creates nothing.
+func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []TaskSpec) (EnqueueResult, error) {
+	if err := spec.validate(); err != nil {
+		return EnqueueResult{}, err
+	}
+	if len(tasks) == 0 {
+		return EnqueueResult{}, nil
+	}
+
+	definitions := make([]TypeDefinition, len(tasks))
+	statuses := make([]types.TaskStatus, len(tasks))
+	for i, t := range tasks {
+		def, err := e.catalog.Definition(t.Type)
+		if err != nil {
+			return EnqueueResult{}, fmt.Errorf("resolve task type %q: %w", t.Type, err)
+		}
+		definitions[i] = def
+
+		status, err := taskCreationStatus(t)
+		if err != nil {
+			return EnqueueResult{}, err
+		}
+		statuses[i] = status
+		if t.ParentTaskID != "" && status != types.Task.Status.Waiting {
+			return EnqueueResult{}, fmt.Errorf("%s task carries a parent link outside waiting status", t.Type)
+		}
+	}
+
+	if err := validateParentLinks(tasks); err != nil {
+		return EnqueueResult{}, err
+	}
+
+	if err := validateCommonHolds(definitions); err != nil {
+		return EnqueueResult{}, err
+	}
+	if err := checkPreconditions(ctx, definitions); err != nil {
+		return EnqueueResult{}, err
+	}
+
+	batchID := uuid.New().String()
+	tx, err := e.client.BeginTx(ctx, nil)
+	if err != nil {
+		return EnqueueResult{}, fmt.Errorf("begin enqueue transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	queries := e.client.Queries.WithTx(tx)
+
+	var schedule sql.NullString
+	if spec.schedule != "" {
+		schedule = sql.NullString{String: spec.schedule, Valid: true}
+	}
+	if err := queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:       batchID,
+		Origin:   spec.origin,
+		Schedule: schedule,
+		Status:   types.Batch.Status.Queued,
+	}); err != nil {
+		return EnqueueResult{}, fmt.Errorf("create batch: %w", err)
+	}
+
+	result := EnqueueResult{BatchID: batchID}
+	created := make(map[string]struct{}, len(tasks))
+	for i, t := range tasks {
+		taskID := t.TaskID
+		if taskID == "" {
+			taskID = uuid.New().String()
+		}
+
+		if t.ParentTaskID != "" {
+			if _, ok := created[t.ParentTaskID]; !ok {
+				result.Skipped++
+				continue
+			}
+		}
+
+		var dedupKey sql.NullString
+		// waiting children carry no key until activation: the partial dedup index only covers pending and
+		// processing statuses, so a key while waiting protects nothing, and writing it at activation time
+		// can collide with a duplicate the window allowed, stranding or failing the parent's child
+		if statuses[i] != types.Task.Status.Waiting && definitions[i].DedupKey != nil {
+			if key := definitions[i].DedupKey(t.Payload); key != "" {
+				dedupKey = sql.NullString{String: key, Valid: true}
+			}
+		}
+
+		payload := t.Payload
+		// a dedup conflict must skip this task without aborting the batch, so an insert that carries a key
+		// runs under its own savepoint: a unique violation rolls back to that savepoint and the transaction
+		// stays usable for the remaining tasks; a task without a key cannot violate the partial dedup index
+		// and inserts directly
+		if dedupKey.Valid {
+			if _, err := tx.ExecContext(ctx, "SAVEPOINT task_insert"); err != nil {
+				return EnqueueResult{}, fmt.Errorf("set insert savepoint: %w", err)
+			}
+		}
+		if _, err := queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   taskID,
+			TaskType: t.Type,
+			Status:   statuses[i],
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+			Payload:  &payload,
+			DedupKey: dedupKey,
+		}); err != nil {
+			if dedupKey.Valid && errs.IsConstraint(err) {
+				if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT task_insert"); rbErr != nil {
+					return EnqueueResult{}, fmt.Errorf("roll back dedup savepoint: %w", rbErr)
+				}
+				result.Skipped++
+				continue
+			}
+			return EnqueueResult{}, fmt.Errorf("create %s task: %w", t.Type, err)
+		}
+		if dedupKey.Valid {
+			if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT task_insert"); err != nil {
+				return EnqueueResult{}, fmt.Errorf("release insert savepoint: %w", err)
+			}
+		}
+		created[taskID] = struct{}{}
+		result.TaskIDs = append(result.TaskIDs, taskID)
+	}
+
+	if len(result.TaskIDs) == 0 {
+		return EnqueueResult{Skipped: result.Skipped}, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		return EnqueueResult{}, fmt.Errorf("commit enqueue transaction: %w", err)
+	}
+	return result, nil
+}
+
+// EnqueueTask enqueues a single task through EnqueueBatch, sharing its validation, dedup and atomicity.
+func (e *Enqueuer) EnqueueTask(ctx context.Context, spec BatchSpec, t TaskSpec) (EnqueueResult, error) {
+	return e.EnqueueBatch(ctx, spec, []TaskSpec{t})
+}
+
+// DedupKey derives the key a task of the given type would carry with the given payload, empty when the
+// type has no dedup key. Boundaries use it to pre-check coverage with the same derivation the enqueue
+// applies, instead of rebuilding the key vocabulary.
+func (e *Enqueuer) DedupKey(taskType types.TaskType, payload json.RawMessage) (string, error) {
+	def, err := e.catalog.Definition(taskType)
+	if err != nil {
+		return "", fmt.Errorf("resolve task type %q: %w", taskType, err)
+	}
+	if def.DedupKey == nil {
+		return "", nil
+	}
+	return def.DedupKey(payload), nil
+}
+
+// validateParentLinks enforces that a linked child's parent appears earlier in the same enqueue: the
+// enqueue can only skip a child once it has already settled the parent's dedup outcome.
+func validateParentLinks(tasks []TaskSpec) error {
+	seen := make(map[string]struct{}, len(tasks))
+	for _, t := range tasks {
+		if t.ParentTaskID != "" {
+			if _, ok := seen[t.ParentTaskID]; !ok {
+				return fmt.Errorf("%s task parent %q does not precede it in the same enqueue", t.Type, t.ParentTaskID)
+			}
+		}
+		if t.TaskID != "" {
+			seen[t.TaskID] = struct{}{}
+		}
+	}
+	return nil
+}
+
+// taskCreationStatus normalizes a spec's status to pending and rejects every status other than pending
+// or waiting. A waiting child must carry its explicit id, because its parent payload links to it.
+func taskCreationStatus(t TaskSpec) (types.TaskStatus, error) {
+	switch t.Status {
+	case "":
+		return types.Task.Status.Pending, nil
+	case types.Task.Status.Pending:
+		return types.Task.Status.Pending, nil
+	case types.Task.Status.Waiting:
+		if t.TaskID == "" {
+			return "", fmt.Errorf("waiting %s task requires an explicit task id", t.Type)
+		}
+		return types.Task.Status.Waiting, nil
+	default:
+		return "", fmt.Errorf("task status %q cannot create work, only pending or waiting", t.Status)
+	}
+}
+
+// validateCommonHolds enforces that every task type in a batch declares the same Holds set; WaitsFor
+// may vary per task type.
+func validateCommonHolds(definitions []TypeDefinition) error {
+	first := definitions[0]
+	firstKey := holdsKey(first.Locks.Holds)
+	for _, def := range definitions[1:] {
+		if holdsKey(def.Locks.Holds) != firstKey {
+			return fmt.Errorf("task types %q and %q declare different holds in one batch", first.Type, def.Type)
+		}
+	}
+	return nil
+}
+
+// holdsKey renders a holds declaration as an order-independent comparison key.
+func holdsKey(holds []types.LockName) string {
+	sorted := slices.Clone(holds)
+	slices.Sort(sorted)
+	return fmt.Sprint(sorted)
+}
+
+// checkPreconditions evaluates each distinct task type's preconditions once, before any row is written.
+func checkPreconditions(ctx context.Context, definitions []TypeDefinition) error {
+	checked := make(map[types.TaskType]struct{}, len(definitions))
+	for _, def := range definitions {
+		if _, ok := checked[def.Type]; ok {
+			continue
+		}
+		checked[def.Type] = struct{}{}
+		for _, precondition := range def.Preconditions {
+			if err := precondition(ctx); err != nil {
+				return &PreconditionError{TaskType: def.Type, Err: err}
+			}
+		}
+	}
+	return nil
 }

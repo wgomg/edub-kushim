@@ -38,41 +38,6 @@ func (s *Store) SetOwnerID(id string) {
 	s.ownerID = id
 }
 
-// CreateTask inserts a task row and returns its id. An empty taskID
-// becomes a fresh UUID, an empty status becomes pending, and a non-empty
-// dedup key matching existing work rejects the creation.
-func (s *Store) CreateTask(
-	ctx context.Context,
-	taskType types.TaskType, batchID string,
-	payload json.RawMessage,
-	taskID string, status types.TaskStatus, dedupKey string,
-) (string, error) {
-	if taskID == "" {
-		taskID = uuid.New().String()
-	}
-	if status == "" {
-		status = types.Task.Status.Pending
-	}
-
-	var dkey sql.NullString
-	if dedupKey != "" {
-		dkey = sql.NullString{String: dedupKey, Valid: true}
-	}
-
-	_, err := s.queries.CreateTask(ctx, database.CreateTaskParams{
-		TaskID:   taskID,
-		TaskType: taskType,
-		Status:   status,
-		BatchID:  sql.NullString{String: batchID, Valid: batchID != ""},
-		Payload:  &payload,
-		DedupKey: dkey,
-	})
-	if err != nil {
-		return "", fmt.Errorf("create task: %w", err)
-	}
-	return taskID, nil
-}
-
 // ClaimNextPending claims one pending task of the type, blocking types
 // through their dedicated protocol; ErrLockBusy surfaces when the
 // maintenance lock is held.

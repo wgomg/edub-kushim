@@ -2,6 +2,7 @@ package task_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,12 +16,43 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+// createTaskRow inserts a task directly for handler tests that only need a
+// claimed task row; enqueue coverage lives in the enqueue tests.
+func createTaskRow(
+	ctx context.Context, t *testing.T, queries *database.Queries,
+	taskType types.TaskType, batchID string, payload json.RawMessage,
+	taskID string, status types.TaskStatus, dedupKey string,
+) (string, error) {
+	t.Helper()
+	if taskID == "" {
+		taskID = uuid.New().String()
+	}
+	if status == "" {
+		status = types.Task.Status.Pending
+	}
+	var dedup sql.NullString
+	if dedupKey != "" {
+		dedup = sql.NullString{String: dedupKey, Valid: true}
+	}
+	body := payload
+	_, err := queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   taskID,
+		TaskType: taskType,
+		Status:   status,
+		BatchID:  sql.NullString{String: batchID, Valid: batchID != ""},
+		Payload:  &body,
+		DedupKey: dedup,
+	})
+	return taskID, err
+}
 
 // newTestConsumeHandler builds a handler wired to a fresh test database.
 // Lives here as an external test package: the consume handler's discard paths
 // need a DB-backed store, and internal/task is already in the test-db matrix.
-func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *task.Store) {
+func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *task.Store, *database.Client) {
 	t.Helper()
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -39,12 +71,12 @@ func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *task
 	testutil.AssertNoError(t, err, "create consumer")
 
 	store := task.NewStore(client)
-	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, logger), store
+	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, logger), store, client
 }
 
 // insertConsumeEnrichPair creates a waiting enrich linked to a pending consume
 // via the consume payload's on_completed field.
-func insertConsumeEnrichPair(t *testing.T, store *task.Store, filePath, waitingFor string) (consumeTaskID, enrichTaskID string) {
+func insertConsumeEnrichPair(t *testing.T, client *database.Client, filePath, waitingFor string) (consumeTaskID, enrichTaskID string) {
 	t.Helper()
 	ctx := context.Background()
 	consumeTaskID = uuid.New().String()
@@ -54,11 +86,11 @@ func insertConsumeEnrichPair(t *testing.T, store *task.Store, filePath, waitingF
 	}
 
 	enrichPayload, _ := json.Marshal(map[string]any{"waiting_for": waitingFor})
-	_, err := store.CreateTask(ctx, "enrich", "", enrichPayload, enrichTaskID, "waiting", "")
+	_, err := createTaskRow(ctx, t, client.Queries, "enrich", "", enrichPayload, enrichTaskID, "waiting", "")
 	testutil.AssertNoError(t, err, "create enrich task")
 
 	consumePayload, _ := json.Marshal(map[string]any{"file_path": filePath, "on_completed": enrichTaskID})
-	_, err = store.CreateTask(ctx, "consume", "", consumePayload, consumeTaskID, "pending", "")
+	_, err = createTaskRow(ctx, t, client.Queries, "consume", "", consumePayload, consumeTaskID, "pending", "")
 	testutil.AssertNoError(t, err, "create consume task")
 	return consumeTaskID, enrichTaskID
 }
@@ -74,11 +106,11 @@ func consumeTaskFor(t *testing.T, store *task.Store, consumeTaskID string, paylo
 }
 
 func TestConsumeHandlerDiscardsEnrichOnFailure(t *testing.T) {
-	handler, store := newTestConsumeHandler(t)
+	handler, store, client := newTestConsumeHandler(t)
 	ctx := context.Background()
 
 	t.Run("payload unmarshal failure recovers on_completed and discards", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, store, "", "")
+		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "")
 		// strict unmarshal fails: file_path is an object, not a string
 		payload := json.RawMessage(fmt.Sprintf(`{"file_path": {"bad": true}, "on_completed": %q}`, enrichID))
 
@@ -92,7 +124,7 @@ func TestConsumeHandlerDiscardsEnrichOnFailure(t *testing.T) {
 	})
 
 	t.Run("missing file_path discards", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, store, "", "")
+		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "")
 
 		_, err := handler.Handle(ctx, consumeTaskFor(t, store, consumeID, nil))
 		if err == nil || !strings.Contains(err.Error(), "no file_path") {
@@ -103,7 +135,7 @@ func TestConsumeHandlerDiscardsEnrichOnFailure(t *testing.T) {
 	})
 
 	t.Run("missing inbox file discards", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, store, filepath.Join(t.TempDir(), "gone.pdf"), "")
+		consumeID, enrichID := insertConsumeEnrichPair(t, client, filepath.Join(t.TempDir(), "gone.pdf"), "")
 
 		_, err := handler.Handle(ctx, consumeTaskFor(t, store, consumeID, nil))
 		if err == nil || !strings.Contains(err.Error(), "build file from path") {
@@ -114,7 +146,7 @@ func TestConsumeHandlerDiscardsEnrichOnFailure(t *testing.T) {
 	})
 
 	t.Run("discard failure is surfaced in the task error", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, store, "", "unrelated-consume")
+		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "unrelated-consume")
 
 		_, err := handler.Handle(ctx, consumeTaskFor(t, store, consumeID, nil))
 		if err == nil || !strings.Contains(err.Error(), "additionally failed to discard enrich task") {
@@ -125,10 +157,10 @@ func TestConsumeHandlerDiscardsEnrichOnFailure(t *testing.T) {
 	})
 
 	t.Run("thumbnail sibling is discarded on unmarshal failure", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, store, "", "")
+		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "")
 		thumbnailID := uuid.New().String()
 		thumbnailPayload, _ := json.Marshal(map[string]any{"waiting_for": consumeID})
-		_, err := store.CreateTask(ctx, "thumbnail", "", thumbnailPayload, thumbnailID, "waiting", "")
+		_, err := createTaskRow(ctx, t, client.Queries, "thumbnail", "", thumbnailPayload, thumbnailID, "waiting", "")
 		testutil.AssertNoError(t, err, "create thumbnail task")
 
 		// strict unmarshal fails: file_path is an object, not a string

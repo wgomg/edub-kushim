@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -50,24 +51,42 @@ func (h *mockHandler) HandledCount() int {
 	return h.handled
 }
 
-// mockDedupHandler implements both Handler and Dedupable.
-type mockDedupHandler struct {
-	mockHandler
-}
-
-func (h *mockDedupHandler) DedupKey(payload json.RawMessage) string {
-	var p struct {
-		Key string `json:"key"`
-	}
-	json.Unmarshal(payload, &p)
-	return p.Key
-}
-
 var errMockFail = errSentinel{}
 
 type errSentinel struct{}
 
 func (e errSentinel) Error() string { return "mock failure" }
+
+// createTaskRow inserts a task directly, keeping the store-level tests
+// focused on claim, complete, fail and retry rather than on the enqueue
+// contract.
+func createTaskRow(
+	ctx context.Context, t *testing.T, queries *database.Queries,
+	taskType types.TaskType, batchID string, payload json.RawMessage,
+	taskID string, status types.TaskStatus, dedupKey string,
+) (string, error) {
+	t.Helper()
+	if taskID == "" {
+		taskID = uuid.New().String()
+	}
+	if status == "" {
+		status = types.Task.Status.Pending
+	}
+	var dedup sql.NullString
+	if dedupKey != "" {
+		dedup = sql.NullString{String: dedupKey, Valid: true}
+	}
+	body := payload
+	_, err := queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   taskID,
+		TaskType: taskType,
+		Status:   status,
+		BatchID:  sql.NullString{String: batchID, Valid: batchID != ""},
+		Payload:  &body,
+		DedupKey: dedup,
+	})
+	return taskID, err
+}
 
 func setupTaskTest(t *testing.T) (*Store, *Registry, *database.Queries) {
 	t.Helper()
@@ -85,7 +104,7 @@ func TestStoreCreateAndGetTask(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	taskID, err := store.CreateTask(ctx, types.Task.Type.Consume, "", json.RawMessage(`{"foo":"bar"}`), "", "", "")
+	taskID, err := createTaskRow(ctx, t, store.client.Queries, types.Task.Type.Consume, "", json.RawMessage(`{"foo":"bar"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create task")
 	if taskID == "" {
 		t.Fatal("expected non-empty task ID")
@@ -105,7 +124,7 @@ func TestStoreCreateWithBatchID(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	taskID, err := store.CreateTask(ctx, types.Task.Type.Consume, "batch-123", json.RawMessage(`{}`), "", "", "")
+	taskID, err := createTaskRow(ctx, t, store.client.Queries, types.Task.Type.Consume, "batch-123", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 	task, _ := store.GetTaskByTaskID(ctx, taskID)
 	if !task.BatchID.Valid || task.BatchID.String != "batch-123" {
@@ -117,7 +136,7 @@ func TestStoreClaimAndComplete(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
+	_, err := createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
 	claimed, _, err := store.ClaimNextPending(ctx, "consume")
@@ -138,7 +157,7 @@ func TestStoreClaimAndFail(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{}`), "", "", "")
+	_, err := createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
 	claimed, _, err := store.ClaimNextPending(ctx, "consume")
@@ -164,10 +183,10 @@ func TestStoreDedupRejectsDuplicate(t *testing.T) {
 	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
-	_, err := store.CreateTask(ctx, "config", "", json.RawMessage(`{"op":"dl"}`), "", "", "download:eng")
+	_, err := createTaskRow(ctx, t, store.client.Queries, "config", "", json.RawMessage(`{"op":"dl"}`), "", "", "download:eng")
 	testutil.AssertNoError(t, err, "first")
 
-	_, err = store.CreateTask(ctx, "config", "", json.RawMessage(`{"op":"dl"}`), "", "", "download:eng")
+	_, err = createTaskRow(ctx, t, store.client.Queries, "config", "", json.RawMessage(`{"op":"dl"}`), "", "", "download:eng")
 	testutil.AssertError(t, err, "duplicate dedup should error")
 }
 
@@ -185,16 +204,159 @@ func TestRegistry(t *testing.T) {
 	testutil.AssertError(t, err, "missing")
 }
 
-func TestRegistryDedupKey(t *testing.T) {
-	r := NewRegistry()
-	r.Register("dedup", &mockDedupHandler{})
+// testCatalog is the minimal task type table the enqueue tests need: only
+// identity and a payload-derived dedup key.
+type testCatalog struct {
+	defs map[types.TaskType]TypeDefinition
+}
 
-	key := r.DedupKey("dedup", json.RawMessage(`{"key":"abc"}`))
-	testutil.AssertEqual(t, key, "abc", "dedup key")
+func (c testCatalog) Definition(taskType types.TaskType) (TypeDefinition, error) {
+	def, ok := c.defs[taskType]
+	if !ok {
+		return TypeDefinition{}, errors.New("unknown task type")
+	}
+	return def, nil
+}
 
-	r.Register("plain", newMockHandler())
-	key = r.DedupKey("plain", json.RawMessage(`{}`))
-	testutil.AssertEqual(t, key, "", "no key")
+func newEnqueuerForTest(t *testing.T) (*Enqueuer, *database.Client) {
+	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	_, db := database.NewTestQueries(t)
+	database.ResetTestDatabase(db)
+	client := database.NewClient(db)
+
+	keyFromPayload := func(payload json.RawMessage) string {
+		var p struct {
+			Key string `json:"key"`
+		}
+		_ = json.Unmarshal(payload, &p)
+		return p.Key
+	}
+	catalog := testCatalog{defs: map[types.TaskType]TypeDefinition{
+		types.Task.Type.Consume: {Type: types.Task.Type.Consume, DedupKey: keyFromPayload},
+		types.Task.Type.Enrich:  {Type: types.Task.Type.Enrich, DedupKey: keyFromPayload},
+		types.Task.Type.Config:  {Type: types.Task.Type.Config, DedupKey: keyFromPayload},
+	}}
+	return NewEnqueuer(client, catalog), client
+}
+
+func TestEnqueuerCreatesBatchAndTask(t *testing.T) {
+	enqueuer, client := newEnqueuerForTest(t)
+	defer client.DB().Close()
+	ctx := context.Background()
+
+	spec, err := NewBatchSpec(types.Batch.Origin.CLI, "")
+	testutil.AssertNoError(t, err, "spec")
+
+	result, err := enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type:    types.Task.Type.Consume,
+		Payload: json.RawMessage(`{"key":"a"}`),
+	}})
+	testutil.AssertNoError(t, err, "enqueue")
+	if result.BatchID == "" || len(result.TaskIDs) != 1 {
+		t.Fatalf("result = %+v, want one task in one batch", result)
+	}
+
+	task, err := client.Queries.GetTaskByTaskID(ctx, result.TaskIDs[0])
+	testutil.AssertNoError(t, err, "get task")
+	testutil.AssertEqual(t, task.BatchID.String, result.BatchID, "task batch")
+	testutil.AssertEqual(t, string(task.Status), "pending", "task status")
+
+	batch, err := client.Queries.GetBatch(ctx, result.BatchID)
+	testutil.AssertNoError(t, err, "get batch")
+	testutil.AssertEqual(t, string(batch.Origin), "cli", "batch origin")
+	testutil.AssertEqual(t, string(batch.Status), "queued", "batch status")
+}
+
+func TestEnqueuerSkipsDuplicate(t *testing.T) {
+	enqueuer, client := newEnqueuerForTest(t)
+	defer client.DB().Close()
+	ctx := context.Background()
+
+	spec, _ := NewBatchSpec(types.Batch.Origin.CLI, "")
+	first, err := enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type: types.Task.Type.Config, Payload: json.RawMessage(`{"key":"dup"}`),
+	}})
+	testutil.AssertNoError(t, err, "first enqueue")
+	if first.BatchID == "" {
+		t.Fatal("first enqueue created nothing")
+	}
+
+	second, err := enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type: types.Task.Type.Config, Payload: json.RawMessage(`{"key":"dup"}`),
+	}})
+	testutil.AssertNoError(t, err, "second enqueue")
+	testutil.AssertEqual(t, second.BatchID, "", "no batch when every task is skipped")
+	testutil.AssertEqual(t, second.Skipped, 1, "one skipped")
+}
+
+func TestEnqueuerRejectsWaitingWithoutID(t *testing.T) {
+	enqueuer, client := newEnqueuerForTest(t)
+	defer client.DB().Close()
+
+	spec, _ := NewBatchSpec(types.Batch.Origin.CLI, "")
+	_, err := enqueuer.EnqueueBatch(context.Background(), spec, []TaskSpec{{
+		Type:   types.Task.Type.Enrich,
+		Status: types.Task.Status.Waiting,
+	}})
+	testutil.AssertError(t, err, "waiting needs an explicit id")
+}
+
+func TestEnqueuerWaitingChildCarriesNoDedupKey(t *testing.T) {
+	enqueuer, client := newEnqueuerForTest(t)
+	defer client.DB().Close()
+	ctx := context.Background()
+
+	spec, _ := NewBatchSpec(types.Batch.Origin.CLI, "")
+	result, err := enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type:    types.Task.Type.Consume,
+		TaskID:  "parent-id",
+		Payload: json.RawMessage(`{"key":"shared"}`),
+	}, {
+		Type:         types.Task.Type.Enrich,
+		TaskID:       "child-id",
+		ParentTaskID: "parent-id",
+		Payload:      json.RawMessage(`{"key":"shared"}`),
+		Status:       types.Task.Status.Waiting,
+	}})
+	testutil.AssertNoError(t, err, "enqueue")
+	testutil.AssertEqual(t, len(result.TaskIDs), 2, "both tasks created")
+
+	parent, err := client.Queries.GetTaskByTaskID(ctx, "parent-id")
+	testutil.AssertNoError(t, err, "get parent")
+	testutil.AssertEqual(t, parent.DedupKey.String, "shared", "pending parent keeps its derived key")
+
+	child, err := client.Queries.GetTaskByTaskID(ctx, "child-id")
+	testutil.AssertNoError(t, err, "get child")
+	if child.DedupKey.Valid {
+		t.Errorf("waiting child carries dedup key %q: activation may then collide with a duplicate enqueued while it waited",
+			child.DedupKey.String)
+	}
+	testutil.AssertEqual(t, string(child.Status), "waiting", "child status")
+}
+
+func TestEnqueuerRejectsUnknownType(t *testing.T) {
+	enqueuer, client := newEnqueuerForTest(t)
+	defer client.DB().Close()
+
+	spec, _ := NewBatchSpec(types.Batch.Origin.CLI, "")
+	_, err := enqueuer.EnqueueBatch(context.Background(), spec, []TaskSpec{{Type: "nonexistent"}})
+	testutil.AssertError(t, err, "unknown type")
+}
+
+func TestEnqueuerCustomID(t *testing.T) {
+	enqueuer, client := newEnqueuerForTest(t)
+	defer client.DB().Close()
+
+	spec, _ := NewBatchSpec(types.Batch.Origin.CLI, "")
+	result, err := enqueuer.EnqueueBatch(context.Background(), spec, []TaskSpec{{
+		Type:   types.Task.Type.Config,
+		TaskID: "my-id",
+	}})
+	testutil.AssertNoError(t, err, "enqueue")
+	testutil.AssertEqual(t, result.TaskIDs[0], "my-id", "custom id")
 }
 
 func TestRetry(t *testing.T) {
@@ -203,11 +365,11 @@ func TestRetry(t *testing.T) {
 	logger := testutil.NewTestLogger()
 
 	// happy path: retrying a failed consume restores its discarded enrich and thumbnail to waiting
-	_, err := store.CreateTask(ctx, "enrich", "", json.RawMessage(`{}`), "retry-e1", "discarded", "")
+	_, err := createTaskRow(ctx, t, store.client.Queries, "enrich", "", json.RawMessage(`{}`), "retry-e1", "discarded", "")
 	testutil.AssertNoError(t, err, "create discarded enrich")
-	_, err = store.CreateTask(ctx, "thumbnail", "", json.RawMessage(`{}`), "retry-t1", "discarded", "")
+	_, err = createTaskRow(ctx, t, store.client.Queries, "thumbnail", "", json.RawMessage(`{}`), "retry-t1", "discarded", "")
 	testutil.AssertNoError(t, err, "create discarded thumbnail")
-	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"on_completed":"retry-e1","on_completed_thumbnail":"retry-t1"}`), "retry-c1", "failed", "")
+	_, err = createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"on_completed":"retry-e1","on_completed_thumbnail":"retry-t1"}`), "retry-c1", "failed", "")
 	testutil.AssertNoError(t, err, "create failed consume")
 
 	err = Retry(ctx, store.client, logger, "retry-c1")
@@ -224,9 +386,9 @@ func TestRetry(t *testing.T) {
 	testutil.AssertError(t, err, "pending task cannot be retried")
 
 	// error path: consume without on_completed retries without touching anything
-	_, err = store.CreateTask(ctx, "enrich", "", json.RawMessage(`{}`), "retry-e2", "discarded", "")
+	_, err = createTaskRow(ctx, t, store.client.Queries, "enrich", "", json.RawMessage(`{}`), "retry-e2", "discarded", "")
 	testutil.AssertNoError(t, err, "create second discarded enrich")
-	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file_path":"/tmp/x.pdf"}`), "retry-c2", "failed", "")
+	_, err = createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file_path":"/tmp/x.pdf"}`), "retry-c2", "failed", "")
 	testutil.AssertNoError(t, err, "create failed consume without on_completed")
 
 	err = Retry(ctx, store.client, logger, "retry-c2")
@@ -243,7 +405,7 @@ func TestRunnerCompletesTask(t *testing.T) {
 	registry.Register("consume", handler)
 
 	ctx := context.Background()
-	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{}`), "", "", "")
+	_, err := createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
 	err = runner.Next(ctx, types.Task.Type.Consume)
@@ -260,7 +422,7 @@ func TestRunnerFailsTask(t *testing.T) {
 	registry.Register(types.Task.Type.Enrich, handler)
 
 	ctx := context.Background()
-	_, err := store.CreateTask(ctx, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
+	_, err := createTaskRow(ctx, t, store.client.Queries, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
 	err = runner.Next(ctx, types.Task.Type.Enrich)
@@ -311,7 +473,7 @@ func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
 	registry.Register(types.Task.Type.Enrich, handler)
 
 	ctx := context.Background()
-	_, err := store.CreateTask(ctx, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
+	_, err := createTaskRow(ctx, t, store.client.Queries, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
 	err = runner.Next(ctx, types.Task.Type.Enrich)
@@ -331,7 +493,7 @@ func TestRunnerFailsTaskOnPanic(t *testing.T) {
 	registry.Register(types.Task.Type.Enrich, handler)
 
 	ctx := context.Background()
-	taskID, err := store.CreateTask(ctx, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
+	taskID, err := createTaskRow(ctx, t, store.client.Queries, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
 	err = runner.Next(ctx, types.Task.Type.Enrich)
@@ -386,57 +548,11 @@ func TestRunnerNilPayload(t *testing.T) {
 	}
 }
 
-func TestDispatcher(t *testing.T) {
-	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(store, registry)
-
-	handler := newMockHandler()
-	registry.Register(types.Task.Type.Consume, handler)
-
-	ctx := context.Background()
-	taskID, err := dispatcher.Enqueue(ctx, types.Task.Type.Consume, "batch-1", json.RawMessage(`{"k":"v"}`), "", "")
-	testutil.AssertNoError(t, err, "enqueue")
-	if taskID == "" {
-		t.Fatal("expected non-empty task ID")
-	}
-
-	task, _ := store.GetTaskByTaskID(ctx, taskID)
-	testutil.AssertEqual(t, string(task.TaskType), "consume", "type")
-	testutil.AssertEqual(t, task.BatchID.String, "batch-1", "batch")
-}
-
-func TestDispatcherCustomStatus(t *testing.T) {
-	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(store, registry)
-	registry.Register(types.Task.Type.Config, newMockHandler())
-
-	_, err := dispatcher.Enqueue(context.Background(), types.Task.Type.Config, "", json.RawMessage(`{}`), "", types.Task.Status.Waiting)
-	testutil.AssertNoError(t, err, "enqueue with waiting")
-}
-
-func TestDispatcherRejectsUnknownType(t *testing.T) {
-	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(store, registry)
-
-	_, err := dispatcher.Enqueue(context.Background(), "nonexistent", "", json.RawMessage(`{}`), "", "")
-	testutil.AssertError(t, err, "unknown type")
-}
-
-func TestDispatcherCustomID(t *testing.T) {
-	store, registry, _ := setupTaskTest(t)
-	dispatcher := NewDispatcher(store, registry)
-	registry.Register(types.Task.Type.Config, newMockHandler())
-
-	taskID, err := dispatcher.Enqueue(context.Background(), types.Task.Type.Config, "", json.RawMessage(`{}`), "my-id", "")
-	testutil.AssertNoError(t, err, "enqueue")
-	testutil.AssertEqual(t, taskID, "my-id", "custom id")
-}
-
 func TestClaimNextPendingGating(t *testing.T) {
 	store, _, q := setupTaskTest(t)
 	ctx := context.Background()
 
-	_, err := store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
+	_, err := createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create consume task")
 
 	t.Run("consume claimable when backup unlocked", func(t *testing.T) {
@@ -446,7 +562,7 @@ func TestClaimNextPendingGating(t *testing.T) {
 	})
 
 	// Create another consume task and lock backup
-	_, err = store.CreateTask(ctx, "consume", "", json.RawMessage(`{"file":"test2.pdf"}`), "", "", "")
+	_, err = createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file":"test2.pdf"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create second consume task")
 
 	_, err = q.AcquireBackupLock(ctx)
@@ -464,7 +580,7 @@ func TestClaimNextPendingGating(t *testing.T) {
 	})
 
 	t.Run("config not blocked when backup locked", func(t *testing.T) {
-		_, err := store.CreateTask(ctx, "config", "", json.RawMessage(`{"op":"test"}`), "", "", "")
+		_, err := createTaskRow(ctx, t, store.client.Queries, "config", "", json.RawMessage(`{"op":"test"}`), "", "", "")
 		testutil.AssertNoError(t, err, "create config task")
 
 		claimed, _, err := store.ClaimNextPending(ctx, types.Task.Type.Config)
@@ -502,7 +618,7 @@ func setupTaskTestClient(t *testing.T) (*Store, *Registry, *database.Client) {
 
 func createBackupTask(t *testing.T, store *Store, taskID string) {
 	t.Helper()
-	_, err := store.CreateTask(context.Background(), types.Task.Type.Backup, "", json.RawMessage(`{}`), taskID, "", "")
+	_, err := createTaskRow(context.Background(), t, store.client.Queries, types.Task.Type.Backup, "", json.RawMessage(`{}`), taskID, "", "")
 	testutil.AssertNoError(t, err, "create backup task")
 }
 

@@ -15,8 +15,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
-var _ task.Dedupable = (*TagMeasureTaskHandler)(nil)
-
 // TagMeasureDedupKey is the active-dedup key shared by the enqueue path and the task handler so they
 // agree; it is declared here because this package sits below the curation package that shares it.
 const TagMeasureDedupKey = "tagmeasure"
@@ -33,12 +31,6 @@ type TagMeasureTaskHandler struct {
 // NewTagMeasureTaskHandler wires the handler to the queries and logger.
 func NewTagMeasureTaskHandler(queries *database.Queries, logger *log.Logger) *TagMeasureTaskHandler {
 	return &TagMeasureTaskHandler{queries: queries, logger: logger}
-}
-
-// DedupKey is fixed for all tag measure tasks: one sweep runs at a time
-// regardless of payload.
-func (h *TagMeasureTaskHandler) DedupKey(payload json.RawMessage) string {
-	return TagMeasureDedupKey
 }
 
 // Handle forks the tagmeasure verb for the task's batch and returns its

@@ -293,12 +293,17 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, 
 
 const deleteConfigTaskByDedupKey = `-- name: DeleteConfigTaskByDedupKey :execrows
 DELETE FROM task
-WHERE task_type = 'config' AND dedup_key = $1
+WHERE task_type = $1 AND dedup_key = $2
   AND status IN ('pending', 'failed')
 `
 
-func (q *Queries) DeleteConfigTaskByDedupKey(ctx context.Context, dedupKey sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteConfigTaskByDedupKey, dedupKey)
+type DeleteConfigTaskByDedupKeyParams struct {
+	TaskType types.TaskType
+	DedupKey sql.NullString
+}
+
+func (q *Queries) DeleteConfigTaskByDedupKey(ctx context.Context, arg DeleteConfigTaskByDedupKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteConfigTaskByDedupKey, arg.TaskType, arg.DedupKey)
 	if err != nil {
 		return 0, err
 	}
@@ -312,18 +317,6 @@ DELETE FROM task WHERE id = $1
 func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteTask, id)
 	return err
-}
-
-const deleteTasksByBatch = `-- name: DeleteTasksByBatch :execrows
-DELETE FROM task WHERE batch_id = $1
-`
-
-func (q *Queries) DeleteTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteTasksByBatch, batchID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const discardEnrichTask = `-- name: DiscardEnrichTask :execrows
@@ -450,12 +443,17 @@ func (q *Queries) FailTask(ctx context.Context, arg FailTaskParams) error {
 const getConfigTaskByDedupKey = `-- name: GetConfigTaskByDedupKey :one
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress, claim_token
-FROM task WHERE task_type = 'config' AND dedup_key = $1
+FROM task WHERE task_type = $1 AND dedup_key = $2
 ORDER BY created_at DESC LIMIT 1
 `
 
-func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, dedupKey sql.NullString) (Task, error) {
-	row := q.db.QueryRowContext(ctx, getConfigTaskByDedupKey, dedupKey)
+type GetConfigTaskByDedupKeyParams struct {
+	TaskType types.TaskType
+	DedupKey sql.NullString
+}
+
+func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, arg GetConfigTaskByDedupKeyParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, getConfigTaskByDedupKey, arg.TaskType, arg.DedupKey)
 	var i Task
 	err := row.Scan(
 		&i.ID,

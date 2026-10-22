@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -37,35 +38,67 @@ func createTestDoc(t *testing.T, queries *database.Queries, title string) string
 	return docID
 }
 
-type recordingTaskCreator struct {
-	calls    []mockTaskCall
-	createFn func(taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error)
+// serviceTestCatalog is the task type table the service tests enqueue
+// against: identity plus the dedup derivations the services rely on.
+type serviceTestCatalog struct {
+	defs map[types.TaskType]task.TypeDefinition
 }
 
-func (m *recordingTaskCreator) CreateTask(_ context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
-	if m.createFn != nil {
-		return m.createFn(taskType, batchID, payload, taskID, status, dedupKey)
+func (c serviceTestCatalog) Definition(taskType types.TaskType) (task.TypeDefinition, error) {
+	def, ok := c.defs[taskType]
+	if !ok {
+		return task.TypeDefinition{}, fmt.Errorf("unknown task type: %q", taskType)
 	}
-	m.calls = append(m.calls, mockTaskCall{
-		TaskType: string(taskType), BatchID: batchID, Payload: payload,
-		TaskID: taskID, Status: string(status), DedupKey: dedupKey,
-	})
-	return taskID, nil
+	return def, nil
 }
 
-type recordingBatchCreator struct {
-	calls    []mockTaskCall
-	createFn func(id string, source types.BatchSource, status types.BatchStatus) error
-}
-
-func (m *recordingBatchCreator) Create(_ context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
-	if m.createFn != nil {
-		return m.createFn(id, source, status)
+func newServiceEnqueuer(_ *testing.T, client *database.Client) *task.Enqueuer {
+	documentID := func(payload json.RawMessage) string {
+		var p struct {
+			DocumentID string `json:"document_id"`
+		}
+		_ = json.Unmarshal(payload, &p)
+		return p.DocumentID
 	}
-	m.calls = append(m.calls, mockTaskCall{
-		BatchID: id, Source: string(source), Status: string(status),
-	})
-	return nil
+	md5Key := func(payload json.RawMessage) string {
+		var p struct {
+			MD5 string `json:"md5"`
+		}
+		_ = json.Unmarshal(payload, &p)
+		if p.MD5 == "" {
+			return ""
+		}
+		return "consume:" + p.MD5
+	}
+	enrichKey := func(payload json.RawMessage) string {
+		if id := documentID(payload); id != "" {
+			return "enrich:doc:" + id
+		}
+		return ""
+	}
+	thumbnailKey := func(payload json.RawMessage) string {
+		if id := documentID(payload); id != "" {
+			return "thumbnail:doc:" + id
+		}
+		return ""
+	}
+
+	catalog := serviceTestCatalog{defs: map[types.TaskType]task.TypeDefinition{
+		types.Task.Type.Consume:       {Type: types.Task.Type.Consume, DedupKey: md5Key},
+		types.Task.Type.Enrich:        {Type: types.Task.Type.Enrich, DedupKey: enrichKey},
+		types.Task.Type.Thumbnail:     {Type: types.Task.Type.Thumbnail, DedupKey: thumbnailKey},
+		types.Task.Type.ThumbBackfill: {Type: types.Task.Type.ThumbBackfill, DedupKey: thumbnailKey},
+	}}
+	return task.NewEnqueuer(client, catalog)
+}
+
+func testBatchSpec(t *testing.T, origin types.BatchOrigin) task.BatchSpec {
+	t.Helper()
+	spec, err := task.NewBatchSpec(origin, "")
+	if err != nil {
+		t.Fatalf("build spec: %v", err)
+	}
+	return spec
 }
 
 func TestReEnrich_Success(t *testing.T) {
@@ -76,29 +109,31 @@ func TestReEnrich_Success(t *testing.T) {
 
 	_, docUUID := database.CreateTestDocument(t, client.Queries, "re-test.pdf")
 
-	taskMock := &recordingTaskCreator{}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
 
-	batchID, err := svc.ReEnrich(ctx, docUUID)
+	batchID, err := svc.ReEnrich(ctx, testBatchSpec(t, types.Batch.Origin.API), docUUID)
 	testutil.AssertNoError(t, err, "re-enrich")
 	if batchID == "" {
 		t.Fatal("expected non-empty batch ID")
 	}
 
-	testutil.AssertEqual(t, len(batchMock.calls), 1, "batch creation called")
-	testutil.AssertEqual(t, batchMock.calls[0].Source, "reenrich", "batch source")
-	testutil.AssertEqual(t, batchMock.calls[0].Status, "queued", "batch status")
-	testutil.AssertEqual(t, batchMock.calls[0].BatchID, batchID, "batch ID matches returned ID")
+	batch, err := client.Queries.GetBatch(ctx, batchID)
+	testutil.AssertNoError(t, err, "get batch")
+	testutil.AssertEqual(t, string(batch.Origin), "api", "batch origin")
+	testutil.AssertEqual(t, string(batch.Status), "queued", "batch status")
 
-	testutil.AssertEqual(t, len(taskMock.calls), 1, "task creation called")
-	testutil.AssertEqual(t, taskMock.calls[0].TaskType, "enrich", "task type")
-	testutil.AssertEqual(t, taskMock.calls[0].Status, "pending", "task status")
-	testutil.AssertEqual(t, taskMock.calls[0].BatchID, batchID, "task batch ID matches")
-	testutil.AssertEqual(t, taskMock.calls[0].DedupKey, "enrich:doc:"+docUUID, "dedup key format")
+	tasks, err := client.Queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
+		BatchID: sql.NullString{String: batchID, Valid: true},
+		Limit:   100,
+	})
+	testutil.AssertNoError(t, err, "list tasks")
+	testutil.AssertEqual(t, len(tasks), 1, "one enrich task")
+	testutil.AssertEqual(t, string(tasks[0].TaskType), "enrich", "task type")
+	testutil.AssertEqual(t, string(tasks[0].Status), "pending", "task status")
+	testutil.AssertEqual(t, tasks[0].DedupKey.String, "enrich:doc:"+docUUID, "dedup key format")
 
 	var payload map[string]any
-	json.Unmarshal(taskMock.calls[0].Payload, &payload)
+	json.Unmarshal(*tasks[0].Payload, &payload)
 	testutil.AssertEqual(t, payload["document_id"], docUUID, "document_id in payload")
 }
 
@@ -108,35 +143,34 @@ func TestReEnrich_DocumentNotFound(t *testing.T) {
 	defer client.DB().Close()
 	ctx := context.Background()
 
-	taskMock := &recordingTaskCreator{}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
 
-	_, err := svc.ReEnrich(ctx, "nonexistent-uuid")
+	_, err := svc.ReEnrich(ctx, testBatchSpec(t, types.Batch.Origin.API), "nonexistent-uuid")
 	testutil.AssertError(t, err, "not found")
-	testutil.AssertEqual(t, len(batchMock.calls), 0, "no batch on not-found")
-	testutil.AssertEqual(t, len(taskMock.calls), 0, "no task on not-found")
+
+	overviews, listErr := client.Queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
+		Limit:           10,
+		NonConsumeTypes: types.NonConsumeTaskTypeValues(),
+	})
+	testutil.AssertNoError(t, listErr, "list batches")
+	testutil.AssertEqual(t, len(overviews), 0, "no batch on not-found")
 }
 
-func TestReEnrich_TaskCreationFails(t *testing.T) {
+func TestReEnrich_DuplicateIsConflict(t *testing.T) {
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
 	defer client.DB().Close()
 	ctx := context.Background()
 
-	_, docUUID := database.CreateTestDocument(t, client.Queries, "fail-task.pdf")
+	_, docUUID := database.CreateTestDocument(t, client.Queries, "dup-re.pdf")
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
+	spec := testBatchSpec(t, types.Batch.Origin.API)
 
-	taskMock := &recordingTaskCreator{
-		createFn: func(_ types.TaskType, _ string, _ json.RawMessage, _ string, _ types.TaskStatus, _ string) (string, error) {
-			return "", fmt.Errorf("create task: unique constraint")
-		},
-	}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	_, err := svc.ReEnrich(ctx, spec, docUUID)
+	testutil.AssertNoError(t, err, "first enqueue")
 
-	_, err := svc.ReEnrich(ctx, docUUID)
-	testutil.AssertError(t, err, "task creation error")
-	testutil.AssertEqual(t, len(batchMock.calls), 1, "batch was created before task")
+	_, err = svc.ReEnrich(ctx, spec, docUUID)
+	testutil.AssertError(t, err, "second enqueue for the same document conflicts")
 }
 
 func TestReEnrichMany_LimitCapped(t *testing.T) {
@@ -148,22 +182,23 @@ func TestReEnrichMany_LimitCapped(t *testing.T) {
 	createTestDoc(t, client.Queries, "bulk-1.pdf")
 	createTestDoc(t, client.Queries, "bulk-2.pdf")
 
-	taskMock := &recordingTaskCreator{}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
 
-	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, 1)
+	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, testBatchSpec(t, types.Batch.Origin.CLI), 1)
 	testutil.AssertNoError(t, err, "re-enrich-many")
 	if batchID == "" {
 		t.Fatal("expected non-empty batch ID")
 	}
 	testutil.AssertEqual(t, enqueued, 1, "enqueued")
 	testutil.AssertEqual(t, skipped, 0, "skipped")
-	testutil.AssertEqual(t, len(batchMock.calls), 1, "batch created once")
-	testutil.AssertEqual(t, batchMock.calls[0].Source, "reenrich", "batch source")
-	testutil.AssertEqual(t, len(taskMock.calls), 1, "task created once")
-	testutil.AssertEqual(t, taskMock.calls[0].TaskType, "enrich", "task type")
-	testutil.AssertEqual(t, taskMock.calls[0].Status, "pending", "task status")
+
+	tasks, err := client.Queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
+		BatchID: sql.NullString{String: batchID, Valid: true},
+		Limit:   100,
+	})
+	testutil.AssertNoError(t, err, "list tasks")
+	testutil.AssertEqual(t, len(tasks), 1, "one task")
+	testutil.AssertEqual(t, string(tasks[0].TaskType), "enrich", "task type")
 }
 
 func TestReEnrichMany_All(t *testing.T) {
@@ -176,18 +211,15 @@ func TestReEnrichMany_All(t *testing.T) {
 	createTestDoc(t, client.Queries, "bulk-2.pdf")
 	createTestDoc(t, client.Queries, "bulk-3.pdf")
 
-	taskMock := &recordingTaskCreator{}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
 
-	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, 0)
+	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, testBatchSpec(t, types.Batch.Origin.CLI), 0)
 	testutil.AssertNoError(t, err, "re-enrich-many all")
 	if batchID == "" {
 		t.Fatal("expected non-empty batch ID")
 	}
 	testutil.AssertEqual(t, enqueued, 3, "enqueued all")
 	testutil.AssertEqual(t, skipped, 0, "skipped")
-	testutil.AssertEqual(t, len(taskMock.calls), 3, "three tasks created")
 }
 
 func TestReEnrichMany_ConflictSkipped(t *testing.T) {
@@ -196,61 +228,26 @@ func TestReEnrichMany_ConflictSkipped(t *testing.T) {
 	defer client.DB().Close()
 	ctx := context.Background()
 
-	createTestDoc(t, client.Queries, "conflict.pdf")
+	docUUID := createTestDoc(t, client.Queries, "conflict.pdf")
 
-	// simulate an existing pending enrich task via the mock returning an error
-	taskMock := &recordingTaskCreator{
-		createFn: func(_ types.TaskType, _ string, _ json.RawMessage, _ string, _ types.TaskStatus, _ string) (string, error) {
-			return "", fmt.Errorf("create task: unique constraint violation")
-		},
-	}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	// a pending enrich task for the same document makes the derive key collide
+	payload, _ := json.Marshal(map[string]any{"document_id": docUUID})
+	_, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   "pre-existing-enrich",
+		TaskType: types.Task.Type.Enrich,
+		Status:   types.Task.Status.Pending,
+		Payload:  (*json.RawMessage)(&payload),
+		DedupKey: sql.NullString{String: "enrich:doc:" + docUUID, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "seed pending enrich task")
 
-	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, 0)
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
+
+	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, testBatchSpec(t, types.Batch.Origin.CLI), 0)
 	testutil.AssertNoError(t, err, "re-enrich-many conflict")
 	testutil.AssertEqual(t, batchID, "", "no batch when all skipped")
 	testutil.AssertEqual(t, enqueued, 0, "none enqueued")
 	testutil.AssertEqual(t, skipped, 1, "one skipped")
-	testutil.AssertEqual(t, len(batchMock.calls), 0, "no batch created")
-}
-
-func TestReEnrichMany_BatchCreateFails(t *testing.T) {
-	client := database.NewTestClient(t)
-	database.ResetTestDatabase(client.DB())
-	defer client.DB().Close()
-	ctx := context.Background()
-
-	createTestDoc(t, client.Queries, "batch-fail-1.pdf")
-	createTestDoc(t, client.Queries, "batch-fail-2.pdf")
-
-	taskMock := &recordingTaskCreator{}
-	batchMock := &recordingBatchCreator{
-		createFn: func(_ string, _ types.BatchSource, _ types.BatchStatus) error {
-			return fmt.Errorf("create batch: connection lost")
-		},
-	}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
-
-	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, 0)
-	if err == nil {
-		t.Fatal("expected error from batch creation")
-	}
-	testutil.AssertError(t, err, "batch creation failure")
-	testutil.AssertEqual(t, batchID, "", "no batch ID on failure")
-	testutil.AssertEqual(t, enqueued, 2, "two tasks created before failure")
-	testutil.AssertEqual(t, skipped, 0, "no conflicts")
-
-	// verify cleanup: no tasks should remain with the orphaned batch id
-	// the batch id is captured from the mock — extract it from the mock's calls
-	batchIDUsed := taskMock.calls[0].BatchID
-	tasks, listErr := client.Queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
-		BatchID: sql.NullString{String: batchIDUsed, Valid: true},
-		Limit:   100,
-		Offset:  0,
-	})
-	testutil.AssertNoError(t, listErr, "list tasks after cleanup")
-	testutil.AssertEqual(t, len(tasks), 0, "unbatched tasks cleaned up")
 }
 
 func TestReEnrichMany_NoDocuments(t *testing.T) {
@@ -259,19 +256,16 @@ func TestReEnrichMany_NoDocuments(t *testing.T) {
 	defer client.DB().Close()
 	ctx := context.Background()
 
-	taskMock := &recordingTaskCreator{}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
 
-	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, 0)
+	batchID, enqueued, skipped, err := svc.ReEnrichMany(ctx, testBatchSpec(t, types.Batch.Origin.CLI), 0)
 	testutil.AssertNoError(t, err, "re-enrich-many empty")
 	testutil.AssertEqual(t, batchID, "", "no batch when no documents")
 	testutil.AssertEqual(t, enqueued, 0, "none enqueued")
 	testutil.AssertEqual(t, skipped, 0, "none skipped")
-	testutil.AssertEqual(t, len(batchMock.calls), 0, "no batch created")
 }
 
-func TestReEnrichMany_BatchIDUsedInTasks(t *testing.T) {
+func TestReEnrichMany_TasksShareBatch(t *testing.T) {
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
 	defer client.DB().Close()
@@ -279,16 +273,17 @@ func TestReEnrichMany_BatchIDUsedInTasks(t *testing.T) {
 
 	docUUID := createTestDoc(t, client.Queries, "verify-bid.pdf")
 
-	taskMock := &recordingTaskCreator{}
-	batchMock := &recordingBatchCreator{}
-	svc := NewReEnrich(client.Queries, taskMock, batchMock)
+	svc := NewReEnrich(client.Queries, newServiceEnqueuer(t, client))
 
-	batchID, _, _, err := svc.ReEnrichMany(ctx, 0)
+	batchID, _, _, err := svc.ReEnrichMany(ctx, testBatchSpec(t, types.Batch.Origin.CLI), 0)
 	testutil.AssertNoError(t, err, "re-enrich-many")
 
-	// all tasks in the run share the same batch id, which matches the returned id
-	for _, call := range taskMock.calls {
-		testutil.AssertEqual(t, call.BatchID, batchID, "task batch ID matches returned batch ID")
-		testutil.AssertEqual(t, call.DedupKey, "enrich:doc:"+docUUID, "dedup key format")
-	}
+	tasks, err := client.Queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
+		BatchID: sql.NullString{String: batchID, Valid: true},
+		Limit:   100,
+	})
+	testutil.AssertNoError(t, err, "list tasks")
+	testutil.AssertEqual(t, len(tasks), 1, "one task in the batch")
+	testutil.AssertEqual(t, tasks[0].BatchID.String, batchID, "task batch ID matches returned batch ID")
+	testutil.AssertEqual(t, tasks[0].DedupKey.String, "enrich:doc:"+docUUID, "dedup key format")
 }

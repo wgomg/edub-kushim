@@ -3,6 +3,7 @@ package consumption
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,9 +13,58 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+// scanTestCatalog is the task type table the scan tests enqueue against.
+type scanTestCatalog struct {
+	defs map[types.TaskType]task.TypeDefinition
+}
+
+func (c scanTestCatalog) Definition(taskType types.TaskType) (task.TypeDefinition, error) {
+	def, ok := c.defs[taskType]
+	if !ok {
+		return task.TypeDefinition{}, sql.ErrNoRows
+	}
+	return def, nil
+}
+
+func newScanTestEnqueuer(client *database.Client) *task.Enqueuer {
+	documentID := func(payload json.RawMessage) string {
+		var p struct {
+			DocumentID string `json:"document_id"`
+		}
+		_ = json.Unmarshal(payload, &p)
+		return p.DocumentID
+	}
+	catalog := scanTestCatalog{defs: map[types.TaskType]task.TypeDefinition{
+		types.Task.Type.Consume: {Type: types.Task.Type.Consume, DedupKey: func(payload json.RawMessage) string {
+			var p struct {
+				MD5 string `json:"md5"`
+			}
+			_ = json.Unmarshal(payload, &p)
+			if p.MD5 == "" {
+				return ""
+			}
+			return "consume:" + p.MD5
+		}},
+		types.Task.Type.Enrich: {Type: types.Task.Type.Enrich, DedupKey: func(payload json.RawMessage) string {
+			if id := documentID(payload); id != "" {
+				return "enrich:doc:" + id
+			}
+			return ""
+		}},
+		types.Task.Type.Thumbnail: {Type: types.Task.Type.Thumbnail, DedupKey: func(payload json.RawMessage) string {
+			if id := documentID(payload); id != "" {
+				return "thumbnail:doc:" + id
+			}
+			return ""
+		}},
+	}}
+	return task.NewEnqueuer(client, catalog)
+}
 
 func setupScanTest(t *testing.T) (*config.Config, *database.Client, func()) {
 	t.Helper()
@@ -33,7 +83,7 @@ func TestScanAndEnqueue_EmptyInbox(t *testing.T) {
 	defer cleanup()
 
 	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
+	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
 	}
@@ -53,7 +103,7 @@ func TestScanAndEnqueue_CreatesBatchAndTasks(t *testing.T) {
 	testutil.CreateTestPDF(t, pdfPath, "unique content alpha")
 
 	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
+	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
 	}
@@ -69,8 +119,8 @@ func TestScanAndEnqueue_CreatesBatchAndTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBatch: %v", err)
 	}
-	if batch.Source != "polling" {
-		t.Errorf("batch.Source = %q, want polling", batch.Source)
+	if batch.Origin != types.Batch.Origin.Polling {
+		t.Errorf("batch.Origin = %q, want polling", batch.Origin)
 	}
 	if batch.Status != "queued" {
 		t.Errorf("batch.Status = %q, want queued", batch.Status)
@@ -156,7 +206,7 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 	}
 
 	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
+	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
 	}
@@ -216,7 +266,7 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 	testutil.CreateTestPDF(t, newPath, "brand new content")
 
 	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
+	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
 	}
@@ -257,7 +307,7 @@ func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
 	}
 
 	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
+	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
 	}
@@ -284,7 +334,7 @@ func TestScanAndEnqueue_PausedBatchesSkip(t *testing.T) {
 
 	// Create a paused batch to trigger the guard.
 	err := client.Queries.CreateBatch(context.Background(), database.CreateBatchParams{
-		ID: "paused-guard-test", Source: types.Batch.Source.CLI, Status: types.Batch.Status.Paused,
+		ID: "paused-guard-test", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Paused,
 	})
 	if err != nil {
 		t.Fatalf("CreateBatch: %v", err)
@@ -295,7 +345,7 @@ func TestScanAndEnqueue_PausedBatchesSkip(t *testing.T) {
 	testutil.CreateTestPDF(t, pdfPath, "content that should not be scanned")
 
 	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, logger)
+	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
 	if err != nil {
 		t.Fatalf("ScanAndEnqueue: %v", err)
 	}

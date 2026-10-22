@@ -262,6 +262,7 @@ test-short:
 		./internal/types/ \
 		./internal/tags/ \
 		./internal/ops/flags/ \
+		./internal/ops/container/ \
 
 # Default test target (same as test-short for now).
 test: test-short
@@ -287,6 +288,7 @@ test-verbose:
 		./internal/types/ \
 		./internal/tags/ \
 		./internal/ops/flags/ \
+		./internal/ops/container/ \
 
 # Database-dependent tests (requires PostgreSQL 16+).
 .PHONY: test-db

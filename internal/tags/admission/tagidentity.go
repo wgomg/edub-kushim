@@ -7,11 +7,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
-
-var _ task.Dedupable = (*TagIdentityTaskHandler)(nil)
 
 // TagIdentityTaskHandler runs the tag identity resolution sweep as a
 // blocking task: it forks the tagidentity verb and extracts its JSON
@@ -25,12 +22,6 @@ type TagIdentityTaskHandler struct {
 // NewTagIdentityTaskHandler wires the handler to the queries and logger.
 func NewTagIdentityTaskHandler(queries *database.Queries, logger *log.Logger) *TagIdentityTaskHandler {
 	return &TagIdentityTaskHandler{queries: queries, logger: logger}
-}
-
-// DedupKey is fixed for all tag identity tasks: only one sweep runs at a
-// time regardless of payload.
-func (h *TagIdentityTaskHandler) DedupKey(payload json.RawMessage) string {
-	return curation.TagIdentityDedupKey
 }
 
 // Handle forks the tagidentity verb for the task's batch and returns its

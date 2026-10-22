@@ -3,68 +3,59 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ReEnrich re-enqueues enrichment for stored documents: one document, or
-// every live document up to a limit. Tasks deduplicate per document, so a
-// triggered run and a bulk run converge on whichever runs first.
+// ReEnrich re-enqueues enrichment for stored documents: one document, or every live document up to a
+// limit. Tasks deduplicate per document, so a triggered run and a bulk run converge on whichever runs
+// first.
 type ReEnrich struct {
-	queries      *database.Queries
-	taskCreator  types.TaskCreator
-	batchCreator types.BatchCreator
+	queries  *database.Queries
+	enqueuer *task.Enqueuer
 }
 
-// NewReEnrich wires the enqueue path to the queries and the task and
-// batch creators.
-func NewReEnrich(queries *database.Queries, taskCreator types.TaskCreator, batchCreator types.BatchCreator) *ReEnrich {
+// NewReEnrich wires the enqueue path to the queries and the transactional enqueuer.
+func NewReEnrich(queries *database.Queries, enqueuer *task.Enqueuer) *ReEnrich {
 	return &ReEnrich{
-		queries:      queries,
-		taskCreator:  taskCreator,
-		batchCreator: batchCreator,
+		queries:  queries,
+		enqueuer: enqueuer,
 	}
 }
 
-// ReEnrich queues one document's enrichment in a fresh reenrich batch;
-// the document must exist.
-func (s *ReEnrich) ReEnrich(ctx context.Context, documentUUID string) (batchID string, err error) {
+// ReEnrich queues one document's enrichment in a fresh batch; the document must exist and an enrich
+// task already queued for it is a conflict.
+func (s *ReEnrich) ReEnrich(ctx context.Context, spec task.BatchSpec, documentUUID string) (batchID string, err error) {
 	_, err = s.queries.GetDocument(ctx, documentUUID)
 	if err != nil {
 		return "", errs.FromDB(err, "get document")
 	}
 
-	batchID = uuid.New().String()
-
-	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.Reenrich, types.Batch.Status.Queued); err != nil {
-		return "", errs.FromDB(err, "create batch")
-	}
-
-	taskID := uuid.New().String()
-
 	payload, _ := json.Marshal(map[string]any{
 		"document_id": documentUUID,
 	})
 
-	_, err = s.taskCreator.CreateTask(ctx, types.Task.Type.Enrich, batchID, payload, taskID, types.Task.Status.Pending, "enrich:doc:"+documentUUID)
+	result, err := s.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{
+		Type:    types.Task.Type.Enrich,
+		Payload: payload,
+	})
 	if err != nil {
-		return "", errs.FromDB(err, "create enrich task")
+		return "", fmt.Errorf("create enrich task: %w", err)
+	}
+	if result.BatchID == "" {
+		return "", errs.EConflict("re-enrich", fmt.Errorf("enrich task for document %s is already queued", documentUUID))
 	}
 
-	return batchID, nil
+	return result.BatchID, nil
 }
 
-// ReEnrichMany queues enrichment for every live document, capped by a
-// positive limit. Tasks whose dedup key still holds are skipped; when no
-// task could be enqueued no batch is created, and a batch-creation
-// failure removes the created tasks so their dedup keys do not block
-// later runs.
-func (s *ReEnrich) ReEnrichMany(ctx context.Context, limit int64) (batchID string, enqueued, skipped int, err error) {
+// ReEnrichMany queues enrichment for every live document, capped by a positive limit. Tasks whose dedup
+// key still holds are skipped; when no task is enqueued no batch is created.
+func (s *ReEnrich) ReEnrichMany(ctx context.Context, spec task.BatchSpec, limit int64) (batchID string, enqueued, skipped int, err error) {
 	documentIDs, err := s.queries.ListLiveDocumentIDs(ctx)
 	if err != nil {
 		return "", 0, 0, errs.FromDB(err, "list live documents")
@@ -74,28 +65,18 @@ func (s *ReEnrich) ReEnrichMany(ctx context.Context, limit int64) (batchID strin
 		documentIDs = documentIDs[:limit]
 	}
 
-	batchID = uuid.New().String()
-
+	tasks := make([]task.TaskSpec, 0, len(documentIDs))
 	for _, documentID := range documentIDs {
 		payload, _ := json.Marshal(map[string]any{
 			"document_id": documentID,
 		})
-
-		_, err := s.taskCreator.CreateTask(ctx, types.Task.Type.Enrich, batchID, payload, uuid.New().String(), types.Task.Status.Pending, "enrich:doc:"+documentID)
-		if err != nil {
-			skipped++
-			continue
-		}
-		enqueued++
+		tasks = append(tasks, task.TaskSpec{Type: types.Task.Type.Enrich, Payload: payload})
 	}
 
-	if enqueued == 0 {
-		return "", 0, skipped, nil
+	result, err := s.enqueuer.EnqueueBatch(ctx, spec, tasks)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("enqueue enrich tasks: %w", err)
 	}
 
-	if err := s.batchCreator.Create(ctx, batchID, types.Batch.Source.Reenrich, types.Batch.Status.Queued); err != nil {
-		return "", enqueued, skipped, errs.FromDB(errors.Join(err, task.DeleteBatchTasks(context.Background(), s.queries, batchID)), "create batch")
-	}
-
-	return batchID, enqueued, skipped, nil
+	return result.BatchID, len(result.TaskIDs), result.Skipped, nil
 }

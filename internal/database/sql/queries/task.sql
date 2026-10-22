@@ -178,7 +178,7 @@ SELECT COUNT(*) FROM task WHERE status = $1 AND task_type = $2;
 -- name: GetConfigTaskByDedupKey :one
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress, claim_token
-FROM task WHERE task_type = 'config' AND dedup_key = $1
+FROM task WHERE task_type = @task_type AND dedup_key = @dedup_key
 ORDER BY created_at DESC LIMIT 1;
 
 -- name: RetryTask :exec
@@ -194,7 +194,7 @@ WHERE id = $1;
 
 -- name: DeleteConfigTaskByDedupKey :execrows
 DELETE FROM task
-WHERE task_type = 'config' AND dedup_key = $1
+WHERE task_type = @task_type AND dedup_key = @dedup_key
   AND status IN ('pending', 'failed');
 
 -- name: SetEnrichTaskPending :exec
@@ -266,9 +266,6 @@ WHERE task_id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail
 
 -- name: DeleteTask :exec
 DELETE FROM task WHERE id = $1;
-
--- name: DeleteTasksByBatch :execrows
-DELETE FROM task WHERE batch_id = $1;
 
 -- name: CancelPendingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP

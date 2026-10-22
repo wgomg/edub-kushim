@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/mime"
@@ -36,9 +35,9 @@ type ConfigHandler struct {
 	client      *database.Client
 	queries     *database.Queries
 	logger      *log.Logger
-	dispatcher  *task.Dispatcher
+	enqueuer    *task.Enqueuer
 	services    *service.CrudServices
-	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Dispatcher, error)
+	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Enqueuer, error)
 }
 
 // NewConfigHandler wires the config handler; the services attach after
@@ -49,7 +48,7 @@ func NewConfigHandler(
 	onConfigSet func(*config.Config),
 	client *database.Client,
 	logger *log.Logger,
-	dispatcher *task.Dispatcher,
+	enqueuer *task.Enqueuer,
 	services *service.CrudServices,
 ) *ConfigHandler {
 	h := &ConfigHandler{
@@ -57,7 +56,7 @@ func NewConfigHandler(
 		onConfigSet: onConfigSet,
 		client:      client,
 		logger:      logger,
-		dispatcher:  dispatcher,
+		enqueuer:    enqueuer,
 		services:    services,
 	}
 	if client != nil {
@@ -68,8 +67,8 @@ func NewConfigHandler(
 
 // SetServices attaches the lazily constructed services after bootstrap;
 // only set once.
-func (h *ConfigHandler) SetServices(client *database.Client, dispatcher *task.Dispatcher) {
-	h.dispatcher = dispatcher
+func (h *ConfigHandler) SetServices(client *database.Client, enqueuer *task.Enqueuer) {
+	h.enqueuer = enqueuer
 	if client != nil {
 		h.client = client
 		h.queries = client.Queries
@@ -131,11 +130,11 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 	if configDir, ok := body["config_dir"].(string); ok && h.getConfig() == nil {
 		var cfg *config.Config
 		var client *database.Client
-		var dispatcher *task.Dispatcher
+		var enqueuer *task.Enqueuer
 		var err error
 
 		if h.OnBootstrap != nil {
-			cfg, client, dispatcher, err = h.OnBootstrap(configDir)
+			cfg, client, enqueuer, err = h.OnBootstrap(configDir)
 		} else {
 			cfg, err = config.Bootstrap(configDir)
 		}
@@ -145,7 +144,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.onConfigSet(cfg)
-		h.SetServices(client, dispatcher)
+		h.SetServices(client, enqueuer)
 
 		svcPath, svcErr := config.GenerateServiceFiles(configDir)
 		if svcErr != nil {
@@ -208,7 +207,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		missing := config.MissingExternalToolErrors(cfg)
 
-		if h.dispatcher == nil {
+		if h.enqueuer == nil {
 			resp := map[string]any{
 				"configured":    true,
 				"missing_tools": missing,
@@ -244,7 +243,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.dispatcher == nil {
+	if h.enqueuer == nil {
 		http.Error(w, "database not ready — retry after setup completes", http.StatusServiceUnavailable)
 		return
 	}
@@ -298,61 +297,58 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Config) int {
-	type pendingTask struct {
-		dedupKey string
-		payload  map[string]string
+	spec, err := task.NewBatchSpec(itypes.Batch.Origin.Wizard, "")
+	if err != nil {
+		h.logger.Error("", "build config batch spec: %v", err)
+		return 0
 	}
-	var tasks []pendingTask
+
+	var tasks []task.TaskSpec
 
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
-		key := "config:tessdata:" + lang
-		if !h.configTaskCovered(ctx, key) {
-			tasks = append(tasks, pendingTask{dedupKey: key, payload: map[string]string{
-				"config_dir": cfg.App.ConfigDir,
-				"op":         "tessdata",
-				"lang":       lang,
-			}})
+		payload, _ := json.Marshal(map[string]string{
+			"config_dir": cfg.App.ConfigDir,
+			"op":         configtask.OpTessdata,
+			"lang":       lang,
+		})
+		if h.configTaskCovered(ctx, itypes.Task.Type.Config, payload) {
+			continue
 		}
+		tasks = append(tasks, task.TaskSpec{Type: itypes.Task.Type.Config, Payload: payload})
 	}
 
-	if config.MissingHugotModel(cfg) && !h.configTaskCovered(ctx, "config:hugot") {
-		tasks = append(tasks, pendingTask{dedupKey: "config:hugot", payload: map[string]string{
+	if config.MissingHugotModel(cfg) {
+		payload, _ := json.Marshal(map[string]string{
 			"config_dir": cfg.App.ConfigDir,
-			"op":         "hugot",
-		}})
+			"op":         configtask.OpHugot,
+		})
+		if !h.configTaskCovered(ctx, itypes.Task.Type.Config, payload) {
+			tasks = append(tasks, task.TaskSpec{Type: itypes.Task.Type.Config, Payload: payload})
+		}
 	}
 
 	if len(tasks) == 0 {
 		return 0
 	}
 
-	batchID := uuid.New().String()
-	if err := h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued); err != nil {
+	result, err := h.enqueuer.EnqueueBatch(ctx, spec, tasks)
+	if err != nil {
 		h.logger.Error("", "create config batch: %v", err)
 		return 0
 	}
-
-	enqueued := 0
-	for _, t := range tasks {
-		payload, _ := json.Marshal(t.payload)
-		if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payload, ""); err != nil {
-			h.logger.Error("", "enqueue config task %s: %v", t.dedupKey, err)
-			continue
-		}
-		enqueued++
-	}
-
-	if enqueued == 0 {
-		if err := h.queries.DeleteBatch(ctx, batchID); err != nil {
-			h.logger.Error("", "delete empty config batch %s: %v", batchID, err)
-		}
-		return 0
-	}
-	return enqueued
+	return len(result.TaskIDs)
 }
 
-func (h *ConfigHandler) configTaskCovered(ctx context.Context, dedupKey string) bool {
-	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
+func (h *ConfigHandler) configTaskCovered(ctx context.Context, taskType itypes.TaskType, payload []byte) bool {
+	dedupKey, err := h.enqueuer.DedupKey(taskType, payload)
+	if err != nil {
+		h.logger.Error("", "derive dedup key for %s: %v", taskType, err)
+		return false
+	}
+	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, database.GetConfigTaskByDedupKeyParams{
+		TaskType: taskType,
+		DedupKey: sql.NullString{String: dedupKey, Valid: dedupKey != ""},
+	})
 	if err == nil {
 		return existing.Status == itypes.Task.Status.Pending || existing.Status == itypes.Task.Status.Processing
 	}
@@ -472,14 +468,20 @@ func probeWritableDir(dir, key string) error {
 	return nil
 }
 
-func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.ResponseWriter, dedupKey, label string) bool {
-	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
+func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.ResponseWriter, taskType itypes.TaskType, dedupKey, label string) bool {
+	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, database.GetConfigTaskByDedupKeyParams{
+		TaskType: taskType,
+		DedupKey: sql.NullString{String: dedupKey, Valid: true},
+	})
 	switch {
 	case err == nil && existing.Status == itypes.Task.Status.Processing:
 		writeJSON(w, http.StatusConflict, map[string]any{"error": label + " already in progress"})
 		return false
 	case err == nil:
-		deleted, delErr := h.queries.DeleteConfigTaskByDedupKey(ctx, sql.NullString{String: dedupKey, Valid: true})
+		deleted, delErr := h.queries.DeleteConfigTaskByDedupKey(ctx, database.DeleteConfigTaskByDedupKeyParams{
+			TaskType: taskType,
+			DedupKey: sql.NullString{String: dedupKey, Valid: true},
+		})
 		if delErr != nil {
 			h.logger.Error("", "delete stale %s task: %v", label, delErr)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue " + label})
@@ -496,13 +498,8 @@ func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.Res
 }
 
 func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseWriter, newDB config.DatabaseConfig) bool {
-	if !h.tryAcquireConfigTaskSlot(ctx, w, configtask.DedupKeyMigrateDB, "database migration") {
-		return false
-	}
-
 	cfg := h.getConfig()
 	payload := configtask.MigrateDBPayload{
-		Op:        "migrate-db",
 		ConfigDir: cfg.App.ConfigDir,
 		Host:      newDB.Host,
 		Port:      strconv.Itoa(newDB.Port),
@@ -513,7 +510,17 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
-	if !h.enqueueMigration(ctx, w, payloadJSON, "failed to enqueue database migration") {
+	dedupKey, err := h.enqueuer.DedupKey(itypes.Task.Type.MigrateDB, payloadJSON)
+	if err != nil {
+		h.logger.Error("", "derive database migration dedup key: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
+		return false
+	}
+	if !h.tryAcquireConfigTaskSlot(ctx, w, itypes.Task.Type.MigrateDB, dedupKey, "database migration") {
+		return false
+	}
+
+	if !h.enqueueMigration(ctx, w, itypes.Task.Type.MigrateDB, payloadJSON, "failed to enqueue database migration") {
 		return false
 	}
 
@@ -522,13 +529,8 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 }
 
 func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.ResponseWriter, body map[string]any) bool {
-	if !h.tryAcquireConfigTaskSlot(ctx, w, configtask.DedupKeyMigrateStorage, "storage migration") {
-		return false
-	}
-
 	cfg := h.getConfig()
 	payload := configtask.MigrateStoragePayload{
-		Op:                "migrate-storage",
 		ConfigDir:         cfg.App.ConfigDir,
 		OldStorageDir:     cfg.Storage.StorageDir,
 		NewStorageDir:     storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir),
@@ -537,7 +539,17 @@ func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.Resp
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
-	if !h.enqueueMigration(ctx, w, payloadJSON, "failed to enqueue storage migration") {
+	dedupKey, err := h.enqueuer.DedupKey(itypes.Task.Type.MigrateStorage, payloadJSON)
+	if err != nil {
+		h.logger.Error("", "derive storage migration dedup key: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
+		return false
+	}
+	if !h.tryAcquireConfigTaskSlot(ctx, w, itypes.Task.Type.MigrateStorage, dedupKey, "storage migration") {
+		return false
+	}
+
+	if !h.enqueueMigration(ctx, w, itypes.Task.Type.MigrateStorage, payloadJSON, "failed to enqueue storage migration") {
 		return false
 	}
 
@@ -545,26 +557,32 @@ func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.Resp
 	return true
 }
 
-// enqueueMigration queues one migration task into a fresh config batch;
-// a failure is reported through the response writer and leaves no batch
-// behind. The caller has already claimed the task's dedup slot.
-func (h *ConfigHandler) enqueueMigration(ctx context.Context, w http.ResponseWriter, payloadJSON []byte, failure string) bool {
-	batchID := uuid.New().String()
-	if err := h.services.Batch.Create(ctx, batchID, itypes.Batch.Source.Config, itypes.Batch.Status.Queued); err != nil {
-		writeServiceError(w, h.logger, "", "create migration batch", err)
+// enqueueMigration queues one migration task through the transactional enqueue; a failure is reported
+// through the response writer and leaves no batch behind. The caller has already claimed the task's
+// dedup slot.
+func (h *ConfigHandler) enqueueMigration(ctx context.Context, w http.ResponseWriter, taskType itypes.TaskType, payloadJSON []byte, failure string) bool {
+	spec, err := task.NewBatchSpec(itypes.Batch.Origin.Wizard, "")
+	if err != nil {
+		h.logger.Error("", "build migration batch spec: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": failure})
 		return false
 	}
 
-	if _, err := h.dispatcher.Enqueue(ctx, itypes.Task.Type.Config, batchID, payloadJSON, ""); err != nil {
-		h.logger.Error("", "enqueue migration task: %v", err)
-		if delErr := h.queries.DeleteBatch(ctx, batchID); delErr != nil {
-			h.logger.Error("", "delete empty config batch %s: %v", batchID, delErr)
-		}
+	if _, err := h.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{Type: taskType, Payload: payloadJSON}); err != nil {
+		h.logger.Error("", "enqueue %s task: %v", taskType, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": failure})
 		return false
 	}
 
 	return true
+}
+
+// configHostedTaskTypes are the task types the config hosts run: asset downloads plus the two migration
+// task types. Status and retry span all three.
+var configHostedTaskTypes = []itypes.TaskType{
+	itypes.Task.Type.Config,
+	itypes.Task.Type.MigrateDB,
+	itypes.Task.Type.MigrateStorage,
 }
 
 // ConfigStatus serves the migration status: readiness, tool failures and
@@ -585,29 +603,32 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.queries != nil {
-		// The setup wizard's completion gate polls this count; scope it to
-		// config tasks so it only reflects downloads/migrations.
-		for _, status := range []itypes.TaskStatus{itypes.Task.Status.Pending, itypes.Task.Status.Processing} {
-			count, err := h.queries.CountTasksByStatusAndType(ctx, database.CountTasksByStatusAndTypeParams{
-				Status:   status,
-				TaskType: itypes.Task.Type.Config,
-			})
-			if err != nil {
-				resp.Errors = append(resp.Errors, err.Error())
-				continue
+		// the setup wizard's completion gate polls this count, so scope it to config-hosted tasks only
+		for _, taskType := range configHostedTaskTypes {
+			for _, status := range []itypes.TaskStatus{itypes.Task.Status.Pending, itypes.Task.Status.Processing} {
+				count, err := h.queries.CountTasksByStatusAndType(ctx, database.CountTasksByStatusAndTypeParams{
+					Status:   status,
+					TaskType: taskType,
+				})
+				if err != nil {
+					resp.Errors = append(resp.Errors, err.Error())
+					continue
+				}
+				pendingTasks += int(count)
 			}
-			pendingTasks += int(count)
 		}
 		resp.PendingTasks = pendingTasks
 
-		failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
-			Status:   itypes.Task.Status.Failed,
-			TaskType: itypes.Task.Type.Config,
-		})
-		if err != nil {
-			h.logger.Error("", "list failed config tasks: %v", err)
-		} else {
-			respFailed := make([]FailedTaskSummary, 0, len(failedTasks))
+		respFailed := make([]FailedTaskSummary, 0)
+		for _, taskType := range configHostedTaskTypes {
+			failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
+				Status:   itypes.Task.Status.Failed,
+				TaskType: taskType,
+			})
+			if err != nil {
+				h.logger.Error("", "list failed config tasks: %v", err)
+				continue
+			}
 			for _, t := range failedTasks {
 				summary := FailedTaskSummary{TaskID: t.TaskID}
 				var p struct {
@@ -618,14 +639,17 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 					_ = json.Unmarshal(*t.Payload, &p)
 				}
 				summary.Op = p.Op
+				if summary.Op == "" {
+					summary.Op = string(t.TaskType)
+				}
 				summary.Lang = p.Lang
 				if t.Error.Valid {
 					summary.Error = t.Error.String
 				}
 				respFailed = append(respFailed, summary)
 			}
-			resp.FailedTasks = respFailed
 		}
+		resp.FailedTasks = respFailed
 	}
 
 	if cfg != nil {
@@ -646,23 +670,25 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
-		Status:   itypes.Task.Status.Failed,
-		TaskType: itypes.Task.Type.Config,
-	})
-	if err != nil {
-		h.logger.Error("", "list failed config tasks: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
 	retried := 0
-	for _, t := range failedTasks {
-		if err := task.Retry(ctx, h.client, h.logger, t.TaskID); err != nil {
-			h.logger.Error("", "retry config task %s: %v", t.TaskID, err)
-			continue
+	for _, taskType := range configHostedTaskTypes {
+		failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
+			Status:   itypes.Task.Status.Failed,
+			TaskType: taskType,
+		})
+		if err != nil {
+			h.logger.Error("", "list failed config tasks: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
-		retried++
+
+		for _, t := range failedTasks {
+			if err := task.Retry(ctx, h.client, h.logger, t.TaskID); err != nil {
+				h.logger.Error("", "retry config task %s: %v", t.TaskID, err)
+				continue
+			}
+			retried++
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]int{"retried": retried})

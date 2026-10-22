@@ -4,56 +4,39 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-type mockTaskCall struct {
-	TaskType string
-	BatchID  string
-	Payload  json.RawMessage
-	TaskID   string
-	Status   string
-	DedupKey string
-	Source   string
+// curationTestCatalog is the task type table the enqueue tests need: only
+// identity and the fixed dedup key of each sweep.
+type curationTestCatalog struct {
+	defs map[types.TaskType]task.TypeDefinition
 }
 
-type recordingTaskCreator struct {
-	calls    []mockTaskCall
-	createFn func(taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error)
-}
-
-func (m *recordingTaskCreator) CreateTask(_ context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
-	if m.createFn != nil {
-		return m.createFn(taskType, batchID, payload, taskID, status, dedupKey)
+func (c curationTestCatalog) Definition(taskType types.TaskType) (task.TypeDefinition, error) {
+	def, ok := c.defs[taskType]
+	if !ok {
+		return task.TypeDefinition{}, sql.ErrNoRows
 	}
-	m.calls = append(m.calls, mockTaskCall{
-		TaskType: string(taskType), BatchID: batchID, Payload: payload,
-		TaskID: taskID, Status: string(status), DedupKey: dedupKey,
-	})
-	return taskID, nil
+	return def, nil
 }
 
-type recordingBatchCreator struct {
-	calls    []mockTaskCall
-	createFn func(id string, source types.BatchSource, status types.BatchStatus) error
-}
-
-func (m *recordingBatchCreator) Create(_ context.Context, id string, source types.BatchSource, status types.BatchStatus) error {
-	if m.createFn != nil {
-		return m.createFn(id, source, status)
+func newCurationEnqueuer(client *database.Client) *task.Enqueuer {
+	key := func(key string) func(json.RawMessage) string {
+		return func(json.RawMessage) string { return key }
 	}
-	m.calls = append(m.calls, mockTaskCall{
-		BatchID: id, Source: string(source), Status: string(status),
-	})
-	return nil
+	catalog := curationTestCatalog{defs: map[types.TaskType]task.TypeDefinition{
+		types.Task.Type.TagReconcile: {Type: types.Task.Type.TagReconcile, DedupKey: key(TagReconcileDedupKey)},
+		types.Task.Type.TagMeasure:   {Type: types.Task.Type.TagMeasure, DedupKey: key("tagmeasure")},
+		types.Task.Type.TagIdentity:  {Type: types.Task.Type.TagIdentity, DedupKey: key(TagIdentityDedupKey)},
+		types.Task.Type.TagAudit:     {Type: types.Task.Type.TagAudit, DedupKey: key(TagAuditDedupKey)},
+	}}
+	return task.NewEnqueuer(client, catalog)
 }
 
 func newEnqueueTestClient(t *testing.T) *database.Client {
@@ -64,122 +47,103 @@ func newEnqueueTestClient(t *testing.T) *database.Client {
 	return client
 }
 
+func curationBatchSpec(t *testing.T, origin types.BatchOrigin) task.BatchSpec {
+	t.Helper()
+	spec, err := task.NewBatchSpec(origin, "")
+	if err != nil {
+		t.Fatalf("build spec: %v", err)
+	}
+	return spec
+}
+
+// seedActiveTagBatch creates a queued batch holding one pending task of the
+// type, which is what the active-batch count keys on.
+func seedActiveTagBatch(t *testing.T, client *database.Client, taskType types.TaskType, dedupKey string) {
+	t.Helper()
+	ctx := context.Background()
+	batchID := "active-" + string(taskType)
+	payload := json.RawMessage(`{}`)
+	testutil.AssertNoError(t, client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Origin: types.Batch.Origin.CLI,
+		Status: types.Batch.Status.Queued,
+	}), "seed batch")
+	_, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID:   "active-task-" + string(taskType),
+		TaskType: taskType,
+		Status:   types.Task.Status.Pending,
+		BatchID:  sql.NullString{String: batchID, Valid: true},
+		Payload:  &payload,
+		DedupKey: sql.NullString{String: dedupKey, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "seed task")
+}
+
+// seedPendingTagTask creates a task with no batch, which only the dedup
+// index sees.
+func seedPendingTagTask(t *testing.T, client *database.Client, taskType types.TaskType, dedupKey string) {
+	t.Helper()
+	payload := json.RawMessage(`{}`)
+	_, err := client.Queries.CreateTask(context.Background(), database.CreateTaskParams{
+		TaskID:   "pending-task-" + string(taskType),
+		TaskType: taskType,
+		Status:   types.Task.Status.Pending,
+		Payload:  &payload,
+		DedupKey: sql.NullString{String: dedupKey, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "seed pending task")
+}
+
 func TestTagIdentityEnqueue(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run("creates one blocking task and a queued batch", func(t *testing.T) {
 		client := newEnqueueTestClient(t)
-		taskMock := &recordingTaskCreator{}
-		batchMock := &recordingBatchCreator{}
-		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
+		svc := NewTagIdentity(client.Queries, newCurationEnqueuer(client))
 
-		batchID, alreadyQueued, err := svc.Enqueue(context.Background())
+		batchID, alreadyQueued, err := svc.Enqueue(ctx, curationBatchSpec(t, types.Batch.Origin.CLI))
 		testutil.AssertNoError(t, err, "enqueue")
 		if batchID == "" {
 			t.Fatal("expected non-empty batch ID")
 		}
 		testutil.AssertEqual(t, alreadyQueued, false, "first call is not already queued")
 
-		testutil.AssertEqual(t, len(taskMock.calls), 1, "one task created")
-		testutil.AssertEqual(t, taskMock.calls[0].TaskType, "tagidentity", "task type")
-		testutil.AssertEqual(t, taskMock.calls[0].Status, "pending", "task status")
-		testutil.AssertEqual(t, taskMock.calls[0].DedupKey, "tagidentity", "dedup key")
-		testutil.AssertEqual(t, taskMock.calls[0].BatchID, batchID, "task belongs to the batch")
+		tasks, err := client.Queries.ListTasksByBatch(ctx, database.ListTasksByBatchParams{
+			BatchID: sql.NullString{String: batchID, Valid: true},
+			Limit:   10,
+		})
+		testutil.AssertNoError(t, err, "list tasks")
+		testutil.AssertEqual(t, len(tasks), 1, "one task created")
+		testutil.AssertEqual(t, string(tasks[0].TaskType), "tagidentity", "task type")
+		testutil.AssertEqual(t, string(tasks[0].Status), "pending", "task status")
+		testutil.AssertEqual(t, tasks[0].DedupKey.String, TagIdentityDedupKey, "dedup key")
+		testutil.AssertEqual(t, tasks[0].BatchID.String, batchID, "task belongs to the batch")
 
-		testutil.AssertEqual(t, len(batchMock.calls), 1, "one batch created")
-		testutil.AssertEqual(t, batchMock.calls[0].Source, "tagidentity", "batch source")
-		testutil.AssertEqual(t, batchMock.calls[0].Status, "queued", "batch status")
-		testutil.AssertEqual(t, batchMock.calls[0].BatchID, batchID, "batch ID matches returned ID")
+		batch, err := client.Queries.GetBatch(ctx, batchID)
+		testutil.AssertNoError(t, err, "get batch")
+		testutil.AssertEqual(t, string(batch.Origin), "cli", "batch origin")
+		testutil.AssertEqual(t, string(batch.Status), "queued", "batch status")
 	})
 
 	t.Run("an active batch reports already queued", func(t *testing.T) {
 		client := newEnqueueTestClient(t)
-		taskMock := &recordingTaskCreator{}
-		batchMock := &recordingBatchCreator{}
-		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
+		seedActiveTagBatch(t, client, types.Task.Type.TagIdentity, TagIdentityDedupKey)
+		svc := NewTagIdentity(client.Queries, newCurationEnqueuer(client))
 
-		batchSvc := service.NewBatch(client, 3)
-		testutil.AssertNoError(t, batchSvc.Create(context.Background(), "existing-run", types.Batch.Source.TagIdentity, types.Batch.Status.Queued), "seed active batch")
-
-		batchID, alreadyQueued, err := svc.Enqueue(context.Background())
+		batchID, alreadyQueued, err := svc.Enqueue(ctx, curationBatchSpec(t, types.Batch.Origin.CLI))
 		testutil.AssertNoError(t, err, "enqueue while active")
 		testutil.AssertEqual(t, alreadyQueued, true, "already queued")
-		if batchID != "" {
-			t.Errorf("batch ID = %q, want empty when already queued", batchID)
-		}
-		testutil.AssertEqual(t, len(taskMock.calls), 0, "no new task while a batch is active")
-		testutil.AssertEqual(t, len(batchMock.calls), 0, "no new batch while a batch is active")
+		testutil.AssertEqual(t, batchID, "", "no batch ID when already queued")
 	})
 
-	t.Run("a duplicate active task reports already queued without a batch", func(t *testing.T) {
+	t.Run("a duplicate pending task reports already queued without a batch", func(t *testing.T) {
 		client := newEnqueueTestClient(t)
-		taskMock := &recordingTaskCreator{
-			createFn: func(types.TaskType, string, json.RawMessage, string, types.TaskStatus, string) (string, error) {
-				// the active-dedup index rejects the second task for the slot the count above lost a race to
-				return "", &pgconn.PgError{Code: "23505", Message: `duplicate key value violates unique constraint "idx_task_dedup"`}
-			},
-		}
-		batchMock := &recordingBatchCreator{}
-		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
+		seedPendingTagTask(t, client, types.Task.Type.TagIdentity, TagIdentityDedupKey)
+		svc := NewTagIdentity(client.Queries, newCurationEnqueuer(client))
 
-		batchID, alreadyQueued, err := svc.Enqueue(context.Background())
+		batchID, alreadyQueued, err := svc.Enqueue(ctx, curationBatchSpec(t, types.Batch.Origin.CLI))
 		testutil.AssertNoError(t, err, "enqueue")
 		testutil.AssertEqual(t, alreadyQueued, true, "a rejected task insert means the work already exists")
-		if batchID != "" {
-			t.Errorf("batch ID = %q, want empty", batchID)
-		}
-		testutil.AssertEqual(t, len(batchMock.calls), 0, "no batch without a task")
+		testutil.AssertEqual(t, batchID, "", "no batch without a task")
 	})
-
-	t.Run("a task creation failure is reported, not swallowed", func(t *testing.T) {
-		client := newEnqueueTestClient(t)
-		taskMock := &recordingTaskCreator{
-			createFn: func(types.TaskType, string, json.RawMessage, string, types.TaskStatus, string) (string, error) {
-				return "", errors.New("connection lost")
-			},
-		}
-		batchMock := &recordingBatchCreator{}
-		svc := NewTagIdentity(client.Queries, taskMock, batchMock)
-
-		_, _, err := svc.Enqueue(context.Background())
-		testutil.AssertError(t, err, "a real failure must not be reported as already queued")
-		testutil.AssertEqual(t, len(batchMock.calls), 0, "no batch without a task")
-	})
-
-	t.Run("batch failure deletes the orphan task", func(t *testing.T) {
-		client := newEnqueueTestClient(t)
-
-		// an orphan pending task would be claimable by the queue's
-		// tagidentity pool with a batch that never exists
-		inner := &capturingTaskCreator{inner: task.NewStore(client)}
-		batchMock := &recordingBatchCreator{
-			createFn: func(string, types.BatchSource, types.BatchStatus) error {
-				return errors.New("batch insert failed")
-			},
-		}
-		svc := NewTagIdentity(client.Queries, inner, batchMock)
-
-		_, _, err := svc.Enqueue(context.Background())
-		if err == nil {
-			t.Fatal("expected error when batch creation fails")
-		}
-		if len(inner.captured) == 0 {
-			t.Fatal("expected the task to have been attempted first")
-		}
-
-		tasks, listErr := client.Queries.ListTasksByBatch(context.Background(), database.ListTasksByBatchParams{
-			BatchID: sql.NullString{String: inner.captured[0], Valid: true},
-			Limit:   10,
-		})
-		testutil.AssertNoError(t, listErr, "list tasks for the failed batch")
-		testutil.AssertEqual(t, len(tasks), 0, "orphan task must be deleted")
-	})
-}
-
-type capturingTaskCreator struct {
-	inner    types.TaskCreator
-	captured []string
-}
-
-func (c *capturingTaskCreator) CreateTask(ctx context.Context, taskType types.TaskType, batchID string, payload json.RawMessage, taskID string, status types.TaskStatus, dedupKey string) (string, error) {
-	c.captured = append(c.captured, batchID)
-	return c.inner.CreateTask(ctx, taskType, batchID, payload, taskID, status, dedupKey)
 }

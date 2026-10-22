@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { formatDuration } from '$lib/utils/html.js';
-	import { sourceBadgeClasses } from '$lib/utils/statusChip.js';
+	import { originBadgeClasses } from '$lib/utils/statusChip.js';
 
 	let { recentBatches = [] } = $props();
 
@@ -75,12 +75,15 @@
 							</td>
 							<td class="px-4 py-3">
 								<span
-									class="inline-block rounded-full px-2 py-0.5 text-xs font-medium {sourceBadgeClasses(
-										batch.source
+									class="inline-block rounded-full px-2 py-0.5 text-xs font-medium {originBadgeClasses(
+										batch.origin
 									)}"
 								>
-									{batch.source || '—'}
+									{batch.origin || '—'}
 								</span>
+								{#if batch.schedule}
+									<span class="ml-1 font-mono text-xs text-parchment-500">{batch.schedule}</span>
+								{/if}
 							</td>
 							<td class="px-4 py-3 text-parchment-400"
 								>{mounted ? formatDate(batch.created_at) : ''}</td

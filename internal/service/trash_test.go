@@ -24,7 +24,7 @@ func createTestThumbnail(t *testing.T, storageDir, docID string, mtime time.Time
 }
 
 func TestCleanupOrphanedThumbnails_RemovesOrphans(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -43,7 +43,7 @@ func TestCleanupOrphanedThumbnails_RemovesOrphans(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_DryRun(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -61,7 +61,7 @@ func TestCleanupOrphanedThumbnails_DryRun(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_SkipsExistingDocs(t *testing.T) {
-	svc, cfg, client, _, cleanup := newTestOrphaned(t)
+	svc, cfg, client, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -80,7 +80,7 @@ func TestCleanupOrphanedThumbnails_SkipsExistingDocs(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_RecencyGuard(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -98,7 +98,7 @@ func TestCleanupOrphanedThumbnails_RecencyGuard(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_MissingDir(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -112,7 +112,7 @@ func TestCleanupOrphanedThumbnails_MissingDir(t *testing.T) {
 }
 
 func TestCleanupOrphanedThumbnails_PrunesEmptyDirs(t *testing.T) {
-	svc, cfg, _, _, cleanup := newTestOrphaned(t)
+	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -130,7 +130,7 @@ func TestCleanupOrphanedThumbnails_PrunesEmptyDirs(t *testing.T) {
 }
 
 func TestPurgeExpired_SweepsOrphanedThumbnailsEveryCycle(t *testing.T) {
-	orphaned, cfg, client, _, cleanup := newTestOrphaned(t)
+	orphaned, cfg, client, cleanup := newTestOrphaned(t)
 	defer cleanup()
 	ctx := context.Background()
 

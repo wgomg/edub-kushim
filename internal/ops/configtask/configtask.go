@@ -1,7 +1,6 @@
-// Package configtask runs the environment tasks a configuration change
-// triggers: database and storage migration, tessdata and model downloads.
-// The tasks deduplicate on fixed keys and report no-op migrations with
-// ErrNoOp. Its task handler follows the domain-handler pattern.
+// Package configtask runs the environment tasks a configuration change triggers: database and storage
+// migration, tessdata and model downloads. Each kind is its own task type with its own dedicated handler
+// and a no-op migration reports ErrNoOp. The handlers follow the domain-handler pattern.
 package configtask
 
 import (
@@ -37,22 +36,23 @@ func DirChanged(oldDir, newDir string) bool {
 	return filepath.Clean(oldDir) != filepath.Clean(newDir)
 }
 
-// The environment ops and their enqueue dedup keys, so concurrent
-// triggers collapse.
+// The config payload operations (asset downloads) and the migration dedup keys, so concurrent triggers
+// collapse.
 const (
-	opTessdata       = "tessdata"
-	opHugot          = "hugot"
-	opMigrateDB      = "migrate-db"
-	opMigrateStorage = "migrate-storage"
+	OpTessdata = "tessdata"
+	OpHugot    = "hugot"
 
-	DedupKeyMigrateDB      = "config:migrate-db"
-	DedupKeyMigrateStorage = "config:migrate-storage"
+	// DedupKeyTessdataPrefix and DedupKeyHugot are the config dedup key vocabulary: the catalog derives
+	// keys with them and the API labels match them, so both packages share one declaration.
+	DedupKeyTessdataPrefix = "config:tessdata:"
+	DedupKeyHugot          = "config:hugot"
+
+	DedupKeyMigrateDB      = "migrate-db"
+	DedupKeyMigrateStorage = "migrate-storage"
 )
 
-// MigrateDBPayload is the environment task's database migration input:
-// the connection to migrate to.
+// MigrateDBPayload is the database migration task's input: the connection to migrate to.
 type MigrateDBPayload struct {
-	Op        string `json:"op"`
 	ConfigDir string `json:"config_dir"`
 	Host      string `json:"host"`
 	Port      string `json:"port"`
@@ -62,9 +62,8 @@ type MigrateDBPayload struct {
 	SSLMode   string `json:"sslmode"`
 }
 
-// MigrateStoragePayload is the environment task's storage move input.
+// MigrateStoragePayload is the storage move task's input.
 type MigrateStoragePayload struct {
-	Op                string `json:"op"`
 	ConfigDir         string `json:"config_dir"`
 	OldStorageDir     string `json:"old_storage_dir"`
 	NewStorageDir     string `json:"new_storage_dir"`
@@ -72,8 +71,8 @@ type MigrateStoragePayload struct {
 	NewConsumptionDir string `json:"new_consumption_dir"`
 }
 
-// ConfigTaskHandler runs the environment tasks: asset downloads and the
-// database and storage migrations, driven by the config API.
+// ConfigTaskHandler runs the environment asset downloads: tessdata languages and the hugot model download,
+// driven by the config API. Migrations are separate task types with their own handlers.
 type ConfigTaskHandler struct {
 	queries *database.Queries
 	logger  *log.Logger
@@ -84,33 +83,7 @@ func NewConfigTaskHandler(queries *database.Queries, logger *log.Logger) *Config
 	return &ConfigTaskHandler{queries: queries, logger: logger}
 }
 
-// DedupKey derives the environment task's key from its op: per language
-// for tessdata, fixed keys for the migrations and the model download.
-func (h *ConfigTaskHandler) DedupKey(payload json.RawMessage) string {
-	var p struct {
-		Op   string `json:"op"`
-		Lang string `json:"lang"`
-	}
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return ""
-	}
-	if p.Op == opTessdata {
-		return "config:tessdata:" + p.Lang
-	}
-	if p.Op == opHugot {
-		return "config:hugot"
-	}
-	if p.Op == opMigrateDB {
-		return DedupKeyMigrateDB
-	}
-	if p.Op == opMigrateStorage {
-		return DedupKeyMigrateStorage
-	}
-	return ""
-}
-
-// Handle dispatches the environment task to its op's handler, tracking
-// progress on the task row and settling the batch at the end.
+// Handle runs one download operation, tracking progress on the task row and settling the batch when done.
 func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
@@ -133,32 +106,44 @@ func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (result jso
 	}
 
 	switch p.Op {
-	case opTessdata:
+	case OpTessdata:
 		progress.Set("download", p.Lang, 0)
 		if err := config.DownloadTessdataLanguage(ctx, cfg, p.Lang); err != nil {
 			return nil, err
 		}
 		return json.Marshal(map[string]string{"lang": p.Lang})
 
-	case opHugot:
+	case OpHugot:
 		progress.Set("download", "hugot model", 0)
 		if err := config.DownloadHugotModel(ctx, cfg, h.logger); err != nil {
 			return nil, err
 		}
 		return json.Marshal(map[string]string{"model": "hugot"})
 
-	case opMigrateDB:
-		return h.handleMigrateDB(ctx, t, progress)
-
-	case opMigrateStorage:
-		return h.handleMigrateStorage(ctx, t, progress)
-
 	default:
 		return nil, fmt.Errorf("unsupported config task operation: %q", p.Op)
 	}
 }
 
-func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task, progress *task.ProgressTracker) (json.RawMessage, error) {
+// MigrateDBTaskHandler runs a database migration task.
+type MigrateDBTaskHandler struct {
+	queries *database.Queries
+	logger  *log.Logger
+}
+
+// NewMigrateDBTaskHandler wires the handler to the queries and logger.
+func NewMigrateDBTaskHandler(queries *database.Queries, logger *log.Logger) *MigrateDBTaskHandler {
+	return &MigrateDBTaskHandler{queries: queries, logger: logger}
+}
+
+// Handle runs the database migration, tracking progress on the task row and settling the batch when done.
+func (h *MigrateDBTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
+	defer func() {
+		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
+	}()
+
 	var p MigrateDBPayload
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal migrate-db payload: %w", err)
@@ -169,6 +154,43 @@ func (h *ConfigTaskHandler) handleMigrateDB(ctx context.Context, t task.Task, pr
 		return nil, err
 	}
 	return json.Marshal(map[string]string{"status": "migrated"})
+}
+
+// MigrateStorageTaskHandler runs a storage move task.
+type MigrateStorageTaskHandler struct {
+	queries *database.Queries
+	logger  *log.Logger
+}
+
+// NewMigrateStorageTaskHandler wires the handler to the queries and logger.
+func NewMigrateStorageTaskHandler(queries *database.Queries, logger *log.Logger) *MigrateStorageTaskHandler {
+	return &MigrateStorageTaskHandler{queries: queries, logger: logger}
+}
+
+// Handle runs the storage move, reporting a no-op migration as a result instead of an error, and then
+// settling the batch at the end.
+func (h *MigrateStorageTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
+	defer func() {
+		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
+	}()
+
+	var p MigrateStoragePayload
+	if err := json.Unmarshal(t.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal migrate-storage payload: %w", err)
+	}
+	err = MigrateStorage(ctx, h.logger, p, func(step, detail string, pct float64) {
+		progress.Set(step, detail, pct)
+	})
+	switch {
+	case err == nil:
+		return json.Marshal(map[string]string{"status": "migrated"})
+	case errors.Is(err, ErrNoOp):
+		return json.Marshal(map[string]string{"status": "no-op"})
+	default:
+		return nil, err
+	}
 }
 
 // MigrateDatabase migrates the schema to a fresh database named after
@@ -264,24 +286,6 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 
 	logger.Info("", "migrate-db: database %q is live and config.yaml updated", p.Database)
 	return nil
-}
-
-func (h *ConfigTaskHandler) handleMigrateStorage(ctx context.Context, t task.Task, progress *task.ProgressTracker) (json.RawMessage, error) {
-	var p MigrateStoragePayload
-	if err := json.Unmarshal(t.Payload, &p); err != nil {
-		return nil, fmt.Errorf("unmarshal migrate-storage payload: %w", err)
-	}
-	err := MigrateStorage(ctx, h.logger, p, func(step, detail string, pct float64) {
-		progress.Set(step, detail, pct)
-	})
-	switch {
-	case err == nil:
-		return json.Marshal(map[string]string{"status": "migrated"})
-	case errors.Is(err, ErrNoOp):
-		return json.Marshal(map[string]string{"status": "no-op"})
-	default:
-		return nil, err
-	}
 }
 
 // MigrateStorage moves the document layout to the new directories:

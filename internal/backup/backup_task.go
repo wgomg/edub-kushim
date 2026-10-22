@@ -7,15 +7,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
-
-var _ task.Dedupable = (*BackupTaskHandler)(nil)
 
 // BackupTaskHandler creates a backup archive as a blocking task, per the
 // payload's mode and schedule, applying retention; the dedup key is the
@@ -38,30 +35,20 @@ func NewBackupTaskHandler(db *sql.DB, queries *database.Queries, getConfig func(
 	}
 }
 
-// DedupKey is the backup mode, so concurrent backups of one mode
-// collapse.
-func (h *BackupTaskHandler) DedupKey(payload json.RawMessage) string {
-	var p struct {
-		Mode string `json:"mode"`
-	}
-	if len(payload) > 0 {
-		_ = json.Unmarshal(payload, &p)
-	}
-	if p.Mode == "" {
-		p.Mode = string(BackupModeFull)
-	}
-	return fmt.Sprintf("backup:%s:%s", p.Mode, time.Now().UTC().Format("2006-01-02"))
+// BackupPayload is the enqueued backup task's payload: the mode, the destination override, the retention
+// count, plus the timing of the schedule that triggered the run.
+type BackupPayload struct {
+	Mode     string         `json:"mode"`
+	Path     string         `json:"path"`
+	Keep     int            `json:"keep"`
+	Schedule ScheduleTiming `json:"schedule"`
 }
 
 // Handle runs the configured backup schedules that are due, creates their
 // archives and applies retention, and returns the run's summary.
 func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	return task.RunBlocking(ctx, h.queries, h.logger, t, "backup", func(progress *task.ProgressTracker) (json.RawMessage, error) {
-		var payload struct {
-			Mode string `json:"mode"`
-			Path string `json:"path"`
-			Keep int    `json:"keep"`
-		}
+		var payload BackupPayload
 		if len(t.Payload) > 0 {
 			if err := json.Unmarshal(t.Payload, &payload); err != nil {
 				return nil, fmt.Errorf("parse backup payload: %w", err)

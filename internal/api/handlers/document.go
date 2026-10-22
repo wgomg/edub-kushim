@@ -22,6 +22,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func sanitizeSnippetHTML(raw string) string {
@@ -689,7 +691,13 @@ func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	batchID, err := h.services.ReEnrich.ReEnrich(ctx, documentID)
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	batchID, err := h.services.ReEnrich.ReEnrich(ctx, spec, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "re-enrich document", err)
 		return

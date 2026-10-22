@@ -1,6 +1,6 @@
 // Package task is the task system: the lifecycle store, the claim and complete protocol with claim tokens,
 // batch ownership with heartbeats, the registry of task-type handlers, the runner that drives claims, the
-// worker pool, the dispatcher that enqueues, the task type definition model and its enqueue contract, and
+// worker pool, the transactional enqueue, the task type definition model and its enqueue contract, and
 // the progress tracker. The lifecycle, batch-ownership and queue-semantics contracts are documented in
 // docs/developer-guide/task-system.md; this package implements them.
 package task
@@ -24,15 +24,6 @@ type Handler interface {
 	// Handle performs the task's work. The runner fails the task on panic,
 	// so handlers should report through the returned error instead.
 	Handle(ctx context.Context, task Task) (json.RawMessage, error)
-}
-
-// Dedupable is the optional second face of a Handler: a task type that
-// wants enqueue-time deduplication states how to derive its dedup key from
-// the payload.
-type Dedupable interface {
-	// DedupKey derives the key that rejects duplicate enqueues of the same
-	// work; empty disables dedup for the type.
-	DedupKey(payload json.RawMessage) string
 }
 
 // RunBlocking runs a blocking task body under the maintenance lock protocol:
