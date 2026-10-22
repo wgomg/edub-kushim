@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
@@ -144,6 +143,18 @@ func (h *MigrateDBTaskHandler) Handle(ctx context.Context, t task.Task) (result 
 		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
 	}()
 
+	// a batch-less task has no queued row to coordinate with, so these synthetic invocations skip the claim
+	// bookkeeping
+	if t.BatchID != "" {
+		stop, err := task.HoldClaimed(ctx, h.queries, h.logger, t, "migrate-db", func(count int64) {
+			progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
+		})
+		if err != nil {
+			return nil, err
+		}
+		defer stop()
+	}
+
 	var p MigrateDBPayload
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal migrate-db payload: %w", err)
@@ -175,6 +186,18 @@ func (h *MigrateStorageTaskHandler) Handle(ctx context.Context, t task.Task) (re
 	defer func() {
 		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
 	}()
+
+	// a batch-less task has no queued row to coordinate with, so these synthetic invocations skip the claim
+	// bookkeeping
+	if t.BatchID != "" {
+		stop, err := task.HoldClaimed(ctx, h.queries, h.logger, t, "migrate-storage", func(count int64) {
+			progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
+		})
+		if err != nil {
+			return nil, err
+		}
+		defer stop()
+	}
 
 	var p MigrateStoragePayload
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
@@ -214,16 +237,6 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 		return fmt.Errorf("connect to current database: %w", err)
 	}
 	defer oldDB.Close()
-
-	oldClient := database.NewClient(oldDB)
-
-	release, err := database.TryHoldMaintenanceLock(ctx, oldClient.Queries, logger, "migrate-db", uuid.NullUUID{}, func(count int64) {
-		report("migrate-db", fmt.Sprintf("drain-wait: %d in-flight", count), 0)
-	})
-	if err != nil {
-		return err
-	}
-	defer release()
 
 	report("migrate-db", "dump", 0)
 	logger.Info("", "migrate-db: copying database to %s@%s:%s/%s", p.User, p.Host, p.Port, p.Database)
@@ -312,16 +325,6 @@ func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePay
 		return fmt.Errorf("connect to database: %w", err)
 	}
 	defer db.Close()
-
-	client := database.NewClient(db)
-
-	release, err := database.TryHoldMaintenanceLock(ctx, client.Queries, logger, "migrate-storage", uuid.NullUUID{}, func(count int64) {
-		report("migrate-storage", fmt.Sprintf("drain-wait: %d in-flight", count), 0)
-	})
-	if err != nil {
-		return err
-	}
-	defer release()
 
 	mode := strings.ToLower(cfg.Storage.MigrationMode)
 	if mode != "move" {

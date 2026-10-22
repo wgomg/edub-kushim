@@ -39,7 +39,7 @@ type MirrorPayload struct {
 	Schedule ScheduleTiming `json:"schedule"`
 }
 
-// Handle mirrors under the maintenance lock, waiting for the lock while
+// Handle mirrors under the claimed maintenance lock, draining the conflicting in-flight tasks while
 // reporting the queue depth, and returns the mirror stats as the result.
 func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)

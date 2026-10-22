@@ -36,7 +36,7 @@ func NewRunner(store *Store, registry *Registry, logger *log.Logger) *Runner {
 }
 
 // Next claims and runs at most one task of the given type. It returns nil
-// when there was nothing to claim or the maintenance lock was busy, so a
+// when there was nothing to claim or a lock the claim needs was busy, so a
 // polling loop treats it as an idle round.
 func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) {
 	task, token, err := r.store.ClaimNextPending(ctx, taskType)
@@ -47,7 +47,7 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 		return fmt.Errorf("claim next pending task: %w", err)
 	}
 
-	blocking := taskType.IsBlocking()
+	blocking := taskType.HoldsLocks()
 
 	defer func() {
 		if rcv := recover(); rcv != nil {

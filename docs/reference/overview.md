@@ -40,7 +40,7 @@ internal/
 │   ├── backup_task.go      # BackupTaskHandler (drain-wait → snapshot → retention, batch lifecycle)
 │   ├── restore.go          # Validate, extract, and replace files from backup archive
 │   ├── scheduler.go        # Backup scheduling (NextBackupTime, NextScheduledTime, ScheduleTiming, FirstRunAnchor, IsBackupDue, IsMirrorDue, dueFromHistory, scheduleTimingFromPayload)
-│   ├── mirror.go           # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunLocked (heartbeat → drain → run; heartbeat via database.StartMaintenanceLockHeartbeat)
+│   ├── mirror.go           # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunMirrorAndRecord, RunLocked (heartbeat → drain → run; heartbeat via database.StartLockHeartbeat)
 │   └── mirror_task.go      # MirrorTaskHandler (batch lifecycle + RunLocked → rsync --delete)
 ├── cgo/                    # MuPDF CGo glue
 │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
@@ -58,7 +58,7 @@ internal/
 │   ├── schema.go           # InitializeSchema — goose migrations + seeders (tags, tag-aliases, doc-types, people-types)
 │   ├── dump.go             # SQL dump: DumpSchemaAndData, SQLDumpToFile, goose version preservation
 │   ├── psqlrestore.go      # Restore via psql: CheckRestoreTooling, RestoreDumpViaPSQL (host or docker/podman exec)
-│   ├── migrate.go          # RewriteStoragePaths, ValidateMigrationDestination, WaitForTaskDrain, maintenance-lock helpers (AcquireMaintenanceLock, HoldMaintenanceLock, TryHoldMaintenanceLock)
+│   ├── migrate.go          # RewriteStoragePaths, ValidateMigrationDestination, WaitForTaskDrain, StartLockHeartbeat (lock acquisition/release stay in internal/task)
 │   ├── models.go           # Generated data models (Document now has PageCount, WordCount, CharCount, Language; added SavedSearch)
 │   ├── db.go               # Database interface (Queries, WithTx)
 │   ├── document_sort.go    # ListDocumentsWithSort (whitelisted sort columns)
@@ -73,7 +73,7 @@ internal/
 │   ├── people_type.sql.go  # Generated people type queries
 │   ├── task.sql.go         # Generated task queries (includes SetEnrichTaskPending, DiscardEnrichTask)
 │   ├── batch.sql.go        # Generated batch + batch_owner queries (queued/processing, ownership, stale owners)
-│   ├── maintenance_lock.sql.go # Generated maintenance-lock signal queries
+│   ├── lock.sql.go          # Generated resource-lock queries (acquire/release/touch/sweeps over the system_signal lock rows)
 │   ├── user.sql.go         # Generated user queries
 │   ├── saved_search.sql.go # Generated saved search queries (CreateSavedSearch, ListSavedSearches, DeleteSavedSearch)
 │   └── sql/                # Embedded SQL assets
@@ -89,6 +89,7 @@ internal/
 │           ├── people.sql
 │           ├── people_type.sql
 │           ├── task.sql
+│           ├── lock.sql
 │           ├── user.sql
 │           └── orphaned.sql
 ├── documents/              # Document domain: ingestion, storage, MIME, and processing adapters
@@ -97,8 +98,7 @@ internal/
 │   │   ├── consume.go      # ConsumeTaskHandler (uses FileFromPath)
 │   │   ├── scan.go         # ScanAndEnqueue — shared inbox scan → dedup → batch creation
 │   │   ├── storage.go      # File operations, checksums, FileFromPath, MIME detection via mimetype lib
-│   │   ├── thumbnail.go    # ThumbnailTaskHandler (render + save page thumbnail)
-│   │   └── thumbnail_backfill.go # ThumbnailBackfillTaskHandler (drain-wait + heartbeat wrapper)
+│   │   └── thumbnail.go    # ThumbnailTaskHandler (render + save page thumbnail)
 │   ├── storage/            # Filesystem operations for documents and orphaned/trashed files
 │   │   ├── dirs.go         # Canonical storage subdirectory name constants (Dir*), part of the persisted data contract
 │   │   ├── paths.go        # Path derivation helpers (ThumbnailPath)
@@ -254,22 +254,24 @@ internal/
 │       ├── evidence.go     # Evidence pass (re-rank, band adjudication, hysteresis confirmation)
 │       ├── apply.go        # Apply pass (alias/keep flips, verdict upsert)
 │       ├── sweeps.go       # Twin canonicalization, orphan and provisional sweeps
-│       ├── tagreconcile.go # TagReconcileTaskHandler (forks `kushim tagreconcile --run`, blocking lifecycle)
+│       ├── tagreconcile.go # TagReconcileTaskHandler (forks `kushim tagreconcile --run`, lock-holding lifecycle)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
  │   ├── batch.go            # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
  │   ├── crud.go             # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
+ │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
  │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; TypeDefinition contract
  │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
- │   ├── handler.go          # Handler interface; RunBlocking — shared blocking-task lifecycle
+ │   ├── handler.go          # Handler interface; RunBlocking/HoldClaimed — shared lock-holding execution lifecycle
 │   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
+│   ├── locks.go            # Resource-lock lifecycle: ErrLockBusy, AcquireLocks (all-or-nothing, canonical order), ReleaseLocksForToken/Batch/StaleHolders, UnionLockNames, LockHeartbeatInterval
 │   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
 │   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
 │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
 │   ├── registry.go         # Task type → handler registry
 │   ├── runner.go           # Worker poll loop (claim → execute → complete with retry fallback)
- │   ├── store.go            # Task persistence (ClaimNextPending, CompleteTask, FailTask, SetPending, Discard)
+ │   ├── store.go            # Task persistence (ClaimNextPending with lock gates and claim-time acquisition, CompleteTask, FailTask, SetPending, Discard)
 │   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
 ├── textnorm/               # Tag and DB-key canonicalization

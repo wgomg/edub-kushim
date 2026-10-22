@@ -1,5 +1,7 @@
 package types
 
+import "slices"
+
 import "testing"
 
 func TestAllCounts(t *testing.T) {
@@ -99,38 +101,57 @@ func TestNonConsumeTaskTypes(t *testing.T) {
 	}
 }
 
-func TestIsBlocking(t *testing.T) {
+func TestHoldsLocks(t *testing.T) {
 	cases := map[TaskType]bool{
-		Task.Type.Backup:        true,
-		Task.Type.Mirror:        true,
-		Task.Type.TagReconcile:  true,
-		Task.Type.ThumbBackfill: true,
-		Task.Type.TagMeasure:    true,
-		Task.Type.TagIdentity:   true,
-		Task.Type.TagAudit:      true,
-		Task.Type.Config:        false,
+		Task.Type.Backup:         true,
+		Task.Type.Mirror:         true,
+		Task.Type.TagReconcile:   true,
+		Task.Type.ThumbBackfill:  true,
+		Task.Type.TagMeasure:     true,
+		Task.Type.TagIdentity:    true,
+		Task.Type.TagAudit:       true,
+		Task.Type.MigrateDB:      true,
+		Task.Type.MigrateStorage: true,
+		Task.Type.Consume:        false,
+		Task.Type.Enrich:         false,
+		Task.Type.Thumbnail:      false,
+		Task.Type.Config:         false,
 	}
 	for typ, want := range cases {
-		if got := typ.IsBlocking(); got != want {
-			t.Errorf("TaskType(%q).IsBlocking() = %v, want %v", typ, got, want)
+		if got := typ.HoldsLocks(); got != want {
+			t.Errorf("TaskType(%q).HoldsLocks() = %v, want %v", typ, got, want)
 		}
 	}
 }
 
-func TestIsLockGated(t *testing.T) {
-	cases := map[TaskType]bool{
-		Task.Type.Consume:       true,
-		Task.Type.Enrich:        true,
-		Task.Type.Thumbnail:     true,
-		Task.Type.TagReconcile:  false,
-		Task.Type.ThumbBackfill: false,
-		Task.Type.TagMeasure:    false,
-		Task.Type.TagIdentity:   false,
-		Task.Type.Config:        false,
+func TestLockDeclarations(t *testing.T) {
+	contains := func(list []TaskType, want TaskType) bool {
+		return slices.Contains(list, want)
 	}
-	for typ, want := range cases {
-		if got := typ.IsLockGated(); got != want {
-			t.Errorf("TaskType(%q).IsLockGated() = %v, want %v", typ, got, want)
+
+	for _, want := range []TaskType{Task.Type.Consume, Task.Type.Enrich, Task.Type.Thumbnail, Task.Type.ThumbBackfill} {
+		if !contains(TaskTypesWaitingOn(LockMaintenance), want) {
+			t.Errorf("TaskTypesWaitingOn(maintenance) misses %q", want)
 		}
+	}
+	for _, want := range []TaskType{Task.Type.Thumbnail, Task.Type.Backup, Task.Type.Mirror, Task.Type.MigrateStorage} {
+		if !contains(TaskTypesWaitingOn(LockStorage), want) {
+			t.Errorf("TaskTypesWaitingOn(storage) misses %q", want)
+		}
+	}
+
+	holding := LockHoldingTaskTypes()
+	if contains(holding, Task.Type.Consume) {
+		t.Error("consume holds no lock")
+	}
+	if !contains(holding, Task.Type.ThumbBackfill) || !contains(holding, Task.Type.MigrateStorage) {
+		t.Error("LockHoldingTaskTypes misses a declared holder")
+	}
+
+	if declaration := LockDeclarationFor(Task.Type.Config); len(declaration.Holds)+len(declaration.WaitsFor) != 0 {
+		t.Errorf("config declares locks: %+v", declaration)
+	}
+	if got := len(AllLockNames()); got != 2 {
+		t.Errorf("AllLockNames len = %d, want 2", got)
 	}
 }

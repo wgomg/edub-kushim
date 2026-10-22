@@ -25,6 +25,32 @@ const (
 	LockStorage     LockName = "storage"
 )
 
+// LockDeclaration is the queued lock policy declared for one task type: the named locks an execution
+// of that type holds for its whole batch run, and the locks a claim must see free before it may start.
+// Both slices are unordered sets; an empty slice declares no lock in that direction.
+type LockDeclaration struct {
+	Holds    []LockName
+	WaitsFor []LockName
+}
+
+// lockDeclarations is the single closed statement of which locks each task type holds and waits for.
+// The task type definitions populate their queued lock policy from it, and the claim, drain and sweep
+// paths read it directly, so the vocabulary below the composition root has one source.
+var lockDeclarations = map[TaskType]LockDeclaration{
+	Task.Type.Consume:        {WaitsFor: []LockName{LockMaintenance}},
+	Task.Type.Enrich:         {WaitsFor: []LockName{LockMaintenance}},
+	Task.Type.Thumbnail:      {WaitsFor: []LockName{LockMaintenance, LockStorage}},
+	Task.Type.ThumbBackfill:  {Holds: []LockName{LockStorage}, WaitsFor: []LockName{LockMaintenance}},
+	Task.Type.Backup:         {Holds: []LockName{LockMaintenance}, WaitsFor: []LockName{LockStorage}},
+	Task.Type.Mirror:         {Holds: []LockName{LockMaintenance}, WaitsFor: []LockName{LockStorage}},
+	Task.Type.TagReconcile:   {Holds: []LockName{LockMaintenance}},
+	Task.Type.TagMeasure:     {Holds: []LockName{LockMaintenance}},
+	Task.Type.TagIdentity:    {Holds: []LockName{LockMaintenance}},
+	Task.Type.TagAudit:       {Holds: []LockName{LockMaintenance}},
+	Task.Type.MigrateDB:      {Holds: []LockName{LockMaintenance}},
+	Task.Type.MigrateStorage: {Holds: []LockName{LockMaintenance}, WaitsFor: []LockName{LockStorage}},
+}
+
 // BatchStatus is the lifecycle state of a batch.
 type BatchStatus string
 
@@ -240,17 +266,6 @@ func (t TaskStatus) Valid() bool {
 	return slices.Contains(allTaskStatuses, t)
 }
 
-// IsBlocking reports whether the type is a blocking-task protocol type:
-// it forks its own process and owns its batch.
-func (t TaskType) IsBlocking() bool {
-	return slices.Contains(blockingTaskTypes, t)
-}
-
-// IsLockGated reports whether the type runs under the maintenance lock.
-func (t TaskType) IsLockGated() bool {
-	return slices.Contains(lockGatedTaskTypes, t)
-}
-
 // AllBatchStatuses returns every declared batch status, cloned.
 func AllBatchStatuses() []BatchStatus { return slices.Clone(allBatchStatuses) }
 
@@ -260,13 +275,61 @@ func AllTaskTypes() []TaskType { return slices.Clone(allTaskTypes) }
 // AllTaskStatuses returns every declared task status, cloned.
 func AllTaskStatuses() []TaskStatus { return slices.Clone(allTaskStatuses) }
 
-// LockGatedTaskTypes lists the task types the maintenance lock gates; the
-// lock holder runs them alone.
-func LockGatedTaskTypes() []TaskType { return slices.Clone(lockGatedTaskTypes) }
+// LockDeclarationFor returns the queued lock declaration of a task type; a type without a declaration
+// (config) declares neither locks nor waits. The returned slices are cloned, so callers cannot mutate
+// the table.
+func LockDeclarationFor(t TaskType) LockDeclaration {
+	declaration := lockDeclarations[t]
+	return LockDeclaration{
+		Holds:    slices.Clone(declaration.Holds),
+		WaitsFor: slices.Clone(declaration.WaitsFor),
+	}
+}
 
-// BlockingTaskTypes lists the blocking-task protocol types, the ones
-// with dedicated child processes and batch ownership.
-func BlockingTaskTypes() []TaskType { return slices.Clone(blockingTaskTypes) }
+// HoldsLocks reports whether an execution of the type acquires locks: its claims carry a claim token
+// and transact the lock release with the task transition.
+func (t TaskType) HoldsLocks() bool {
+	return len(lockDeclarations[t].Holds) > 0
+}
+
+// TaskTypesWaitingOn lists the task types whose claims wait for at least one of the given locks. An
+// execution holding those locks drains this set before starting its work.
+func TaskTypesWaitingOn(locks ...LockName) []TaskType {
+	waiting := make([]TaskType, 0, len(allTaskTypes))
+	for _, taskType := range allTaskTypes {
+		for _, wait := range lockDeclarations[taskType].WaitsFor {
+			if slices.Contains(locks, wait) {
+				waiting = append(waiting, taskType)
+				break
+			}
+		}
+	}
+	return waiting
+}
+
+// LockHoldingTaskTypes lists the task types that acquire locks, the set whose claims carry tokens.
+func LockHoldingTaskTypes() []TaskType {
+	holding := make([]TaskType, 0, len(allTaskTypes))
+	for _, taskType := range allTaskTypes {
+		if taskType.HoldsLocks() {
+			holding = append(holding, taskType)
+		}
+	}
+	return holding
+}
+
+// AllLockNames returns every declared lock name, cloned.
+func AllLockNames() []LockName { return slices.Clone(allLockNames) }
+
+// LockNameValues is AllLockNames in plain string form, for the lock queries.
+func LockNameValues() []string {
+	names := AllLockNames()
+	values := make([]string, len(names))
+	for i, name := range names {
+		values[i] = string(name)
+	}
+	return values
+}
 
 // NonConsumeTaskTypes are the task types whose batches own their lifecycle in their handlers and never
 // occupy a consume slot.
@@ -328,22 +391,6 @@ var allTaskTypes = []TaskType{
 	Task.Type.TagAudit,
 }
 
-var blockingTaskTypes = []TaskType{
-	Task.Type.Backup,
-	Task.Type.Mirror,
-	Task.Type.TagReconcile,
-	Task.Type.ThumbBackfill,
-	Task.Type.TagMeasure,
-	Task.Type.TagIdentity,
-	Task.Type.TagAudit,
-}
-
-var lockGatedTaskTypes = []TaskType{
-	Task.Type.Consume,
-	Task.Type.Enrich,
-	Task.Type.Thumbnail,
-}
-
 var allTaskStatuses = []TaskStatus{
 	Task.Status.Pending,
 	Task.Status.Processing,
@@ -353,6 +400,8 @@ var allTaskStatuses = []TaskStatus{
 	Task.Status.Discarded,
 	Task.Status.Waiting,
 }
+
+var allLockNames = []LockName{LockMaintenance, LockStorage}
 
 var allTagVerdicts = []TagVerdict{
 	TagVerdicts.Same,

@@ -6,24 +6,27 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/backup"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func mirrorHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
-	if fp.Help("Usage: kushim mirror [--path <dest>]\n" +
+	if fp.Help("Usage: kushim mirror [--path <dest>] [--no-wait]\n" +
 		"  Mirror the storage tree to a destination with rsync --delete.\n\n" +
-		"  --path    Override destination (default: config mirror.path)\n" +
-		"            Local path or rsync remote target ([user@]host:path)") {
+		"  --path     Override destination (default: config mirror.path)\n" +
+		"             Local path or rsync remote target ([user@]host:path)\n" +
+		"  --no-wait  Exit non-zero instead of waiting for a lock or in-flight work") {
 		return nil
 	}
 
 	var overridePath string
 	fp.String("--path", &overridePath)
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown arguments: %v", rest)
 	}
@@ -36,15 +39,17 @@ func mirrorHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
+	catalog, err := c.GetCatalog()
+	if err != nil {
+		return fmt.Errorf("task catalog: %w", err)
+	}
+	def, err := catalog.Definition(types.Task.Type.Mirror)
+	if err != nil {
+		return fmt.Errorf("mirror definition: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	fmt.Println("Waiting for the backup lock...")
-	if err := database.AcquireMaintenanceLock(ctx, client.Queries, c.GetLogger(), "Backup"); err != nil {
-		return err
-	}
-	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
 
 	cfg := c.GetConfig()
 	dest := cfg.Mirror.Path
@@ -60,9 +65,14 @@ func mirrorHandler(c *container.Container, args []string) error {
 	}
 
 	fmt.Printf("Mirroring %s -> %s\n", cfg.Storage.StorageDir, dest)
-	result, _, err := backup.RunLocked(ctx, client.Queries, c.GetLogger(), cfg.Storage.StorageDir, dest, nil, nil, uuid.NullUUID{})
+	var result *backup.Result
+	err = task.RunDirect(ctx, client, c.GetLogger(), "mirror", def.LocksForDirectMode(), !noWait, nil, func() error {
+		var runErr error
+		result, _, runErr = backup.RunMirrorAndRecord(ctx, c.GetLogger(), cfg.Storage.StorageDir, dest, nil)
+		return runErr
+	})
 	if err != nil {
-		return fmt.Errorf("mirror failed: %w", err)
+		return err
 	}
 
 	fmt.Printf("Mirror completed: %s\n", result.Summary())

@@ -70,6 +70,9 @@ type Batch struct {
 // The registry owns the task-type set, so the display rule cannot drift from the dispatch exclusion.
 var nonConsumeTaskTypeValues = types.NonConsumeTaskTypeValues()
 
+// lockNameValues is the closed lock set in SQL parameter form, owned by the vocabulary in internal/types.
+var lockNameValues = types.LockNameValues()
+
 // NewBatch wires the batch service; maxRetries bounds the task-store
 // claim-contention retries.
 func NewBatch(client *database.Client, maxRetries int) *Batch {
@@ -313,11 +316,8 @@ func (s *Batch) CompleteCancel(ctx context.Context, batchID, ownerID string) (pr
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := s.client.Queries.WithTx(tx)
 
-	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, database.ReleaseMaintenanceLockForBatchParams{
-		BatchID: bid,
-		Types:   types.BlockingTaskTypes(),
-	}); err != nil {
-		return 0, errs.FromDB(err, "release maintenance lock for batch "+batchID)
+	if err := task.ReleaseLocksForBatch(ctx, txQ, batchID); err != nil {
+		return 0, errs.FromDB(err, "release locks for batch "+batchID)
 	}
 
 	processingCancelled, err = txQ.CancelProcessingTasksByBatch(ctx, bid)
@@ -508,11 +508,8 @@ func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string)
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := s.client.Queries.WithTx(tx)
 
-	if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, database.ReleaseMaintenanceLockForBatchParams{
-		BatchID: bid,
-		Types:   types.BlockingTaskTypes(),
-	}); err != nil {
-		return 0, errs.FromDB(err, "release maintenance lock for batch "+batchID)
+	if err := task.ReleaseLocksForBatch(ctx, txQ, batchID); err != nil {
+		return 0, errs.FromDB(err, "release locks for batch "+batchID)
 	}
 
 	quarantined, err := txQ.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
@@ -554,15 +551,16 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	cutoff := time.Now().Add(-time.Duration(staleAfterSeconds) * time.Second)
 	txQ := s.client.Queries.WithTx(tx)
 
-	// the maintenance lock release must precede the resets because its subselect reads status = 'processing'.
-	if _, err := txQ.ReleaseMaintenanceLockForStaleHolders(ctx, types.BlockingTaskTypes()); err != nil {
-		return 0, errs.FromDB(err, "release maintenance lock for stale holders")
+	// the lock release must precede the resets because its subselect reads status = 'processing'.
+	if err := task.ReleaseLocksForStaleHolders(ctx, txQ, types.LockHoldingTaskTypes()); err != nil {
+		return 0, errs.FromDB(err, "release locks for stale holders")
 	}
 
 	blockingQuarantined, err := txQ.QuarantineStaleBlockingTasks(ctx, database.QuarantineStaleBlockingTasksParams{
 		Attempts:  s.maxRetries,
 		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.BlockingTaskTypes(),
+		Types:     types.LockHoldingTaskTypes(),
+		LockNames: lockNameValues,
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "quarantine stale blocking tasks")
@@ -571,7 +569,8 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	blockingReset, err := txQ.ResetStaleBlockingTasks(ctx, database.ResetStaleBlockingTasksParams{
 		Attempts:  s.maxRetries,
 		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.BlockingTaskTypes(),
+		Types:     types.LockHoldingTaskTypes(),
+		LockNames: lockNameValues,
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "reset stale blocking tasks")
@@ -580,7 +579,7 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	quarantined, err := txQ.QuarantineStaleProcessingTasks(ctx, database.QuarantineStaleProcessingTasksParams{
 		Attempts:  s.maxRetries,
 		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.BlockingTaskTypes(),
+		Types:     types.LockHoldingTaskTypes(),
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "quarantine stale processing tasks")
@@ -589,7 +588,7 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	reset, err := txQ.ResetStaleProcessingTasks(ctx, database.ResetStaleProcessingTasksParams{
 		Attempts:  s.maxRetries,
 		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.BlockingTaskTypes(),
+		Types:     types.LockHoldingTaskTypes(),
 	})
 	if err != nil {
 		return 0, errs.FromDB(err, "reset stale processing tasks")

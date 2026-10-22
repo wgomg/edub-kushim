@@ -329,18 +329,21 @@ const getNextPendingTaskOfTypeForOwner = `-- name: GetNextPendingTaskOfTypeForOw
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = $1
   AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
-  AND (NOT $3::boolean OR NOT is_maintenance_lock_held())
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.name = ANY($3::text[]) AND lock_is_held(s.name)
+  )
 ORDER BY created_at LIMIT 1
 `
 
 type GetNextPendingTaskOfTypeForOwnerParams struct {
-	TaskType types.TaskType
-	OwnerID  string
-	Gated    bool
+	TaskType  types.TaskType
+	OwnerID   string
+	WaitLocks []string
 }
 
 func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetNextPendingTaskOfTypeForOwnerParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeForOwner, arg.TaskType, arg.OwnerID, arg.Gated)
+	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfTypeForOwner, arg.TaskType, arg.OwnerID, pq.Array(arg.WaitLocks))
 	var id int64
 	err := row.Scan(&id)
 	return id, err

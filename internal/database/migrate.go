@@ -35,15 +35,16 @@ func ValidateMigrationDestination(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// WaitForTaskDrain polls until no processing task of the lock-gated types
+// WaitForTaskDrain polls until no processing task of the given task types
 // remains, reporting the remaining count on onWait; the context ends the
-// wait with an error.
-func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *log.Logger, what string, onWait ...func(count int64)) error {
+// wait with an error. The caller passes the task types whose declared waits
+// include a lock it holds.
+func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *log.Logger, what string, drainTypes []types.TaskType, onWait ...func(count int64)) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
-		count, err := queries.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
+		count, err := queries.CountProcessingTasks(ctx, drainTypes)
 		if err != nil {
 			return fmt.Errorf("count processing tasks: %w", err)
 		}
@@ -64,11 +65,16 @@ func WaitForTaskDrain(ctx context.Context, queries *Queries, logger *log.Logger,
 	}
 }
 
-// StartMaintenanceLockHeartbeat holds the maintenance lock, renewing it on
-// the given interval until the context ends; it returns a stop function
-// that reports whether every renewal held, so the holder can abort when
-// the lock was lost. token, when valid, names the lock holder's claim.
-func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger *log.Logger, interval time.Duration, token uuid.NullUUID) func() {
+// StartLockHeartbeat refreshes the heartbeat timestamps of the named locks
+// held under token on the given interval until the context ends; it returns
+// a stop function that ends the refresh early. A NULL token refreshes the
+// manual holder's locks, whose time window is the only staleness backstop.
+func StartLockHeartbeat(ctx context.Context, queries *Queries, logger *log.Logger, interval time.Duration, names []types.LockName, token uuid.NullUUID) func() {
+	lockNames := make([]string, len(names))
+	for i, name := range names {
+		lockNames[i] = string(name)
+	}
+
 	stopCh := make(chan struct{})
 	var stopOnce sync.Once
 	go func() {
@@ -81,95 +87,16 @@ func StartMaintenanceLockHeartbeat(ctx context.Context, queries *Queries, logger
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, err := queries.TouchMaintenanceLockForTask(ctx, token); err != nil {
-					logger.Error("", "maintenance lock heartbeat: touch: %v", err)
+				if _, err := queries.TouchLocksForToken(ctx, TouchLocksForTokenParams{
+					LockNames:  lockNames,
+					OwnerToken: token,
+				}); err != nil {
+					logger.Error("", "lock heartbeat: touch: %v", err)
 				}
 			}
 		}
 	}()
 	return func() { stopOnce.Do(func() { close(stopCh) }) }
-}
-
-// HoldMaintenanceLock returns once the maintenance lock is held and the
-// lock-gated tasks have drained, waiting while another process holds the
-// lock. A valid token is a lock the caller already holds, which the helper
-// leaves for the caller to release; otherwise the returned release function
-// releases the lock the helper took. onWait, when non-nil, observes the
-// remaining in-flight count.
-func HoldMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string, token uuid.NullUUID, onWait func(count int64)) (func(), error) {
-	return holdMaintenanceLock(ctx, queries, logger, what, token, onWait, true)
-}
-
-// TryHoldMaintenanceLock is HoldMaintenanceLock without the wait: a lock
-// held by another process is returned as an error instead of retried.
-func TryHoldMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string, token uuid.NullUUID, onWait func(count int64)) (func(), error) {
-	return holdMaintenanceLock(ctx, queries, logger, what, token, onWait, false)
-}
-
-func holdMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string, token uuid.NullUUID, onWait func(count int64), wait bool) (func(), error) {
-	acquired := !token.Valid
-	if acquired {
-		if wait {
-			if err := AcquireMaintenanceLock(ctx, queries, logger, what); err != nil {
-				return nil, err
-			}
-		} else {
-			rows, err := tryAcquireMaintenanceLock(ctx, queries)
-			if err != nil {
-				return nil, err
-			}
-			if rows == 0 {
-				return nil, fmt.Errorf("%s: maintenance lock held by another process", what)
-			}
-		}
-	}
-
-	stopHeartbeat := StartMaintenanceLockHeartbeat(ctx, queries, logger, 5*time.Minute, token)
-	release := func() {
-		stopHeartbeat()
-		if acquired {
-			releaseMaintenanceLock(queries, logger)
-		}
-	}
-	if err := WaitForTaskDrain(ctx, queries, logger, what, onWait); err != nil {
-		release()
-		return nil, err
-	}
-	return release, nil
-}
-
-func tryAcquireMaintenanceLock(ctx context.Context, queries *Queries) (int64, error) {
-	rows, err := queries.AcquireBackupLock(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("acquire maintenance lock: %w", err)
-	}
-	return rows, nil
-}
-
-// AcquireMaintenanceLock waits until the lock is free; each wait is logged
-// and ctx ends the wait.
-func AcquireMaintenanceLock(ctx context.Context, queries *Queries, logger *log.Logger, what string) error {
-	for {
-		rows, err := tryAcquireMaintenanceLock(ctx, queries)
-		if err != nil {
-			return err
-		}
-		if rows > 0 {
-			return nil
-		}
-		logger.Info("", "%s: maintenance lock held by another process — waiting...", what)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-}
-
-func releaseMaintenanceLock(queries *Queries, logger *log.Logger) {
-	if _, err := queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{}); err != nil {
-		logger.Error("", "release maintenance lock: %v", err)
-	}
 }
 
 // RewriteStoragePaths rewrites stored path columns from an old storage

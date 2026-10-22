@@ -65,7 +65,10 @@ DELETE FROM batch_owner WHERE batch_id IN (
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = @task_type
   AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
-  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.name = ANY(@wait_locks::text[]) AND lock_is_held(s.name)
+  )
 ORDER BY created_at LIMIT 1;
 
 -- name: GetBatch :one

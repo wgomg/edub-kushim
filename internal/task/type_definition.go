@@ -31,17 +31,29 @@ type LockPolicy struct {
 }
 
 // TypeDefinition is the declaration of one task type. It is a composition of concern-specific values,
-// not one struct owning every concern: identity, queued locks, dedup derivation, preconditions and the
-// typed task-set builder. Fields are added only by the stage that consumes them (direct-mode locks, CLI
-// surface, hosts, concurrency, schedules), into this same type. It never carries a handler, an attach
-// pass, handler construction, a legacy source, a pool interval or worker count, a pooling predicate or
-// a lifecycle-ownership flag; handlers stay in the registry.
+// not one struct owning every concern: identity, the queued and direct lock policy, dedup derivation,
+// preconditions and the typed task-set builder. Fields are added only by the stage that consumes them
+// (CLI surface, hosts, concurrency, schedules), into this same type. It never carries a handler, an
+// attach pass, handler construction, a legacy source, a pool interval or worker count, and a pooling
+// predicate or a lifecycle-ownership flag; handlers stay in the registry.
 type TypeDefinition struct {
-	Type          types.TaskType
-	Locks         LockPolicy
+	Type  types.TaskType
+	Locks LockPolicy
+
+	// DirectLocks overrides the lock policy for direct CLI runs; nil uses the queued Locks set.
+	DirectLocks   *LockPolicy
 	DedupKey      func(json.RawMessage) string
 	Preconditions []Precondition
 	BuildTasks    func(ctx context.Context, input BuildInput) ([]TaskSpec, error)
+}
+
+// LocksForDirectMode returns the lock policy a direct CLI run of the type uses: its declared direct
+// policy when one is set, otherwise the queued lock set.
+func (d TypeDefinition) LocksForDirectMode() LockPolicy {
+	if d.DirectLocks != nil {
+		return *d.DirectLocks
+	}
+	return d.Locks
 }
 
 // TypeCatalog looks up the task type definitions built by the composition root. Enqueue, dispatch and

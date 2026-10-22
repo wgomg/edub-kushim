@@ -57,6 +57,43 @@ func TestDedupKeys(t *testing.T) {
 	}
 }
 
+// TestLockDeclarationsMatchVocabulary pins the definitions' queued lock policy to the closed vocabulary
+// table: the enqueue validates common holds through the definitions while the claim, drain and sweep
+// paths read the table, so neither side may drift. Direct mode defaults to the queued set everywhere
+// until a type's direct path declares otherwise.
+func TestLockDeclarationsMatchVocabulary(t *testing.T) {
+	catalog := NewCatalog(nil)
+
+	for _, taskType := range types.AllTaskTypes() {
+		def, err := catalog.Definition(taskType)
+		if err != nil {
+			t.Fatalf("definition for %q: %v", taskType, err)
+		}
+		declaration := types.LockDeclarationFor(taskType)
+		if !equalLockNames(def.Locks.Holds, declaration.Holds) {
+			t.Errorf("%q holds = %v, want %v", taskType, def.Locks.Holds, declaration.Holds)
+		}
+		if !equalLockNames(def.Locks.WaitsFor, declaration.WaitsFor) {
+			t.Errorf("%q waits = %v, want %v", taskType, def.Locks.WaitsFor, declaration.WaitsFor)
+		}
+		if def.DirectLocks != nil {
+			t.Errorf("%q direct locks = %+v, want nil (defaults to the queued set)", taskType, *def.DirectLocks)
+		}
+	}
+}
+
+func equalLockNames(a, b []types.LockName) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestDailyDedupKeys pins the date-scoped keys of the daily backup and mirror runs.
 func TestDailyDedupKeys(t *testing.T) {
 	catalog := NewCatalog(nil)

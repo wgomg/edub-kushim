@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -12,19 +11,18 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ErrLockBusy reports that the maintenance lock is held by another
-// process. Claim attempts treat it as an idle round rather than an error.
-var ErrLockBusy = errors.New("maintenance lock busy")
-
-// Store is the persistence of the task lifecycle: creating tasks with
-// dedup keys, claiming pending tasks with claim tokens, completing,
-// failing and retrying them, plus the blocking-task variants that
-// coordinate through the maintenance lock and claim tokens. All methods
-// are safe for concurrent use.
+// Store is the persistence of the task lifecycle: creating tasks with their dedup keys, claiming pending
+// tasks with claim tokens, completing, failing and retrying them, plus the lock-holding variants that
+// coordinate through the declared resource locks and claim tokens. All methods are safe for concurrent use.
 type Store struct {
 	client  *database.Client
 	queries *database.Queries
 	ownerID string
+
+	// batchHoldsAcquired tells claims that the execution already holds the batch locks, so a claim verifies
+	// its waits and takes the token without acquiring. The consume child sets it after its batch-level
+	// acquisition.
+	batchHoldsAcquired bool
 }
 
 // NewStore builds the task store over the shared database client.
@@ -38,11 +36,16 @@ func (s *Store) SetOwnerID(id string) {
 	s.ownerID = id
 }
 
-// ClaimNextPending claims one pending task of the type, blocking types
-// through their dedicated protocol; ErrLockBusy surfaces when the
-// maintenance lock is held.
+// SetBatchHoldsAcquired must run after the batch-level acquisition and before the claims it affects.
+func (s *Store) SetBatchHoldsAcquired(acquired bool) {
+	s.batchHoldsAcquired = acquired
+}
+
+// ClaimNextPending claims one pending task of the type. Types that hold locks claim through their own
+// token-guarded protocol; the others only verify their declared waits. ErrLockBusy surfaces whenever a lock
+// the claim needs is held.
 func (s *Store) ClaimNextPending(ctx context.Context, taskType types.TaskType) (database.Task, uuid.UUID, error) {
-	if taskType.IsBlocking() {
+	if taskType.HoldsLocks() {
 		return s.claimBlockingNextPending(ctx, taskType)
 	}
 	return s.claimNextPending(ctx, taskType)
@@ -52,18 +55,18 @@ func (s *Store) claimNextPending(ctx context.Context, taskType types.TaskType) (
 	var id int64
 	var err error
 
-	gated := taskType.IsLockGated()
+	waitLocks := lockNameStrings(types.LockDeclarationFor(taskType).WaitsFor)
 
 	if s.ownerID != "" {
 		id, err = s.queries.GetNextPendingTaskOfTypeForOwner(ctx, database.GetNextPendingTaskOfTypeForOwnerParams{
-			TaskType: taskType,
-			OwnerID:  s.ownerID,
-			Gated:    gated,
+			TaskType:  taskType,
+			OwnerID:   s.ownerID,
+			WaitLocks: waitLocks,
 		})
 	} else {
 		id, err = s.queries.GetNextPendingTaskOfType(ctx, database.GetNextPendingTaskOfTypeParams{
-			TaskType: taskType,
-			Gated:    gated,
+			TaskType:  taskType,
+			WaitLocks: waitLocks,
 		})
 	}
 	if err != nil {
@@ -87,6 +90,8 @@ func (s *Store) claimNextPending(ctx context.Context, taskType types.TaskType) (
 
 func (s *Store) claimBlockingNextPending(ctx context.Context, taskType types.TaskType) (database.Task, uuid.UUID, error) {
 	token := uuid.New()
+	declaration := types.LockDeclarationFor(taskType)
+	waitLocks := lockNameStrings(declaration.WaitsFor)
 
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -99,14 +104,14 @@ func (s *Store) claimBlockingNextPending(ctx context.Context, taskType types.Tas
 	var id int64
 	if s.ownerID != "" {
 		id, err = txQ.GetNextPendingTaskOfTypeForOwner(ctx, database.GetNextPendingTaskOfTypeForOwnerParams{
-			TaskType: taskType,
-			OwnerID:  s.ownerID,
-			Gated:    false,
+			TaskType:  taskType,
+			OwnerID:   s.ownerID,
+			WaitLocks: waitLocks,
 		})
 	} else {
 		id, err = txQ.GetNextPendingTaskOfType(ctx, database.GetNextPendingTaskOfTypeParams{
-			TaskType: taskType,
-			Gated:    false,
+			TaskType:  taskType,
+			WaitLocks: waitLocks,
 		})
 	}
 	if err != nil {
@@ -124,17 +129,16 @@ func (s *Store) claimBlockingNextPending(ctx context.Context, taskType types.Tas
 		return database.Task{}, uuid.Nil, sql.ErrNoRows
 	}
 
-	rows, err = txQ.AcquireMaintenanceLockForTask(ctx, uuid.NullUUID{UUID: token, Valid: true})
-	if err != nil {
-		return database.Task{}, uuid.Nil, fmt.Errorf("acquire maintenance lock: %w", err)
-	}
-	if rows == 0 {
-		return database.Task{}, uuid.Nil, ErrLockBusy
-	}
-
 	task, err := txQ.GetTask(ctx, id)
 	if err != nil {
 		return database.Task{}, uuid.Nil, err
+	}
+
+	if !s.batchHoldsAcquired {
+		if err := acquireLocks(ctx, txQ, declaration.Holds, declaration.WaitsFor,
+			uuid.NullUUID{UUID: token, Valid: true}, task.BatchID.String); err != nil {
+			return database.Task{}, uuid.Nil, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -178,8 +182,8 @@ func (s *Store) withBlockingTransition(ctx context.Context, op string, id int64,
 		return 0, fmt.Errorf("%s blocking task %d: %w", op, id, err)
 	}
 	if rows > 0 {
-		if _, err := txQ.ReleaseMaintenanceLockForTask(ctx, uuid.NullUUID{UUID: token, Valid: true}); err != nil {
-			return 0, fmt.Errorf("release maintenance lock for task %d: %w", id, err)
+		if err := ReleaseLocksForToken(ctx, txQ, uuid.NullUUID{UUID: token, Valid: true}); err != nil {
+			return 0, fmt.Errorf("release locks for task %d: %w", id, err)
 		}
 	}
 

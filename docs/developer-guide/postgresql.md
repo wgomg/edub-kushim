@@ -380,15 +380,15 @@ indexed) — which keeps payloads for machine data only.
 Plain SQL functions (not triggers) are used to centralize business conditions
 so they can be reused across queries.
 
-The maintenance-lock gate (`00014_maintenance_lock_predicate.sql`, redefined
-over `system_signal` by `00041_system_signal.sql`):
+The resource-lock gate (`lock_is_held`, created by
+`00049_named_resource_locks.sql` over the lock rows of `system_signal`):
 
 ```sql
-CREATE OR REPLACE FUNCTION is_maintenance_lock_held() RETURNS boolean AS $$
+CREATE OR REPLACE FUNCTION lock_is_held(lock_name text) RETURNS boolean AS $$
 BEGIN
   RETURN EXISTS (
     SELECT 1 FROM system_signal
-    WHERE name = 'maintenance_lock'
+    WHERE name = lock_name
       AND value = 'true'
       AND (data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
   );
@@ -400,27 +400,33 @@ $$ LANGUAGE plpgsql;
 -- name: GetNextPendingTaskOfType :one
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = @task_type
-  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.name = ANY(@wait_locks::text[]) AND lock_is_held(s.name)
+  )
 ORDER BY created_at LIMIT 1;
 ```
 
-The function encodes the lock's *staleness rule* in one place; every worker
-poll (and the backup task itself) consults it. Which task types claim under
-the gate (`gated = true`) is declared once in the Go registry
-(`types.TaskType.IsLockGated()`: consume, enrich, thumbnail); all other types
-claim with `gated = false`, so the predicate can never leak into their
-queries. The lock is acquired with a
-conditional UPDATE on the signal row (§2) — an atomic
-compare-and-swap:
+The function encodes the locks' *staleness rule* in one place; every worker
+poll (and the maintenance runs themselves) consults it. The waits each task
+type gates on are declared once in the closed vocabulary table
+(`types.LockDeclarationFor`): consume and enrich wait `maintenance`,
+`thumbnail` waits `maintenance` and `storage` — the claim passes the type's
+waits as `wait_locks`, and an empty wait list makes the `NOT EXISTS` vacuously
+true, so the predicate can never leak into a type that declares none. The
+locks are acquired with a
+conditional multi-row UPDATE on the signal rows (§2) — an atomic
+compare-and-swap over all of an execution's holds at once:
 
 ```sql
 UPDATE system_signal SET value = 'true',
-    data = jsonb_build_object('started_at', to_jsonb(NOW()))
-WHERE name = 'maintenance_lock'
+    data = jsonb_build_object('started_at', to_jsonb(NOW()),
+                              'owner_token', $1::uuid::text, 'batch_id', $2::text)
+WHERE name = ANY(@lock_names::text[])
   AND (value = 'false' OR (data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes');
 ```
 
-Zero rows affected = the lock was already held — same `:execrows` discipline
+Zero rows affected = a hold was already taken — same `:execrows` discipline
 as the task claim (§7).
 
 The store-changed flags are the counterexample where the mechanism is a
@@ -611,7 +617,7 @@ Knowing what *isn't* here is as instructive as what is:
 | Generated tsvector column | `sql/schema/migrations/00002_tsvector.sql` |
 | GIN + CONCURRENTLY + NO TRANSACTION | `sql/schema/migrations/00003_tsvector_index.sql` |
 | Trigger + `pg_notify` | `sql/schema/migrations/00004_listen_notify.sql` + `internal/ops/queue/notify.go` |
-| Signal store + SQL gate function | `sql/schema/migrations/00041_system_signal.sql`, `sql/queries/maintenance_lock.sql`, `sql/queries/task.sql:13-18` |
+| Signal store + SQL gate function | `sql/schema/migrations/00041_system_signal.sql`, `sql/schema/migrations/00049_named_resource_locks.sql`, `sql/queries/lock.sql`, `sql/queries/task.sql:13-23` |
 | Soft delete + partial index | `sql/schema/migrations/00007_trash_soft_delete.sql` |
 | Idempotent multi-row seeds with `ON CONFLICT` | `sql/schema/seed-*.sql` |
 | Upsert + `excluded` | `sql/queries/batch.sql:24-31`, `tag.sql:17-20`, `people.sql`, `document_tag.sql`, `deleted_tag.sql` |

@@ -1145,52 +1145,60 @@ func TestTaskHealthQueries(t *testing.T) {
 	})
 }
 
-func TestBackupLockLifecycle(t *testing.T) {
+func TestLockLifecycle(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
 	ctx := context.Background()
+	maintenance := []string{string(types.LockMaintenance)}
+	token := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+	defer q.ReleaseLocksForToken(ctx, ReleaseLocksForTokenParams{LockNames: types.LockNameValues(), OwnerToken: token})
 
 	t.Run("initially unlocked", func(t *testing.T) {
-		locked, err := q.IsMaintenanceLocked(ctx)
-		assertNoError(t, err, "is backup locked")
-		assertEqual(t, locked, int32(0), "not locked initially")
+		held, err := q.IsLockHeld(ctx, string(types.LockMaintenance))
+		assertNoError(t, err, "is lock held")
+		assertEqual(t, held, int32(0), "not held initially")
 	})
 
-	t.Run("acquire and verify locked", func(t *testing.T) {
-		rows, err := q.AcquireBackupLock(ctx)
+	t.Run("acquire and verify held", func(t *testing.T) {
+		rows, err := q.AcquireLocks(ctx, AcquireLocksParams{OwnerToken: token, LockNames: maintenance})
 		assertNoError(t, err, "acquire")
 		assertEqual(t, rows, int64(1), "one row affected")
 
-		locked, err := q.IsMaintenanceLocked(ctx)
-		assertNoError(t, err, "check locked")
-		assertEqual(t, locked, int32(1), "locked after acquire")
+		held, err := q.IsLockHeld(ctx, string(types.LockMaintenance))
+		assertNoError(t, err, "check held")
+		assertEqual(t, held, int32(1), "held after acquire")
 	})
 
 	t.Run("release and verify unlocked", func(t *testing.T) {
-		rows, err := q.ReleaseBackupLock(ctx, uuid.NullUUID{})
+		released, err := q.ReleaseLocksForToken(ctx, ReleaseLocksForTokenParams{
+			LockNames:  maintenance,
+			OwnerToken: token,
+		})
 		assertNoError(t, err, "release")
-		assertEqual(t, rows, int64(1), "one row released")
+		assertEqual(t, len(released), 1, "one row released")
 
-		locked, err := q.IsMaintenanceLocked(ctx)
+		held, err := q.IsLockHeld(ctx, string(types.LockMaintenance))
 		assertNoError(t, err, "check unlocked")
-		assertEqual(t, locked, int32(0), "unlocked after release")
+		assertEqual(t, held, int32(0), "unlocked after release")
 	})
-
-	// Cleanup in case test fails mid-way
-	q.ReleaseBackupLock(ctx, uuid.NullUUID{})
 }
 
-func TestAcquireBackupLockConflict(t *testing.T) {
+func TestAcquireLocksConflict(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
 	ctx := context.Background()
-	defer q.ReleaseBackupLock(ctx, uuid.NullUUID{})
+	maintenance := []string{string(types.LockMaintenance)}
+	first := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+	defer q.ReleaseLocksForToken(ctx, ReleaseLocksForTokenParams{LockNames: types.LockNameValues(), OwnerToken: first})
 
-	rows, err := q.AcquireBackupLock(ctx)
+	rows, err := q.AcquireLocks(ctx, AcquireLocksParams{OwnerToken: first, LockNames: maintenance})
 	assertNoError(t, err, "first acquire")
 	assertEqual(t, rows, int64(1), "first acquire succeeds")
 
-	rows, err = q.AcquireBackupLock(ctx)
+	rows, err = q.AcquireLocks(ctx, AcquireLocksParams{
+		OwnerToken: uuid.NullUUID{UUID: uuid.New(), Valid: true},
+		LockNames:  maintenance,
+	})
 	assertNoError(t, err, "second acquire")
 	assertEqual(t, rows, int64(0), "second acquire returns 0 when already held")
 }
@@ -1202,7 +1210,7 @@ func TestCountProcessingTasks(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty", func(t *testing.T) {
-		count, err := q.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
+		count, err := q.CountProcessingTasks(ctx, types.TaskTypesWaitingOn(types.LockMaintenance))
 		assertNoError(t, err, "count")
 		assertEqual(t, count, int64(0), "zero processing tasks")
 	})
@@ -1218,7 +1226,7 @@ func TestCountProcessingTasks(t *testing.T) {
 		id3, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-3", TaskType: types.Task.Type.Config, Status: types.Task.Status.Pending})
 		q.ClaimTask(ctx, ClaimTaskParams{ID: id3})
 
-		count, err := q.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
+		count, err := q.CountProcessingTasks(ctx, types.TaskTypesWaitingOn(types.LockMaintenance))
 		assertNoError(t, err, "count with tasks")
 		assertEqual(t, count, int64(2), "only consume + enrich")
 	})
@@ -1236,21 +1244,22 @@ func TestCountProcessingTasks(t *testing.T) {
 		idCn, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-cn", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending})
 		q.ClaimTask(ctx, ClaimTaskParams{ID: idCn})
 
-		count, err := q.CountProcessingTasks(ctx, types.LockGatedTaskTypes())
+		count, err := q.CountProcessingTasks(ctx, types.TaskTypesWaitingOn(types.LockMaintenance))
 		assertNoError(t, err, "count")
 		assertEqual(t, count, int64(1), "only the consume task; blocking excluded")
 	})
 
 	// Cleanup
-	q.ReleaseBackupLock(ctx, uuid.NullUUID{})
+	q.ReleaseLocksForToken(ctx, ReleaseLocksForTokenParams{LockNames: types.LockNameValues(), OwnerToken: uuid.NullUUID{}})
 }
 
-func TestGatedQueriesBlockDuringBackup(t *testing.T) {
+func TestWaitedQueriesBlockDuringMaintenance(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
 	resetDB(t, q)
 	ctx := context.Background()
-	defer q.ReleaseBackupLock(ctx, uuid.NullUUID{})
+	maintenance := []string{string(types.LockMaintenance)}
+	defer q.ReleaseLocksForToken(ctx, ReleaseLocksForTokenParams{LockNames: types.LockNameValues(), OwnerToken: uuid.NullUUID{}})
 
 	// Create a pending consume task
 	payload := json.RawMessage(`{"file":"test.pdf"}`)
@@ -1260,34 +1269,35 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 	assertNoError(t, err, "create task")
 	_ = id
 
-	t.Run("ungated returns task when unlocked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: false})
+	t.Run("no waits returns task when unlocked", func(t *testing.T) {
+		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume})
 		assertNoError(t, err, "ungated claim")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
 
-	t.Run("gated returns task when unlocked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: true})
+	t.Run("waiting on maintenance returns task when unlocked", func(t *testing.T) {
+		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, WaitLocks: maintenance})
 		assertNoError(t, err, "gated claim unlocked")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
 
-	// Lock backup
-	_, err = q.AcquireBackupLock(ctx)
+	// Hold the maintenance lock with a manual holder
+	rows, err := q.AcquireLocks(ctx, AcquireLocksParams{LockNames: maintenance})
 	assertNoError(t, err, "acquire lock")
+	assertEqual(t, rows, int64(1), "acquire lock")
 
-	t.Run("gated returns ErrNoRows when locked", func(t *testing.T) {
-		_, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: true})
-		assertEqual(t, err, sql.ErrNoRows, "gated claim blocked during backup")
+	t.Run("waiting on maintenance returns ErrNoRows when held", func(t *testing.T) {
+		_, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, WaitLocks: maintenance})
+		assertEqual(t, err, sql.ErrNoRows, "gated claim blocked during maintenance")
 	})
 
-	t.Run("ungated still returns task when locked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, Gated: false})
+	t.Run("no waits still returns task when held", func(t *testing.T) {
+		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume})
 		assertNoError(t, err, "ungated claim still works")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
 
-	t.Run("gated with owner also blocked when locked", func(t *testing.T) {
+	t.Run("waiting with owner also blocked when held", func(t *testing.T) {
 		batchID := "gate-batch"
 		q.CreateBatch(ctx, CreateBatchParams{ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued})
 		q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: batchID, OwnerID: "gate-owner", Pid: 999})
@@ -1298,10 +1308,51 @@ func TestGatedQueriesBlockDuringBackup(t *testing.T) {
 		})
 
 		_, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
-			TaskType: types.Task.Type.Consume, OwnerID: "gate-owner", Gated: true,
+			TaskType: types.Task.Type.Consume, OwnerID: "gate-owner", WaitLocks: maintenance,
 		})
-		assertEqual(t, err, sql.ErrNoRows, "gated owner claim blocked during backup")
+		assertEqual(t, err, sql.ErrNoRows, "gated owner claim blocked during maintenance")
 	})
+}
+
+// TestThumbnailClaimWaitsForStorage pins the second lock of the thumbnail declaration: its claims
+// defer on both maintenance and storage, so a storage writer pauses new thumbnail work while
+// maintenance-holders alone do not.
+func TestThumbnailClaimWaitsForStorage(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+	waits := []string{string(types.LockMaintenance), string(types.LockStorage)}
+	storageToken := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+	t.Cleanup(func() {
+		q.ReleaseLocksForToken(ctx, ReleaseLocksForTokenParams{
+			LockNames:  types.LockNameValues(),
+			OwnerToken: storageToken,
+		})
+	})
+
+	payload := json.RawMessage(`{"file":"t.pdf"}`)
+	_, err := q.CreateTask(ctx, CreateTaskParams{
+		TaskID: "thumb-gate", TaskType: types.Task.Type.Thumbnail, Status: types.Task.Status.Pending, Payload: &payload,
+	})
+	assertNoError(t, err, "create thumbnail task")
+
+	id, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{
+		TaskType: types.Task.Type.Thumbnail, WaitLocks: waits,
+	})
+	assertNoError(t, err, "claim while storage is free")
+	assertEqual(t, id > 0, true, "got a task id")
+
+	rows, err := q.AcquireLocks(ctx, AcquireLocksParams{
+		OwnerToken: storageToken, LockNames: []string{string(types.LockStorage)},
+	})
+	assertNoError(t, err, "hold storage")
+	assertEqual(t, rows, int64(1), "hold storage")
+
+	_, err = q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{
+		TaskType: types.Task.Type.Thumbnail, WaitLocks: waits,
+	})
+	assertEqual(t, err, sql.ErrNoRows, "thumbnail claim deferred while storage is held")
 }
 
 func TestCountPausedBatches(t *testing.T) {

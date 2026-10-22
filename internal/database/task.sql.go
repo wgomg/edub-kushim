@@ -563,17 +563,20 @@ func (q *Queries) GetNextPendingTask(ctx context.Context) (int64, error) {
 const getNextPendingTaskOfType = `-- name: GetNextPendingTaskOfType :one
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = $1
-  AND (NOT $2::boolean OR NOT is_maintenance_lock_held())
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.name = ANY($2::text[]) AND lock_is_held(s.name)
+  )
 ORDER BY created_at LIMIT 1
 `
 
 type GetNextPendingTaskOfTypeParams struct {
-	TaskType types.TaskType
-	Gated    bool
+	TaskType  types.TaskType
+	WaitLocks []string
 }
 
 func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, arg GetNextPendingTaskOfTypeParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, arg.TaskType, arg.Gated)
+	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, arg.TaskType, pq.Array(arg.WaitLocks))
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -1103,6 +1106,33 @@ func (q *Queries) ListAllTasksByType(ctx context.Context, taskType types.TaskTyp
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBatchTaskTypes = `-- name: ListBatchTaskTypes :many
+SELECT DISTINCT task_type FROM task WHERE batch_id = $1 ORDER BY task_type
+`
+
+func (q *Queries) ListBatchTaskTypes(ctx context.Context, batchID sql.NullString) ([]types.TaskType, error) {
+	rows, err := q.db.QueryContext(ctx, listBatchTaskTypes, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []types.TaskType
+	for rows.Next() {
+		var task_type types.TaskType
+		if err := rows.Scan(&task_type); err != nil {
+			return nil, err
+		}
+		items = append(items, task_type)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

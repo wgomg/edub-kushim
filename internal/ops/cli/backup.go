@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,33 +18,36 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-func checkBackupPreconditions(c *container.Container, operation string) (*database.Client, error) {
+// checkRestorePreconditions enforces the quiescence restore requires: it replaces state, so it refuses
+// instead of waiting for locks or draining.
+func checkRestorePreconditions(c *container.Container) (*database.Client, error) {
 	client, err := c.GetClient()
 	if err != nil {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	locked, err := client.Queries.IsMaintenanceLocked(context.Background())
+	locked, err := client.Queries.IsLockHeld(context.Background(), string(types.LockMaintenance))
 	if err != nil {
 		return nil, fmt.Errorf("check backup state: %w", err)
 	}
 	if locked > 0 {
-		return nil, fmt.Errorf("a scheduled backup is in progress — wait for it to finish")
+		return nil, fmt.Errorf("a maintenance run is in progress — wait for it to finish")
 	}
 
-	count, err := client.Queries.CountProcessingTasks(context.Background(), types.LockGatedTaskTypes())
+	count, err := client.Queries.CountProcessingTasks(context.Background(), types.TaskTypesWaitingOn(types.LockMaintenance))
 	if err != nil {
 		return nil, fmt.Errorf("check processing tasks: %w", err)
 	}
 	if count > 0 {
-		return nil, fmt.Errorf("%d task(s) in progress — stop all processing before running manual %s", count, operation)
+		return nil, fmt.Errorf("%d task(s) in progress — stop all processing before running restore", count)
 	}
 
 	if c.GetConfig().Consumer.Polling.Enabled {
-		return nil, fmt.Errorf("polling is enabled — disable it before running manual %s", operation)
+		return nil, fmt.Errorf("polling is enabled — disable it before running restore")
 	}
 
 	return client, nil
@@ -51,10 +55,11 @@ func checkBackupPreconditions(c *container.Container, operation string) (*databa
 
 func backupHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
-	if fp.Help("Usage: kushim backup [--path <dir>] [--mode <full|database|documents>]\n" +
+	if fp.Help("Usage: kushim backup [--path <dir>] [--mode <full|database|documents>] [--no-wait]\n" +
 		"  Run a backup immediately.\n\n" +
-		"  --path    Override output directory (default: config backup.path)\n" +
-		"  --mode    What to include: full (DB + documents), database, documents (default: full)") {
+		"  --path     Override output directory (default: config backup.path)\n" +
+		"  --mode     What to include: full (DB + documents), database, documents (default: full)\n" +
+		"  --no-wait  Exit non-zero instead of waiting for a lock or in-flight work") {
 		return nil
 	}
 
@@ -62,6 +67,8 @@ func backupHandler(c *container.Container, args []string) error {
 	var mode string
 	fp.String("--path", &overridePath)
 	fp.String("--mode", &mode)
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown arguments: %v", rest)
 	}
@@ -74,19 +81,18 @@ func backupHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("invalid --mode %q — must be one of: full, database, documents", mode)
 	}
 
-	client, err := checkBackupPreconditions(c, "backup")
+	client, err := c.GetClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("database: %w", err)
 	}
-
-	rowsAffected, err := client.Queries.AcquireBackupLock(context.Background())
+	catalog, err := c.GetCatalog()
 	if err != nil {
-		return fmt.Errorf("acquire backup lock: %w", err)
+		return fmt.Errorf("task catalog: %w", err)
 	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("backup lock held by another process — wait for it to finish")
+	def, err := catalog.Definition(types.Task.Type.Backup)
+	if err != nil {
+		return fmt.Errorf("backup definition: %w", err)
 	}
-	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
 
 	backupDir := c.GetConfig().Backup.Path
 	if overridePath != "" {
@@ -107,9 +113,17 @@ func backupHandler(c *container.Container, args []string) error {
 	defer cancel()
 
 	fmt.Printf("Creating %s backup...\n", backupMode)
-	result, err := backup.Create(ctx, db, database.SchemaFS, backupMode, backupDir, configPath, c.GetConfig().Storage.StorageDir)
+	var result *backup.BackupResult
+	err = task.RunDirect(ctx, client, c.GetLogger(), "backup", def.LocksForDirectMode(), !noWait, nil, func() error {
+		var runErr error
+		result, runErr = backup.Create(ctx, db, database.SchemaFS, backupMode, backupDir, configPath, c.GetConfig().Storage.StorageDir)
+		if runErr != nil {
+			return fmt.Errorf("backup failed: %w", runErr)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("backup failed: %w", err)
+		return err
 	}
 
 	fmt.Printf("Backup created: %s\n", result.Path)
@@ -181,19 +195,29 @@ func restoreHandler(c *container.Container, args []string) error {
 		}
 	}
 
-	client, err := checkBackupPreconditions(c, "restore")
+	client, err := checkRestorePreconditions(c)
 	if err != nil {
 		return err
 	}
 
-	rowsAffected, err := client.Queries.AcquireBackupLock(context.Background())
-	if err != nil {
-		return fmt.Errorf("acquire backup lock: %w", err)
+	lockToken := uuid.NullUUID{}
+	if err := task.AcquireLocks(context.Background(), client,
+		[]types.LockName{types.LockMaintenance}, nil, lockToken, ""); err != nil {
+		if errors.Is(err, task.ErrLockBusy) {
+			return fmt.Errorf("maintenance lock held by another process — wait for it to finish")
+		}
+		return fmt.Errorf("acquire maintenance lock: %w", err)
 	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("backup lock held by another process — wait for it to finish")
-	}
-	defer client.Queries.ReleaseBackupLock(context.Background(), uuid.NullUUID{})
+	defer func() {
+		relCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := task.ReleaseLocksForToken(relCtx, client.Queries, lockToken); err != nil {
+			c.GetLogger().Error("", "release maintenance lock: %v", err)
+		}
+	}()
+	stopHeartbeat := database.StartLockHeartbeat(context.Background(), client.Queries, c.GetLogger(),
+		task.LockHeartbeatInterval, []types.LockName{types.LockMaintenance}, lockToken)
+	defer stopHeartbeat()
 
 	pidFile := filepath.Join(c.GetConfig().App.ConfigDir, "kushim-queue.pid")
 	if data, err := os.ReadFile(pidFile); err == nil {

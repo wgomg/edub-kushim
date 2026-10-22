@@ -579,7 +579,7 @@ func TestRunnerNilPayload(t *testing.T) {
 }
 
 func TestClaimNextPendingGating(t *testing.T) {
-	store, _, q := setupTaskTest(t)
+	store, _, _ := setupTaskTest(t)
 	ctx := context.Background()
 
 	_, err := createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
@@ -595,9 +595,9 @@ func TestClaimNextPendingGating(t *testing.T) {
 	_, err = createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file":"test2.pdf"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create second consume task")
 
-	_, err = q.AcquireBackupLock(ctx)
-	testutil.AssertNoError(t, err, "acquire backup lock")
-	defer q.ReleaseBackupLock(ctx, uuid.NullUUID{})
+	err = AcquireLocks(ctx, store.client, []types.LockName{types.LockMaintenance}, nil, uuid.NullUUID{}, "")
+	testutil.AssertNoError(t, err, "acquire maintenance lock")
+	defer ReleaseLocksForToken(ctx, store.client.Queries, uuid.NullUUID{})
 
 	t.Run("consume blocked when backup locked", func(t *testing.T) {
 		_, _, err := store.ClaimNextPending(ctx, "consume")
@@ -654,7 +654,7 @@ func createBackupTask(t *testing.T, store *Store, taskID string) {
 
 func lockHeld(t *testing.T, client *database.Client) bool {
 	t.Helper()
-	v, err := client.Queries.IsMaintenanceLocked(context.Background())
+	v, err := client.Queries.IsLockHeld(context.Background(), string(types.LockMaintenance))
 	testutil.AssertNoError(t, err, "check lock")
 	return v == 1
 }
@@ -798,7 +798,7 @@ func TestStoreGuardAgainstStaleClaimant(t *testing.T) {
 	testutil.AssertNoError(t, err, "claim")
 
 	fresh := uuid.New()
-	if _, err := client.DB().ExecContext(ctx, "UPDATE system_signal SET data = jsonb_set(data, '{owner_token}', to_jsonb($1::text)) WHERE name = 'maintenance_lock'", fresh); err != nil {
+	if _, err := client.DB().ExecContext(ctx, "UPDATE system_signal SET data = jsonb_set(data, '{owner_token}', to_jsonb($1::text)) WHERE name = 'maintenance'", fresh); err != nil {
 		t.Fatalf("overwrite lock token: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx, "UPDATE task SET claim_token = $1 WHERE id = $2", fresh, task.ID); err != nil {

@@ -267,7 +267,7 @@ func (c *Container) ensureTaskWiring() error {
 	registry.Register(types.Task.Type.Enrich, enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 	thumbnailHandler := consumption.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() })
 	registry.Register(types.Task.Type.Thumbnail, thumbnailHandler)
-	registry.Register(types.Task.Type.ThumbBackfill, consumption.NewThumbnailBackfillTaskHandler(thumbnailHandler, client.Queries, c.logger))
+	registry.Register(types.Task.Type.ThumbBackfill, thumbnailHandler)
 	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, c.logger))
@@ -316,6 +316,15 @@ func (c *Container) SetRunnerOwnerID(id string) error {
 		return err
 	}
 	c.store.SetOwnerID(id)
+	return nil
+}
+
+// SetRunnerBatchHoldsAcquired applies the batch-holds state to the task store, wiring the runner first.
+func (c *Container) SetRunnerBatchHoldsAcquired(acquired bool) error {
+	if _, err := c.GetRunner(); err != nil {
+		return err
+	}
+	c.store.SetBatchHoldsAcquired(acquired)
 	return nil
 }
 

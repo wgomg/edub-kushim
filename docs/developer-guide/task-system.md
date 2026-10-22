@@ -25,7 +25,7 @@ Audience: developers touching `internal/task/`, `internal/ops/queue/queue.go`,
 9. [Deduplication](#9-deduplication)
 10. [Reclamation after crashes](#10-reclamation-after-crashes)
 11. [Retry and resume](#11-retry-and-resume)
-12. [The backup gate](#12-the-backup-gate)
+12. [The resource locks](#12-the-resource-locks)
 13. [Configuration knobs](#13-configuration-knobs)
 14. [Gotchas](#14-gotchas)
 
@@ -47,7 +47,7 @@ The cast of characters:
 | `Enqueuer` | `internal/task/enqueue.go` | the single creation path (`EnqueueBatch`/`EnqueueTask`) over `BatchSpec`/`TaskSpec` |
 | `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue contract: locks, dedup key, preconditions, builder |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
-| `Handler` | `internal/task/handler.go` | does the work, returns JSON result; `RunBlocking` wraps the blocking-task lifecycle |
+| `Handler` | `internal/task/handler.go` | does the work, returns JSON result; `RunBlocking` wraps the lock-holding lifecycle |
 | `Runner` | `internal/task/runner.go` | claims + dispatches + completes |
 | `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
@@ -160,8 +160,8 @@ The `WHERE status = 'pending'` is the entire concurrency control: of N racing
 workers, exactly one flips the row and affects 1 row; the rest affect 0. The
 Go side checks `RowsAffected` (that's what sqlc's `:execrows` annotation
 means) and treats 0 as "someone else got it" (`internal/task/store.go:58-96`).
-The `claim_token` column is written only by the blocking claim path (§12) and
-is NULL for every other task type.
+The `claim_token` column is written only by the claims of lock-holding
+types (§12) and is NULL for every other task type.
 
 ```go
 rows, err := s.queries.ClaimTask(ctx, id)
@@ -173,8 +173,7 @@ if rows == 0 {
 This is the project-wide pattern: **every concurrency-sensitive transition is
 a guarded UPDATE with rows-affected acknowledgment** — `ClaimTask`,
 `CompleteTask`, `TryInsertBatchOwner`, `UpdateBatchOwnerIfStale`,
-`HeartbeatBatchOwner`, `ReleaseBatchOwner`, `AcquireBackupLock`,
-`AcquireMaintenanceLockForTask`. Nothing is
+`HeartbeatBatchOwner`, `ReleaseBatchOwner`, `AcquireLocks`. Nothing is
 ever "SELECT then UPDATE"; the guard and the write are one statement.
 
 Why not `SELECT ... FOR UPDATE SKIP LOCKED`? The UPDATE-guard needs no
@@ -312,7 +311,10 @@ someone took the lease away; the worker keeps running but its claims
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = @task_type
   AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
-  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.name = ANY(@wait_locks::text[]) AND lock_is_held(s.name)
+  )
 ORDER BY created_at LIMIT 1;
 ```
 
@@ -365,10 +367,12 @@ for {
 ```
 
 1. **Postgres NOTIFY** (`internal/ops/queue/notify.go`): a dedicated
-   single-connection pool does `LISTEN batch_queued` +
-   `WaitForNotification`, pushing a token into `notifyCh`. The trigger lives
-   in the database (`00004_listen_notify.sql`) and fires on `INSERT`/`UPDATE`
-   of a `queued` batch.
+   single-connection pool `LISTEN`s on `batch_queued` and `lock_released`,
+   pushing a token into `notifyCh` on either. The `batch_queued` trigger
+   lives in the database (`00004_listen_notify.sql`) and fires on
+   `INSERT`/`UPDATE` of a `queued` batch; a released resource lock fires
+   `lock_released` at commit (the release queries call `pg_notify`), so work
+   deferred on a lock wakes as soon as the lock frees.
 2. **The 30s safety timer**: NOTIFY is a *hint* — it can be missed, dropped
    (the non-blocking send at `notify.go:68-71`), or lost on reconnect. The
    timer guarantees a poll at least every 30s, and it's **reset on every
@@ -599,9 +603,10 @@ Two sweeps recover from dead workers, both driven by the **attempts budget**
 (`Consumer.Reclaim.MaxRetries`, default 3) and the **staleness cutoff**
 (`StaleTaskAfter`, default 600s — a task is only stale if it's been in
 `processing` longer than that, so a slow-but-alive task isn't touched). The
-age transitions below apply to the gated class only (consume, enrich,
-thumbnail); blocking-class tasks (backup, mirror, tagreconcile,
-thumbbackfill, tagmeasure, tagidentity, tagaudit) are swept by ownership-gated variants instead:
+age transitions below apply to the workloads with no declared holds (consume,
+enrich, thumbnail); the lock-holding types (backup, mirror, the four tag
+passes, thumbbackfill, migrate-db, migrate-storage) are swept by lock-aware
+variants instead:
 
 ```sql
 -- name: QuarantineStaleProcessingTasks :execrows
@@ -626,56 +631,38 @@ requeue with `attempts + 1`; at/above it → `failed` with a recognizable
 error string. The global sweep runs from the queue daemon's housekeeping
 ticker; the per-batch variant runs at consume entry and batch resume.
 
-**Blocking-class recovery is gated on maintenance-lock ownership.** A
-blocking task is swept only when the lock is not held fresh by its own
-claim — `(data->>'owner_token') IS DISTINCT FROM task.claim_token::text`, or the
-token still matches but the row's `started_at` key is past the 30-minute
-freshness window (the holder crashed without heartbeating). A live holder
+**Lock-holding recovery is gated on lock ownership.** A lock-holding task is
+swept only when no fresh resource-lock row belongs to its execution: the
+sweep's exemption matches a lock whose `owner_token` equals the task's
+`claim_token` (a claim-held lock) or whose `batch_id` equals the task's batch
+(a batch-held lock — the consume child of a `thumbbackfill` batch holds
+`storage` for the whole run under its own batch-owner token), with the row's
+`started_at` key inside the 30-minute freshness window. A live holder
 (5-minute heartbeat refreshing) keeps both the task row and the lock; a
 crashed holder is recovered exactly once. The sweep transaction releases
-stale holders' locks first (`ReleaseMaintenanceLockForStaleHolders` — the
-release subselect reads `status = 'processing'`, so it must run before the
-resets), then applies the blocking transitions:
+stale holders' locks first (`ReleaseLocksForStaleHolders` — locks past the
+window whose `owner_token` belongs to a `processing` lock-holding claim, so
+the release must precede the resets), then applies the transitions:
 
 ```sql
--- name: QuarantineStaleBlockingTasks :execrows
-UPDATE task SET
-    status = 'failed',
-    error = 'Max retries exceeded (' || attempts || ')',
-    completed_at = CURRENT_TIMESTAMP
-FROM system_signal
-WHERE system_signal.name = 'maintenance_lock'
-  AND task.status = 'processing'
-  AND task.task_type = ANY(@types::task_type[])
-  AND task.attempts >= $1
-  AND task.started_at < $2
-  AND (
-    (system_signal.data->>'owner_token') IS DISTINCT FROM task.claim_token::text
-    OR (system_signal.data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes'
-  );
-
--- name: ResetStaleBlockingTasks :execrows
-UPDATE task SET
-    status = 'pending',
-    attempts = attempts + 1,
-    progress = NULL
-FROM system_signal
-WHERE system_signal.name = 'maintenance_lock'
-  AND task.status = 'processing'
-  AND task.task_type = ANY(@types::task_type[])
-  AND task.attempts < $1
-  AND task.started_at < $2
-  AND (
-    (system_signal.data->>'owner_token') IS DISTINCT FROM task.claim_token::text
-    OR (system_signal.data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes'
-  );
+-- the NOT EXISTS exemption both sweeps carry
+NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.name = ANY(@lock_names::text[])
+      AND s.value = 'true'
+      AND (s.data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
+      AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
+           OR s.data->>'batch_id' = task.batch_id)
+);
 ```
 
-The window expression is character-identical to the acquire queries' steal
-boundary, so "the sweep says stale" and "an acquire would succeed" never
-disagree. Manual NULL-token locks are never touched by the sweep (the
-release's token-membership subselect cannot match NULL); manual recovery
-stays acquire-steal only.
+(`QuarantineStaleBlockingTasks` / `ResetStaleBlockingTasks` in
+`sql/queries/lock.sql`; the freshness expression is the same boundary the
+acquire queries use to steal, so "the sweep says stale" and "an acquire would
+succeed" never disagree. Per-batch resets release the batch's locks by id in
+the same transaction, which also covers a crashed child's run-held lock.
+Manual NULL-token locks match neither disjunct — the window is the manual
+holder's only recovery path.)
 
 `attempts` increments **only** on reclamation resets — a normal handler
 failure goes straight to `failed` (visible, manually retryable) without
@@ -750,104 +737,115 @@ The wizard also auto-resumes config setup on boot
 
 ---
 
-## 12. The backup gate
+## 12. The resource locks
 
-Backups must not race the pipeline. The mechanism is a **maintenance-lock
-signal row** in `system_signal` plus a SQL function used as a claim gate
-(`00041_system_signal.sql` + `00014_maintenance_lock_predicate.sql` +
-`00015_claim_token_lock.sql` + `sql/queries/maintenance_lock.sql` + `task.sql:13-18`):
+Pipeline work and bulk maintenance are serialized by **named resource locks**.
+`internal/types` declares the closed set — two names — and, per task type, the
+locks an execution **holds** for its whole batch run and the locks a claim
+must see **free** before it may start (`types.LockDeclarationFor`). The
+lifecycle lives in `internal/task/locks.go` on top of two `system_signal`
+rows keyed by lock name (`maintenance`, `storage`): a `value` held flag and
+JSONB `data` carrying `owner_token` (a UUID for task- and batch-held locks;
+absent for the NULL-token manual holders), `batch_id` (recorded by every
+acquisition so reclamation can release a batch's locks wholesale), and a
+heartbeat timestamp. `lock_is_held(name)` says a lock is held iff the row is
+marked held and its timestamp is inside **NOW() − 30 minutes** — the database
+clock is the only clock (migration `00049_named_resource_locks.sql`) — and a
+holder refreshes through 5-minute heartbeats. The two-level rule:
 
-```sql
--- name: AcquireMaintenanceLockForTask :execrows
-UPDATE system_signal
-SET value = 'true',
-    data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text)
-WHERE name = 'maintenance_lock'
-  AND (value = 'false' OR (data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes');
-```
+- The task claim gates every type on its declared waits: the selection query
+  refuses a task whose waits are not all free (`NOT EXISTS … lock_is_held`).
+- Types with declared holds claim through the token protocol: the claim, its
+  acquisition and the release are one transaction
+  (`Store.claimBlockingNextPending`, `internal/task/store.go`). Acquisition
+  is all-or-nothing (`task.AcquireLocks`, backed by `AcquireLocks` in
+  `sql/queries/lock.sql`): `LockRowsForUpdate` row-locks the
+  `holds ∪ waits` rows in canonical name order, the waits must all be free,
+  and each hold row is overwritten only if free or past the window. A
+  conflict rolls the claim back — the task stays `pending` — and
+  `ErrLockBusy` surfaces, mapped by the runner to a quiet `nil` so the pool's
+  next tick retries instead of failing the task. No execution ever holds one
+  lock while waiting for another, so no deadlock is possible; two same-day
+  maintenance runs serialize with both eventually completing.
+- The release is the task's leave-`processing` moment:
+  `CompleteBlockingTask` / `FailBlockingTask` release the locks by claim
+  token in the same tx as the transition (`ReleaseLocksForToken`); batch
+  resets, cancel and retry release by batch id (`ReleaseLocksForBatch`).
+- The drain set is derived, not listed: `types.TaskTypesWaitingOn(holds...)`
+  is the in-flight work a holder must let finish — a `maintenance` holder
+  drains `consume`/`enrich`/`thumbnail`/`thumbbackfill`, a `storage` holder
+  drains `thumbnail` — and `database.WaitForTaskDrain` polls it to zero on a
+  5s ticker before the body runs. `database.StartLockHeartbeat` (`TouchLocksForToken`) keeps every
+  held lock fresh for the run; a holder that stops heartbeating becomes
+  takeable after the 30-minute window, the last-resort recovery when no reaper
+  is running (the daemon's sweeps recover task- and batch-held locks promptly;
+  the window is the manual holder's only mechanism).
+- The shared handler lifecycle is `task.RunBlocking`
+  (`internal/task/handler.go`): mark batch processing → `HoldClaimed`
+  (heartbeat + drain) → body → the runner's token-guarded transition. The
+  backup handler and the four tag passes run through it; the `migrate-db` and
+  `migrate-storage` handlers use `HoldClaimed` over their own batch
+  bookkeeping (their acquisition happens at claim), and drain before copying
+  the database or moving storage files.
 
-- Acquiring affects 0 rows if the lock is held and fresh — the same
-  rows-affected discipline as task claims. The 30-minute staleness window
-  means a crashed backup (no release) auto-expires.
-- `is_maintenance_lock_held()` is called in the **task-claim queries**
-  themselves (`GetNextPendingTaskOfType` / `GetNextPendingTaskOfTypeForOwner`
-  via their `Gated` flag): while a blocking task holds the lock, no new
-  consume/enrich task is claimed — workers go idle instead of mutating
-  documents mid-backup. Which types claim gated is declared once in the
-  registry (`types.TaskType.IsLockGated()`: consume, enrich, thumbnail);
-  blocking types that acquire the lock (`IsBlocking()`: backup, mirror,
-  tagreconcile, thumbbackfill, tagmeasure, tagidentity, tagaudit) and config claim ungated.
-- **Claim-time acquisition**: a blocking task acquires the lock
-  **inside the claim transaction**
-  (`Store.claimBlockingNextPending`, `internal/task/store.go`):
-  `GetNextPendingTaskOfType` → `ClaimTask` → `AcquireMaintenanceLockForTask`
-  run in one tx with a per-claim UUID token written to both the task row
-  (`task.claim_token`) and the lock row's `owner_token` data key). If the
-  acquire affects 0 rows (another blocking task holds the lock), the claim
-  rolls back — the task stays `pending` — and `ErrLockBusy` is returned;
-  the runner maps it to a quiet `nil` so the pool's next tick retries
-  instead of failing the task. Two blocking tasks due the same day serialize
-  with both eventually completing.
-- **Token-guarded release**: the lock is held from claim until the task
-  leaves `processing`. `CompleteBlockingTask` / `FailBlockingTask`
-  (`internal/task/store.go`) transition the task (`WHERE id = $2 AND status
-  = 'processing' AND claim_token = $3`) and, only when the transition
-  affected a row, release the lock in the same tx
-  (`ReleaseMaintenanceLockForTask`, guarded by `(data->>'owner_token') IS NOT
-  DISTINCT FROM $1::uuid::text`). Every leave-`processing` sweep/reset/cancel/retry path
-  (`ResetStaleProcessingTasks`, `ResetProcessingTasksByBatch`, `CompleteCancel`,
-  the consume-cancel CLI, `Owner.ResetProcessingByBatch`, `task.Retry`)
-  releases via a subselect on the task rows' `claim_token`
-  (`ReleaseMaintenanceLockForStaleHolders` / `ReleaseMaintenanceLockForBatch`)
-  inside the transition's transaction. The stale-holder variant releases
-  only when the lock is past the 30-minute freshness window and its
-  `owner_token` belongs to a `processing` blocking claim, so a live holder's
-  fresh lock is never dropped by the age sweep. A stale claimant's late
-  terminal write is a token-mismatch no-op (rows = 0 → no release), so it
-  can never drop a fresh holder's lock.
-- The backup handler (`internal/backup/backup_task.go`) runs with the lock
-  held; it **drains** in-flight
-  work (`database.WaitForTaskDrain`, `internal/database/migrate.go`: 5s ticker on
-  `CountProcessingTasks` until zero) before snapshotting, then applies
-  retention. The `migrate-db` and `migrate-storage` tasks (their own task
-  types) take the same
-  lock through `database.TryHoldMaintenanceLock` — refusing when another process
-  holds it — and drain in-flight work before copying the database or moving
-  storage files.
-- Scheduling: the queue daemon's ticker enqueues a `backup` task when
-  `IsBackupDue` and the lock is free; the `backup:<mode>:<date>` dedup key prevents
-  same-day duplicates per mode. The enqueue payload records the schedule
-  (`schedule: {interval, time}`) that produced the task; `IsBackupDue` parses
-  it from the last completed task and, when it differs from the current config
-  timing, re-phases the next run to the closest upcoming occurrence of the new
-  timing instead of waiting a full interval (tasks completed before this
-  change carry no recorded schedule and keep the steady rule).
+Locks live as long as the *execution*, not one task. A batch whose task types
+declare holds gets them acquired **for the run**: the consume child of a
+`thumbbackfill` batch acquires `storage` all-or-nothing under its own
+batch-owner token once the batch's waits are free (deferring in-process until
+they are), drains `thumbnail`, and then runs its pool with claims that verify
+waits but skip acquisition (`Store.SetBatchHoldsAcquired`). New `thumbnail`
+claims from ingest batches defer until the backfill settles — per-document
+thumbnails never write while the storage tree is being bulk-walked. The
+release happens when the run ends; reclamation releases by batch id, and the
+stale sweep's exemption covers both the claim token and the batch id (§10).
+
+Direct CLI commands run under the manual holder path (`task.RunDirect`,
+`internal/task/direct.go`): acquire the policy's locks — `LocksForDirectMode`
+defaults to the queued set — all-or-nothing with a NULL token, heartbeat, drain, run the body, release. Waiting is the default; `--no-wait`
+exits non-zero instead of waiting for a lock or drain.
+`kushim backup` works with polling enabled — it waits for the lock and drains
+rather than refusing. `kushim restore` and `kushim migrate database` keep
+their quiescence preconditions because they replace state: they refuse while
+the maintenance lock is held or gated tasks are processing (plus polling and
+daemon PID checks for restore), try-acquire with a NULL token, and never wait
+or drain.
+
+Scheduling: the daemon's backup/mirror scheduling, the anchored scheduler and
+the polling scan skip while `IsLockHeld(maintenance)`; a `storage`-only
+holder does not pause scheduling or polling. Released locks notify
+`lock_released`, which wakes the daemon's dispatch tick alongside
+`batch_queued`. The queue daemon enqueues a `backup` task when `IsBackupDue`
+and the lock is free; the `backup:<mode>:<date>` dedup key prevents
+same-day duplicates per mode. The enqueue payload records the schedule
+(`schedule: {interval, time}`) that produced the task; `IsBackupDue` parses
+it from the last completed task and, when it differs from the current config
+timing, re-phases the next run to the closest upcoming occurrence of the new
+timing instead of waiting a full interval (tasks completed before this
+change carry no recorded schedule and keep the steady rule).
 
 The **mirror** task (`internal/backup/mirror_task.go`) participates in the
-same gate: it is claimed with the lock held, drains in-flight work, and runs
+same gate: it is claimed with the locks held, drains in-flight work, and runs
 `rsync -a --delete` over the storage tree (see `internal/backup/`). Because a
 large rsync can exceed the 30-minute staleness window, the handler runs a
-heartbeat that refreshes the lock row's `started_at` key every 5 minutes
-(`TouchMaintenanceLockForTask`, guarded by the claim token) for the rsync
+heartbeat that refreshes the lock row's heartbeat timestamp every 5 minutes
+(`TouchLocksForToken`, guarded by the claim token) for the rsync
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
-shared `database.StartMaintenanceLockHeartbeat` helper *before*
+shared `database.StartLockHeartbeat` helper *before*
 `WaitForTaskDrain` returns, so the drain-wait itself is covered too; the
 backup, tagreconcile, tagmeasure, tagidentity and tagaudit handlers get that sequence —
 heartbeat, drain, body, batch finalize — from the shared `task.RunBlocking`
-lifecycle (`internal/task/handler.go`), which composes `database.HoldMaintenanceLock`
-around the body; the thumbbackfill wrapper starts
-the helper directly and keeps it running through the inner handler.
-Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
+lifecycle (`internal/task/handler.go`). The queued mirror handler composes
+`backup.RunLocked`, which owns the heartbeat → drain → rsync → state-file
+sequence over the claim token; the direct `kushim mirror` command runs under
+the manual holder path instead — waiting for the lock and draining by
+default, `--no-wait` to fail fast — and writes
+the `.edub-mirror.json` diagnostics file into the
+destination. Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 `NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task,
-with the same payload-derived re-phase on schedule edits);
-the manual `kushim mirror` command bypasses task dedup but still waits for the
-lock and drain, and writes the `.edub-mirror.json` diagnostics file into the
-destination. Both the handler and the CLI share `backup.RunLocked`, which owns
-the heartbeat → drain → rsync → state-file sequence (the CLI passes a NULL
-token, matching its NULL-owner lock from `AcquireBackupLock`).
+with the same payload-derived re-phase on schedule edits).
 
 The **tagmeasure** task (`internal/tags/tagmeasure.go`) is a
-blocking-class task too: claimed with the lock held, drained via
+lock-holding task too: claimed with the maintenance lock held, drained via
 `WaitForTaskDrain`, heartbeat across the whole run — and it additionally forks
 `kushim tagmeasure --run <batch-id>` and waits, so the pass's long
 repeatable-read transaction runs in its own process while the parent keeps the
@@ -886,7 +884,7 @@ Runs come from the anchored schedule (disabled by default), a manual
 claims — `enricher.tag_audit.enabled` gates only automatic enqueuing.
 
 The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) is a
-blocking-class task too: claimed with the lock held, drained via
+lock-holding task too: claimed with the maintenance lock held, drained via
 `WaitForTaskDrain` under the same 5-minute heartbeat, then forks
 `kushim tagreconcile --run <batch-id>`; the child builds the reconciler and runs
 one pass, printing the `tagreconcile-report: <json>` line that becomes the task
@@ -916,24 +914,24 @@ applies re-arm the flags through the table triggers (migration `00044`;
 `00045` removed the identity flag), which is the record's honest reading of
 "changed since it last ran".
 
-The **thumbbackfill** task (`internal/documents/consumption/thumbnail_backfill.go`, a thin
-wrapper that adds drain-wait + heartbeat around the per-document
-`ThumbnailTaskHandler`) is a blocking-class task too: it is claimed with
-the lock held, drains in-flight work via `WaitForTaskDrain`, and runs the same
-5-minute heartbeat across the whole run. `ThumbnailBackfill`
+The **thumbbackfill** task (`internal/documents/consumption/thumbnail.go`'s
+per-document `ThumbnailTaskHandler`) holds its lock at batch level: its
+dedicated pool runs inside the forked consume child, which acquires
+`storage` for the whole run after verifying `maintenance` is free, drains
+in-flight thumbnail tasks before starting, and runs the same 5-minute
+heartbeat across the run; its per-task claims verify the maintenance wait but
+skip acquisition (§12, batch-held locks). `ThumbnailBackfill`
 (`internal/service/thumbnail_backfill.go`) creates `thumbbackfill` tasks
-(dedup key `thumbnail:doc:<uuid>`) in `thumbbackfill` batches, which the
-forked consume child processes with a dedicated 1-worker/2s `thumbbackfill`
-pool; per-document `thumbnail` tasks remain lock-gated.
+(dedup key `thumbnail:doc:<uuid>`) in `thumbbackfill` batches.
 
-Manual `kushim backup` / `kushim restore` and the configtask migrations
-use the plain `AcquireBackupLock` / `ReleaseBackupLock` (NULL token): their
-release is guarded by `owner_token IS NOT DISTINCT FROM NULL`, so it can only
-release a NULL-owner lock and never a blocking task's tokenized lock.
+Direct CLI holders (`kushim backup`, `kushim restore`, `kushim mirror`,
+`kushim migrate`) are NULL-token lock rows: their release is guarded by
+`owner_token`-or-`batch_id` matching a NULL, so it can never drop a loaded
+task- or child-held lock.
 
-A blocking task longer than 30 minutes keeps its lock alive via the 5-minute
-heartbeat, and the age sweep leaves it alone: blocking-class recovery is
-gated on lock ownership (§10), so a live heartbeating holder is never reset
+A lock-holding task longer than 30 minutes keeps its locks alive via the
+5-minute heartbeat, and the age sweep leaves it alone: lock-holding recovery
+is gated on lock ownership (§10), so a live heartbeating holder is never reset
 mid-run.
 
 ---
@@ -960,7 +958,7 @@ mid-run.
 - **`rows == 0` is usually success, not failure** — for claims it means
   "someone else won" (idle, not error); for completes it means "already
   transitioned". Only treat 0 rows as an error where the contract says so
-  (e.g. `AcquireBackupLock`).
+  (e.g. the guarded lock acquire).
 - **`FailTask` has no status guard** — it can overwrite a `completed` task if
   called from a stale path. The runner's ordering (complete first, fail only
   as fallback) exists to minimize this; keep it.
@@ -1004,4 +1002,4 @@ mid-run.
 
 ---
 
-*Last verified against the tree: 2026-10-01. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-22. If code and doc disagree, code wins.*

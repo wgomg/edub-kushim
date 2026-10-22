@@ -2,15 +2,22 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func migrateHandler(c *container.Container, args []string) error {
@@ -47,7 +54,7 @@ func migrateDatabaseHandler(c *container.Container, args []string) error {
 		return nil
 	}
 
-	var host, port, user, password, database, sslMode string
+	var host, port, user, password, databaseName, sslMode string
 	if err := fp.String("--host", &host); err != nil {
 		return err
 	}
@@ -60,7 +67,7 @@ func migrateDatabaseHandler(c *container.Container, args []string) error {
 	if err := fp.String("--password", &password); err != nil {
 		return err
 	}
-	if err := fp.String("--database", &database); err != nil {
+	if err := fp.String("--database", &databaseName); err != nil {
 		return err
 	}
 	if err := fp.String("--sslmode", &sslMode); err != nil {
@@ -74,7 +81,7 @@ func migrateDatabaseHandler(c *container.Container, args []string) error {
 		password = os.Getenv("KUSHIM_DB_PASSWORD")
 	}
 
-	if host == "" || port == "" || user == "" || database == "" {
+	if host == "" || port == "" || user == "" || databaseName == "" {
 		_, _ = fmt.Fprintln(os.Stderr, migrateDatabaseUsage)
 		return fmt.Errorf("--host, --port, --user and --database are required (--password may be set via KUSHIM_DB_PASSWORD)")
 	}
@@ -88,15 +95,54 @@ func migrateDatabaseHandler(c *container.Container, args []string) error {
 		Port:      port,
 		User:      user,
 		Password:  password,
-		Database:  database,
+		Database:  databaseName,
 		SSLMode:   sslMode,
 	}
 
-	fmt.Printf("Migrating database to %s@%s:%s/%s...\n", user, host, port, database)
-	if err := configtask.MigrateDatabase(context.Background(), c.GetLogger(), payload, task.NoopProgress); err != nil {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	catalog, err := c.GetCatalog()
+	if err != nil {
+		return fmt.Errorf("task catalog: %w", err)
+	}
+	def, err := catalog.Definition(types.Task.Type.MigrateDB)
+	if err != nil {
+		return fmt.Errorf("migrate-db definition: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	policy := def.LocksForDirectMode()
+	lockToken := uuid.NullUUID{}
+	if err := task.AcquireLocks(ctx, client, policy.Holds, policy.WaitsFor, lockToken, ""); err != nil {
+		if errors.Is(err, task.ErrLockBusy) {
+			return fmt.Errorf("a maintenance run is in progress — wait for it to finish")
+		}
+		return fmt.Errorf("acquire maintenance lock: %w", err)
+	}
+	defer func() {
+		relCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := task.ReleaseLocksForToken(relCtx, client.Queries, lockToken); err != nil {
+			c.GetLogger().Error("", "release maintenance lock: %v", err)
+		}
+	}()
+	stopHeartbeat := database.StartLockHeartbeat(ctx, client.Queries, c.GetLogger(), task.LockHeartbeatInterval, policy.Holds, lockToken)
+	defer stopHeartbeat()
+
+	if err := database.WaitForTaskDrain(ctx, client.Queries, c.GetLogger(), "migrate-db",
+		types.TaskTypesWaitingOn(policy.Holds...)); err != nil {
 		return err
 	}
-	fmt.Printf("Database %q is live and config.yaml updated.\n", database)
+
+	fmt.Printf("Migrating database to %s@%s:%s/%s...\n", user, host, port, databaseName)
+	if err := configtask.MigrateDatabase(ctx, c.GetLogger(), payload, task.NoopProgress); err != nil {
+		return err
+	}
+	fmt.Printf("Database %q is live and config.yaml updated.\n", databaseName)
 	return nil
 }
 
@@ -108,7 +154,7 @@ const migrateStorageUsage = "Usage: kushim migrate storage --storage-dir <new> [
 
 func migrateStorageHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
-	if fp.Help(migrateStorageUsage) {
+	if fp.Help(migrateStorageUsage + "\n\n  --no-wait  Exit non-zero instead of waiting for a lock or in-flight work") {
 		return nil
 	}
 
@@ -119,6 +165,8 @@ func migrateStorageHandler(c *container.Container, args []string) error {
 	if err := fp.String("--consumption-dir", &newConsumption); err != nil {
 		return err
 	}
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown arguments: %v", rest)
 	}
@@ -153,8 +201,27 @@ func migrateStorageHandler(c *container.Container, args []string) error {
 		return nil
 	}
 
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	catalog, err := c.GetCatalog()
+	if err != nil {
+		return fmt.Errorf("task catalog: %w", err)
+	}
+	def, err := catalog.Definition(types.Task.Type.MigrateStorage)
+	if err != nil {
+		return fmt.Errorf("migrate-storage definition: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	fmt.Println("Migrating storage directories...")
-	if err := configtask.MigrateStorage(context.Background(), c.GetLogger(), payload, task.NoopProgress); err != nil {
+	err = task.RunDirect(ctx, client, c.GetLogger(), "migrate-storage", def.LocksForDirectMode(), !noWait, nil, func() error {
+		return configtask.MigrateStorage(ctx, c.GetLogger(), payload, task.NoopProgress)
+	})
+	if err != nil {
 		return err
 	}
 	fmt.Println("Storage files relocated and config.yaml updated.")

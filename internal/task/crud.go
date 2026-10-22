@@ -157,7 +157,7 @@ func Retry(ctx context.Context, client *database.Client, logger *log.Logger, tas
 		return fmt.Errorf("task %q is %s, not failed", taskID, task.Status)
 	}
 
-	if task.TaskType.IsBlocking() {
+	if task.TaskType.HoldsLocks() {
 		// the lock must not outlive the processing row it was claimed for
 		tx, err := client.BeginTx(ctx, nil)
 		if err != nil {
@@ -166,11 +166,8 @@ func Retry(ctx context.Context, client *database.Client, logger *log.Logger, tas
 		defer tx.Rollback()
 
 		txQ := client.Queries.WithTx(tx)
-		if _, err := txQ.ReleaseMaintenanceLockForBatch(ctx, database.ReleaseMaintenanceLockForBatchParams{
-			BatchID: task.BatchID,
-			Types:   types.BlockingTaskTypes(),
-		}); err != nil {
-			return fmt.Errorf("release maintenance lock for retry %s: %w", taskID, err)
+		if err := ReleaseLocksForBatch(ctx, txQ, task.BatchID.String); err != nil {
+			return fmt.Errorf("release locks for retry %s: %w", taskID, err)
 		}
 		if err := txQ.RetryTask(ctx, task.ID); err != nil {
 			return err

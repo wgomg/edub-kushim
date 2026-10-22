@@ -272,10 +272,11 @@ Batch 660e8400-e29b-41d4-a716-446655440001 queued with 12 thumbnail task(s) — 
 
 Documents whose thumbnail task is already `pending` are skipped — the dedup key
 `thumbnail:doc:<uuid>` (unique partial index) prevents duplicate queued tasks.
-Failed tasks fall outside the index, so a re-run re-enqueues them. Backfill
-tasks are blocking: the processing pool claims them with the maintenance lock
-held (mutually exclusive with backup, mirror, and tag reconciliation) and
-waits for in-flight consume/enrich/thumbnail tasks to drain before rendering.
+Failed tasks fall outside the index, so a re-run re-enqueues them. The
+backfill run holds the `storage` resource lock for its whole batch (mutually
+exclusive with a running backup's maintenance hold on the storage wait) and
+waits for in-flight thumbnail tasks to drain before rendering; regular
+thumbnail tasks from ingest pause until the backfill settles.
 
 #### Scheduled backfill
 
@@ -525,8 +526,8 @@ Supported tasks:
 
 | Task | Arguments |
 | ---- | --------- |
-| `backup` | `--mode <full\|database\|documents>`, `--path <dir>`, `--keep N` (all optional) |
-| `mirror` | `--path <dir>` (optional) |
+| `backup` | `--mode <full\|database\|documents>`, `--path <dir>`, `--keep N`, `--no-wait` (all optional) |
+| `mirror` | `--path <dir>`, `--no-wait` (both optional) |
 | `enrich` | one or more document ids |
 | `thumbnails` | none — scans every document missing a thumbnail |
 | `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` | none |
@@ -730,6 +731,7 @@ kushim backup --mode documents --path /mnt/nas/documents
 | -------- | ------------------------------------ | ----------------------------------------- |
 | `--path` | Config `backup.path` (or `<config_dir>/backups/`) | Override output directory |
 | `--mode` | `full` | What to include: `full` (database + documents), `database` (DB dump only), or `documents` (storage only) |
+| `--no-wait` | Wait and drain | Exit non-zero instead of waiting for the `maintenance`/`storage` locks or for in-flight tasks to drain |
 
 The backup creates a timestamped `tar.gz` archive whose contents depend on the
 mode (the manifest records the mode; `config.yaml` is always included):
@@ -747,6 +749,13 @@ Archive names are prefixed with the mode: `edub-backup-full-<timestamp>.tar.gz`,
 
 Manual backups never apply retention — only scheduled backups prune old
 archives, using the schedule's `keep` for that mode.
+
+The command coordinates through the resource locks: it acquires the
+`maintenance` and `storage` locks (waiting until any running backup, mirror,
+migration, or tag pass releases them) and waits for in-flight consume/enrich/
+thumbnail tasks to drain before writing. `--no-wait` skips both waits and
+exits non-zero when anything conflicts. It works with polling enabled — the
+held locks pause new task claims while the backup runs.
 
 ### `kushim mirror`
 
@@ -766,8 +775,9 @@ kushim mirror --path user@nas:/srv/documents
 | Flag     | Default                    | Description                                                                  |
 | -------- | -------------------------- | ---------------------------------------------------------------------------- |
 | `--path` | Config `mirror.path`       | Destination: local path or rsync remote target (`[user@]host:path`)          |
+| `--no-wait` | Wait and drain | Exit non-zero instead of waiting for the resource locks or for in-flight tasks to drain |
 
-The command waits for the backup lock (mirror, backup, and migrations never
+The command waits for the resource locks (mirror, backup, and migrations never
 run concurrently) and for in-flight consume/enrich/thumbnail tasks to drain,
 then runs `rsync -a --delete --info=stats2 --timeout=600 <storage>/ <dest>` and
 writes a small `.edub-mirror.json` diagnostics file (timestamp, file count,
@@ -776,10 +786,10 @@ count (thousands-separated) plus the per-run breakdown parsed from rsync's
 stats2 output, e.g. `Mirror completed: 139,524 files (3 transferred: 2
 created, 1 updated, 0 deleted), 80,080,709,948 bytes` — "files" is the total
 regular files in the tree, and the parenthetical shows what this run actually
-changed. Because the held lock blocks new task claims, the manual mirror is
+changed. Because the held locks block new task claims, the manual mirror is
 safe even with polling enabled — no polling-window coordination needed. The
 10-minute rsync idle timeout aborts
-stalled transfers (unreachable remotes, hung ssh) so the backup lock is never
+stalled transfers (unreachable remotes, hung ssh) so the locks are never
 held indefinitely; Ctrl-C also kills the spawned `ssh` for remote targets.
 
 Prerequisites:
@@ -804,7 +814,7 @@ reconstructibility against mechanically derived parts, and part coverage),
 written as versioned evidence records.
 
 ```bash
-kushim tagmeasure                # enqueue a blocking task and print its batch id
+kushim tagmeasure                # enqueue a task and print its batch id
 kushim tagmeasure --run <batch-id>  # the queued run's execution mode
 ```
 
@@ -843,7 +853,7 @@ Every run is bounded by the `enricher.tag_reconcile` caps (`max_rejudge`,
 latest completed run's report.
 
 ```bash
-kushim tagreconcile                # enqueue a blocking task and print its batch id
+kushim tagreconcile                # enqueue a task and print its batch id
 kushim tagreconcile --run <batch-id>  # the queued run's execution mode
 ```
 
@@ -878,7 +888,7 @@ folds rename (or alias) a name, a losing name becomes an alias of its winner,
 and claims without a judge answer stay pending for the next run.
 
 ```bash
-kushim tagidentity                 # enqueue a blocking task and print its batch id
+kushim tagidentity                 # enqueue a task and print its batch id
 kushim tagidentity --run <batch-id>  # the queued run's execution mode
 ```
 
@@ -914,7 +924,7 @@ per-dimension coverage counts are recorded in the measurement substrate, and fla
 surface in the **Coverage** tab of the tags page.
 
 ```bash
-kushim tagaudit                # enqueue a blocking task and print its batch id
+kushim tagaudit                # enqueue a task and print its batch id
 kushim tagaudit --run <batch-id>  # the queued run's execution mode
 ```
 
@@ -980,16 +990,16 @@ archive and run `psql -f edub.sql` manually on the remote host.
 
 ### `kushim migrate`
 
-Run the database or storage migration logic from the CLI, without going through the config task queue. Both subcommands refuse to start while another migration or backup holds the backup lock, wait for in-flight tasks to drain, and persist the new settings to `config.yaml` only after the operation succeeds.
+Run the database or storage migration logic from the CLI, without going through the config task queue. Both subcommands coordinate through the resource locks — `migrate database` refuses while the `maintenance` lock is held, `migrate storage` acquires the `maintenance` and `storage` locks (waiting by default; `--no-wait` exits non-zero) — wait for in-flight tasks to drain, and persist the new settings to `config.yaml` only after the operation succeeds.
 
 ```
 kushim migrate database --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]
-kushim migrate storage --storage-dir <new> [--consumption-dir <new>]
+kushim migrate storage --storage-dir <new> [--consumption-dir <new>] [--no-wait]
 ```
 
 #### `kushim migrate database`
 
-Copies the current database to a new PostgreSQL server and points `config.yaml` at it, running the same steps as the `migrate-db` config task: pre-migration safety snapshot (config `backup.path`, retention-capped), SQL dump (schema + data, `goose_db_version` preserved), destination validation (refuses databases with tables but no edub migration history; skips restore when the destination already holds data), and a deferred `config.yaml` update. The destination restore runs `psql` per the current config's `database.runtime` (host binary or exec into the current container, connecting over TCP to the destination); `runtime: remote` refuses before dumping.
+Copies the current database to a new PostgreSQL server and points `config.yaml` at it, running the same steps as the `migrate-db` config task: it refuses while another maintenance run holds the `maintenance` lock, waits for in-flight tasks to drain, then takes the pre-migration safety snapshot (config `backup.path`, retention-capped), SQL dump (schema + data, `goose_db_version` preserved), destination validation (refuses databases with tables but no edub migration history; skips restore when the destination already holds data), and a deferred `config.yaml` update. The destination restore runs `psql` per the current config's `database.runtime` (host binary or exec into the current container, connecting over TCP to the destination); `runtime: remote` refuses before dumping.
 
 | Flag         | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
@@ -1004,12 +1014,13 @@ A password passed on the command line is visible in process listings and shell h
 
 #### `kushim migrate storage`
 
-Relocates the storage and consumption directories to new paths: rewrites pending consume-task payloads and the database paths (`document.storage_path`, `document.original_path`, `orphaned_file.file_path`), moves the storage subdirs and inbox files per `storage.migration_mode` (`copy` — copy-then-delete, default — or `move` — rename with cross-filesystem copy fallback), and persists the new dirs to `config.yaml`. At least one of `--storage-dir` or `--consumption-dir` must be provided.
+Relocates the storage and consumption directories to new paths: it acquires the `maintenance` and `storage` resource locks (waiting for any conflicting run to finish, or `--no-wait` to exit non-zero instead), waits for in-flight tasks to drain, rewrites pending consume-task payloads and the database paths (`document.storage_path`, `document.original_path`, `orphaned_file.file_path`), moves the storage subdirs and inbox files per `storage.migration_mode` (`copy` — copy-then-delete, default — or `move` — rename with cross-filesystem copy fallback), and persists the new dirs to `config.yaml`. At least one of `--storage-dir` or `--consumption-dir` must be provided.
 
 | Flag                 | Description                                      |
 | -------------------- | ------------------------------------------------ |
 | `--storage-dir`      | New storage directory                            |
 | `--consumption-dir`  | New consumption (inbox) directory                |
+| `--no-wait`          | Exit non-zero instead of waiting for the locks or the drain |
 
 Paths that resolve under a system location (`/proc`, `/sys`, `/dev`, `/boot`) are rejected. If neither directory actually changes, the command reports a no-op and exits successfully. Run `kushim migrate database` before `kushim migrate storage` — the storage migration reads the updated config (including the new database connection) from disk.
 

@@ -217,6 +217,12 @@ func Run(c *container.Container, args []string) error {
 			c.GetLogger().Error("", "quarantine files for batch %s: %v", batchIDParam, err)
 		}
 
+		release, err := acquireBatchHolds(ctx, c, client, batchIDParam, ownerID)
+		if err != nil {
+			return err
+		}
+		defer release()
+
 		return runBatchThroughPools(ctx, cancel, c, batchRun{
 			client:        client,
 			owner:         owner,
@@ -338,6 +344,12 @@ func Run(c *container.Container, args []string) error {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)
 	}
 
+	release, err := acquireBatchHolds(ctx, c, client, batchID, ownerID)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	return runBatchThroughPools(ctx, cancel, c, batchRun{
 		client:        client,
 		owner:         owner,
@@ -360,6 +372,71 @@ func batchRunsThumbbackfill(ctx context.Context, client *database.Client, batchI
 		return false, err
 	}
 	return len(tasks) > 0, nil
+}
+
+// acquireBatchHolds takes the locks the batch's task types declare for the whole run, waiting until
+// they are free, and returns the release function the run defers. It also tells the claim path that the
+// batch locks are already held, so per-task claims only verify their waits. A batch whose task types
+// declare no holds needs nothing and releases nothing.
+func acquireBatchHolds(ctx context.Context, c *container.Container, client *database.Client, batchID, ownerID string) (func(), error) {
+	taskTypes, err := client.Queries.ListBatchTaskTypes(ctx, sql.NullString{String: batchID, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("list batch task types: %w", err)
+	}
+
+	var holds, waits []types.LockName
+	for _, taskType := range taskTypes {
+		declaration := types.LockDeclarationFor(taskType)
+		holds = task.UnionLockNames(holds, declaration.Holds)
+		waits = task.UnionLockNames(waits, declaration.WaitsFor)
+	}
+	if len(holds) == 0 {
+		return func() {}, nil
+	}
+
+	token, err := uuid.Parse(ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("batch owner token: %w", err)
+	}
+	lockToken := uuid.NullUUID{UUID: token, Valid: true}
+
+	for {
+		err := task.AcquireLocks(ctx, client, holds, waits, lockToken, batchID)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, task.ErrLockBusy) {
+			return nil, fmt.Errorf("acquire batch locks: %w", err)
+		}
+		c.GetLogger().Info("", "consume: batch %s is waiting for its locks", batchID)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	stopHeartbeat := database.StartLockHeartbeat(ctx, client.Queries, c.GetLogger(), task.LockHeartbeatInterval, holds, lockToken)
+	release := func() {
+		stopHeartbeat()
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := task.ReleaseLocksForToken(releaseCtx, client.Queries, lockToken); err != nil {
+			c.GetLogger().Error("", "consume: release batch %s locks: %v", batchID, err)
+		}
+	}
+
+	if err := database.WaitForTaskDrain(ctx, client.Queries, c.GetLogger(), "batch "+batchID, types.TaskTypesWaitingOn(holds...), nil); err != nil {
+		release()
+		return nil, err
+	}
+
+	if err := c.SetRunnerBatchHoldsAcquired(true); err != nil {
+		release()
+		return nil, err
+	}
+
+	return release, nil
 }
 
 // The post-acquire sequence both halves of Run share.
@@ -457,12 +534,9 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 	}
 	bid := sql.NullString{String: batchID, Valid: true}
 	txQ := client.Queries.WithTx(tx)
-	if _, relErr := txQ.ReleaseMaintenanceLockForBatch(cancelCtx, database.ReleaseMaintenanceLockForBatchParams{
-		BatchID: bid,
-		Types:   types.BlockingTaskTypes(),
-	}); relErr != nil {
+	if err := task.ReleaseLocksForBatch(cancelCtx, txQ, batchID); err != nil {
 		tx.Rollback()
-		return fmt.Errorf("release maintenance lock: %w", relErr)
+		return fmt.Errorf("release locks: %w", err)
 	}
 	procCount, procErr := txQ.CancelProcessingTasksByBatch(cancelCtx, bid)
 	if procErr != nil {

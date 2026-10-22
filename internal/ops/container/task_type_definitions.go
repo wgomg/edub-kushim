@@ -27,93 +27,87 @@ type Catalog struct {
 	definitions map[types.TaskType]task.TypeDefinition
 }
 
+// lockPolicy adapts a task type's closed lock declaration from the vocabulary to the task package's
+// policy value, so the definitions and the claim paths cannot drift.
+func lockPolicy(taskType types.TaskType) task.LockPolicy {
+	declaration := types.LockDeclarationFor(taskType)
+	return task.LockPolicy{Holds: declaration.Holds, WaitsFor: declaration.WaitsFor}
+}
+
 // NewCatalog builds the task type table; builders read the database through the queries it carries.
 func NewCatalog(queries *database.Queries) *Catalog {
 	return &Catalog{definitions: map[types.TaskType]task.TypeDefinition{
 		types.Task.Type.Consume: {
 			Type:     types.Task.Type.Consume,
-			Locks:    task.LockPolicy{WaitsFor: []types.LockName{types.LockMaintenance}},
+			Locks:    lockPolicy(types.Task.Type.Consume),
 			DedupKey: consumeDedupKey,
 		},
 		types.Task.Type.Enrich: {
 			Type:       types.Task.Type.Enrich,
-			Locks:      task.LockPolicy{WaitsFor: []types.LockName{types.LockMaintenance}},
+			Locks:      lockPolicy(types.Task.Type.Enrich),
 			DedupKey:   enrichDedupKey,
 			BuildTasks: buildEnrichTasks,
 		},
 		types.Task.Type.Thumbnail: {
-			Type: types.Task.Type.Thumbnail,
-			Locks: task.LockPolicy{WaitsFor: []types.LockName{
-				types.LockMaintenance, types.LockStorage,
-			}},
+			Type:     types.Task.Type.Thumbnail,
+			Locks:    lockPolicy(types.Task.Type.Thumbnail),
 			DedupKey: thumbnailDedupKey,
 		},
 		types.Task.Type.ThumbBackfill: {
-			Type: types.Task.Type.ThumbBackfill,
-			Locks: task.LockPolicy{
-				Holds:    []types.LockName{types.LockStorage},
-				WaitsFor: []types.LockName{types.LockMaintenance},
-			},
+			Type:       types.Task.Type.ThumbBackfill,
+			Locks:      lockPolicy(types.Task.Type.ThumbBackfill),
 			DedupKey:   thumbnailDedupKey,
 			BuildTasks: buildThumbnailBackfillTasks(queries),
 		},
 		types.Task.Type.Backup: {
-			Type: types.Task.Type.Backup,
-			Locks: task.LockPolicy{
-				Holds:    []types.LockName{types.LockMaintenance},
-				WaitsFor: []types.LockName{types.LockStorage},
-			},
+			Type:       types.Task.Type.Backup,
+			Locks:      lockPolicy(types.Task.Type.Backup),
 			DedupKey:   backupDedupKey,
 			BuildTasks: buildBackupTasks,
 		},
 		types.Task.Type.Mirror: {
-			Type: types.Task.Type.Mirror,
-			Locks: task.LockPolicy{
-				Holds:    []types.LockName{types.LockMaintenance},
-				WaitsFor: []types.LockName{types.LockStorage},
-			},
+			Type:       types.Task.Type.Mirror,
+			Locks:      lockPolicy(types.Task.Type.Mirror),
 			DedupKey:   mirrorDedupKey,
 			BuildTasks: buildMirrorTasks,
 		},
 		types.Task.Type.TagReconcile: {
 			Type:       types.Task.Type.TagReconcile,
-			Locks:      task.LockPolicy{Holds: []types.LockName{types.LockMaintenance}},
+			Locks:      lockPolicy(types.Task.Type.TagReconcile),
 			DedupKey:   constantDedupKey(curation.TagReconcileDedupKey),
 			BuildTasks: buildTagTask(types.Task.Type.TagReconcile),
 		},
 		types.Task.Type.TagMeasure: {
 			Type:       types.Task.Type.TagMeasure,
-			Locks:      task.LockPolicy{Holds: []types.LockName{types.LockMaintenance}},
+			Locks:      lockPolicy(types.Task.Type.TagMeasure),
 			DedupKey:   constantDedupKey(tags.TagMeasureDedupKey),
 			BuildTasks: buildTagTask(types.Task.Type.TagMeasure),
 		},
 		types.Task.Type.TagIdentity: {
 			Type:       types.Task.Type.TagIdentity,
-			Locks:      task.LockPolicy{Holds: []types.LockName{types.LockMaintenance}},
+			Locks:      lockPolicy(types.Task.Type.TagIdentity),
 			DedupKey:   constantDedupKey(curation.TagIdentityDedupKey),
 			BuildTasks: buildTagTask(types.Task.Type.TagIdentity),
 		},
 		types.Task.Type.TagAudit: {
 			Type:       types.Task.Type.TagAudit,
-			Locks:      task.LockPolicy{Holds: []types.LockName{types.LockMaintenance}},
+			Locks:      lockPolicy(types.Task.Type.TagAudit),
 			DedupKey:   constantDedupKey(curation.TagAuditDedupKey),
 			BuildTasks: buildTagTask(types.Task.Type.TagAudit),
 		},
 		types.Task.Type.MigrateDB: {
 			Type:     types.Task.Type.MigrateDB,
-			Locks:    task.LockPolicy{Holds: []types.LockName{types.LockMaintenance}},
+			Locks:    lockPolicy(types.Task.Type.MigrateDB),
 			DedupKey: constantDedupKey(configtask.DedupKeyMigrateDB),
 		},
 		types.Task.Type.MigrateStorage: {
-			Type: types.Task.Type.MigrateStorage,
-			Locks: task.LockPolicy{
-				Holds:    []types.LockName{types.LockMaintenance},
-				WaitsFor: []types.LockName{types.LockStorage},
-			},
+			Type:     types.Task.Type.MigrateStorage,
+			Locks:    lockPolicy(types.Task.Type.MigrateStorage),
 			DedupKey: constantDedupKey(configtask.DedupKeyMigrateStorage),
 		},
 		types.Task.Type.Config: {
 			Type:     types.Task.Type.Config,
+			Locks:    lockPolicy(types.Task.Type.Config),
 			DedupKey: configDedupKey,
 		},
 	}}

@@ -17,6 +17,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
@@ -198,20 +200,25 @@ func WriteState(dest string, state State) error {
 	return nil
 }
 
-// RunLocked acquires the maintenance lock (skipping cleanly when busy),
-// mirrors, and records the mirror task's completion. onWait, when non-nil,
-// reports the queued count while waiting for the lock; onSync, when
-// non-nil, runs when the sync starts. token, when valid, is the blocking
-// task's claim token the run settles. The returned string is the state
-// timestamp.
+// RunLocked keeps the claim token's maintenance lock fresh, waits for the conflicting in-flight tasks to
+// drain, mirrors, and records the mirror task's completion. onWait, when non-nil, reports the queued
+// count while waiting for the drain; onSync, when non-nil, runs when the sync starts. token, when valid,
+// is the blocking task's claim token the run settles. The returned string is the state timestamp.
 func RunLocked(ctx context.Context, queries *database.Queries, logger *log.Logger, storageDir, dest string, onWait func(count int64), onSync func(), token uuid.NullUUID) (*Result, string, error) {
-	stopHeartbeat := database.StartMaintenanceLockHeartbeat(ctx, queries, logger, 5*time.Minute, token)
+	holds := types.LockDeclarationFor(types.Task.Type.Mirror).Holds
+	stopHeartbeat := database.StartLockHeartbeat(ctx, queries, logger, task.LockHeartbeatInterval, holds, token)
 	defer stopHeartbeat()
 
-	if err := database.WaitForTaskDrain(ctx, queries, logger, "mirror", onWait); err != nil {
+	if err := database.WaitForTaskDrain(ctx, queries, logger, "mirror", types.TaskTypesWaitingOn(holds...), onWait); err != nil {
 		return nil, "", err
 	}
 
+	return RunMirrorAndRecord(ctx, logger, storageDir, dest, onSync)
+}
+
+// RunMirrorAndRecord runs the mirror action and records its state file; it takes no locks and drains
+// nothing, so the queued handler's locked run and the direct manual holder path share it.
+func RunMirrorAndRecord(ctx context.Context, logger *log.Logger, storageDir, dest string, onSync func()) (*Result, string, error) {
 	if onSync != nil {
 		onSync()
 	}

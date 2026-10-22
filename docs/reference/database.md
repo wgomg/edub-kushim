@@ -71,10 +71,8 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 - `ValidateMigrationDestination(ctx, db)` — Refuses the destructive restore when the destination holds tables without edub migration history (goose version table present with rows); the application-managed tables `goose_db_version`, `system_signal`, and `matcher_text_embedding` are ignored (the shared `appManagedTables` list), so a mistyped/reused database name is never silently wiped.
 - `RewriteStoragePaths(ctx, db, oldDir, newDir)` — Rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` from `oldDir` to `newDir` in a single transaction (LIKE-escaped prefix match); used by restore and the `migrate-storage` task.
 - `RewriteTaskPayloadPaths(ctx, db, oldConsumptionDir, newConsumptionDir)` — Rewrites `file_path` inside pending `consume` task payloads (JSON) from the old consumption dir to the new one via `jsonb_set` with a strict-prefix match; runs before files move so queued work references the new inbox paths.
-- `WaitForTaskDrain(ctx, queries, logger, what, onWait ...func(count int64))` — Polls `CountProcessingTasks` (5s ticker) until no consume/enrich task is processing; the caller must hold the maintenance lock, which blocks new claims, so it converges. `onWait`, when non-nil, observes the in-flight count on each poll.
-- `AcquireMaintenanceLock(ctx, queries, logger, what)` — Waits until the maintenance lock is free, polling every 5s and logging each wait; the context ends the wait. The `kushim mirror` CLI uses it so a running backup never blocks the mirror forever.
-- `HoldMaintenanceLock(ctx, queries, logger, what, token, onWait)` — Runs the full lock protocol: acquires the lock (or adopts the lock named by a valid claim token without taking ownership of it), starts the 5-minute heartbeat, drains in-flight tasks, and returns the release function that stops the heartbeat and releases an acquired lock. Composed by `task.RunBlocking`.
-- `TryHoldMaintenanceLock(...)` — `HoldMaintenanceLock` without the wait: a lock held by another process returns an error instead. The `migrate-db` and `migrate-storage` handlers refuse with it while another process holds the lock.
+- `WaitForTaskDrain(ctx, queries, logger, what, drainTypes []types.TaskType, onWait ...func(count int64))` — Polls `CountProcessingTasks` over the given task types (5s ticker) until none is processing; the caller holds locks the types wait on, which blocks new claims, so it converges. Callers derive the set with `types.TaskTypesWaitingOn(holds...)`. `onWait`, when non-nil, observes the in-flight count on each poll.
+- `StartLockHeartbeat(ctx, queries, logger, interval, names []types.LockName, token uuid.NullUUID) func()` — Refreshes the heartbeat timestamps of the named locks held under the token (a NULL token refreshes the manual holder's locks) on the given interval until the context ends; the returned stop function ends the refresh early. Lock acquisition, release and claims live in `internal/task` (locks.go / store.go / direct.go) on top of the `lock.sql` queries.
 - `WithConnectTimeout(dsn, seconds)` — Appends `connect_timeout` to a DSN so connecting to an unreachable host fails within the given seconds (used by the migration's destination connect).
 
 ---
@@ -160,11 +158,11 @@ The SQL dump/restore machinery lives in `internal/database/` (shared by `kushim 
 
 ### Task
 
-`CreateTask`, `GetTask`, `GetTaskByTaskID`, `GetTaskByBatchID`, `ListTasks`, `ListAllTasks`, `ListTasksByBatch`, `ListAllTasksByBatch`, `ListTasksByBatchAndStatus`, `ListAllTasksByBatchAndStatus`, `ListTasksByBatchAndStatusAndType`, `ListAllTasksByBatchAndStatusAndType`, `ListTasksByBatchAndType`, `ListAllTasksByBatchAndType`, `ListTasksByStatus`, `ListAllTasksByStatus`, `ListTasksByStatusAndType`, `ListAllTasksByStatusAndType`, `ListTasksByType`, `ListAllTasksByType`, `ListActiveTasks` (non-terminal `pending`/`processing`/`waiting`, processing-first then oldest-queued, `LIMIT/OFFSET`), `CountTasksByBatchAndStatus`, `GetNextPendingTask`, `GetNextPendingTaskOfType`, `ClaimTask`, `CompleteTask` (now `:execrows` with `AND status = 'processing'` status guard), `FailTask`, `RetryTask`, `DeleteTask`, `CancelPendingTasksByBatch`, `CancelProcessingTasksByBatch`, `SetEnrichTaskPending`, `DiscardEnrichTask`, `DiscardEnrichTaskByTaskID`, `ListDistinctBatchIDs`, `ListDistinctBatchIDsByStatus`, `CountDistinctBatches`, `CountAllTasks`, `CountTasksByStatus`, `QuarantineStaleProcessingTasks`, `ResetStaleProcessingTasks` (both gated-class only, blocking types excluded)
+`CreateTask`, `GetTask`, `GetTaskByTaskID`, `GetTaskByBatchID`, `ListTasks`, `ListAllTasks`, `ListTasksByBatch`, `ListAllTasksByBatch`, `ListTasksByBatchAndStatus`, `ListAllTasksByBatchAndStatus`, `ListTasksByBatchAndStatusAndType`, `ListAllTasksByBatchAndStatusAndType`, `ListTasksByBatchAndType`, `ListAllTasksByBatchAndType`, `ListTasksByStatus`, `ListAllTasksByStatus`, `ListTasksByStatusAndType`, `ListAllTasksByStatusAndType`, `ListTasksByType`, `ListAllTasksByType`, `ListActiveTasks` (non-terminal `pending`/`processing`/`waiting`, processing-first then oldest-queued, `LIMIT/OFFSET`), `CountTasksByBatchAndStatus`, `GetNextPendingTask`, `GetNextPendingTaskOfType`, `ListBatchTaskTypes` (distinct task types of one batch — the batch-level hold derivation), `ClaimTask`, `CompleteTask` (now `:execrows` with `AND status = 'processing'` status guard), `FailTask`, `RetryTask`, `DeleteTask`, `CancelPendingTasksByBatch`, `CancelProcessingTasksByBatch`, `SetEnrichTaskPending`, `DiscardEnrichTask`, `DiscardEnrichTaskByTaskID`, `ListDistinctBatchIDs`, `ListDistinctBatchIDsByStatus`, `CountDistinctBatches`, `CountAllTasks`, `CountTasksByStatus`, `QuarantineStaleProcessingTasks`, `ResetStaleProcessingTasks` (both lock-holding types excluded; the stale blockers and the batch-id/claim-token exemption live in the lock queries)
 
-### Maintenance lock
+### Resource locks
 
-The `maintenance_lock` row of `system_signal`: `IsMaintenanceLocked` (the `is_maintenance_lock_held()` gate), `AcquireBackupLock` / `ReleaseBackupLock` (tokenless lock for the CLI and system-wide maintenance), `AcquireMaintenanceLockForTask` / `ReleaseMaintenanceLockForTask` / `TouchMaintenanceLockForTask` (claim-token lock, its owner-guarded release, and the 5-minute heartbeat), `ReleaseMaintenanceLockForStaleHolders` (releases only past the 30-minute window, token-membership scoped), `ReleaseMaintenanceLockForBatch`, `QuarantineStaleBlockingTasks`, `ResetStaleBlockingTasks` (both ownership-gated on the lock row's `owner_token` and freshness key)
+One `system_signal` row per lock name (`maintenance`, `storage` — `value` is the held flag, JSONB `data` carries `owner_token`, `batch_id` and the heartbeat timestamp; `lock_is_held(name)` is held-and-fresh under a 30-minute window). In `sql/queries/lock.sql`: `IsLockHeld` (the gate for scheduling and polling checks), `LockRowsForUpdate` (canonical-name-order row locks for acquisition), `CountHeldLocks`, `AcquireLocks` (guarded multi-row hold overwrite: free or past the window; `owner_token`/`batch_id` recorded per acquisition — narg NULL matches the manual holder's absent key via `IS NOT DISTINCT FROM`), `ReleaseLocksForToken` / `ReleaseLocksForBatch` / `ReleaseLocksForStaleHolders` (all `RETURNING name`, matching token- or batch-ownership with `IS NOT DISTINCT FROM`), `TouchLocksForToken` (heartbeat refresh), `NotifyLocksReleased` (`pg_notify('lock_released', ...)`, called in the release transaction so waiters wake at commit), and `QuarantineStaleBlockingTasks` / `ResetStaleBlockingTasks` (stale `processing` blocking tasks, exempted while a fresh lock row belongs to their execution by claim token or batch id). Claim-time acquisition, release orchestration and the manual holder path live in `internal/task` (locks.go / store.go / direct.go).
 
 ### Store-change record
 
@@ -466,7 +464,7 @@ the document was last audited in, read as `stamp < current sweep` for eligibilit
 cascading on document delete) and the `tag_audit_sweep` counter, whose row lives in
 `system_signal` since `00041_system_signal.sql`).
 `system_signal` holds the migration-seeded signal rows (the sweep counter, the
-maintenance lock, and the three store-changed flags; the matcher daemon also
+two resource lock rows, and the three store-changed flags; the matcher daemon also
 records its `matcher_text_embedding_generation` marker there at runtime), so
 the table is excluded from the
 schema-and-data dump and the migration replay recreates its seeded rows on restore. `00039_tag_demotion.sql` adds the demotion record and the seeded marker
@@ -507,7 +505,14 @@ to the `task_type` enum, and the Down mapping is deliberately lossy (the
 schedule origin is approximated from the batch's first task type).
 `00048_rekey_migrate_tasks.sql` re-keys pending/failed `config` migration tasks
 onto the new `migrate-db`/`migrate-storage` task types and dedup keys (Down
-restores the `op` payload field and the `config:` key prefix).
+restores the `op` payload field and the `config:` key prefix). `00049_named_resource_locks.sql`
+renames the `maintenance_lock` signal row to `maintenance` (carrying `value`,
+`owner_token` and the heartbeat timestamp so a live holder survives the
+migration), seeds the `maintenance` and `storage` lock rows, and replaces the
+gate: `lock_is_held(lock_name)` reads the named row's held flag plus a
+30-minute window over the `data` timestamp, and `is_maintenance_lock_held()`
+is dropped (its Down restores both for the rollback path; the `storage` row's
+state has no legacy counterpart).
 Goose tracks
 which versions have been applied in the `goose_db_version` table.
 

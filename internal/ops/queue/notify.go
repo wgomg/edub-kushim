@@ -40,7 +40,7 @@ func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<
 			continue
 		}
 
-		if _, err := conn.Exec(ctx, "LISTEN batch_queued"); err != nil {
+		if _, err := conn.Exec(ctx, "LISTEN batch_queued; LISTEN lock_released"); err != nil {
 			logger.Error("", "notify: LISTEN: %v", err)
 			conn.Release()
 			select {
@@ -51,7 +51,7 @@ func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<
 			continue
 		}
 
-		logger.Info("", "notify: listening for batch_queued notifications")
+		logger.Info("", "notify: listening for batch_queued and lock_released notifications")
 
 		for {
 			_, err := conn.Conn().WaitForNotification(ctx)

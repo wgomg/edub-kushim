@@ -17,6 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // containerRuntime picks the test container CLI that can see the running
@@ -127,7 +128,7 @@ func TestMigrateDBTask(t *testing.T) {
 	}
 
 	// Backup lock must be released after the migration.
-	locked, err := queries.IsMaintenanceLocked(ctx)
+	locked, err := queries.IsLockHeld(ctx, string(types.LockMaintenance))
 	if err != nil {
 		t.Fatalf("check backup lock: %v", err)
 	}
@@ -484,7 +485,7 @@ func TestMigrateStorageTask(t *testing.T) {
 			}
 
 			// Backup lock must be released and config persisted.
-			locked, err := queries.IsMaintenanceLocked(ctx)
+			locked, err := queries.IsLockHeld(ctx, string(types.LockMaintenance))
 			if err != nil {
 				t.Fatalf("check backup lock: %v", err)
 			}

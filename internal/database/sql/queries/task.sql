@@ -13,8 +13,14 @@ SELECT id FROM task WHERE status = 'pending' ORDER BY created_at LIMIT 1;
 -- name: GetNextPendingTaskOfType :one
 SELECT id FROM task
 WHERE status = 'pending' AND task_type = @task_type
-  AND (NOT @gated::boolean OR NOT is_maintenance_lock_held())
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.name = ANY(@wait_locks::text[]) AND lock_is_held(s.name)
+  )
 ORDER BY created_at LIMIT 1;
+
+-- name: ListBatchTaskTypes :many
+SELECT DISTINCT task_type FROM task WHERE batch_id = $1 ORDER BY task_type;
 
 -- name: ListTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,

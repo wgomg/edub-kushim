@@ -750,7 +750,7 @@ the reconciler's live counts, and the pair-verdict aggregates all read through
   same queued task — the pool always claims, so the flag gates only the
   schedule — while `kushim tagmeasure --run <batch-id>` is the queued run's
   execution mode. The pass holds the lock for its whole transaction, so runs are
-  minutes-scale and serialize with every other blocking task.
+  minutes-scale and serialize with every other maintenance hold.
 
 The pass measures; it never judges. Dispositions — promote, demote, alias, split,
 delete — stay with the reconciler's arms (the stored-compound scan, the twin

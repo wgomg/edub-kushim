@@ -858,7 +858,7 @@ func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
 		t.Fatalf("set orphan claim token and stale started_at: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
 		foreignToken); err != nil {
 		t.Fatalf("hold lock with foreign token: %v", err)
 	}
@@ -875,7 +875,7 @@ func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
 	testutil.AssertNoError(t, err, "get foreign task")
 	testutil.AssertEqual(t, foreign.Status, "processing", "foreign holder untouched")
 
-	held, err := client.Queries.IsMaintenanceLocked(ctx)
+	held, err := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	if held != 1 {
 		t.Fatalf("foreign holder's lock was released, want held=%d", held)
@@ -898,7 +898,7 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 		t.Fatalf("set claim token and stale started_at: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW() - INTERVAL '31 minutes'), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW() - INTERVAL '31 minutes'), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
 		token); err != nil {
 		t.Fatalf("hold lock with expired started_at: %v", err)
 	}
@@ -911,7 +911,7 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 	testutil.AssertNoError(t, err, "get task")
 	testutil.AssertEqual(t, row.Status, "pending", "task reset to pending")
 
-	held, err := client.Queries.IsMaintenanceLocked(ctx)
+	held, err := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	testutil.AssertEqual(t, held, 0, "lock released after window expiry")
 
@@ -957,7 +957,7 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 			t.Fatalf("set stale with max attempts: %v", err)
 		}
 		if _, err := client.DB().ExecContext(ctx,
-			"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
+			"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
 			token); err != nil {
 			t.Fatalf("hold lock with matching token: %v", err)
 		}
@@ -975,7 +975,7 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 		var owner uuid.NullUUID
 		var running bool
 		if err := client.DB().QueryRowContext(ctx,
-			"SELECT (data->>'owner_token')::uuid, value::boolean FROM system_signal WHERE name = 'maintenance_lock'").Scan(&owner, &running); err != nil {
+			"SELECT (data->>'owner_token')::uuid, value::boolean FROM system_signal WHERE name = 'maintenance'").Scan(&owner, &running); err != nil {
 			t.Fatalf("read lock state: %v", err)
 		}
 		testutil.AssertEqual(t, running, true, "lock still held")
@@ -999,12 +999,12 @@ func TestBatch_ResetStaleProcessingTasks_KeepsLiveBlockingHolder(t *testing.T) {
 		t.Fatalf("set claim token and stale started_at: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance_lock'",
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
 		token); err != nil {
 		t.Fatalf("hold lock with token: %v", err)
 	}
 
-	held, err := client.Queries.IsMaintenanceLocked(ctx)
+	held, err := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 	testutil.AssertNoError(t, err, "pre-reset lock check")
 	if held != 1 {
 		t.Fatalf("pre-reset lock held=%d, want 1", held)
@@ -1014,7 +1014,7 @@ func TestBatch_ResetStaleProcessingTasks_KeepsLiveBlockingHolder(t *testing.T) {
 		t.Fatalf("reset stale: %v", err)
 	}
 
-	held, err = client.Queries.IsMaintenanceLocked(ctx)
+	held, err = client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	if held != 1 {
 		t.Fatalf("post-reset lock held=%d, want 1 (live holder keeps its lock)", held)
@@ -1024,6 +1024,52 @@ func TestBatch_ResetStaleProcessingTasks_KeepsLiveBlockingHolder(t *testing.T) {
 	testutil.AssertNoError(t, err, "get task")
 	if string(row.Status) != "processing" {
 		t.Fatalf("status=%s, want processing", row.Status)
+	}
+}
+
+func TestBatch_ResetStaleProcessingTasks_KeepsLiveChildHeldBatch(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	batchID := "rsts-bf"
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+	}); err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
+	taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rsts-bf-1", TaskType: "thumbbackfill", Status: "processing",
+		BatchID: sql.NullString{String: batchID, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create processing thumbbackfill")
+
+	// the task token holds no lock: the child holds storage for the whole run under its batch-owner
+	// token and records the batch on the lock row
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $2",
+		uuid.New(), taskID); err != nil {
+		t.Fatalf("stale claim token and started_at: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text, 'batch_id', $2::text) WHERE name = 'storage'",
+		uuid.New(), batchID); err != nil {
+		t.Fatalf("hold storage for the batch: %v", err)
+	}
+
+	if _, err := svc.ResetStaleProcessingTasks(ctx, 60); err != nil {
+		t.Fatalf("reset stale: %v", err)
+	}
+
+	row, err := client.Queries.GetTask(ctx, taskID)
+	testutil.AssertNoError(t, err, "get task")
+	if string(row.Status) != "processing" {
+		t.Fatalf("status=%s, want processing (a live child-held batch keeps its task)", row.Status)
+	}
+
+	held, err := client.Queries.IsLockHeld(ctx, "storage")
+	testutil.AssertNoError(t, err, "storage lock check")
+	if held != 1 {
+		t.Fatalf("storage lock held=%d, want 1 (the child's lock is untouched)", held)
 	}
 }
 

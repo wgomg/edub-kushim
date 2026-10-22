@@ -11,10 +11,10 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// TestMigrationSystemSignalCarriesState pins migration 00041's upgrade contract: a maintenance lock
-// held and a sweep counter advanced before the upgrade keep their values in system_signal, so a process
-// running while the schema upgrades stays the lock holder and the completed audit sweep does not reset
-// to a fresh one.
+// TestMigrationSystemSignalCarriesState pins the lock carry-over of migrations 00041 and 00049: a
+// maintenance lock held and a sweep counter advanced before 00041 keep their values in system_signal, so
+// a process running while the schema upgrades stays the lock holder, and 00049 renames the lock row
+// without losing that state. The completed audit sweep does not reset to a fresh one.
 func TestMigrationSystemSignalCarriesState(t *testing.T) {
 	ctx := context.Background()
 	base := TestDSN(t)
@@ -57,7 +57,7 @@ func TestMigrationSystemSignalCarriesState(t *testing.T) {
 	var started time.Time
 	if err := db.QueryRowContext(ctx, `
 		SELECT value, (data->>'owner_token')::uuid, (data->>'started_at')::timestamptz
-		FROM system_signal WHERE name = 'maintenance_lock'`).Scan(&value, &owner, &started); err != nil {
+		FROM system_signal WHERE name = 'maintenance'`).Scan(&value, &owner, &started); err != nil {
 		t.Fatalf("read the migrated maintenance lock: %v", err)
 	}
 	if value != "true" {
@@ -71,11 +71,11 @@ func TestMigrationSystemSignalCarriesState(t *testing.T) {
 	}
 
 	var held bool
-	if err := db.QueryRowContext(ctx, "SELECT is_maintenance_lock_held()").Scan(&held); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT lock_is_held('maintenance')").Scan(&held); err != nil {
 		t.Fatalf("check the lock gate after the migration: %v", err)
 	}
 	if !held {
-		t.Error("is_maintenance_lock_held() = false, want it to see the carried lock")
+		t.Error("lock_is_held('maintenance') = false, want it to see the carried lock")
 	}
 
 	var sweep string
