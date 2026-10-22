@@ -13,6 +13,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// dedupIndexName names the schema's partial unique index on (task_type, dedup_key): only a violation of
+// this index is a dedup conflict, while a collision on any other unique constraint (the task id above
+// all) must abort the enqueue instead of being skipped.
+const dedupIndexName = "idx_task_dedup"
+
 // BatchSpec is the requester metadata every enqueue carries: the entry-point origin and, when scheduled,
 // the name of the schedule that produced the run. Its fields stay unexported so only NewBatchSpec can set
 // them; the constructor and the enqueue share one validation, so a zero-value spec is rejected too.
@@ -201,9 +206,10 @@ func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []Tas
 
 		payload := t.Payload
 		// a dedup conflict must skip this task without aborting the batch, so an insert that carries a key
-		// runs under its own savepoint: a unique violation rolls back to that savepoint and the transaction
-		// stays usable for the remaining tasks; a task without a key cannot violate the partial dedup index
-		// and inserts directly
+		// runs under its own savepoint: a violation of the dedup index rolls back to that savepoint, and the
+		// transaction stays usable for the remaining tasks; a collision on another unique constraint, the task
+		// id above all, is not a dedup conflict and aborts, while a task without a key cannot violate the
+		// partial dedup index at all and inserts directly
 		if dedupKey.Valid {
 			if _, err := tx.ExecContext(ctx, "SAVEPOINT task_insert"); err != nil {
 				return EnqueueResult{}, fmt.Errorf("set insert savepoint: %w", err)
@@ -217,7 +223,7 @@ func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []Tas
 			Payload:  &payload,
 			DedupKey: dedupKey,
 		}); err != nil {
-			if dedupKey.Valid && errs.IsConstraint(err) {
+			if dedupKey.Valid && errs.IsConstraintOn(err, dedupIndexName) {
 				if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT task_insert"); rbErr != nil {
 					return EnqueueResult{}, fmt.Errorf("roll back dedup savepoint: %w", rbErr)
 				}

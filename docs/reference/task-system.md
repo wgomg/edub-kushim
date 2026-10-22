@@ -90,7 +90,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 - `Enqueuer` — the single creation path for queued work; owns the DB client and the `TypeCatalog`
   - **Methods**:
     - `NewEnqueuer(client, catalog) *Enqueuer`
-    - `EnqueueBatch(ctx, spec, tasks []TaskSpec) (EnqueueResult, error)` — one transaction inserts the batch (origin, schedule, `queued`) and its tasks; a dedup conflict skips that task, zero survivors create nothing, and the batch types must share one `Holds` set; preconditions run before any row is written
+    - `EnqueueBatch(ctx, spec, tasks []TaskSpec) (EnqueueResult, error)` — one transaction inserts the batch (origin, schedule, `queued`) and its tasks; a violation of the dedup index skips that task, a collision on any other unique constraint (the task id) aborts, zero survivors create nothing, and the batch types must share one `Holds` set; preconditions run before any row is written
     - `EnqueueTask(ctx, spec, task)` — single-task convenience over `EnqueueBatch`
     - `DedupKey(taskType, payload) (string, error)` — the derivation a task of that type would carry, for boundary-side coverage checks
 

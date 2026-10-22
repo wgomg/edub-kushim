@@ -292,6 +292,36 @@ func TestEnqueuerSkipsDuplicate(t *testing.T) {
 	testutil.AssertEqual(t, second.Skipped, 1, "one skipped")
 }
 
+func TestEnqueuerAbortsOnTaskIDCollision(t *testing.T) {
+	enqueuer, client := newEnqueuerForTest(t)
+	defer client.DB().Close()
+	ctx := context.Background()
+
+	spec, _ := NewBatchSpec(types.Batch.Origin.CLI, "")
+	_, err := enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type:    types.Task.Type.Config,
+		TaskID:  "clash",
+		Payload: json.RawMessage(`{"key":"first"}`),
+	}})
+	testutil.AssertNoError(t, err, "first enqueue")
+
+	// the colliding task carries a different dedup key, so the failure can only come from the task id
+	// uniqueness and must abort instead of being counted as a dedup skip
+	_, err = enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type:    types.Task.Type.Config,
+		TaskID:  "clash",
+		Payload: json.RawMessage(`{"key":"second"}`),
+	}, {
+		Type:    types.Task.Type.Config,
+		TaskID:  "sibling",
+		Payload: json.RawMessage(`{"key":"third"}`),
+	}})
+	testutil.AssertError(t, err, "task id collision must abort the enqueue")
+
+	_, err = client.Queries.GetTaskByTaskID(ctx, "sibling")
+	testutil.AssertError(t, err, "aborted enqueue leaves no sibling behind")
+}
+
 func TestEnqueuerRejectsWaitingWithoutID(t *testing.T) {
 	enqueuer, client := newEnqueuerForTest(t)
 	defer client.DB().Close()

@@ -459,7 +459,9 @@ func FromDB(err error, op string) error {
 
 PostgreSQL error codes are inspected through `errors.As` to a `*pgconn.PgError`
 (`IsConstraint`, `IsForeignKey`, `IsBusy` — unique violations, FK violations,
-deadlock/serialization).
+deadlock/serialization). `IsConstraintOn` narrows a unique violation to one
+constraint or index by name, for callers that skip work on one specific
+conflict but abort on any other.
 
 Handlers convert kinds to HTTP statuses (`internal/api/handlers/errors.go:14`):
 

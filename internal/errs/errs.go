@@ -96,6 +96,15 @@ func IsConstraint(err error) bool {
 	return false
 }
 
+// IsConstraintOn reports a unique violation from Postgres raised by the named constraint or index, so a
+// caller that treats one conflict as a skip can tell its own index apart from every other unique rule.
+func IsConstraintOn(err error, name string) bool {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		return pgErr.Code == pgerrcode.UniqueViolation && pgErr.ConstraintName == name
+	}
+	return false
+}
+
 // IsForeignKey reports a foreign-key violation from Postgres.
 func IsForeignKey(err error) bool {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {

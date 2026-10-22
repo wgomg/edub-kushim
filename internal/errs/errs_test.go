@@ -181,3 +181,51 @@ func TestPgErrorPredicates(t *testing.T) {
 		})
 	}
 }
+
+func TestIsConstraintOn(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		constraint string
+		match      bool
+	}{
+		{
+			name:       "matching constraint name",
+			err:        &pgconn.PgError{Code: pgerrcode.UniqueViolation, ConstraintName: "idx_task_dedup"},
+			constraint: "idx_task_dedup",
+			match:      true,
+		},
+		{
+			name:       "different constraint name",
+			err:        &pgconn.PgError{Code: pgerrcode.UniqueViolation, ConstraintName: "task_task_id_key"},
+			constraint: "idx_task_dedup",
+			match:      false,
+		},
+		{
+			name:       "non unique violation",
+			err:        &pgconn.PgError{Code: pgerrcode.ForeignKeyViolation, ConstraintName: "idx_task_dedup"},
+			constraint: "idx_task_dedup",
+			match:      false,
+		},
+		{
+			name:       "plain error",
+			err:        fmt.Errorf("not a pg error"),
+			constraint: "idx_task_dedup",
+			match:      false,
+		},
+		{
+			name:       "wrapped pg error",
+			err:        fmt.Errorf("outer: %w", &pgconn.PgError{Code: pgerrcode.UniqueViolation, ConstraintName: "idx_task_dedup"}),
+			constraint: "idx_task_dedup",
+			match:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsConstraintOn(tt.err, tt.constraint); got != tt.match {
+				t.Errorf("IsConstraintOn() = %v, want %v", got, tt.match)
+			}
+		})
+	}
+}

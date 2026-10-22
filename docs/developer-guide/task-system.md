@@ -582,11 +582,14 @@ Key formats in use:
 | config | `config:tessdata:<lang>` / `config:hugot` |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
-The waiting (child) enrich tasks store **no dedup key** — dedup only kicks in
-once activated, when the payload gains `document_id`. A duplicate enqueue
-loses the dedup conflict: `EnqueueBatch` skips the task, no batch is created,
-and the boundary reports the work as already queued ("re-enrich already
-queued", `internal/ops/cli/enrich.go`).
+The waiting (child) enrich tasks store **no dedup key**, and never gain one:
+the column is only written on insert, and a waiting child's insert carries
+none, so an activated child stays dedup-free. A duplicate enqueue of keyed
+work loses the dedup conflict: `EnqueueBatch` skips the task, no batch is
+created, and the boundary reports the work as already queued ("re-enrich
+already queued", `internal/ops/cli/enrich.go`). Only a violation of the dedup
+index counts as a skip — a collision on any other unique constraint (the task
+id above all) aborts the enqueue and creates nothing.
 
 ---
 
