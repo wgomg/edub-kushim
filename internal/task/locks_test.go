@@ -143,6 +143,11 @@ func TestStoreClaimBlocking_BatchHoldsAcquiredSkipsAcquisition(t *testing.T) {
 	store, _, client := setupTaskTestClient(t)
 	ctx := context.Background()
 
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID: "bf-batch-1", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+	}); err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
 	if _, err := createTaskRow(ctx, t, store.client.Queries, types.Task.Type.ThumbBackfill, "bf-batch-1",
 		json.RawMessage(`{}`), "bf-1", "", ""); err != nil {
 		t.Fatalf("create thumbbackfill task: %v", err)

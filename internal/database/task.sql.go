@@ -17,7 +17,7 @@ import (
 
 const cancelPendingTasksByBatch = `-- name: CancelPendingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
-WHERE batch_id = $1 AND status = 'pending'
+WHERE batch_id = $1 AND status IN ('pending', 'waiting')
 `
 
 func (q *Queries) CancelPendingTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
@@ -80,28 +80,6 @@ type CompleteBlockingTaskParams struct {
 
 func (q *Queries) CompleteBlockingTask(ctx context.Context, arg CompleteBlockingTaskParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, completeBlockingTask, arg.Result, arg.ID, arg.ClaimToken)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const completeTask = `-- name: CompleteTask :execrows
-UPDATE task SET
-    status = 'completed',
-    result = $1,
-    completed_at = CURRENT_TIMESTAMP,
-    attempts = 0
-WHERE id = $2 AND status = 'processing'
-`
-
-type CompleteTaskParams struct {
-	Result *json.RawMessage
-	ID     int64
-}
-
-func (q *Queries) CompleteTask(ctx context.Context, arg CompleteTaskParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, completeTask, arg.Result, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -361,39 +339,41 @@ func (q *Queries) DiscardEnrichTaskByTaskID(ctx context.Context, arg DiscardEnri
 	return result.RowsAffected()
 }
 
-const discardWaitingEnrichesOfFailedConsumes = `-- name: DiscardWaitingEnrichesOfFailedConsumes :execrows
+const discardOrphanedWaitingEnriches = `-- name: DiscardOrphanedWaitingEnriches :execrows
 UPDATE task AS e
 SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = COALESCE(c.error, 'parent consume task failed')
+    error = COALESCE(c.error, 'parent consume task did not complete')
 FROM task AS c
 WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
-  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND c.task_type = 'consume' AND c.status NOT IN ('pending', 'processing')
   AND c.batch_id = $1
   AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
 `
 
-func (q *Queries) DiscardWaitingEnrichesOfFailedConsumes(ctx context.Context, batchID sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, discardWaitingEnrichesOfFailedConsumes, batchID)
+// a waiting child whose parent consume is no longer pending or processing can never be activated: the parent
+// completed without activating it, failed, or was cancelled, so the waiting row would strand the settle
+func (q *Queries) DiscardOrphanedWaitingEnriches(ctx context.Context, batchID sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardOrphanedWaitingEnriches, batchID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const discardWaitingEnrichesOfFailedConsumesGlobal = `-- name: DiscardWaitingEnrichesOfFailedConsumesGlobal :execrows
+const discardOrphanedWaitingEnrichesGlobal = `-- name: DiscardOrphanedWaitingEnrichesGlobal :execrows
 UPDATE task AS e
 SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = COALESCE(c.error, 'parent consume task failed')
+    error = COALESCE(c.error, 'parent consume task did not complete')
 FROM task AS c
 WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
-  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND c.task_type = 'consume' AND c.status NOT IN ('pending', 'processing')
   AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
 `
 
-func (q *Queries) DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, discardWaitingEnrichesOfFailedConsumesGlobal)
+func (q *Queries) DiscardOrphanedWaitingEnrichesGlobal(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardOrphanedWaitingEnrichesGlobal)
 	if err != nil {
 		return 0, err
 	}
@@ -420,24 +400,6 @@ func (q *Queries) FailBlockingTask(ctx context.Context, arg FailBlockingTaskPara
 		return 0, err
 	}
 	return result.RowsAffected()
-}
-
-const failTask = `-- name: FailTask :exec
-UPDATE task SET
-    status = 'failed',
-    completed_at = CURRENT_TIMESTAMP,
-    error = $1
-WHERE id = $2
-`
-
-type FailTaskParams struct {
-	Error sql.NullString
-	ID    int64
-}
-
-func (q *Queries) FailTask(ctx context.Context, arg FailTaskParams) error {
-	_, err := q.db.ExecContext(ctx, failTask, arg.Error, arg.ID)
-	return err
 }
 
 const getConfigTaskByDedupKey = `-- name: GetConfigTaskByDedupKey :one
@@ -561,13 +523,15 @@ func (q *Queries) GetNextPendingTask(ctx context.Context) (int64, error) {
 }
 
 const getNextPendingTaskOfType = `-- name: GetNextPendingTaskOfType :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
+SELECT t.id FROM task t
+WHERE t.status = 'pending' AND t.task_type = $1
+  AND (t.batch_id IS NULL
+       OR EXISTS (SELECT 1 FROM batch b WHERE b.id = t.batch_id AND b.status IN ('queued', 'processing')))
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY($2::text[]) AND lock_is_held(s.name)
   )
-ORDER BY created_at LIMIT 1
+ORDER BY t.created_at LIMIT 1
 `
 
 type GetNextPendingTaskOfTypeParams struct {
@@ -575,6 +539,8 @@ type GetNextPendingTaskOfTypeParams struct {
 	WaitLocks []string
 }
 
+// a task whose batch is missing or is not queued/processing is not claimable; without this filter one such
+// row would be selected forever and stall the whole task type
 func (q *Queries) GetNextPendingTaskOfType(ctx context.Context, arg GetNextPendingTaskOfTypeParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getNextPendingTaskOfType, arg.TaskType, pq.Array(arg.WaitLocks))
 	var id int64
@@ -1649,27 +1615,49 @@ func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams
 	return items, nil
 }
 
-const quarantineStaleProcessingTasks = `-- name: QuarantineStaleProcessingTasks :execrows
+const quarantineStaleProcessingTasks = `-- name: QuarantineStaleProcessingTasks :many
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE status = 'processing' AND attempts >= $1 AND started_at < $2
+WHERE status = 'processing' AND attempts >= $1
+  AND started_at < NOW() - make_interval(secs => $2::int)
   AND task_type <> ALL($3::task_type[])
+RETURNING task_id, task_type
 `
 
 type QuarantineStaleProcessingTasksParams struct {
-	Attempts  int32
-	StartedAt sql.NullTime
-	Types     []types.TaskType
+	Attempts          int32
+	StaleAfterSeconds int32
+	Types             []types.TaskType
 }
 
-func (q *Queries) QuarantineStaleProcessingTasks(ctx context.Context, arg QuarantineStaleProcessingTasksParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, quarantineStaleProcessingTasks, arg.Attempts, arg.StartedAt, pq.Array(arg.Types))
+type QuarantineStaleProcessingTasksRow struct {
+	TaskID   string
+	TaskType types.TaskType
+}
+
+func (q *Queries) QuarantineStaleProcessingTasks(ctx context.Context, arg QuarantineStaleProcessingTasksParams) ([]QuarantineStaleProcessingTasksRow, error) {
+	rows, err := q.db.QueryContext(ctx, quarantineStaleProcessingTasks, arg.Attempts, arg.StaleAfterSeconds, pq.Array(arg.Types))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	var items []QuarantineStaleProcessingTasksRow
+	for rows.Next() {
+		var i QuarantineStaleProcessingTasksRow
+		if err := rows.Scan(&i.TaskID, &i.TaskType); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resetStaleProcessingTasks = `-- name: ResetStaleProcessingTasks :execrows
@@ -1677,18 +1665,19 @@ UPDATE task SET
     status = 'pending',
     attempts = attempts + 1,
     progress = NULL
-WHERE status = 'processing' AND attempts < $1 AND started_at < $2
+WHERE status = 'processing' AND attempts < $1
+  AND started_at < NOW() - make_interval(secs => $2::int)
   AND task_type <> ALL($3::task_type[])
 `
 
 type ResetStaleProcessingTasksParams struct {
-	Attempts  int32
-	StartedAt sql.NullTime
-	Types     []types.TaskType
+	Attempts          int32
+	StaleAfterSeconds int32
+	Types             []types.TaskType
 }
 
 func (q *Queries) ResetStaleProcessingTasks(ctx context.Context, arg ResetStaleProcessingTasksParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, resetStaleProcessingTasks, arg.Attempts, arg.StartedAt, pq.Array(arg.Types))
+	result, err := q.db.ExecContext(ctx, resetStaleProcessingTasks, arg.Attempts, arg.StaleAfterSeconds, pq.Array(arg.Types))
 	if err != nil {
 		return 0, err
 	}
@@ -1749,39 +1738,24 @@ func (q *Queries) RetryFailedTasksByBatch(ctx context.Context, batchID sql.NullS
 	return result.RowsAffected()
 }
 
-const retryTask = `-- name: RetryTask :exec
-UPDATE task SET
-    status = 'pending',
-    result = NULL,
-    error = NULL,
-    progress = NULL,
-    started_at = NULL,
-    completed_at = NULL,
-    attempts = 0
-WHERE id = $1
-`
-
-func (q *Queries) RetryTask(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, retryTask, id)
-	return err
-}
-
 const setEnrichTaskPending = `-- name: SetEnrichTaskPending :exec
 UPDATE task SET
     status = 'pending',
     payload = $1,
+    dedup_key = $2,
     error = NULL,
     completed_at = NULL
-WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type IN ('enrich', 'thumbnail')
+WHERE id = $3 AND status IN ('waiting', 'discarded') AND task_type IN ('enrich', 'thumbnail')
 `
 
 type SetEnrichTaskPendingParams struct {
-	Payload *json.RawMessage
-	ID      int64
+	Payload  *json.RawMessage
+	DedupKey sql.NullString
+	ID       int64
 }
 
 func (q *Queries) SetEnrichTaskPending(ctx context.Context, arg SetEnrichTaskPendingParams) error {
-	_, err := q.db.ExecContext(ctx, setEnrichTaskPending, arg.Payload, arg.ID)
+	_, err := q.db.ExecContext(ctx, setEnrichTaskPending, arg.Payload, arg.DedupKey, arg.ID)
 	return err
 }
 

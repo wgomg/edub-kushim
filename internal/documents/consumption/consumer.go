@@ -484,25 +484,56 @@ type consumePayload struct {
 	FilePath string `json:"file_path"`
 }
 
-// QuarantineFailedFiles moves the originals of a batch's quarantined
-// consume tasks out of the consumption directory; per-file failures are
-// logged and continue, and the first payload or unmarshal failure is
-// returned.
-func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, storageDir string, logger *log.Logger, batchID string) error {
-	rows, err := queries.GetQuarantinedConsumeTaskPayloads(ctx, sql.NullString{String: batchID, Valid: true})
-	if err != nil {
-		return fmt.Errorf("get quarantined consume task payloads: %w", err)
+// QuarantineFailedFiles moves the originals of a batch's permanently failed consume tasks out of the
+// consumption directory. The tasks are named by the ids the reclamation just failed plus the batch's
+// attempts-exhausted failed consume rows, so the classification never reads the error text; the second
+// source covers a run that died between its reset and its quarantine. An empty batchID skips both the
+// batch-scoped sources, which is what the global stale sweep uses when it already holds the full identity
+// set. Per-file failures are logged and continue, and the first payload or unmarshal failure is returned.
+func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, storageDir string, logger *log.Logger, batchID string, maxRetries int32, failedTaskIDs []string) error {
+	type payloadRow struct {
+		taskID  string
+		payload *json.RawMessage
+	}
+
+	var candidates []payloadRow
+	if len(failedTaskIDs) > 0 {
+		rows, err := queries.GetConsumeTaskPayloadsByIDs(ctx, failedTaskIDs)
+		if err != nil {
+			return fmt.Errorf("get quarantined consume task payloads: %w", err)
+		}
+		for _, row := range rows {
+			candidates = append(candidates, payloadRow{taskID: row.TaskID, payload: row.Payload})
+		}
+	}
+
+	if batchID != "" {
+		residue, err := queries.GetPermanentlyFailedConsumeTaskPayloads(ctx, database.GetPermanentlyFailedConsumeTaskPayloadsParams{
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+			Attempts: maxRetries,
+		})
+		if err != nil {
+			return fmt.Errorf("get permanently failed consume task payloads: %w", err)
+		}
+		for _, row := range residue {
+			candidates = append(candidates, payloadRow{taskID: row.TaskID, payload: row.Payload})
+		}
 	}
 
 	var firstErr error
-	for _, row := range rows {
-		if row.Payload == nil {
+	seen := make(map[string]struct{}, len(candidates))
+	for _, row := range candidates {
+		if _, ok := seen[row.taskID]; ok {
+			continue
+		}
+		seen[row.taskID] = struct{}{}
+		if row.payload == nil {
 			continue
 		}
 		var p consumePayload
-		if err := json.Unmarshal(*row.Payload, &p); err != nil {
+		if err := json.Unmarshal(*row.payload, &p); err != nil {
 			if firstErr == nil {
-				firstErr = fmt.Errorf("unmarshal payload for task %s: %w", row.TaskID, err)
+				firstErr = fmt.Errorf("unmarshal payload for task %s: %w", row.taskID, err)
 			}
 			continue
 		}
@@ -512,11 +543,13 @@ func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, stora
 		}
 	}
 
-	// Sweep discards every enrich still waiting for a failed consume in the
-	// batch, covering quarantined tasks and legacy stuck data alike.
-	if _, err := queries.DiscardWaitingEnrichesOfFailedConsumes(ctx, sql.NullString{String: batchID, Valid: true}); err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("discard waiting enriches of failed consumes: %w", err)
+	// sweep discards every waiting child whose parent consume is no longer pending or processing, covering
+	// failed, cancelled and never-activated parents plus legacy stuck data
+	if batchID != "" {
+		if _, err := queries.DiscardOrphanedWaitingEnriches(ctx, sql.NullString{String: batchID, Valid: true}); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("discard orphaned waiting enriches: %w", err)
+			}
 		}
 	}
 	return firstErr

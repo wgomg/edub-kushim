@@ -36,20 +36,19 @@ func NewTagMeasureTaskHandler(queries *database.Queries, logger *log.Logger) *Ta
 // Handle forks the tagmeasure verb for the task's batch and returns its
 // report as the task result.
 func (h *TagMeasureTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
-	return task.RunBlocking(ctx, h.queries, h.logger, t, "tag measure", func(progress *task.ProgressTracker) (json.RawMessage, error) {
-		progress.Set("run", "tagmeasure --run "+t.BatchID, 0)
-		result, err := ForkAndExtractReport("tagmeasure", t.BatchID, ReportPrefix, "tag measure")
-		if err != nil {
-			return nil, err
-		}
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+	progress.Set("run", "tagmeasure --run "+t.BatchID, 0)
+	result, err := ForkAndExtractReport("tagmeasure", t.BatchID, ReportPrefix, "tag measure")
+	if err != nil {
+		return nil, err
+	}
 
-		if report, parseErr := parseReport(result); parseErr == nil {
-			h.logger.Info("", "tag measure run %s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
-				report.RunID, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
-				report.Operators, report.States, report.Skipped, report.Worklists)
-		}
-		return result, nil
-	})
+	if report, parseErr := parseReport(result); parseErr == nil {
+		h.logger.Info("", "tag measure run %s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
+			report.RunID, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
+			report.Operators, report.States, report.Skipped, report.Worklists)
+	}
+	return result, nil
 }
 
 // ForkAndExtractReport forks this binary's subcommand with --run runID and

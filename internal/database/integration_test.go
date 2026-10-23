@@ -136,24 +136,18 @@ func TestTaskLifecycle(t *testing.T) {
 	id := insertTask(t, q, "tc-1", types.Task.Status.Pending)
 	task, _ := q.GetTask(ctx, id)
 	assertEqual(t, string(task.Status), "pending", "pending")
-	rows, _ := q.ClaimTask(ctx, ClaimTaskParams{ID: id})
+	token := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+	rows, _ := q.ClaimTask(ctx, ClaimTaskParams{ID: id, ClaimToken: token})
 	assertEqual(t, rows, int64(1), "claimed")
 	task, _ = q.GetTask(ctx, id)
 	assertEqual(t, string(task.Status), "processing", "processing")
 	result := json.RawMessage(`{"ok":true}`)
-	_, err := q.CompleteTask(ctx, CompleteTaskParams{ID: id, Result: &result})
+	_, err := q.CompleteBlockingTask(ctx, CompleteBlockingTaskParams{
+		ID: id, Result: &result, ClaimToken: token,
+	})
 	assertNoError(t, err, "complete")
 	task, _ = q.GetTask(ctx, id)
 	assertEqual(t, string(task.Status), "completed", "completed")
-}
-
-func TestTaskRetry(t *testing.T) {
-	q, _ := NewTestQueries(t)
-	ctx := context.Background()
-	id := insertTask(t, q, "ret-1", types.Task.Status.Failed)
-	assertNoError(t, q.RetryTask(ctx, id), "retry")
-	task, _ := q.GetTask(ctx, id)
-	assertEqual(t, string(task.Status), "pending", "after retry")
 }
 
 func TestEnrichWaitingFlow(t *testing.T) {
@@ -230,7 +224,7 @@ func TestDeleteBatchOwnerByBatchID(t *testing.T) {
 	assertNoError(t, err, "delete by batch id")
 	assertEqual(t, rows, int64(1), "one row deleted")
 
-	_, err = q.GetBatchOwner(ctx, "del-test")
+	_, err = q.GetBatchOwner(ctx, GetBatchOwnerParams{BatchID: "del-test", StaleAfterSeconds: 15})
 	assertEqual(t, err, sql.ErrNoRows, "owner gone after delete")
 
 	rows, err = q.DeleteBatchOwnerByBatchID(ctx, "del-test")
@@ -258,7 +252,7 @@ func TestDocumentTagsPeople(t *testing.T) {
 	assertEqual(t, len(ppl), 1, "person")
 }
 
-func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
+func TestGetPermanentlyFailedConsumeTaskPayloads(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
 	resetDB(t, q)
@@ -277,10 +271,16 @@ func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
 	})
 	assertNoError(t, err, "create task")
 
-	assertNoError(t, q.FailTask(ctx, FailTaskParams{
-		ID:    id,
-		Error: sql.NullString{String: "Max retries exceeded (3)", Valid: true},
-	}), "fail task")
+	token := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+	_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id, ClaimToken: token})
+	assertNoError(t, err, "claim failed task")
+	_, err = q.FailBlockingTask(ctx, FailBlockingTaskParams{
+		ID: id, Error: sql.NullString{String: "Max retries exceeded (3)", Valid: true}, ClaimToken: token,
+	})
+	assertNoError(t, err, "fail task")
+	if _, err := db.ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = $1", id); err != nil {
+		t.Fatalf("set attempts: %v", err)
+	}
 
 	gqPayload2 := json.RawMessage(`{}`)
 	id2, err := q.CreateTask(ctx, CreateTaskParams{
@@ -292,14 +292,20 @@ func TestGetQuarantinedConsumeTaskPayloads(t *testing.T) {
 	})
 	assertNoError(t, err, "create other task")
 
-	assertNoError(t, q.FailTask(ctx, FailTaskParams{
-		ID:    id2,
-		Error: sql.NullString{String: "some other error", Valid: true},
-	}), "fail other task")
+	token2 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+	_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id2, ClaimToken: token2})
+	assertNoError(t, err, "claim other task")
+	_, err = q.FailBlockingTask(ctx, FailBlockingTaskParams{
+		ID: id2, Error: sql.NullString{String: "some other error", Valid: true}, ClaimToken: token2,
+	})
+	assertNoError(t, err, "fail other task")
 
-	rows, err := q.GetQuarantinedConsumeTaskPayloads(ctx, sql.NullString{String: "gq-batch", Valid: true})
+	rows, err := q.GetPermanentlyFailedConsumeTaskPayloads(ctx, GetPermanentlyFailedConsumeTaskPayloadsParams{
+		BatchID:  sql.NullString{String: "gq-batch", Valid: true},
+		Attempts: 3,
+	})
 	assertNoError(t, err, "get quarantined")
-	assertEqual(t, len(rows), 1, "only quarantine-matched task")
+	assertEqual(t, len(rows), 1, "only the attempts-exhausted task")
 	assertEqual(t, rows[0].TaskID, "gq-task", "task id")
 }
 
@@ -440,7 +446,7 @@ func TestRestoreDiscardedEnrichTasks(t *testing.T) {
 	})
 }
 
-func TestDiscardWaitingEnrichesOfFailedConsumes(t *testing.T) {
+func TestDiscardOrphanedWaitingEnriches(t *testing.T) {
 	q, db := NewTestQueries(t)
 	ctx := context.Background()
 
@@ -464,7 +470,7 @@ func TestDiscardWaitingEnrichesOfFailedConsumes(t *testing.T) {
 	})
 	assertNoError(t, err, "create pending consume")
 
-	n, err := q.DiscardWaitingEnrichesOfFailedConsumes(ctx, sql.NullString{String: "b1", Valid: true})
+	n, err := q.DiscardOrphanedWaitingEnriches(ctx, sql.NullString{String: "b1", Valid: true})
 	assertNoError(t, err, "batch sweep")
 	assertEqual(t, n, int64(1), "one enrich discarded")
 	task, _ := q.GetTaskByTaskID(ctx, "swe-e1")
@@ -485,7 +491,7 @@ func TestDiscardWaitingEnrichesOfFailedConsumes(t *testing.T) {
 		})
 		assertNoError(t, err, "create failed consume")
 
-		n, err := q.DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx)
+		n, err := q.DiscardOrphanedWaitingEnrichesGlobal(ctx)
 		assertNoError(t, err, "global sweep")
 		assertEqual(t, n, int64(1), "one enrich discarded")
 		task, _ := q.GetTaskByTaskID(ctx, "swe-e3")
@@ -1089,9 +1095,12 @@ func TestTaskHealthQueries(t *testing.T) {
 			TaskID: "th-completed", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
 		})
 		assertNoError(t, err, "create completed task")
-		_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id1})
+		token1 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+		_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id1, ClaimToken: token1})
 		assertNoError(t, err, "claim")
-		_, err = q.CompleteTask(ctx, CompleteTaskParams{ID: id1, Result: nil})
+		_, err = q.CompleteBlockingTask(ctx, CompleteBlockingTaskParams{
+			ID: id1, Result: nil, ClaimToken: token1,
+		})
 		assertNoError(t, err, "complete")
 
 		id2, err := q.CreateTask(ctx, CreateTaskParams{
@@ -1099,7 +1108,13 @@ func TestTaskHealthQueries(t *testing.T) {
 			BatchID: sql.NullString{String: "th-batch-1", Valid: true},
 		})
 		assertNoError(t, err, "create failed task")
-		assertNoError(t, q.FailTask(ctx, FailTaskParams{ID: id2, Error: sql.NullString{String: "x", Valid: true}}), "fail")
+		token2 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+		_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id2, ClaimToken: token2})
+		assertNoError(t, err, "claim failed task")
+		_, err = q.FailBlockingTask(ctx, FailBlockingTaskParams{
+			ID: id2, Error: sql.NullString{String: "x", Valid: true}, ClaimToken: token2,
+		})
+		assertNoError(t, err, "fail")
 
 		_, err = q.CreateTask(ctx, CreateTaskParams{
 			TaskID: "th-pending", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,

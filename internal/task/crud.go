@@ -3,12 +3,9 @@ package task
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -141,71 +138,4 @@ func ListFiltered(ctx context.Context, queries *database.Queries, f TaskFilter) 
 	default:
 		return queries.ListAllTasks(ctx)
 	}
-}
-
-// Retry resets a task for reprocessing: it re-queues the task and returns
-// an error for unknown ids or states that cannot be retried.
-func Retry(ctx context.Context, client *database.Client, logger *log.Logger, taskID string) error {
-	task, err := client.Queries.GetTaskByTaskID(ctx, taskID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrTaskNotFound
-		}
-		return err
-	}
-	if task.Status != types.Task.Status.Failed {
-		return fmt.Errorf("task %q is %s, not failed", taskID, task.Status)
-	}
-
-	if task.TaskType.HoldsLocks() {
-		// the lock must not outlive the processing row it was claimed for
-		tx, err := client.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin transaction for retry %s: %w", taskID, err)
-		}
-		defer tx.Rollback()
-
-		txQ := client.Queries.WithTx(tx)
-		if err := ReleaseLocksForBatch(ctx, txQ, task.BatchID.String); err != nil {
-			return fmt.Errorf("release locks for retry %s: %w", taskID, err)
-		}
-		if err := txQ.RetryTask(ctx, task.ID); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit transaction for retry %s: %w", taskID, err)
-		}
-	} else {
-		if err := client.Queries.RetryTask(ctx, task.ID); err != nil {
-			return err
-		}
-	}
-
-	if task.TaskType == types.Task.Type.Consume && task.Payload != nil {
-		onCompleted, onCompletedThumbnail := consumeChildTaskIDs(*task.Payload)
-		if onCompleted != "" {
-			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompleted); err != nil {
-				logger.Error("", "restore enrich task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompleted, taskID, err)
-			}
-		}
-		if onCompletedThumbnail != "" {
-			if _, err := client.Queries.SetEnrichTaskWaiting(ctx, onCompletedThumbnail); err != nil {
-				logger.Error("", "restore thumbnail task %s after retry of consume %s failed: %v (will be recovered by activation or sweep)", onCompletedThumbnail, taskID, err)
-			}
-		}
-	}
-	return nil
-}
-
-// consumeChildTaskIDs decodes the waiting child tasks of a consume task
-// payload: the enrich task and the optional thumbnail task queued behind
-// it. Decode failures read as no children, the same contract
-// recoverOnCompleted documents in the consumption package.
-func consumeChildTaskIDs(payload json.RawMessage) (onCompleted, onCompletedThumbnail string) {
-	var p struct {
-		OnCompleted          string `json:"on_completed"`
-		OnCompletedThumbnail string `json:"on_completed_thumbnail"`
-	}
-	_ = json.Unmarshal(payload, &p)
-	return p.OnCompleted, p.OnCompletedThumbnail
 }

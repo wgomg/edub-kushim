@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -58,22 +59,41 @@ func (q *Queries) BatchHasNonConsumeTask(ctx context.Context, arg BatchHasNonCon
 	return exists, err
 }
 
-const cleanupCompletedBatches = `-- name: CleanupCompletedBatches :execrows
-DELETE FROM batch_owner WHERE batch_id IN (
-  SELECT b.batch_id FROM batch_owner b
-  WHERE NOT EXISTS (
-    SELECT 1 FROM task t WHERE t.batch_id = b.batch_id
-      AND t.status IN ('pending', 'processing', 'waiting')
-  )
-)
+const batchTaskStatusCounts = `-- name: BatchTaskStatusCounts :one
+SELECT
+    COUNT(*) FILTER (WHERE status = 'waiting')::bigint AS waiting,
+    COUNT(*) FILTER (WHERE status = 'pending')::bigint AS pending,
+    COUNT(*) FILTER (WHERE status = 'processing')::bigint AS processing,
+    COUNT(*) FILTER (WHERE status = 'completed')::bigint AS completed,
+    COUNT(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+    COUNT(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled,
+    COUNT(*) FILTER (WHERE status = 'discarded')::bigint AS discarded
+FROM task WHERE batch_id = $1
 `
 
-func (q *Queries) CleanupCompletedBatches(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, cleanupCompletedBatches)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+type BatchTaskStatusCountsRow struct {
+	Waiting    int64
+	Pending    int64
+	Processing int64
+	Completed  int64
+	Failed     int64
+	Cancelled  int64
+	Discarded  int64
+}
+
+func (q *Queries) BatchTaskStatusCounts(ctx context.Context, batchID sql.NullString) (BatchTaskStatusCountsRow, error) {
+	row := q.db.QueryRowContext(ctx, batchTaskStatusCounts, batchID)
+	var i BatchTaskStatusCountsRow
+	err := row.Scan(
+		&i.Waiting,
+		&i.Pending,
+		&i.Processing,
+		&i.Completed,
+		&i.Failed,
+		&i.Cancelled,
+		&i.Discarded,
+	)
+	return i, err
 }
 
 const countActiveTagAuditBatches = `-- name: CountActiveTagAuditBatches :one
@@ -143,11 +163,11 @@ func (q *Queries) CountActiveThumbnailBackfillBatches(ctx context.Context) (int6
 
 const countLiveBatches = `-- name: CountLiveBatches :one
 SELECT COUNT(*) FROM batch_owner
-WHERE last_heartbeat > CURRENT_TIMESTAMP - INTERVAL '15 seconds'
+WHERE last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => $1::int)
 `
 
-func (q *Queries) CountLiveBatches(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countLiveBatches)
+func (q *Queries) CountLiveBatches(ctx context.Context, staleAfterSeconds int32) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveBatches, staleAfterSeconds)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -236,20 +256,71 @@ func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
 }
 
 const getBatchOwner = `-- name: GetBatchOwner :one
-SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat FROM batch_owner WHERE batch_id = $1
+SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat,
+       last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $2::int) AS stale
+FROM batch_owner WHERE batch_id = $1
 `
 
-func (q *Queries) GetBatchOwner(ctx context.Context, batchID string) (BatchOwner, error) {
-	row := q.db.QueryRowContext(ctx, getBatchOwner, batchID)
-	var i BatchOwner
+type GetBatchOwnerParams struct {
+	BatchID           string
+	StaleAfterSeconds int32
+}
+
+type GetBatchOwnerRow struct {
+	BatchID       string
+	OwnerID       string
+	Pid           int64
+	AcquiredAt    time.Time
+	LastHeartbeat time.Time
+	Stale         bool
+}
+
+// stale is decided by the database clock so every lease-liveness decision shares one clock.
+func (q *Queries) GetBatchOwner(ctx context.Context, arg GetBatchOwnerParams) (GetBatchOwnerRow, error) {
+	row := q.db.QueryRowContext(ctx, getBatchOwner, arg.BatchID, arg.StaleAfterSeconds)
+	var i GetBatchOwnerRow
 	err := row.Scan(
 		&i.BatchID,
 		&i.OwnerID,
 		&i.Pid,
 		&i.AcquiredAt,
 		&i.LastHeartbeat,
+		&i.Stale,
 	)
 	return i, err
+}
+
+const getConsumeTaskPayloadsByIDs = `-- name: GetConsumeTaskPayloadsByIDs :many
+SELECT task_id, payload FROM task
+WHERE task_id = ANY($1::text[]) AND task_type = 'consume'
+`
+
+type GetConsumeTaskPayloadsByIDsRow struct {
+	TaskID  string
+	Payload *json.RawMessage
+}
+
+func (q *Queries) GetConsumeTaskPayloadsByIDs(ctx context.Context, taskIds []string) ([]GetConsumeTaskPayloadsByIDsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getConsumeTaskPayloadsByIDs, pq.Array(taskIds))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetConsumeTaskPayloadsByIDsRow
+	for rows.Next() {
+		var i GetConsumeTaskPayloadsByIDsRow
+		if err := rows.Scan(&i.TaskID, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getLastTagAuditBatchCreatedAt = `-- name: GetLastTagAuditBatchCreatedAt :one
@@ -326,14 +397,15 @@ func (q *Queries) GetLastThumbnailBackfillBatchCreatedAt(ctx context.Context) (s
 }
 
 const getNextPendingTaskOfTypeForOwner = `-- name: GetNextPendingTaskOfTypeForOwner :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = $1
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
+SELECT t.id FROM task t
+WHERE t.status = 'pending' AND t.task_type = $1
+  AND t.batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = $2)
+  AND EXISTS (SELECT 1 FROM batch b WHERE b.id = t.batch_id AND b.status IN ('queued', 'processing'))
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY($3::text[]) AND lock_is_held(s.name)
   )
-ORDER BY created_at LIMIT 1
+ORDER BY t.created_at LIMIT 1
 `
 
 type GetNextPendingTaskOfTypeForOwnerParams struct {
@@ -374,25 +446,31 @@ func (q *Queries) GetNextQueuedBatch(ctx context.Context, nonConsumeTypes []stri
 	return i, err
 }
 
-const getQuarantinedConsumeTaskPayloads = `-- name: GetQuarantinedConsumeTaskPayloads :many
+const getPermanentlyFailedConsumeTaskPayloads = `-- name: GetPermanentlyFailedConsumeTaskPayloads :many
 SELECT task_id, payload FROM task
-WHERE batch_id = $1 AND status = 'failed' AND error LIKE 'Max retries exceeded%'
+WHERE batch_id = $1 AND task_type = 'consume'
+  AND status = 'failed' AND attempts >= $2
 `
 
-type GetQuarantinedConsumeTaskPayloadsRow struct {
+type GetPermanentlyFailedConsumeTaskPayloadsParams struct {
+	BatchID  sql.NullString
+	Attempts int32
+}
+
+type GetPermanentlyFailedConsumeTaskPayloadsRow struct {
 	TaskID  string
 	Payload *json.RawMessage
 }
 
-func (q *Queries) GetQuarantinedConsumeTaskPayloads(ctx context.Context, batchID sql.NullString) ([]GetQuarantinedConsumeTaskPayloadsRow, error) {
-	rows, err := q.db.QueryContext(ctx, getQuarantinedConsumeTaskPayloads, batchID)
+func (q *Queries) GetPermanentlyFailedConsumeTaskPayloads(ctx context.Context, arg GetPermanentlyFailedConsumeTaskPayloadsParams) ([]GetPermanentlyFailedConsumeTaskPayloadsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getPermanentlyFailedConsumeTaskPayloads, arg.BatchID, arg.Attempts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetQuarantinedConsumeTaskPayloadsRow
+	var items []GetPermanentlyFailedConsumeTaskPayloadsRow
 	for rows.Next() {
-		var i GetQuarantinedConsumeTaskPayloadsRow
+		var i GetPermanentlyFailedConsumeTaskPayloadsRow
 		if err := rows.Scan(&i.TaskID, &i.Payload); err != nil {
 			return nil, err
 		}
@@ -438,9 +516,11 @@ SELECT
     sub.last_completed_at AS last_completed_at,
     bo.last_heartbeat AS owner_last_heartbeat,
     bo.pid AS owner_pid,
+    (bo.last_heartbeat IS NOT NULL
+      AND bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $3::int)) AS owner_stale,
     EXISTS (
         SELECT 1 FROM task t2
-        WHERE t2.batch_id = b.id AND t2.task_type::text = ANY($3::text[])
+        WHERE t2.batch_id = b.id AND t2.task_type::text = ANY($4::text[])
     ) AS non_consume
 FROM batch b
 LEFT JOIN LATERAL (
@@ -463,9 +543,10 @@ LIMIT $1 OFFSET $2
 `
 
 type ListBatchOverviewsParams struct {
-	Limit           int32
-	Offset          int32
-	NonConsumeTypes []string
+	Limit             int32
+	Offset            int32
+	StaleAfterSeconds int32
+	NonConsumeTypes   []string
 }
 
 type ListBatchOverviewsRow struct {
@@ -486,11 +567,17 @@ type ListBatchOverviewsRow struct {
 	LastCompletedAt    interface{}
 	OwnerLastHeartbeat sql.NullTime
 	OwnerPid           sql.NullInt64
+	OwnerStale         sql.NullBool
 	NonConsume         bool
 }
 
 func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviewsParams) ([]ListBatchOverviewsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listBatchOverviews, arg.Limit, arg.Offset, pq.Array(arg.NonConsumeTypes))
+	rows, err := q.db.QueryContext(ctx, listBatchOverviews,
+		arg.Limit,
+		arg.Offset,
+		arg.StaleAfterSeconds,
+		pq.Array(arg.NonConsumeTypes),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -516,6 +603,7 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 			&i.LastCompletedAt,
 			&i.OwnerLastHeartbeat,
 			&i.OwnerPid,
+			&i.OwnerStale,
 			&i.NonConsume,
 		); err != nil {
 			return nil, err
@@ -560,7 +648,7 @@ func (q *Queries) ListPausedBatches(ctx context.Context) ([]string, error) {
 
 const listStaleBatchOwners = `-- name: ListStaleBatchOwners :many
 SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
-WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '15 seconds'
+WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $1::int)
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
             AND t.status IN ('pending', 'processing', 'waiting'))
@@ -572,8 +660,8 @@ type ListStaleBatchOwnersRow struct {
 	Pid     int64
 }
 
-func (q *Queries) ListStaleBatchOwners(ctx context.Context) ([]ListStaleBatchOwnersRow, error) {
-	rows, err := q.db.QueryContext(ctx, listStaleBatchOwners)
+func (q *Queries) ListStaleBatchOwners(ctx context.Context, staleAfterSeconds int32) ([]ListStaleBatchOwnersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listStaleBatchOwners, staleAfterSeconds)
 	if err != nil {
 		return nil, err
 	}
@@ -595,12 +683,39 @@ func (q *Queries) ListStaleBatchOwners(ctx context.Context) ([]ListStaleBatchOwn
 	return items, nil
 }
 
-const quarantineProcessingTasksByBatch = `-- name: QuarantineProcessingTasksByBatch :execrows
+const lockBatchForClaim = `-- name: LockBatchForClaim :one
+SELECT status FROM batch WHERE id = $1 FOR UPDATE
+`
+
+// a claim locks the batch row and flips it into processing only on the first claim; processing stays allowed
+// so the remaining tasks of a multi-task batch stay claimable, while any other status refuses the claim
+func (q *Queries) LockBatchForClaim(ctx context.Context, id string) (types.BatchStatus, error) {
+	row := q.db.QueryRowContext(ctx, lockBatchForClaim, id)
+	var status types.BatchStatus
+	err := row.Scan(&status)
+	return status, err
+}
+
+const markBatchClaimed = `-- name: MarkBatchClaimed :execrows
+UPDATE batch SET status = 'processing'
+WHERE id = $1 AND status = 'queued'
+`
+
+func (q *Queries) MarkBatchClaimed(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markBatchClaimed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const quarantineProcessingTasksByBatch = `-- name: QuarantineProcessingTasksByBatch :many
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
 WHERE batch_id = $1 AND status = 'processing' AND attempts >= $2
+RETURNING task_id, task_type
 `
 
 type QuarantineProcessingTasksByBatchParams struct {
@@ -608,12 +723,32 @@ type QuarantineProcessingTasksByBatchParams struct {
 	Attempts int32
 }
 
-func (q *Queries) QuarantineProcessingTasksByBatch(ctx context.Context, arg QuarantineProcessingTasksByBatchParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, quarantineProcessingTasksByBatch, arg.BatchID, arg.Attempts)
+type QuarantineProcessingTasksByBatchRow struct {
+	TaskID   string
+	TaskType types.TaskType
+}
+
+func (q *Queries) QuarantineProcessingTasksByBatch(ctx context.Context, arg QuarantineProcessingTasksByBatchParams) ([]QuarantineProcessingTasksByBatchRow, error) {
+	rows, err := q.db.QueryContext(ctx, quarantineProcessingTasksByBatch, arg.BatchID, arg.Attempts)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	var items []QuarantineProcessingTasksByBatchRow
+	for rows.Next() {
+		var i QuarantineProcessingTasksByBatchRow
+		if err := rows.Scan(&i.TaskID, &i.TaskType); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const releaseBatchOwner = `-- name: ReleaseBatchOwner :execrows
@@ -633,13 +768,16 @@ func (q *Queries) ReleaseBatchOwner(ctx context.Context, arg ReleaseBatchOwnerPa
 	return result.RowsAffected()
 }
 
-const requeueBatch = `-- name: RequeueBatch :exec
-UPDATE batch SET status = 'queued' WHERE id = $1
+const requeueProcessingBatch = `-- name: RequeueProcessingBatch :execrows
+UPDATE batch SET status = 'queued' WHERE id = $1 AND status = 'processing'
 `
 
-func (q *Queries) RequeueBatch(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, requeueBatch, id)
-	return err
+func (q *Queries) RequeueProcessingBatch(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, requeueProcessingBatch, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const resetProcessingTasksByBatch = `-- name: ResetProcessingTasksByBatch :execrows
@@ -663,49 +801,101 @@ func (q *Queries) ResetProcessingTasksByBatch(ctx context.Context, arg ResetProc
 	return result.RowsAffected()
 }
 
-const setBatchCancelled = `-- name: SetBatchCancelled :exec
-UPDATE batch SET status = 'cancelled' WHERE id = $1
+const resumeBatch = `-- name: ResumeBatch :execrows
+UPDATE batch SET status = 'queued'
+WHERE id = $1 AND status IN ('failed', 'completed', 'cancelled', 'paused')
 `
 
-func (q *Queries) SetBatchCancelled(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, setBatchCancelled, id)
-	return err
+func (q *Queries) ResumeBatch(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resumeBatch, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const setBatchCompleted = `-- name: SetBatchCompleted :exec
-UPDATE batch SET status = 'completed' WHERE id = $1
+const setBatchCancelled = `-- name: SetBatchCancelled :execrows
+UPDATE batch SET status = 'cancelled'
+WHERE id = $1 AND status IN ('queued', 'processing', 'paused')
 `
 
-func (q *Queries) SetBatchCompleted(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, setBatchCompleted, id)
-	return err
+func (q *Queries) SetBatchCancelled(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setBatchCancelled, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const setBatchFailed = `-- name: SetBatchFailed :exec
-UPDATE batch SET status = 'failed' WHERE id = $1
+const setBatchPaused = `-- name: SetBatchPaused :execrows
+UPDATE batch SET status = 'paused'
+WHERE batch.id = $1
+  AND batch.status = 'processing'
+  AND (
+    EXISTS (
+      SELECT 1 FROM batch_owner bo
+      WHERE bo.batch_id = batch.id AND bo.owner_id = $2::text
+    )
+    OR (
+      $2::text IS NULL
+      AND EXISTS (
+        SELECT 1 FROM task t
+        WHERE t.batch_id = batch.id AND t.claim_token = $3::uuid
+      )
+    )
+  )
 `
 
-func (q *Queries) SetBatchFailed(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, setBatchFailed, id)
-	return err
+type SetBatchPausedParams struct {
+	ID         string
+	OwnerID    sql.NullString
+	ClaimToken uuid.NullUUID
 }
 
-const setBatchPaused = `-- name: SetBatchPaused :exec
-UPDATE batch SET status = 'paused' WHERE id = $1
-`
-
-func (q *Queries) SetBatchPaused(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, setBatchPaused, id)
-	return err
+// pause authorizes like the settle: a leased execution must still own the lease, and a pool execution must
+// still hold a claim of this batch, so a stale executor cannot pause the run that replaced it
+func (q *Queries) SetBatchPaused(ctx context.Context, arg SetBatchPausedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setBatchPaused, arg.ID, arg.OwnerID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const setBatchProcessing = `-- name: SetBatchProcessing :exec
-UPDATE batch SET status = 'processing' WHERE id = $1
+const settleBatch = `-- name: SettleBatch :one
+UPDATE batch SET status = CASE
+    WHEN EXISTS (SELECT 1 FROM task t WHERE t.batch_id = batch.id AND t.status = 'failed')
+      THEN 'failed'::batch_status
+    ELSE 'completed'::batch_status
+  END
+WHERE batch.id = $1
+  AND batch.status = 'processing'
+  AND NOT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = batch.id AND t.status IN ('pending', 'processing', 'waiting')
+  )
+  AND (
+    NOT EXISTS (SELECT 1 FROM batch_owner bo WHERE bo.batch_id = batch.id)
+    OR EXISTS (
+      SELECT 1 FROM batch_owner bo
+      WHERE bo.batch_id = batch.id AND bo.owner_id = $2::text
+    )
+  )
+RETURNING status
 `
 
-func (q *Queries) SetBatchProcessing(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, setBatchProcessing, id)
-	return err
+type SettleBatchParams struct {
+	ID      string
+	OwnerID sql.NullString
+}
+
+// the status is computed inside the write so a task that fails between a read and the settle cannot be lost;
+// any active task, a non-processing batch or a foreign lease refuses the write and leaves the row untouched
+func (q *Queries) SettleBatch(ctx context.Context, arg SettleBatchParams) (types.BatchStatus, error) {
+	row := q.db.QueryRowContext(ctx, settleBatch, arg.ID, arg.OwnerID)
+	var status types.BatchStatus
+	err := row.Scan(&status)
+	return status, err
 }
 
 const tryInsertBatchOwner = `-- name: TryInsertBatchOwner :execrows
@@ -736,15 +926,16 @@ UPDATE batch_owner SET
   pid = $2,
   acquired_at = CURRENT_TIMESTAMP,
   last_heartbeat = CURRENT_TIMESTAMP
-WHERE batch_id = $3 AND (last_heartbeat < $4 OR owner_id = $5)
+WHERE batch_id = $3
+  AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $4::int)
+       OR owner_id = $1)
 `
 
 type UpdateBatchOwnerIfStaleParams struct {
-	OwnerID       string
-	Pid           int64
-	BatchID       string
-	LastHeartbeat time.Time
-	OwnerID_2     string
+	OwnerID           string
+	Pid               int64
+	BatchID           string
+	StaleAfterSeconds int32
 }
 
 func (q *Queries) UpdateBatchOwnerIfStale(ctx context.Context, arg UpdateBatchOwnerIfStaleParams) (int64, error) {
@@ -752,8 +943,7 @@ func (q *Queries) UpdateBatchOwnerIfStale(ctx context.Context, arg UpdateBatchOw
 		arg.OwnerID,
 		arg.Pid,
 		arg.BatchID,
-		arg.LastHeartbeat,
-		arg.OwnerID_2,
+		arg.StaleAfterSeconds,
 	)
 	if err != nil {
 		return 0, err

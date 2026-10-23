@@ -143,10 +143,12 @@ kushim consume --batch 550e8400-e29b-41d4-a716-446655440000 --force
 
 #### `kushim consume cancel <batch-id>`
 
-Cancel a running batch. Pending tasks are marked as `cancelled` in the
-database and a `SIGTERM` is sent to the process currently processing the
-batch. Any task that was in‑flight at the moment of cancellation is also
-marked as `cancelled`.
+Cancel a batch. Pending and waiting tasks are marked as `cancelled` in the
+database, a `SIGTERM` is sent to the process currently processing the batch
+(when its lease owner is a live process), and every task that was in‑flight
+at the moment of cancellation is also marked as `cancelled`. The batch's
+resource locks and lease are released with the cancel. A cancelled batch is
+terminal — cancel refuses an already‑settled batch.
 
 ```
 kushim consume cancel 550e8400-e29b-41d4-a716-446655440000
@@ -157,6 +159,10 @@ Output:
 ```
 Batch 550e8400-e29b-41d4-a716-446655440000: 5 pending + 1 processing cancelled, signal sent to PID 12345
 ```
+
+When the lease owner no longer exists, the cancel proceeds without signal
+(`Process <pid> is no longer running`); when no lease exists at all, the
+pending count is reported on its own.
 
 If the process is no longer running (e.g. already crashed):
 
@@ -497,7 +503,11 @@ Note: `Error:` only appears when the task has failed.
 
 ### `kushim task retry`
 
-Reset a failed task's status to `pending` so a worker retries it.
+Retry a failed task by resuming the batch it belongs to: the failed tasks of
+the batch are reset to `pending` and the batch goes back to `queued` for a
+worker to pick up. The paired tasks of a retried consume (its discarded
+enrich and thumbnail children) are restored to `waiting` before the batch
+becomes visible again.
 
 ```
 kushim task retry 880e8400-e29b-41d4-a716-446655440003
@@ -506,11 +516,12 @@ kushim task retry 880e8400-e29b-41d4-a716-446655440003
 Output:
 
 ```
-Task "880e8400-e29b-41d4-a716-446655440003" retried — status reset to pending
+Task "880e8400-e29b-41d4-a716-446655440003" retried — its batch requeued
 ```
 
-Only failed tasks can be retried. The task is picked up on the next
-worker poll cycle.
+Only failed tasks can be retried; a task that is not failed is refused.
+Resuming a batch whose worker is a live execution is also refused — wait for
+the batch to settle first.
 
 ### `kushim batch create <task> [args]`
 
@@ -2199,7 +2210,10 @@ Response `200` — array of objects:
 
 ### Batch Retry
 
-Reset all failed tasks in a batch to pending.
+Resume a batch with its failed tasks reset to pending. This is the batch
+alias of task retry: failed tasks re-run, the batch goes back to `queued`,
+and the paired children of retried consume tasks are restored before the
+batch becomes visible again.
 
 ```
 POST /api/v1/batches/{batchID}/retry
@@ -2212,6 +2226,9 @@ Response `200`:
   "retried": 3
 }
 ```
+
+A batch without failed tasks answers `{"retried": 0}`; an unknown batch id
+answers `404`.
 
 Idempotent — returns 0 retried when no failed tasks remain.
 
@@ -2436,11 +2453,11 @@ Response `200`:
 POST /api/v1/batches/{batchID}/cancel
 ```
 
-Cancels a running batch. Pending tasks are marked as `cancelled` in the
-database and a `SIGTERM` is sent to the worker process currently processing
-the batch. Any task that was in-flight at the moment of cancellation is also
-marked as `cancelled`. Idempotent — calling cancel on an already‑settled
-batch returns 200 with zero counts.
+Cancels a batch: pending and waiting tasks are marked as `cancelled` in the
+database, a `SIGTERM` is sent to the worker process currently processing the
+batch (when its lease owner is a live process), and any task that was
+in-flight at the moment of cancellation is also marked as `cancelled`. The
+batch's resource locks and lease are released with the cancel.
 
 Response `200`:
 
@@ -2463,6 +2480,11 @@ If the worker process is no longer running:
   "signal_sent": false
 }
 ```
+
+A batch without an owner row cancels its tasks with
+`"signal_sent": false` and no owner reported. An already‑settled batch
+answers `409` (terminal states are immutable), and an unknown batch id
+answers `404`.
 
 ### User CRUD
 

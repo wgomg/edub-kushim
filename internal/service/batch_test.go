@@ -193,58 +193,6 @@ func TestBatch_HasPendingWork(t *testing.T) {
 	})
 }
 
-func TestBatch_IsLockedByLiveOwner(t *testing.T) {
-	svc, client := newTestBatch(t)
-	ctx := context.Background()
-
-	t.Run("returns false when no owner", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "no-owner-batch", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-
-		locked, err := svc.IsLockedByLiveOwner(ctx, "no-owner-batch")
-		testutil.AssertNoError(t, err, "check lock")
-		testutil.AssertEqual(t, locked, false, "should not be locked")
-	})
-
-	t.Run("returns true when live owner exists", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "locked-batch", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-			BatchID: "locked-batch", OwnerID: "owner-3", Pid: 3,
-		})
-		testutil.AssertNoError(t, err, "insert owner")
-
-		locked, err := svc.IsLockedByLiveOwner(ctx, "locked-batch")
-		testutil.AssertNoError(t, err, "check lock")
-		testutil.AssertEqual(t, locked, true, "should be locked")
-	})
-
-	t.Run("returns false when owner is stale", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "stale-lock-batch", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-			BatchID: "stale-lock-batch", OwnerID: "owner-4", Pid: 4,
-		})
-		testutil.AssertNoError(t, err, "insert owner")
-		staleTime := time.Now().Add(-2 * time.Minute)
-		_, err = client.DB().ExecContext(ctx,
-			"UPDATE batch_owner SET last_heartbeat = $1 WHERE batch_id = $2",
-			staleTime, "stale-lock-batch",
-		)
-		testutil.AssertNoError(t, err, "backdate heartbeat")
-
-		locked, err := svc.IsLockedByLiveOwner(ctx, "stale-lock-batch")
-		testutil.AssertNoError(t, err, "check lock")
-		testutil.AssertEqual(t, locked, false, "stale owner should not lock")
-	})
-}
-
 func TestBatch_CountOrphaned(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
@@ -350,45 +298,6 @@ func TestBatch_ListOverviews(t *testing.T) {
 	})
 }
 
-func TestBatch_BeginCancel(t *testing.T) {
-	svc, client := newTestBatch(t)
-	ctx := context.Background()
-
-	t.Run("returns cancelled count and no owner for batch without owner", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "cancel-no-owner", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID: "cancel-t1", TaskType: "consume", Status: "pending",
-			BatchID: sql.NullString{String: "cancel-no-owner", Valid: true},
-		})
-		testutil.AssertNoError(t, err, "create task")
-
-		pending, pid, ownerID, err := svc.BeginCancel(ctx, "cancel-no-owner")
-		testutil.AssertNoError(t, err, "begin cancel")
-		testutil.AssertEqual(t, pending, int64(1), "pending cancelled")
-		testutil.AssertEqual(t, pid, int64(0), "no owner pid")
-		testutil.AssertEqual(t, ownerID, "", "no owner id")
-	})
-
-	t.Run("returns owner info when owner exists", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "cancel-with-owner", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-			BatchID: "cancel-with-owner", OwnerID: "cancel-owner", Pid: 42,
-		})
-		testutil.AssertNoError(t, err, "insert owner")
-
-		_, pid, ownerID, err := svc.BeginCancel(ctx, "cancel-with-owner")
-		testutil.AssertNoError(t, err, "begin cancel")
-		testutil.AssertEqual(t, pid, int64(42), "owner pid")
-		testutil.AssertEqual(t, ownerID, "cancel-owner", "owner id")
-	})
-}
-
 func TestBatch_ListSummaries(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
@@ -468,89 +377,6 @@ func TestBatch_ActiveIDs(t *testing.T) {
 	testutil.AssertEqual(t, ids[0], "active-1", "active batch id")
 }
 
-func TestBatch_CompleteCancel(t *testing.T) {
-	svc, client := newTestBatch(t)
-	ctx := context.Background()
-
-	t.Run("cancels processing tasks and releases owner", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "cc-batch", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-			BatchID: "cc-batch", OwnerID: "cc-owner", Pid: 50,
-		})
-		testutil.AssertNoError(t, err, "insert owner")
-		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID: "cc-t1", TaskType: "consume", Status: "processing",
-			BatchID: sql.NullString{String: "cc-batch", Valid: true},
-		})
-		testutil.AssertNoError(t, err, "create processing task")
-
-		cancelled, err := svc.CompleteCancel(ctx, "cc-batch", "cc-owner")
-		testutil.AssertNoError(t, err, "complete cancel")
-		testutil.AssertEqual(t, cancelled, int64(1), "processing cancelled")
-
-		_, err = client.Queries.GetBatchOwner(ctx, "cc-batch")
-		testutil.AssertError(t, err, "owner should be released")
-
-		summary, err := svc.GetSummary(ctx, "cc-batch")
-		testutil.AssertNoError(t, err, "get summary after cancel")
-		testutil.AssertEqual(t, summary.Status, "cancelled", "batch status after cancel")
-	})
-}
-
-func TestBatch_QueueStateTransitions(t *testing.T) {
-	svc, client := newTestBatch(t)
-	ctx := context.Background()
-
-	t.Run("queued to processing to completed", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "qpc", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-
-		summary, _ := svc.GetSummary(ctx, "qpc")
-		testutil.AssertEqual(t, summary.Status, "queued", "initial status")
-
-		err = svc.SetBatchProcessing(ctx, "qpc")
-		testutil.AssertNoError(t, err, "set processing")
-		summary, _ = svc.GetSummary(ctx, "qpc")
-		testutil.AssertEqual(t, summary.Status, "processing", "processing status")
-
-		err = svc.SetBatchCompleted(ctx, "qpc")
-		testutil.AssertNoError(t, err, "set completed")
-		summary, _ = svc.GetSummary(ctx, "qpc")
-		testutil.AssertEqual(t, summary.Status, "completed", "completed status")
-	})
-
-	t.Run("queued to processing to failed", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "qpf", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-
-		err = svc.SetBatchProcessing(ctx, "qpf")
-		testutil.AssertNoError(t, err, "set processing")
-		err = svc.SetBatchFailed(ctx, "qpf")
-		testutil.AssertNoError(t, err, "set failed")
-		summary, _ := svc.GetSummary(ctx, "qpf")
-		testutil.AssertEqual(t, summary.Status, "failed", "failed status")
-	})
-
-	t.Run("requeue resets to queued", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "rq", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-
-		err = svc.RequeueBatch(ctx, "rq")
-		testutil.AssertNoError(t, err, "requeue")
-		summary, _ := svc.GetSummary(ctx, "rq")
-		testutil.AssertEqual(t, summary.Status, "queued", "requeued status")
-	})
-}
-
 func TestBatch_DeleteBatchOwnerByBatchID(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
@@ -568,7 +394,7 @@ func TestBatch_DeleteBatchOwnerByBatchID(t *testing.T) {
 		err = svc.DeleteBatchOwnerByBatchID(ctx, "del-own")
 		testutil.AssertNoError(t, err, "delete owner")
 
-		_, err = client.Queries.GetBatchOwner(ctx, "del-own")
+		_, err = client.Queries.GetBatchOwner(ctx, database.GetBatchOwnerParams{BatchID: "del-own", StaleAfterSeconds: 15})
 		testutil.AssertEqual(t, err, sql.ErrNoRows, "owner gone")
 	})
 
@@ -596,9 +422,9 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create processing task")
 
-		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-proc")
+		result, err := svc.ResetProcessingTasksByBatch(ctx, "rst-proc")
 		testutil.AssertNoError(t, err, "reset")
-		testutil.AssertEqual(t, n, int64(1), "one task reset")
+		testutil.AssertEqual(t, result.Reset, int64(1), "one task reset")
 
 		task, err := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertNoError(t, err, "get task")
@@ -622,9 +448,9 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 
 		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = $1", taskID)
 
-		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-quar")
+		result, err := svc.ResetProcessingTasksByBatch(ctx, "rst-quar")
 		testutil.AssertNoError(t, err, "reset")
-		testutil.AssertEqual(t, n, int64(1), "one task quarantined")
+		testutil.AssertEqual(t, len(result.Quarantined), 1, "one task quarantined")
 
 		task, err := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertNoError(t, err, "get task")
@@ -656,9 +482,10 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		testutil.AssertNoError(t, err, "create task 2")
 		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = $1", id2)
 
-		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-mix")
+		result, err := svc.ResetProcessingTasksByBatch(ctx, "rst-mix")
 		testutil.AssertNoError(t, err, "reset mixed")
-		testutil.AssertEqual(t, n, int64(2), "one reset + one quarantined")
+		testutil.AssertEqual(t, result.Reset, int64(1), "one reset")
+		testutil.AssertEqual(t, len(result.Quarantined), 1, "one quarantined")
 
 		t1, _ := client.Queries.GetTask(ctx, id1)
 		testutil.AssertEqual(t, t1.Status, "pending", "task below threshold reset")
@@ -704,9 +531,10 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		testutil.AssertNoError(t, err, "create processing consume")
 		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = $1", quarID)
 
-		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-enrich")
+		result, err := svc.ResetProcessingTasksByBatch(ctx, "rst-enrich")
 		testutil.AssertNoError(t, err, "reset")
-		testutil.AssertEqual(t, n, int64(2), "one reset + one quarantined")
+		testutil.AssertEqual(t, result.Reset, int64(1), "one reset")
+		testutil.AssertEqual(t, len(result.Quarantined), 1, "one quarantined")
 
 		enrich1, _ := client.Queries.GetTaskByTaskID(ctx, "rst-enrich-e1")
 		testutil.AssertEqual(t, enrich1.Status, "waiting", "enrich of reset consume restored")
@@ -720,63 +548,10 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
-		n, err := svc.ResetProcessingTasksByBatch(ctx, "rst-none")
+		result, err := svc.ResetProcessingTasksByBatch(ctx, "rst-none")
 		testutil.AssertNoError(t, err, "reset empty")
-		testutil.AssertEqual(t, n, int64(0), "zero reset")
+		testutil.AssertEqual(t, result.Reset, int64(0), "zero reset")
 	})
-}
-
-func TestBatch_RetryFailed(t *testing.T) {
-	svc, client := newTestBatch(t)
-	ctx := context.Background()
-
-	err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "rtyf-batch", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Failed,
-	})
-	testutil.AssertNoError(t, err, "create batch")
-
-	// happy path: retried consume restores its discarded enrich to waiting
-	enrichPayload := json.RawMessage(`{}`)
-	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-		TaskID: "rtyf-e1", TaskType: "enrich", Status: "discarded", Payload: &enrichPayload,
-		BatchID: sql.NullString{String: "rtyf-batch", Valid: true},
-	})
-	testutil.AssertNoError(t, err, "create discarded enrich")
-	consumePayload := json.RawMessage(`{"on_completed":"rtyf-e1"}`)
-	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-		TaskID: "rtyf-c1", TaskType: "consume", Status: "failed", Payload: &consumePayload,
-		BatchID: sql.NullString{String: "rtyf-batch", Valid: true},
-	})
-	testutil.AssertNoError(t, err, "create failed consume")
-
-	// restore is scoped to the retried batch
-	otherEnrichPayload := json.RawMessage(`{}`)
-	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-		TaskID: "rtyf-e2", TaskType: "enrich", Status: "discarded", Payload: &otherEnrichPayload,
-		BatchID: sql.NullString{String: "other-batch", Valid: true},
-	})
-	testutil.AssertNoError(t, err, "create discarded enrich in other batch")
-	otherConsumePayload := json.RawMessage(`{"on_completed":"rtyf-e2"}`)
-	_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-		TaskID: "rtyf-c2", TaskType: "consume", Status: "failed", Payload: &otherConsumePayload,
-		BatchID: sql.NullString{String: "other-batch", Valid: true},
-	})
-	testutil.AssertNoError(t, err, "create failed consume in other batch")
-
-	n, err := svc.RetryFailed(ctx, "rtyf-batch")
-	testutil.AssertNoError(t, err, "retry failed")
-	testutil.AssertEqual(t, n, int64(1), "one task retried")
-
-	consume, err := client.Queries.GetTaskByTaskID(ctx, "rtyf-c1")
-	testutil.AssertNoError(t, err, "get retried consume")
-	testutil.AssertEqual(t, consume.Status, "pending", "consume pending after retry")
-	enrich, err := client.Queries.GetTaskByTaskID(ctx, "rtyf-e1")
-	testutil.AssertNoError(t, err, "get enrich")
-	testutil.AssertEqual(t, enrich.Status, "waiting", "enrich restored to waiting")
-
-	enrich2, err := client.Queries.GetTaskByTaskID(ctx, "rtyf-e2")
-	testutil.AssertNoError(t, err, "get other enrich")
-	testutil.AssertEqual(t, enrich2.Status, "discarded", "enrich in other batch untouched")
 }
 
 func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
@@ -797,9 +572,9 @@ func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
 		testutil.AssertNoError(t, err, "create processing consume")
 		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", taskID)
 
-		n, err := svc.ResetStaleProcessingTasks(ctx, staleSeconds)
+		result, err := svc.ResetStaleProcessingTasks(ctx, staleSeconds)
 		testutil.AssertNoError(t, err, "reset stale")
-		testutil.AssertEqual(t, n, int64(1), "one task reset")
+		testutil.AssertEqual(t, result.Reset, int64(1), "one task reset")
 
 		consume, _ := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertEqual(t, consume.Status, "pending", "consume pending after reset")
@@ -820,9 +595,9 @@ func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
 		testutil.AssertNoError(t, err, "create processing consume")
 		client.DB().ExecContext(ctx, "UPDATE task SET attempts = 3, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", taskID)
 
-		n, err := svc.ResetStaleProcessingTasks(ctx, staleSeconds)
+		result, err := svc.ResetStaleProcessingTasks(ctx, staleSeconds)
 		testutil.AssertNoError(t, err, "reset stale")
-		testutil.AssertEqual(t, n, int64(1), "one task quarantined")
+		testutil.AssertEqual(t, len(result.Quarantined), 1, "one task quarantined")
 
 		consume, _ := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertEqual(t, consume.Status, "failed", "consume quarantined")
@@ -863,9 +638,9 @@ func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
 		t.Fatalf("hold lock with foreign token: %v", err)
 	}
 
-	n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+	result, err := svc.ResetStaleProcessingTasks(ctx, 60)
 	testutil.AssertNoError(t, err, "reset stale")
-	testutil.AssertEqual(t, n, int64(1), "only orphaned task reset")
+	testutil.AssertEqual(t, result.Reset, int64(1), "only orphaned task reset")
 
 	orphan, err := client.Queries.GetTask(ctx, ownTaskID)
 	testutil.AssertNoError(t, err, "get orphan task")
@@ -903,9 +678,9 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 		t.Fatalf("hold lock with expired started_at: %v", err)
 	}
 
-	n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+	result, err := svc.ResetStaleProcessingTasks(ctx, 60)
 	testutil.AssertNoError(t, err, "reset stale")
-	testutil.AssertEqual(t, n, int64(1), "one blocking task reset")
+	testutil.AssertEqual(t, result.Reset, int64(1), "one blocking task reset")
 
 	row, err := client.Queries.GetTask(ctx, taskID)
 	testutil.AssertNoError(t, err, "get task")
@@ -915,9 +690,10 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	testutil.AssertEqual(t, held, 0, "lock released after window expiry")
 
-	n2, err := svc.ResetStaleProcessingTasks(ctx, 60)
+	second, err := svc.ResetStaleProcessingTasks(ctx, 60)
 	testutil.AssertNoError(t, err, "second sweep")
-	testutil.AssertEqual(t, n2, int64(0), "no-op on second sweep")
+	testutil.AssertEqual(t, second.Reset, int64(0), "no-op on second sweep")
+	testutil.AssertEqual(t, len(second.Quarantined), 0, "nothing quarantined on second sweep")
 }
 
 func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
@@ -935,9 +711,9 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 			t.Fatalf("set stale with max attempts: %v", err)
 		}
 
-		n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+		result, err := svc.ResetStaleProcessingTasks(ctx, 60)
 		testutil.AssertNoError(t, err, "reset stale")
-		testutil.AssertEqual(t, n, int64(1), "one task quarantined")
+		testutil.AssertEqual(t, len(result.Quarantined), 1, "one task quarantined")
 
 		row, err := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertNoError(t, err, "get task")
@@ -962,9 +738,9 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 			t.Fatalf("hold lock with matching token: %v", err)
 		}
 
-		n, err := svc.ResetStaleProcessingTasks(ctx, 60)
+		result, err := svc.ResetStaleProcessingTasks(ctx, 60)
 		testutil.AssertNoError(t, err, "reset stale")
-		testutil.AssertEqual(t, n, int64(0), "nothing quarantined")
+		testutil.AssertEqual(t, len(result.Quarantined), 0, "nothing quarantined")
 
 		row, err := client.Queries.GetTask(ctx, taskID)
 		testutil.AssertNoError(t, err, "get task")

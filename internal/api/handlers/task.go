@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -151,41 +150,80 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// RetryTask resets one failed task for reprocessing.
+// RetryTask is a compatibility alias: it resolves the task's batch and resumes it with the failed tasks
+// retried. Stage 8 moves the callers to the resume endpoint.
 func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
 	taskID := r.PathValue("id")
 
-	if err := task.Retry(ctx, h.client, h.logger, taskID); err != nil {
-		if errors.Is(err, task.ErrTaskNotFound) {
-			http.Error(w, "Task not found", http.StatusNotFound)
-			return
+	maxRetries, ok := h.reclaimMaxRetries(w)
+	if !ok {
+		return
+	}
+
+	if err := task.RetryTask(ctx, h.client, h.logger, taskID, maxRetries); err != nil {
+		if !writeBatchLifecycleError(w, err) {
+			h.logger.Error(reqID, "retry task %s: %v", taskID, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
-		h.logger.Error(reqID, "retry task %s: %v", taskID, err)
-		http.Error(w, "can only retry failed tasks", http.StatusConflict)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RetryBatch resets one batch's failed tasks.
+// RetryBatch is a compatibility alias: it resumes the batch with the failed tasks retried. Stage 8 moves
+// the callers to the resume endpoint.
 func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
-	retried, err := h.services.Batch.RetryFailed(ctx, batchID)
-	if err != nil {
-		h.logger.Error(reqID, "retry batch %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	maxRetries, ok := h.reclaimMaxRetries(w)
+	if !ok {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]int64{"retried": retried})
+	result, err := task.ResumeBatch(ctx, h.client, h.logger, batchID, maxRetries, true)
+	if err != nil {
+		if !writeBatchLifecycleError(w, err) {
+			h.logger.Error(reqID, "retry batch %s: %v", batchID, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int64{"retried": result.FailedRetried})
+}
+
+// batchLifecycleError classifies a lifecycle sentinel into the HTTP status and message that every retry,
+// resume and cancel surface shares, so the same failure is never reported differently by endpoint.
+func batchLifecycleError(err error) (status int, message string, handled bool) {
+	switch {
+	case errors.Is(err, task.ErrBatchNotFound):
+		return http.StatusNotFound, "batch not found", true
+	case errors.Is(err, task.ErrTaskNotFound):
+		return http.StatusNotFound, "task not found", true
+	case errors.Is(err, task.ErrTaskNotFailed):
+		return http.StatusConflict, "can only retry failed tasks", true
+	case errors.Is(err, task.ErrBatchTerminal), errors.Is(err, task.ErrBatchLocked),
+		errors.Is(err, task.ErrBatchNotResumable):
+		return http.StatusConflict, err.Error(), true
+	default:
+		return http.StatusInternalServerError, "", false
+	}
+}
+
+// writeBatchLifecycleError writes the classified response and reports whether one was written.
+func writeBatchLifecycleError(w http.ResponseWriter, err error) bool {
+	status, message, handled := batchLifecycleError(err)
+	if handled {
+		http.Error(w, message, status)
+	}
+	return handled
 }
 
 // ListBatches serves the batch summaries, optionally filtered by status.
@@ -524,45 +562,34 @@ func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug(reqID, "batch summary: %+v", s)
 }
 
-// ResumeBatch moves a paused batch back to queued.
+// ResumeBatch requeues a settled or paused batch, resetting its processing tasks.
 func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
-	hasWork, err := h.services.Batch.HasPendingWork(ctx, batchID)
+	maxRetries, ok := h.reclaimMaxRetries(w)
+	if !ok {
+		return
+	}
+
+	result, err := task.ResumeBatch(ctx, h.client, h.logger, batchID, maxRetries, false)
 	if err != nil {
-		h.logger.Error(reqID, "check pending work for batch %s: %v", batchID, err)
+		if status, message, handled := batchLifecycleError(err); handled {
+			writeJSON(w, status, map[string]string{"error": message})
+			return
+		}
+		h.logger.Error(reqID, "resume batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	if !hasWork {
+	if !result.Resumed {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"resumed": false,
 			"reason":  "batch is already settled",
 		})
-		return
-	}
-
-	locked, err := h.services.Batch.IsLockedByLiveOwner(ctx, batchID)
-	if err == nil && locked {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "batch is locked by a live owner",
-		})
-		return
-	}
-
-	if _, err := h.services.Batch.ResetProcessingTasksByBatch(ctx, batchID); err != nil {
-		h.logger.Error(reqID, "reset processing tasks for batch %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	if err := h.services.Batch.RequeueBatch(ctx, batchID); err != nil {
-		h.logger.Error(reqID, "requeue batch %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -573,44 +600,42 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CancelBatch runs the two-phase cancel: pending tasks cancel, the owner
-// is signalled, and processing tasks are discarded when it steps down.
+// CancelBatch cancels a batch through the single cancel operation: pending, waiting and processing tasks
+// cancel, a live executor is signalled, and the lease and locks are released.
 func (h *TaskHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
-	pendingCancelled, ownerPID, ownerID, err := h.services.Batch.BeginCancel(ctx, batchID)
+	result, err := task.CancelBatch(ctx, h.client, h.logger, batchID)
 	if err != nil {
-		h.logger.Error(reqID, "cancel batch %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	signalSent := false
-	processingCancelled := int64(0)
-
-	if ownerPID > 0 {
-		killErr := syscall.Kill(int(ownerPID), syscall.SIGTERM)
-		if killErr == nil {
-			signalSent = true
+		if status, message, handled := batchLifecycleError(err); handled {
+			writeJSON(w, status, map[string]string{"error": message})
+			return
 		}
-	}
-
-	processingCancelled, err = h.services.Batch.CompleteCancel(ctx, batchID, ownerID)
-	if err != nil {
-		h.logger.Error(reqID, "complete cancel batch %s: %v", batchID, err)
+		h.logger.Error(reqID, "cancel batch %s: %v", batchID, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"batch_id":             batchID,
-		"cancelled_pending":    pendingCancelled,
-		"cancelled_processing": processingCancelled,
-		"signal_sent":          signalSent,
+		"cancelled_pending":    result.PendingCancelled,
+		"cancelled_processing": result.ProcessingCancelled,
+		"signal_sent":          result.Signalled,
 	})
+}
+
+// reclaimMaxRetries returns the configured reclaim retry bound the resume resets use. A missing config
+// means the server is not initialized and the request is refused.
+func (h *TaskHandler) reclaimMaxRetries(w http.ResponseWriter) (int32, bool) {
+	cfg := h.getConfig()
+	if cfg == nil {
+		http.Error(w, "not initialized", http.StatusServiceUnavailable)
+		return 0, false
+	}
+	return int32(cfg.Consumer.Reclaim.MaxRetries), true
 }
 
 // Labels derive from the task type and, for the type-specific variants, from the dedup key.

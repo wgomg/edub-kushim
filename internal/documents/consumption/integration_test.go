@@ -498,7 +498,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		testutil.AssertNoError(t, err, "create consume task")
 
 		_, err = client.DB().ExecContext(ctx,
-			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = $1",
+			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', attempts = 3, completed_at = CURRENT_TIMESTAMP WHERE id = $1",
 			taskID)
 		testutil.AssertNoError(t, err, "quarantine task")
 
@@ -512,7 +512,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create enrich task")
 
-		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID)
+		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID, 3, nil)
 		testutil.AssertNoError(t, err, "quarantine failed files")
 
 		if _, err := os.Stat(filePath); !os.IsNotExist(err) {
@@ -553,7 +553,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create task")
 
-		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID)
+		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID, 3, nil)
 		testutil.AssertNoError(t, err, "quarantine should succeed")
 
 		errorDir := filepath.Join(storageDir, "errors")
@@ -591,7 +591,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		testutil.AssertNoError(t, err, "create consume task")
 
 		_, err = client.DB().ExecContext(ctx,
-			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', completed_at = CURRENT_TIMESTAMP WHERE id = $1",
+			"UPDATE task SET status = 'failed', error = 'Max retries exceeded (3)', attempts = 3, completed_at = CURRENT_TIMESTAMP WHERE id = $1",
 			taskID)
 		testutil.AssertNoError(t, err, "quarantine task")
 
@@ -605,7 +605,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create enrich task")
 
-		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID)
+		err = QuarantineFailedFiles(ctx, client.Queries, storageDir, logger, batchID, 3, nil)
 		testutil.AssertNoError(t, err, "quarantine should succeed")
 
 		enrichTask, err := client.Queries.GetTaskByTaskID(ctx, enrichTaskID)

@@ -40,8 +40,8 @@ internal/
 │   ├── backup_task.go      # BackupTaskHandler (drain-wait → snapshot → retention, batch lifecycle)
 │   ├── restore.go          # Validate, extract, and replace files from backup archive
 │   ├── scheduler.go        # Backup scheduling (NextBackupTime, NextScheduledTime, ScheduleTiming, FirstRunAnchor, IsBackupDue, IsMirrorDue, dueFromHistory, scheduleTimingFromPayload)
-│   ├── mirror.go           # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunMirrorAndRecord, RunLocked (heartbeat → drain → run; heartbeat via database.StartLockHeartbeat)
-│   └── mirror_task.go      # MirrorTaskHandler (batch lifecycle + RunLocked → rsync --delete)
+│   ├── mirror.go           # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunMirrorAndRecord (the queued handler's action; the runner owns the lock heartbeat and drain)
+│   └── mirror_task.go      # MirrorTaskHandler (pure work function → RunMirrorAndRecord)
 ├── cgo/                    # MuPDF CGo glue
 │   ├── mupdf_wrapper.go    # MuPDF CGo wrapper (6 C helpers + Go API)
 │   └── mupdf_nocgo.go      # Non-CGo stub (build-tag gated)
@@ -209,7 +209,7 @@ internal/
 │   ├── people.go           # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go       # PeopleType service (NewPeopleType, batch CRUD)
 │   ├── document_type.go    # DocumentType service (NewDocumentType, batch CRUD)
- │   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, BeginCancel/CompleteCancel, CountOrphaned, RetryFailed, HasPendingWork, IsLockedByLiveOwner)
+ │   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, CountOrphaned, HasPendingWork, CountPausedBatches, ListPausedBatches, CountQueuedConsumeBatches, GetNextQueuedBatch, CountLiveBatches, ListStaleBatchOwners, DeleteBatchOwnerByBatchID, ResetProcessingTasksByBatch, ResetStaleProcessingTasks); BatchSummary/BatchOverview read models
 │   ├── orphaned.go         # Orphaned file service (scan, list, delete, restore, move-to-inbox, orphaned-thumbnail sweep)
 │   ├── trash.go            # Trash service (soft delete, restore, permanent delete, purge + hourly background purge)
 │   ├── errored.go          # Errored file service (list on disk, get path, delete, delete-all)
@@ -258,20 +258,21 @@ internal/
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
- │   ├── batch.go            # Batch ownership — Owner.Acquire, Release, Heartbeat, BatchOwnerState
- │   ├── crud.go             # Task CRUD (Get, ListFiltered, Retry, CountBatchStatuses, ListBatchSummaries)
+ │   ├── batch.go            # Batch ownership (Owner.Acquire/Release/Heartbeat) + the guarded lifecycle ops: SettleBatch (single terminal writer), PauseBatch (lease/token-guarded), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch
+ │   ├── crud.go             # Task CRUD (Get, ListFiltered, CountBatchStatuses, ListBatchSummaries)
  │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
  │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; TypeDefinition contract
  │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
- │   ├── handler.go          # Handler interface; RunBlocking/HoldClaimed — shared lock-holding execution lifecycle
+ │   ├── handler.go          # Handler interface — pure work functions
+│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition
 │   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   ├── locks.go            # Resource-lock lifecycle: ErrLockBusy, AcquireLocks (all-or-nothing, canonical order), ReleaseLocksForToken/Batch/StaleHolders, UnionLockNames, LockHeartbeatInterval
 │   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
 │   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
 │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
 │   ├── registry.go         # Task type → handler registry
-│   ├── runner.go           # Worker poll loop (claim → execute → complete with retry fallback)
- │   ├── store.go            # Task persistence (ClaimNextPending with lock gates and claim-time acquisition, CompleteTask, FailTask, SetPending, Discard)
+│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition
+ │   ├── store.go            # Task persistence (ClaimNextPending with guard + batch flip + lock gates and claim-time acquisition, CompleteTask/FailTask token-guarded transitions, ActivateChild activation with dedup discard, Discard)
 │   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
 ├── textnorm/               # Tag and DB-key canonicalization

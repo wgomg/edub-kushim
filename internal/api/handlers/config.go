@@ -661,7 +661,8 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RetryFailedConfig retries the environment's failed tasks.
+// RetryFailedConfig retries the environment's failed tasks by resuming their batches with the failed tasks
+// reset.
 func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -669,8 +670,13 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 		http.Error(w, "not initialized", http.StatusBadRequest)
 		return
 	}
+	cfg := h.getConfig()
+	if cfg == nil {
+		http.Error(w, "not initialized", http.StatusServiceUnavailable)
+		return
+	}
 
-	retried := 0
+	batchIDs := make(map[string]struct{})
 	for _, taskType := range configHostedTaskTypes {
 		failedTasks, err := h.queries.ListAllTasksByStatusAndType(ctx, database.ListAllTasksByStatusAndTypeParams{
 			Status:   itypes.Task.Status.Failed,
@@ -681,17 +687,24 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-
 		for _, t := range failedTasks {
-			if err := task.Retry(ctx, h.client, h.logger, t.TaskID); err != nil {
-				h.logger.Error("", "retry config task %s: %v", t.TaskID, err)
-				continue
+			if t.BatchID.Valid {
+				batchIDs[t.BatchID.String] = struct{}{}
 			}
-			retried++
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]int{"retried": retried})
+	retried := int64(0)
+	for batchID := range batchIDs {
+		result, err := task.ResumeBatch(ctx, h.client, h.logger, batchID, int32(cfg.Consumer.Reclaim.MaxRetries), true)
+		if err != nil {
+			h.logger.Error("", "retry config batch %s: %v", batchID, err)
+			continue
+		}
+		retried += result.FailedRetried
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int64{"retried": retried})
 }
 
 // CreateAdminUser creates the first admin account during setup.

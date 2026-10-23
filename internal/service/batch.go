@@ -1,9 +1,9 @@
-// Package service is the API-facing use-case layer: the batch lifecycle
-// with owner liveness and reclaim, the people, people type, document type
-// and user CRUD, the trash lifecycle with its background purge, the
-// errors-directory admin, orphaned files, thumbnail backfill, and
-// re-enrichment enqueueing. It sits between the handlers and the
-// persistence layer and owns no domain invariants beyond its own.
+// Package service is the API-facing use-case layer: the batch read model with owner liveness, the people
+// type, document type and user CRUD, the trash lifecycle with its background purge, the errors-directory
+// admin, orphaned files, thumbnail backfill, and re-enrichment enqueueing. It sits between the handlers
+// and the persistence layer and owns no domain invariants beyond its own. The batch lifecycle writes
+// (settle, pause, cancel, resume) live in internal/task; this layer only reads batches and runs the
+// reclamation the queue driver calls.
 package service
 
 import (
@@ -57,9 +57,8 @@ type BatchOverview struct {
 	DurationMs *int64
 }
 
-// Batch is the batch lifecycle service: summaries, orphan detection,
-// retry, cancel protocol, requeueing, and the stale-task reclaim the
-// queue driver uses.
+// Batch is the batch read model and reclamation service: summaries, orphan detection and the stale-task
+// resets the queue driver uses.
 type Batch struct {
 	client     *database.Client
 	queries    *database.Queries
@@ -176,9 +175,10 @@ func (s *Batch) ListSummaries(ctx context.Context, f task.BatchFilter) ([]BatchS
 // ListOverviews pages the batch rows for the list view.
 func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]BatchOverview, error) {
 	rows, err := s.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
-		Limit:           limit,
-		Offset:          offset,
-		NonConsumeTypes: nonConsumeTaskTypeValues,
+		Limit:             limit,
+		Offset:            offset,
+		StaleAfterSeconds: task.LeaseStaleSeconds,
+		NonConsumeTypes:   nonConsumeTaskTypeValues,
 	})
 	if err != nil {
 		return nil, errs.FromDB(err, "list batch overviews")
@@ -190,7 +190,7 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]Batch
 		processing := toInt64(row.Processing)
 		waiting := toInt64(row.Waiting)
 
-		state := deriveOwnerState(row.OwnerLastHeartbeat)
+		state := deriveOwnerState(row.OwnerLastHeartbeat, row.OwnerStale)
 
 		var createdAt time.Time
 		if row.BatchCreatedAt.Valid {
@@ -255,92 +255,6 @@ func (s *Batch) CountOrphaned(ctx context.Context) (int64, error) {
 	return orphanedCount, nil
 }
 
-// RetryFailed resets a batch's failed tasks back to pending and returns
-// how many were reset.
-func (s *Batch) RetryFailed(ctx context.Context, batchID string) (int64, error) {
-	tx, err := s.client.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, errs.FromDB(err, "begin transaction for retry failed batch "+batchID)
-	}
-	defer tx.Rollback()
-
-	bid := sql.NullString{String: batchID, Valid: true}
-	txQ := s.client.Queries.WithTx(tx)
-
-	count, err := txQ.RetryFailedTasksByBatch(ctx, bid)
-	if err != nil {
-		return 0, errs.FromDB(err, "retry failed batch "+batchID)
-	}
-
-	if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
-		return 0, errs.FromDB(err, "restore discarded enrich tasks for batch "+batchID)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, errs.FromDB(err, "commit transaction for retry failed batch "+batchID)
-	}
-
-	return count, nil
-}
-
-// BeginCancel starts the cancel protocol: the batch flips to cancelling,
-// its pending tasks are cancelled, and the live owner's identity is
-// returned so the caller can signal it to stop.
-func (s *Batch) BeginCancel(ctx context.Context, batchID string) (pendingCancelled int64, ownerPID int64, ownerID string, err error) {
-	pendingCancelled, err = s.queries.CancelPendingTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
-	if err != nil {
-		return 0, 0, "", errs.FromDB(err, "cancel pending tasks for batch "+batchID)
-	}
-
-	bo, err := s.queries.GetBatchOwner(ctx, batchID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return pendingCancelled, 0, "", nil
-		}
-		return 0, 0, "", errs.FromDB(err, "get batch owner for "+batchID)
-	}
-
-	return pendingCancelled, bo.Pid, bo.OwnerID, nil
-}
-
-// CompleteCancel finishes the cancel protocol: the batch flips to
-// cancelled and its still-processing tasks are cancelled, only after the
-// owner named at BeginCancel has released it.
-func (s *Batch) CompleteCancel(ctx context.Context, batchID, ownerID string) (processingCancelled int64, err error) {
-	tx, err := s.client.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, errs.FromDB(err, "begin transaction for cancel "+batchID)
-	}
-	defer tx.Rollback()
-
-	bid := sql.NullString{String: batchID, Valid: true}
-	txQ := s.client.Queries.WithTx(tx)
-
-	if err := task.ReleaseLocksForBatch(ctx, txQ, batchID); err != nil {
-		return 0, errs.FromDB(err, "release locks for batch "+batchID)
-	}
-
-	processingCancelled, err = txQ.CancelProcessingTasksByBatch(ctx, bid)
-	if err != nil {
-		return 0, errs.FromDB(err, "cancel processing tasks for batch "+batchID)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, errs.FromDB(err, "commit transaction for cancel "+batchID)
-	}
-
-	s.queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
-		BatchID: batchID,
-		OwnerID: ownerID,
-	})
-
-	if err := s.queries.SetBatchCancelled(ctx, batchID); err != nil {
-		return 0, errs.FromDB(err, "set batch cancelled "+batchID)
-	}
-
-	return processingCancelled, nil
-}
-
 // CountDistinct counts the batch ids in the task table.
 func (s *Batch) CountDistinct(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountDistinctBatches(ctx)
@@ -376,16 +290,6 @@ func (s *Batch) HasPendingWork(ctx context.Context, batchID string) (bool, error
 		}
 	}
 	return false, nil
-}
-
-// IsLockedByLiveOwner reports whether the batch's owner heartbeat is
-// fresh.
-func (s *Batch) IsLockedByLiveOwner(ctx context.Context, batchID string) (bool, error) {
-	state, _, err := s.batchOwnerState(ctx, batchID)
-	if err != nil {
-		return false, nil
-	}
-	return state == task.OwnerLive, nil
 }
 
 // CountPausedBatches counts the credit-paused batches, which block
@@ -426,52 +330,9 @@ func (s *Batch) GetNextQueuedBatch(ctx context.Context) (database.Batch, error) 
 	return b, nil
 }
 
-// RequeueBatch flips a completed or failed batch back to queued for
-// reprocessing.
-func (s *Batch) RequeueBatch(ctx context.Context, batchID string) error {
-	if err := s.queries.RequeueBatch(ctx, batchID); err != nil {
-		return errs.FromDB(err, "requeue batch")
-	}
-	return nil
-}
-
-// SetBatchProcessing flips the batch into its processing state, ignoring
-// absent rows; SetBatchCompleted, SetBatchFailed and SetBatchCancelled
-// are the other lifecycle setters with the same semantics.
-func (s *Batch) SetBatchProcessing(ctx context.Context, batchID string) error {
-	if err := s.queries.SetBatchProcessing(ctx, batchID); err != nil {
-		return errs.FromDB(err, "set batch processing")
-	}
-	return nil
-}
-
-// SetBatchCompleted settles the batch as completed.
-func (s *Batch) SetBatchCompleted(ctx context.Context, batchID string) error {
-	if err := s.queries.SetBatchCompleted(ctx, batchID); err != nil {
-		return errs.FromDB(err, "set batch completed")
-	}
-	return nil
-}
-
-// SetBatchFailed settles the batch as failed.
-func (s *Batch) SetBatchFailed(ctx context.Context, batchID string) error {
-	if err := s.queries.SetBatchFailed(ctx, batchID); err != nil {
-		return errs.FromDB(err, "set batch failed")
-	}
-	return nil
-}
-
-// SetBatchCancelled settles the batch as cancelled.
-func (s *Batch) SetBatchCancelled(ctx context.Context, batchID string) error {
-	if err := s.queries.SetBatchCancelled(ctx, batchID); err != nil {
-		return errs.FromDB(err, "set batch cancelled")
-	}
-	return nil
-}
-
 // CountLiveBatches counts batches in a non-terminal state.
 func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountLiveBatches(ctx)
+	count, err := s.queries.CountLiveBatches(ctx, task.LeaseStaleSeconds)
 	if err != nil {
 		return 0, errs.FromDB(err, "count live batches")
 	}
@@ -481,7 +342,7 @@ func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
 // ListStaleBatchOwners returns the ownership rows whose heartbeat is
 // older than the stale threshold.
 func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]database.ListStaleBatchOwnersRow, error) {
-	owners, err := s.queries.ListStaleBatchOwners(ctx)
+	owners, err := s.queries.ListStaleBatchOwners(ctx, task.LeaseStaleSeconds)
 	if err != nil {
 		return nil, errs.FromDB(err, "list stale batch owners")
 	}
@@ -496,123 +357,102 @@ func (s *Batch) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string) e
 	return nil
 }
 
-// ResetProcessingTasksByBatch re-queues a batch's processing tasks and
-// returns how many were reset.
-func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string) (int64, error) {
-	tx, err := s.client.BeginTx(ctx, nil)
+// ResetProcessingTasksByBatch re-queues a batch's processing tasks and reports what the reset quarantined.
+// It is the service's reclamation entry for the queue driver, so the batch reset keeps the service error
+// convention instead of exposing the task package's raw database errors.
+func (s *Batch) ResetProcessingTasksByBatch(ctx context.Context, batchID string) (task.ResetResult, error) {
+	result, err := task.ResetProcessingTasksByBatch(ctx, s.client, batchID, s.maxRetries)
 	if err != nil {
-		return 0, errs.FromDB(err, "begin transaction for reset "+batchID)
+		return task.ResetResult{}, errs.FromDB(err, "reset processing tasks "+batchID)
 	}
-	defer tx.Rollback()
-
-	bid := sql.NullString{String: batchID, Valid: true}
-	txQ := s.client.Queries.WithTx(tx)
-
-	if err := task.ReleaseLocksForBatch(ctx, txQ, batchID); err != nil {
-		return 0, errs.FromDB(err, "release locks for batch "+batchID)
-	}
-
-	quarantined, err := txQ.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
-		BatchID:  bid,
-		Attempts: s.maxRetries,
-	})
-	if err != nil {
-		return 0, errs.FromDB(err, "quarantine processing tasks "+batchID)
-	}
-
-	reset, err := txQ.ResetProcessingTasksByBatch(ctx, database.ResetProcessingTasksByBatchParams{
-		BatchID:  bid,
-		Attempts: s.maxRetries,
-	})
-	if err != nil {
-		return 0, errs.FromDB(err, "reset processing tasks "+batchID)
-	}
-
-	if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
-		return 0, errs.FromDB(err, "restore discarded enrich tasks "+batchID)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, errs.FromDB(err, "commit transaction for reset "+batchID)
-	}
-
-	return quarantined + reset, nil
+	return result, nil
 }
 
-// ResetStaleProcessingTasks re-queues the processing tasks whose owners
-// went stale, bounded by the staleness threshold in seconds.
-func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds int64) (int64, error) {
+// ResetStaleProcessingTasks re-queues the processing tasks whose owners went stale, bounded by the stale
+// window in seconds, and returns the identities the sweeps quarantined. Every comparison uses the database
+// clock, so the sweep shares the lease staleness clock instead of the application one.
+func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds int64) (task.ResetResult, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, errs.FromDB(err, "begin transaction for reset stale processing tasks")
+		return task.ResetResult{}, errs.FromDB(err, "begin transaction for reset stale processing tasks")
 	}
 	defer tx.Rollback()
 
-	cutoff := time.Now().Add(-time.Duration(staleAfterSeconds) * time.Second)
+	staleAfter := int32(staleAfterSeconds)
 	txQ := s.client.Queries.WithTx(tx)
 
-	// the lock release must precede the resets because its subselect reads status = 'processing'.
+	// the lock release must precede the resets because its subselect reads status = 'processing'
 	if err := task.ReleaseLocksForStaleHolders(ctx, txQ, types.LockHoldingTaskTypes()); err != nil {
-		return 0, errs.FromDB(err, "release locks for stale holders")
+		return task.ResetResult{}, errs.FromDB(err, "release locks for stale holders")
 	}
 
 	blockingQuarantined, err := txQ.QuarantineStaleBlockingTasks(ctx, database.QuarantineStaleBlockingTasksParams{
-		Attempts:  s.maxRetries,
-		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.LockHoldingTaskTypes(),
-		LockNames: lockNameValues,
+		Attempts:          s.maxRetries,
+		StaleAfterSeconds: staleAfter,
+		Types:             types.LockHoldingTaskTypes(),
+		LockNames:         lockNameValues,
 	})
 	if err != nil {
-		return 0, errs.FromDB(err, "quarantine stale blocking tasks")
+		return task.ResetResult{}, errs.FromDB(err, "quarantine stale blocking tasks")
 	}
 
 	blockingReset, err := txQ.ResetStaleBlockingTasks(ctx, database.ResetStaleBlockingTasksParams{
-		Attempts:  s.maxRetries,
-		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.LockHoldingTaskTypes(),
-		LockNames: lockNameValues,
+		Attempts:          s.maxRetries,
+		StaleAfterSeconds: staleAfter,
+		Types:             types.LockHoldingTaskTypes(),
+		LockNames:         lockNameValues,
 	})
 	if err != nil {
-		return 0, errs.FromDB(err, "reset stale blocking tasks")
+		return task.ResetResult{}, errs.FromDB(err, "reset stale blocking tasks")
 	}
 
 	quarantined, err := txQ.QuarantineStaleProcessingTasks(ctx, database.QuarantineStaleProcessingTasksParams{
-		Attempts:  s.maxRetries,
-		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.LockHoldingTaskTypes(),
+		Attempts:          s.maxRetries,
+		StaleAfterSeconds: staleAfter,
+		Types:             types.LockHoldingTaskTypes(),
 	})
 	if err != nil {
-		return 0, errs.FromDB(err, "quarantine stale processing tasks")
+		return task.ResetResult{}, errs.FromDB(err, "quarantine stale processing tasks")
 	}
 
 	reset, err := txQ.ResetStaleProcessingTasks(ctx, database.ResetStaleProcessingTasksParams{
-		Attempts:  s.maxRetries,
-		StartedAt: sql.NullTime{Time: cutoff, Valid: true},
-		Types:     types.LockHoldingTaskTypes(),
+		Attempts:          s.maxRetries,
+		StaleAfterSeconds: staleAfter,
+		Types:             types.LockHoldingTaskTypes(),
 	})
 	if err != nil {
-		return 0, errs.FromDB(err, "reset stale processing tasks")
+		return task.ResetResult{}, errs.FromDB(err, "reset stale processing tasks")
 	}
 
 	if _, err := txQ.RestoreDiscardedEnrichTasks(ctx); err != nil {
-		return 0, errs.FromDB(err, "restore discarded enrich tasks")
+		return task.ResetResult{}, errs.FromDB(err, "restore discarded enrich tasks")
 	}
 
-	// quarantined stale consumes have no batch-level recovery point (the
-	// batch owner may still be live), so sweep their waiting enriches here.
-	if _, err := txQ.DiscardWaitingEnrichesOfFailedConsumesGlobal(ctx); err != nil {
-		return 0, errs.FromDB(err, "discard waiting enriches of failed consumes")
+	// quarantined stale consumes have no batch-level recovery point (the batch owner may still be live), so
+	// sweep their waiting enriches here
+	if _, err := txQ.DiscardOrphanedWaitingEnrichesGlobal(ctx); err != nil {
+		return task.ResetResult{}, errs.FromDB(err, "discard orphaned waiting enriches")
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, errs.FromDB(err, "commit transaction for reset stale processing tasks")
+		return task.ResetResult{}, errs.FromDB(err, "commit transaction for reset stale processing tasks")
 	}
 
-	return blockingQuarantined + blockingReset + quarantined + reset, nil
+	result := task.ResetResult{Reset: blockingReset + reset}
+	for _, row := range blockingQuarantined {
+		result.Quarantined = append(result.Quarantined, task.TaskIdentity{TaskID: row.TaskID, TaskType: row.TaskType})
+	}
+	for _, row := range quarantined {
+		result.Quarantined = append(result.Quarantined, task.TaskIdentity{TaskID: row.TaskID, TaskType: row.TaskType})
+	}
+	return result, nil
 }
 
 func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.OwnerState, int64, error) {
-	bo, err := s.queries.GetBatchOwner(ctx, batchID)
+	bo, err := s.queries.GetBatchOwner(ctx, database.GetBatchOwnerParams{
+		BatchID:           batchID,
+		StaleAfterSeconds: task.LeaseStaleSeconds,
+	})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return task.OwnerNone, 0, nil
@@ -620,21 +460,17 @@ func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.Owner
 		return task.OwnerNone, 0, err
 	}
 
-	if isOwnerStale(bo.LastHeartbeat) {
+	if bo.Stale {
 		return task.OwnerStale, bo.Pid, nil
 	}
 	return task.OwnerLive, bo.Pid, nil
 }
 
-func isOwnerStale(heartbeat time.Time) bool {
-	return time.Since(heartbeat) > task.StaleAfter
-}
-
-func deriveOwnerState(hb sql.NullTime) task.OwnerState {
+func deriveOwnerState(hb sql.NullTime, stale sql.NullBool) task.OwnerState {
 	if !hb.Valid {
 		return task.OwnerNone
 	}
-	if isOwnerStale(hb.Time) {
+	if stale.Valid && stale.Bool {
 		return task.OwnerStale
 	}
 	return task.OwnerLive

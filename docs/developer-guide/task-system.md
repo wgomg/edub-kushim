@@ -47,8 +47,8 @@ The cast of characters:
 | `Enqueuer` | `internal/task/enqueue.go` | the single creation path (`EnqueueBatch`/`EnqueueTask`) over `BatchSpec`/`TaskSpec` |
 | `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue contract: locks, dedup key, preconditions, builder |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
-| `Handler` | `internal/task/handler.go` | does the work, returns JSON result; `RunBlocking` wraps the lock-holding lifecycle |
-| `Runner` | `internal/task/runner.go` | claims + dispatches + completes |
+| `Handler` | `internal/task/handler.go` | pure work function: does the job, returns the JSON result or an error; performs no batch-status write, lock or settle |
+| `Runner` | `internal/task/execute.go` | claims under the execution guard, drains and holds locks for holding types, dispatches, completes/fails, and settles |
 | `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
@@ -107,7 +107,8 @@ only — the pipeline never reads it back. `ClaimTask` clears it so each
 attempt starts clean, and `UpdateTaskProgress` only writes while
 `status = 'processing'`, so a write racing the stale-sweep reset is a no-op.
 The reclaim/retry paths (`ResetProcessingTasksByBatch`,
-`ResetStaleProcessingTasks`, `RetryTask`) also clear `progress` alongside
+`ResetStaleProcessingTasks`, the retry/resume
+resets) also clear `progress` alongside
 the status flip, so a re-queued task never displays a stale step from a
 previous attempt. `ProgressTracker` (`internal/task/progress.go`) is the
 single writer per task and throttles writes to ≥1/s unless the step
@@ -159,22 +160,35 @@ WHERE id = $1 AND status = 'pending';
 The `WHERE status = 'pending'` is the entire concurrency control: of N racing
 workers, exactly one flips the row and affects 1 row; the rest affect 0. The
 Go side checks `RowsAffected` (that's what sqlc's `:execrows` annotation
-means) and treats 0 as "someone else got it" (`internal/task/store.go:58-96`).
-The `claim_token` column is written only by the claims of lock-holding
-types (§12) and is NULL for every other task type.
+means) and treats 0 as "someone else got it" (`internal/task/store.go`).
 
-```go
-rows, err := s.queries.ClaimTask(ctx, id)
-if rows == 0 {
-	return database.Task{}, sql.ErrNoRows
-}
-```
+**Every claim records a guard and claims its batch in the same transaction.**
+The guard (`task.claim_token`) is the lease owner's id for a leased execution
+(the consume child, via `SetRunnerOwnerID`) and a fresh UUID per task under
+every other claim path; the same token later authorizes the guarded
+transitions and settle (§4). The claim transaction also locks the batch row
+(`LockBatchForClaim`) — the selected task's batch must be `queued` or
+`processing`, it flips `queued → processing` on the first claim
+(`MarkBatchClaimed`, with the row locked for the transaction), and zero rows
+rolls the whole claim back. A batch in any other state (`paused`, terminal,
+or missing) can neither be claimed from nor stall the queue: the selection
+queries only consider pending tasks whose batch is claimable (or that carry
+no batch at all), so a legacy pending row in a terminated batch is skipped
+rather than blocking its task type under `ORDER BY created_at LIMIT 1`.
+
+For holding types the claim transaction acquires the locks (§12) after the
+task row is written, still all-or-nothing. Any refusal surfaces as
+`sql.ErrNoRows` (nothing claimable) or `ErrLockBusy` (a waited lock is
+taken) — the runner maps both to a quiet idle round.
 
 This is the project-wide pattern: **every concurrency-sensitive transition is
 a guarded UPDATE with rows-affected acknowledgment** — `ClaimTask`,
-`CompleteTask`, `TryInsertBatchOwner`, `UpdateBatchOwnerIfStale`,
-`HeartbeatBatchOwner`, `ReleaseBatchOwner`, `AcquireLocks`. Nothing is
-ever "SELECT then UPDATE"; the guard and the write are one statement.
+`CompleteBlockingTask`, `FailBlockingTask`, the batch lifecycle writes
+(`SettleBatch`, `SetBatchPaused`, `SetBatchCancelled`, `MarkBatchClaimed`,
+`ResumeBatch`, `RequeueProcessingBatch`), `TryInsertBatchOwner`,
+`UpdateBatchOwnerIfStale`, `HeartbeatBatchOwner`, `ReleaseBatchOwner`,
+`AcquireLocks`. Nothing is ever "SELECT then UPDATE"; the guard and the write
+are one statement.
 
 Why not `SELECT ... FOR UPDATE SKIP LOCKED`? The UPDATE-guard needs no
 explicit unlock, holds the row lock for a single statement (not the whole
@@ -185,49 +199,41 @@ leaves a `processing` row that the stale sweep (§10) finds.
 
 ## 4. The runner loop
 
-`Runner.Next` (`internal/task/runner.go:28-93`) is called by every pool
-worker tick. The flow:
+`Runner.Next` (`internal/task/execute.go`) is called by every pool worker
+tick. The flow:
 
-1. **Claim** — `store.ClaimNextPending(ctx, taskType)`; `sql.ErrNoRows` means
-   idle, return nil quietly (`runner.go:30-35`).
-2. **Validate** — nil payload → `FailTask("task has nil payload")`
-   (`runner.go:37-46`); unknown type → `FailTask` with the registry error
-   (`runner.go:48-52`).
-3. **Dispatch** — `h.Handle(ctx, task)`.
-4. **Complete** — `completeTaskWithRetry` (`runner.go:95-125`): `CompleteTask`
-   with **3 attempts and exponential backoff (50ms → 100ms → 200ms)** for
-   transient DB contention:
+1. **Claim with guard** — `store.ClaimNextPending(ctx, taskType)` returns the
+   task row and its guard token; the claim transaction owns the claim write,
+   the guarded batch flip and (for holding types) the all-or-nothing
+   acquisition (§3). `sql.ErrNoRows` and `ErrLockBusy` both mean idle — the
+   runner returns nil quietly.
+2. **Hold the locks** (`holdLocks`) — for a type that declares holds while the
+   execution has not already acquired them at batch level
+   (`Store.SetBatchHoldsAcquired`), the runner starts
+   `database.StartLockHeartbeat` over the guard token and drains
+   `types.TaskTypesWaitingOn(holds...)` to zero (`WaitForTaskDrain`,
+   `drain-wait` progress) before the handler runs.
+3. **Validate** — nil payload → guarded fail.
+4. **Run** — `h.Handle(ctx, task)`; handlers are pure: no batch write, no
+   lock, no settle.
+5. **Complete** — `completeTaskWithRetry`: the token-guarded
+   `CompleteBlockingTask` with **3 attempts and exponential backoff
+   (50ms → 100ms → 200ms)** for transient DB contention. Zero rows is *success*
+   — the claim was taken (cancelled, swept, reclaimed) and the executor's
+   guard no longer matches; the settle afterward is refused by the same
+   guards, so the write attempt is safe in every case.
+6. **Settle** — the runner settles after **every** transition through
+   `SettleBatch` (§5): for a multi-task batch the active-task guard leaves it
+   to the last task, for a single-task pool batch it closes immediately. A
+   settle write that fails is logged; `SettleBatch`'s guards are the recovery
+   path, not the caller's responsibility.
+7. **Complete-failure fallback** — if completion fails after retries, the
+   oriented task is marked **failed** under the guard with
+   `"complete task failed after retries: ..."` (visible, retryable) and a
+   fail-write that itself errors is logged; the sweeper covers the process
+   anyway via `FailTask`.
 
-```go
-const maxAttempts = 3
-backoff := 50 * time.Millisecond
-
-for attempt := 1; ; attempt++ {
-	rows, err := r.store.CompleteTask(ctx, id, result)
-	if err == nil && rows > 0 { return nil }
-	if err == nil {
-		// rows == 0: the task was already transitioned (e.g. by the
-		// stale-task sweep). The handler's work is done; nothing more
-		// to record.
-		return nil
-	}
-	if attempt >= maxAttempts { return err }
-	select {
-	case <-ctx.Done(): return ctx.Err()
-	case <-time.After(backoff): backoff *= 2
-	}
-}
-```
-
-   Note `rows == 0` is *success* — the stale sweep may have already moved the
-   task; the handler's work is done either way.
-5. **Complete-failure fallback** (`runner.go:76-90`): if completing failed
-   after retries, the task is marked **failed** with
-   `"complete task failed after retries: ..."` — visible and retryable rather
-   than stuck in `processing` forever.
-
-Handler errors extract metadata via `errors.As` to `*task.Error`
-(`runner.go:60-74`, type at `internal/task/errors.go:3-10`):
+Handler errors unwrap to `*task.Error` (`internal/task/errors.go`):
 
 ```go
 type Error struct {
@@ -237,8 +243,14 @@ type Error struct {
 }
 ```
 
-`ReqID` correlates logs across the LLM call; `PauseBatch` triggers
-`PauseBatch(batchID)` — the credit-exhaustion flow (§12 of the LLM guide).
+`ReqID` correlates logs across the LLM call. `PauseBatch` is the
+credit-exhaustion flow (§12 of the LLM guide) and has a strict ordering: the
+task fails first (guarded), **then** `PauseBatch` runs, and the terminal
+settle is **skipped** — otherwise a failure of the batch's last active task
+would settle it `failed` and the pause would refuse a batch that is no longer
+`processing`. A pause is terminal for the run: the batch stays `paused` until
+an explicit resume (§11). Every other handler error follows the ordinary
+fail-then-settle path.
 
 ---
 
@@ -251,8 +263,8 @@ The `batch_owner` table is the lease table
 
 ### Acquire: two-step, then force
 
-`Owner.Acquire` (`internal/task/batch.go:52-83`) implements the comment in
-the SQL (`batch.sql:8-9` — "try INSERT first, then UPDATE with stale check"):
+`Owner.Acquire` (`internal/task/batch.go`) implements the comment in the SQL
+(`batch.sql` — "try INSERT first, then UPDATE with stale check"):
 
 ```sql
 -- name: TryInsertBatchOwner :execrows
@@ -262,22 +274,23 @@ ON CONFLICT(batch_id) DO NOTHING;
 
 -- name: UpdateBatchOwnerIfStale :execrows
 UPDATE batch_owner SET
-  owner_id = $1, pid = $2, ...
-WHERE batch_id = $3 AND (last_heartbeat < $4 OR owner_id = $5);
+  owner_id = @owner_id, pid = @pid, ...
+WHERE batch_id = @batch_id
+  AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
+       OR owner_id = @owner_id);
 ```
 
 If the INSERT affects 0 rows, someone owns the batch — steal only if the
-incumbent is stale (`last_heartbeat < cutoff`) or **we already own it** (the
-`owner_id = $5` clause makes re-acquire idempotent). Otherwise
-`ErrBatchLocked` (`batch.go:16`). The staleness constant is
-`StaleAfter = 15 * time.Second` (`batch.go:14`).
-
-`AcquireBatchOwnerForce` (`batch.sql:23-30`) is the unconditional upsert with
+incumbent is stale (evaluated by the **database clock**; `task.LeaseStaleSeconds`
+is the one window every lease query shares) or **we already own it** (the
+`owner_id = @owner_id` clause makes re-acquire idempotent). Otherwise
+`ErrBatchLocked`.
+`AcquireBatchOwnerForce` is the unconditional upsert with
 `excluded` — used by the queue daemon's placeholder and the `--force` flag.
 
 ### Keep-alive: heartbeat every 5 seconds
 
-`Heartbeat.Start` (`internal/task/heartbeat.go:28-63`) runs a ticker that
+`Heartbeat.Start` (`internal/task/heartbeat.go`) runs a ticker that
 updates `last_heartbeat` for `owner_id`:
 
 ```go
@@ -299,35 +312,44 @@ for {
 5s interval, 15s staleness = **3 missed beats before the lease is stealable**.
 A heartbeat that updates 0 rows logs "row missing or owner_id mismatch" —
 someone took the lease away; the worker keeps running but its claims
-(§5, owner-scoped) will find nothing.
+(owner-scoped) will find nothing.
 
 ### The lease gates claiming
 
-`Store.ClaimNextPending` only claims tasks from batches **this process owns**
-(`batch.sql:64-69`):
+`Store.ClaimNextPending` claims tasks from batches **this process owns** when
+it carries an owner id (`GetNextPendingTaskOfTypeForOwner`) and from any
+claimable batch otherwise (`GetNextPendingTaskOfType`, the pool path — see
+§3 for the claimability filter both selection queries share):
 
 ```sql
 -- name: GetNextPendingTaskOfTypeForOwner :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = @task_type
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
+SELECT t.id FROM task t
+WHERE t.status = 'pending' AND t.task_type = @task_type
+  AND t.batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
+  AND EXISTS (SELECT 1 FROM batch b
+              WHERE b.id = t.batch_id
+                AND b.status IN ('queued', 'processing'))
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY(@wait_locks::text[]) AND lock_is_held(s.name)
   )
-ORDER BY created_at LIMIT 1;
+ORDER BY t.created_at LIMIT 1;
 ```
 
 The `ownerID` is a per-process UUID set via `SetRunnerOwnerID`
-(`consume.go:154-156`). Batches without an owner row are invisible to
-workers — the lease table *partitions the work*.
+(`consume.go`). Batches without an owner row are invisible to a leased
+runner — the lease table partitions the leased work; pool executions (the
+daemon's maintenance pools, the edub/wizard config pools) claim globally
+under their fresh per-task guard.
 
 ### Release and cleanup
 
-`ReleaseBatchOwner` deletes only where **both** batch and owner match
-(`batch.sql:35-36`) — a worker can't accidentally release someone else's
-lease. `CleanupCompletedBatches` (`batch.sql:54-61`) removes owner rows whose
-batch has no pending/processing/waiting tasks left.
+`ReleaseBatchOwner` deletes only where **both** batch and owner match — a
+worker can't accidentally release someone else's lease. The lifecycle owns
+release: a settle releases the batch's locks (by id, transactional with the
+terminal write), the execution's teardown releases its owner row, and pause
+and cancel release both. `ResumeBatch` drops a stale ownership row (by the
+same pair match) before requeueing.
 
 ---
 
@@ -408,41 +430,53 @@ own lease.
 
 ### Reclaiming stale batches
 
-`reclaimStaleBatches` (`queue.go:207-253`) runs on the housekeeping ticker:
-for each owner stale > 15s whose batch still has work
-(`ListStaleBatchOwners`): SIGTERM the (still-alive) owner PID, reset its
-processing tasks (§10), quarantine failed files, decide the batch's fate —
-`failed` if no work remains, `queued` otherwise — and delete the owner row so
-the batch can be re-forked.
+`reclaimStaleBatches` runs on the housekeeping ticker: for each owner stale
+> 15s whose batch still has work (`ListStaleBatchOwners`), it **releases the
+listed ownership row first** — by the `(batch_id, owner_id)` pair it listed,
+so a fresh execution that took the batch over after the snapshot keeps its
+lease and the whole iteration is skipped on zero rows. Then it resets the
+batch's processing tasks (§10), moves the quarantined files by the returned
+task identities, and decides the batch's fate: the guarded settle when no
+work remains (completed/failed by task outcomes), the guarded requeue
+otherwise. Any recovery step failing after the release hands the batch back
+to the dispatcher through the same guarded requeue, so a released batch can
+never be left `processing` without a lease and without a dispatcher to claim
+it. `reclaimStaleTasks` moves the inbox files of the identities the global
+sweep quarantined at once, instead of waiting for the batch's next run.
 
 ---
 
 ## 7. The consume command
 
 `kushim consume --batch <id>` (`internal/ops/consume/consume.go`) is the
-per-batch worker. Batch-mode flow (`consume.go:95-200`):
+per-batch worker. Batch-mode flow:
 
-1. **Paused-batch hard stop** (`consume.go:114-119`): a paused batch refuses
-   to run, with a message about resolving the LLM billing issue.
-2. **Acquire the lease** with `--force` escalation (`consume.go:131-144`):
-   `ErrBatchLocked` without `--force` prints the incumbent PID and exits;
-   with `--force` it calls `AcquireForce` (the `excluded` upsert).
-3. **Entry repair** (`consume.go:141-147`): reset orphaned processing tasks
-   from previous crashes (`ResetProcessingByBatch`) and quarantine failed
-   files — the batch is healed before work starts.
+1. **Paused-batch hard stop**: a paused batch refuses to run, with a message
+   about resolving the LLM billing issue.
+2. **Acquire the lease** with `--force` escalation: `ErrBatchLocked` without
+   `--force` prints the incumbent PID and exits; with `--force` it calls
+   `AcquireForce` (the `excluded` upsert).
+3. **Entry repair**: reset orphaned processing tasks from previous crashes
+   (`task.ResetProcessingTasksByBatch`) and quarantine the files of the
+   returned task identities plus the batch's retries-exhausted consume tasks
+   — the batch is healed before work starts.
 4. **Heartbeat + pools**: `SetRunnerOwnerID(ownerID)`, start the heartbeat,
    start the consume and enrich pools (`pollBatch`), and monitor.
-5. **Terminal status** (`setBatchTerminalStatus`, `consume.go:655-689`):
-   `failed` if any task failed, else `completed` — already-terminal states skip
-   only the settle write, never the bookend. The settle logs one INFO bookend
-   from the batch's task listing: completed/failed/cancelled counts plus the
-   aggregated per-document enrich counts when any completed enrich result
-   decoded. `ErrBatchPaused` is swallowed as success (the pause was the
-   outcome).
+5. **Terminal status** (`task.SettleBatch`): the single terminal writer, from
+   task outcomes — `failed` if any task failed, else `completed`; already-
+   terminal states return their stored status without a write. The settle
+   logs one INFO line with the completed/failed/cancelled counts; the
+   consume child then adds the enrich bookend (`logEnrichBookend`) — the
+   aggregated per-document enrich counts over decoded completed enrich
+   results. `ErrBatchPaused` is swallowed as success (the pause was the
+   outcome). Before the final settle the run drains the still-`waiting`
+   children whose parents are no longer active (`QuarantineFailedFiles`
+   without an id set covers the whole batch), because a settle with an
+   active-waiting child would refuse and leave the settlement to nobody.
 6. **Cleanup**: stop heartbeat, release the lease with a 5s timeout, trigger
    a post-batch orphan scan (`triggerOrphanScan`, 5-minute budget).
 
-`pollBatch` (`consume.go:526-646`) is the progress monitor: a 500ms ticker
+`pollBatch` is the progress monitor: a 500ms ticker
 watches the batch row, prints per-file transitions (pending→processing,
 →completed, →failed) from a `previous` map, detects the pause transition
 (`ErrBatchPaused`), and prints the summary when `remain == 0`. While a task
@@ -460,21 +494,20 @@ The queue daemon never forks consume workers for these batches:
 so no watchdog holds a `max_concurrent_batches` slot for the duration of a
 long backup.
 
-The handlers own the lifecycle directly, keeping the status accurate even
-when `kushim queue` is not running: `MarkBatchProcessing` at start and
-`FinalizeBatchStatus` (completed/failed) at the end, once no sibling tasks
-remain active (`internal/task/batch.go`); the settle also logs one INFO
-summary line with the final status and the completed/failed/cancelled task
-counts (a failed count query is logged and never blocks the settle).
-Because these batches have no `batch_owner` row in that case, the service
+These batches run through the same runner as consume work: the handler is a
+pure work function and the runner claims under a fresh per-task guard, flips
+the batch `queued → processing` in the claim transaction, and settles through
+`SettleBatch` at the end — the status is accurate even when no queue daemon
+is watching. Because there is no `batch_owner` row on that path, the service
 layer forces `Orphaned = false` for batches with a non-consume task —
 otherwise the UI would show a bogus orphan state and a Resume button that
 forks a consume worker (`internal/service/batch.go`).
 
-Standalone mode (`consume.go:191-319`, no daemon) refuses to run while any
+Standalone mode (no daemon) refuses to run while any
 paused batch exists, scans the inbox, enqueues the consume+enrich task pairs,
 and — only if no other batch is queued — runs the same
-owner/heartbeat/pollBatch sequence in-process.
+owner/heartbeat/pollBatch sequence in-process; the leased execution settles
+through `SettleBatch` like the daemon-forked one.
 
 ---
 
@@ -499,23 +532,34 @@ enrichPayload, _ := json.Marshal(map[string]any{
 result, err := enqueuer.EnqueueBatch(ctx, spec, tasks) // the waiting child rides along
 ```
 
-On consume success, the child is **activated** (`activateChildEnrich`,
-`internal/documents/consumption/consume.go:99-135`): it validates the `waiting_for` link, injects
-`document_id` into the payload, and flips the child to `pending`:
+On consume success, the child is **activated** (`activateChildEnrich` /
+`activateChildThumbnail`, `internal/documents/consumption/consume.go`): the
+handler validates the `waiting_for` link, injects `document_id` into the
+payload, derives the child's dedup key through the type definition (the same
+derivation `EnqueueBatch` applies), and flips the child to `pending` through
+`Store.ActivateChild`:
 
 ```sql
 -- name: SetEnrichTaskPending :exec
 UPDATE task SET
     status = 'pending',
-    payload = $1,
+    payload = @payload,
+    dedup_key = @dedup_key,
     error = NULL,
     completed_at = NULL
-WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type = 'enrich';
+WHERE id = @id AND status IN ('waiting', 'discarded')
+  AND task_type IN ('enrich', 'thumbnail');
 ```
 
-The `IN ('waiting', 'discarded')` guard means a discarded child can also be
-re-armed. On consume failure, the child is **discarded**
-(`deactivateChildEnrich`, `internal/documents/consumption/consume.go:136-170`) — marked
+The activation writes the key atomically with the pending flip. The
+`IN ('waiting', 'discarded')` guard means a discarded child can also be
+re-armed. A key that collides with live work discards the duplicate child
+(`DiscardedDuplicate`) instead of failing the parent — the surviving task
+already covers the work — and a key the definition cannot derive (missing
+definition, empty document id) fails the activation rather than writing a
+keyless row that the dedup index could not police. On consume failure, the
+child is **discarded**
+(`deactivateChildEnrich`, same file) — marked
 `discarded` with the parent's error, so the enrich never runs against a
 document that doesn't exist, and it doesn't count as a failed task.
 
@@ -526,7 +570,7 @@ activated) is a benign no-op logged at info level.
 
 **Every consume failure path discards the child**, not just failures inside
 `Process` — the handler wraps all error returns in `withDiscardAttempt`
-(`internal/documents/consumption/consume.go:247-260`), covering the early exits too: payload
+(`internal/documents/consumption/consume.go`), covering the early exits too: payload
 unmarshal failure (with a best-effort lenient re-parse of `on_completed` via
 `recoverOnCompleted`), an empty `file_path`, and `FileFromPath` failures
 (the realistic crash-retry case: the inbox file was already moved). If the
@@ -547,13 +591,16 @@ WHERE task_id = $1 AND status = 'discarded' AND task_type = 'enrich';
 ```
 
 The restore is targeted by `task_id` (the consume payload's `on_completed`),
-so it cannot race a claim. It runs after the individual task retry
-(`crud.go:127-150`), and as join-based `UPDATE ... FROM` statements inside
-the same transaction as the batch retry / batch resets
-(`RestoreDiscardedEnrichTasks` / `RestoreDiscardedEnrichTasksByBatch`,
-§10-11). The invariant this upholds: an enrich is never left `discarded`
-while its consume is `pending` again, and it is never `waiting` while its
-consume is terminal-`failed` (that half is enforced by the sweeps, §10).
+so it cannot race a claim. The join-based variants run inside the same
+transaction as the recovery they belong to: `RestoreDiscardedEnrichTasks`
+(global) and `RestoreDiscardedEnrichTasksByBatch` (per-batch) pair with the
+resets inside the sweep transactions, and `ResumeBatch` runs the per-batch
+variant a second time *after* `RetryFailedTasksByBatch`, so the retried
+consumes (newly `pending`) and their discarded children become visible
+atomically with the requeue (§10-11). The invariant this upholds: an enrich
+is never left `discarded` while its consume is `pending` again, and it is
+never `waiting` while its consume is terminal-`failed` (that half is
+enforced by the sweeps, §10).
 
 ---
 
@@ -571,7 +618,9 @@ Uniqueness holds **only while the task is live** — once it completes/fails,
 the row drops out of the index and the same key becomes insertable again
 (that's how a re-ingest after a crash works). The Go side derives keys in the
 task type catalog (`internal/ops/container/task_type_definitions.go`), one
-derivation per task type; `EnqueueBatch` applies it to pending tasks.
+derivation per task type; `EnqueueBatch` applies it to pending tasks and the
+consume handler applies the same derivation to its waiting children at
+activation (§8), so the differentiated children carry keys too.
 
 Key formats in use:
 
@@ -586,14 +635,16 @@ Key formats in use:
 | config | `config:tessdata:<lang>` / `config:hugot` |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
-The waiting (child) enrich tasks store **no dedup key**, and never gain one:
-the column is only written on insert, and a waiting child's insert carries
-none, so an activated child stays dedup-free. A duplicate enqueue of keyed
-work loses the dedup conflict: `EnqueueBatch` skips the task, no batch is
-created, and the boundary reports the work as already queued ("re-enrich
-already queued", `internal/ops/cli/enrich.go`). Only a violation of the dedup
-index counts as a skip — a collision on any other unique constraint (the task
-id above all) aborts the enqueue and creates nothing.
+Activation is the only path that puts a key on a waiting child, and a
+conflicting activation loses to the index: `Store.ActivateChild` writes
+`pending` + key atomically, so a duplicate activation of already-live work
+discards the duplicate child instead of failing its parent. A duplicate
+enqueue of keyed work loses the dedup conflict: `EnqueueBatch` skips the
+task, no batch is created, and the boundary reports the work as already
+queued ("re-enrich already queued", `internal/ops/cli/enrich.go`). Only a
+violation of the dedup index counts as a skip — a collision on any other
+unique constraint (the task id above all) aborts the enqueue and creates
+nothing.
 
 ---
 
@@ -609,27 +660,35 @@ passes, thumbbackfill, migrate-db, migrate-storage) are swept by lock-aware
 variants instead:
 
 ```sql
--- name: QuarantineStaleProcessingTasks :execrows
+-- name: QuarantineStaleProcessingTasks :many
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE status = 'processing' AND attempts >= $1 AND started_at < $2
-  AND task_type <> ALL(@types::task_type[]);
+WHERE status = 'processing' AND attempts >= @attempts
+  AND started_at < NOW() - make_interval(secs => @stale_after_seconds::int)
+  AND task_type <> ALL(@types::task_type[])
+RETURNING task_id, task_type;
 
 -- name: ResetStaleProcessingTasks :execrows
 UPDATE task SET
     status = 'pending',
     attempts = attempts + 1,
     progress = NULL
-WHERE status = 'processing' AND attempts < $1 AND started_at < $2
+WHERE status = 'processing' AND attempts < @attempts
+  AND started_at < NOW() - make_interval(secs => @stale_after_seconds::int)
   AND task_type <> ALL(@types::task_type[]);
 ```
 
-(`task.sql`; per-batch variants at `batch.sql:41-52`.) Below the budget →
+(`task.sql`; the staleness is decided by the database clock — a Go-derived
+cutoff timestamp cannot disagree with the lease window. Per-batch variants
+at `batch.sql`.) Below the budget →
 requeue with `attempts + 1`; at/above it → `failed` with a recognizable
-error string. The global sweep runs from the queue daemon's housekeeping
-ticker; the per-batch variant runs at consume entry and batch resume.
+error string; the sweeps **return the task identities they quarantined**
+(`task_id` + `task_type`), which is what the file quarantine and the recovery
+logging consume. The global sweep runs from the queue daemon's housekeeping
+ticker; the per-batch variant runs at consume entry, batch resume and batch
+reclamation.
 
 **Lock-holding recovery is gated on lock ownership.** A lock-holding task is
 swept only when no fresh resource-lock row belongs to its execution: the
@@ -669,15 +728,22 @@ failure goes straight to `failed` (visible, manually retryable) without
 burning budget.
 
 Failed consume tasks get their files moved to the quarantine dir via
-`GetQuarantinedConsumeTaskPayloads` + `QuarantineFailedFiles`
-(`consumption/consumer.go:423-448`). The same function then runs one
-batch-scoped sweep (`DiscardWaitingEnrichesOfFailedConsumes`) that discards
-**every** still-`waiting` enrich whose consume in the batch is `failed`,
-copying the parent's error text — broader than the old per-task discard,
-which only handled `'Max retries exceeded'` tasks. The sweep runs
+`QuarantineFailedFiles` (`consumption/consumer.go`), which classifies by
+**task identity, never error text**: it takes the ids the reclamation just
+quarantined (the sweeps' returned identities), plus a batch-scoped
+attempts-exhausted query (`GetPermanentlyFailedConsumeTaskPayloads`) that
+covers a run which died between its reset and its quarantine. An empty
+batch id limits the work to the named ids — that is the global sweep's
+cross-batch case, which the daemon runs immediately instead of waiting for
+the batch's next entry. The same function then runs one
+batch-scoped sweep (`DiscardOrphanedWaitingEnriches`) that discards
+**every** still-`waiting` enrich or thumbnail whose parent consume in the
+batch is no longer `pending`/`processing` — failed, cancelled, or completed
+without ever activating its children — copying the parent's error text.
+The sweep runs
 unconditionally (even with zero quarantined rows), so it also catches legacy
-stuck data. The global stale-task sweep (`ResetStaleProcessingTasks`,
-`service/batch.go:490`) runs a global variant of the same sweep, since
+stuck data. The global stale-task sweep (`service.Batch.ResetStaleProcessingTasks`) keeps
+a global variant of the orphan sweep, since
 its quarantined consumes have no batch-level recovery point.
 
 Both sweeps also **restore**: the reset half (consume back to `pending`)
@@ -691,13 +757,17 @@ instead.
 ### Per-task panic recovery
 
 Panics inside `Runner.Next` after the claim succeeds are caught by a deferred
-`recover()` (`runner.go:37-48`): the task is failed immediately via `FailTask`
-with `panic: <text>` recorded in `task.error` — the real panic text, not the
-sweep's generic `'Max retries exceeded'` — and the REQID is logged. The error
+`recover()` (`internal/task/execute.go`): the task is failed under the
+execution guard via the guarded fail-write with `panic: <text>` recorded in
+`task.error` — the real panic text, not the sweep's generic
+`'Max retries exceeded'` — and the REQID is logged. The fail-write uses a
+detached `context.Background()` with a 10s timeout so it lands even when the
+panic coincides with shutdown, and the settle attempt that follows is made
+by the same guards, so a panic of the batch's last active task still closes
+the batch. The error
 is returned to the pool, which logs it and keeps the worker running; a plain
 error return never restarts the worker (only an uncaught panic in `runWorker`
-does). The fail-write uses a detached `context.Background()` with a 10s
-timeout so it lands even when the panic coincides with shutdown. The sweeps
+does). The sweeps
 above remain the backstop for hard crashes (kill -9, OOM) where no Go-level
 recover can run: the recover handles panics promptly with attribution, the
 sweeps handle process death after the cutoff.
@@ -706,34 +776,46 @@ sweeps handle process death after the cutoff.
 
 ## 11. Retry and resume
 
-- **`kushim task retry <id>` / `POST /api/v1/tasks/{id}/retry`** — resets one
-  task to `pending` (clears result/error/attempts); guarded to `failed` tasks
-  only (`crud.go:127-150`; 409 otherwise). For consume tasks with an
-  `on_completed` payload field, the paired `discarded` enrich is restored to
-  `waiting` via `SetEnrichTaskWaiting`; if that restore fails it is logged
-  and the retry still succeeds (activation accepts `discarded` anyway).
-- **`POST /api/v1/batches/{id}/retry`** — `RetryFailed`
-  (`service/batch.go:211-235`): now transactional — `RetryFailedTasksByBatch`
-  then `RestoreDiscardedEnrichTasksByBatch` commit together, so the restore
-  can't race task claiming.
-- **`POST /api/v1/batches/{id}/resume`** (`api/handlers/task.go:525-574`) —
-  the full recovery: refuses if the batch is settled (no pending work) or
-  locked by a live owner (409), then `ResetProcessingTasksByBatch` +
-  `RequeueBatch` (`status = 'queued'`) — the daemon's notify/timer picks it
-  up and re-forks.
-- **Re-enrich** (`service/enrich.go:29-53` single, `:55-89` bulk) — a fresh
-  `queued` batch with one `pending` enrich task per document; the dedup index
-  rejects duplicates (the bulk run counts them as skipped).
+Four surfaces resolve to **one** operation, `task.ResumeBatch`
+(`internal/task/batch.go`), with `includeFailed` selecting whether failed
+tasks re-run:
 
-The reset paths also restore: `ResetProcessingTasksByBatch`
-(`service/batch.go:418-453`), `Owner.ResetProcessingByBatch`
-(`internal/task/batch.go:119-154`), and the global
+- **`kushim task retry <id>` / `POST /api/v1/tasks/{id}/retry`** — the task
+  alias: resolve the task, refuse a non-failed task (`409`), missing task
+  (`404`), then resume its batch with failed tasks reset (`includeFailed:
+  true`), answering `204`.
+- **`POST /api/v1/batches/{id}/retry`** — the batch alias with
+  `includeFailed: true`, answering `{"retried": <n>}`.
+- **`POST /api/v1/batches/{id}/resume`** — `includeFailed: false`; answers
+  `{"resumed": true}` when the batch went back to `queued` and
+  `{"resumed": false}` when nothing can become active.
+- **`POST /wizard/config/retry`** — resumptions per distinct batch over its
+  failed config-hosted tasks.
+
+`ResumeBatch` is the single guarded recovery: it re-runs from
+`failed`/`completed`/`cancelled`/`paused` to `queued`, refuses a batch with a
+live lease (`ErrBatchLocked`, database-clock check) or one still queued or
+processing (`ErrBatchNotResumable`), resets the batch's processing tasks
+(quarantine-at-max plus reset, restoring discarded children — §10) inside the
+same transaction, and when `includeFailed` is set re-runs the restore after
+the retry so the retried consumes and their children surface together with
+the requeue. An operation that would leave no active work (a fully cancelled
+batch, say) touches nothing and reports `Resumed = false`.
+
+**Every endpoint maps one lifecycle sentinel the same way** (`batchLifecycleError`,
+`internal/api/handlers/task.go`): missing batch/task → `404`, terminal / locked
+by a live owner / not resumable / task-not-failed → `409` with the sentinel's
+message — so the same failure is never reported differently by endpoint.
+
+The reset paths also restore: the batch reset
+(`task.ResetProcessingTasksByBatch`, also offered transactionally through
+`service.Batch.ResetProcessingTasksByBatch`) and the global
 `ResetStaleProcessingTasks` each run their scoped restore inside the same
-transaction as the reset, so a `discarded` enrich is re-armed exactly when
+transaction as the reset, so a `discarded` child is re-armed exactly when
 its consume returns to `pending`.
 
 The wizard also auto-resumes config setup on boot
-(`internal/api/wizard/server.go:43-53`).
+(`internal/api/wizard/server.go`).
 
 ---
 
@@ -755,9 +837,10 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
 
 - The task claim gates every type on its declared waits: the selection query
   refuses a task whose waits are not all free (`NOT EXISTS … lock_is_held`).
-- Types with declared holds claim through the token protocol: the claim, its
-  acquisition and the release are one transaction
-  (`Store.claimBlockingNextPending`, `internal/task/store.go`). Acquisition
+- Every claim carries an execution guard (§3), and types with declared holds
+  acquire through the token protocol: the claim, its acquisition and the
+  release are one transaction (`Store.ClaimNextPending`,
+  `internal/task/store.go`). Acquisition
   is all-or-nothing (`task.AcquireLocks`, backed by `AcquireLocks` in
   `sql/queries/lock.sql`): `LockRowsForUpdate` row-locks the
   `holds ∪ waits` rows in canonical name order, the waits must all be free,
@@ -767,10 +850,13 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
   next tick retries instead of failing the task. No execution ever holds one
   lock while waiting for another, so no deadlock is possible; two same-day
   maintenance runs serialize with both eventually completing.
-- The release is the task's leave-`processing` moment:
-  `CompleteBlockingTask` / `FailBlockingTask` release the locks by claim
-  token in the same tx as the transition (`ReleaseLocksForToken`); batch
-  resets, cancel and retry release by batch id (`ReleaseLocksForBatch`).
+- The release is the task's leave-`processing` moment: the runner's guarded
+  `CompleteTask` / `FailTask` (`CompleteBlockingTask` / `FailBlockingTask`
+  under the guard) release the locks their claim acquired by claim token in
+  the same tx as the transition (`ReleaseLocksForToken`); the settle, a
+  batch reset, cancel and resume release by batch id (`ReleaseLocksForBatch`).
+  The release is skipped only for the batch-level hold itself — that
+  belongs to the run and is released by the settle.
 - The drain set is derived, not listed: `types.TaskTypesWaitingOn(holds...)`
   is the in-flight work a holder must let finish — a `maintenance` holder
   drains `consume`/`enrich`/`thumbnail`/`thumbbackfill`, a `storage` holder
@@ -780,13 +866,12 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
   takeable after the 30-minute window, the last-resort recovery when no reaper
   is running (the daemon's sweeps recover task- and batch-held locks promptly;
   the window is the manual holder's only mechanism).
-- The shared handler lifecycle is `task.RunBlocking`
-  (`internal/task/handler.go`): mark batch processing → `HoldClaimed`
-  (heartbeat + drain) → body → the runner's token-guarded transition. The
-  backup handler and the four tag passes run through it; the `migrate-db` and
-  `migrate-storage` handlers use `HoldClaimed` over their own batch
-  bookkeeping (their acquisition happens at claim), and drain before copying
-  the database or moving storage files.
+- The runner owns the lock-holding lifecycle: it starts the heartbeat and the
+  drain for a claim whose type declares holds (§4) and dispatches a pure
+  handler. The backup handler and the four tag passes are work functions
+  under it; the `migrate-db` and `migrate-storage` handlers drain nothing
+  themselves (the runner has drained), and the work happens after claim and
+  before settle.
 
 Locks live as long as the *execution*, not one task. A batch whose task types
 declare holds gets them acquired **for the run**: the consume child of a
@@ -830,13 +915,13 @@ large rsync can exceed the 30-minute staleness window, the handler runs a
 heartbeat that refreshes the lock row's heartbeat timestamp every 5 minutes
 (`TouchLocksForToken`, guarded by the claim token) for the rsync
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
-shared `database.StartLockHeartbeat` helper *before*
+runner *before*
 `WaitForTaskDrain` returns, so the drain-wait itself is covered too; the
-backup, tagreconcile, tagmeasure, tagidentity and tagaudit handlers get that sequence —
-heartbeat, drain, body, batch finalize — from the shared `task.RunBlocking`
-lifecycle (`internal/task/handler.go`). The queued mirror handler composes
-`backup.RunLocked`, which owns the heartbeat → drain → rsync → state-file
-sequence over the claim token; the direct `kushim mirror` command runs under
+backup, tagreconcile, tagmeasure, tagidentity and tagaudit handlers get that
+sequence — heartbeat, drain, body, settle — from the
+runner (`internal/task/execute.go`). The queued mirror handler is the pure
+`backup.RunMirrorAndRecord` over the tree; the direct `kushim mirror` command
+runs under
 the manual holder path instead — waiting for the lock and draining by
 default, `--no-wait` to fail fast — and writes
 the `.edub-mirror.json` diagnostics file into the
@@ -956,12 +1041,20 @@ mid-run.
 ## 14. Gotchas
 
 - **`rows == 0` is usually success, not failure** — for claims it means
-  "someone else won" (idle, not error); for completes it means "already
-  transitioned". Only treat 0 rows as an error where the contract says so
+  "someone else won" (idle, not error); for the guarded task transitions it
+  means "already transitioned", and the guarded batch writes (settle, pause,
+  cancel, requeue) make a refusal *observable* while keeping the state
+  truthful. Only treat 0 rows as an error where the contract says so
   (e.g. the guarded lock acquire).
-- **`FailTask` has no status guard** — it can overwrite a `completed` task if
-  called from a stale path. The runner's ordering (complete first, fail only
-  as fallback) exists to minimize this; keep it.
+- **Task transitions are token-guarded** — `CompleteTask`/`FailTask` (over
+  `CompleteBlockingTask`/`FailBlockingTask`) write only while the task is
+  still `processing` under the guard that claimed it, so a stale executor
+  can never rewrite a task the sweep reset. Keep the runner's ordering
+  (complete first on success, fail otherwise) intact.
+- **Ownership of the batch's terminal writes belongs to `SettleBatch`** —
+  handlers carry no batch-status writes; diverting a "quick" status write
+  into a handler reintroduces the four-writers race the single writer
+  closed.
 - **`attempts` only grows on reclamation resets** — never bump it on ordinary
   handler failures; the budget exists to bound crash loops, not retries.
 - **Owner-scoped claiming is the lease's teeth** — a worker whose lease was
@@ -978,23 +1071,22 @@ mid-run.
   drops notifications when the daemon is busy — never "fix" that by making
   the channel blocking, or a full channel stalls the daemon.
 - **`waiting` tasks are invisible to normal claims** (they're not `pending`)
-  and must be activated or discarded — an orphaned `waiting` row means the
-  parent's completion handler didn't run. The reclaim sweeps only ever
-  *discard* waiting enriches of terminal-failed consumes; they never
-  activate them.
+  and must be activated or discarded. Activation only happens on the parent
+  path; the recovery sweeps only *discard* — a `waiting` child whose parent
+  is no longer `pending`/`processing` (failed, cancelled, or completed
+  without activating) is discarded with the parent's error text, over
+  enrich **and** thumbnail children (`DiscardOrphanedWaitingEnriches`).
 - **The enrich invariant is enforced at recovery points, not continuously**:
-  "enrich is never `waiting` while its consume is terminal-`failed`" holds
-  because the handler discards on every failure path, and the sweeps
-  (`QuarantineFailedFiles`, `ResetStaleProcessingTasks`) mop up anything the
-  handler missed (crashes, legacy data). A consume that reached `failed`
-  without a sweep running in between can briefly show a `waiting` enrich —
-  the next recovery point closes it.
-- **The individual-retry restore is log-only on failure** — if
-  `SetEnrichTaskWaiting` fails after a `task retry`, the retry still succeeds
-  and the enrich stays `discarded`; it is re-armed later by activation
-  (`SetEnrichTaskPending` accepts `discarded`) or by the next batch
-  recovery-point restore.
-- **Paused batches refuse to run** (`consume.go:112-117`) and pause is sticky
+  "a child is never `waiting` while its consume is terminal" holds because
+  the handler discards on every failure path, and the sweeps
+  (`QuarantineFailedFiles`, `ResetStaleProcessingTasks`,
+  `DiscardOrphanedWaitingEnriches`) mop up anything the handler missed
+  (crashes, legacy data).
+- **Resume atomicity is the recovery boundary** — the retried consumes and
+  their restored children commit inside the resume transaction, so a failed
+  restore rolls the resume back; nothing is reported as resumed with
+  children still `discarded`.
+- **Paused batches refuse to run** and pause is sticky
   — resume is an explicit API/CLI action after the billing issue is fixed.
 - **`CountLiveBatches` counts heartbeats, not processes** — a batch whose
   worker is mid-task but heartbeating normally counts as live; only 15s of
@@ -1002,4 +1094,4 @@ mid-run.
 
 ---
 
-*Last verified against the tree: 2026-10-22. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-23. If code and doc disagree, code wins.*

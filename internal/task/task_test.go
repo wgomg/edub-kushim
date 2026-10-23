@@ -139,11 +139,11 @@ func TestStoreClaimAndComplete(t *testing.T) {
 	_, err := createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file":"test.pdf"}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	claimed, _, err := store.ClaimNextPending(ctx, "consume")
+	claimed, token, err := store.ClaimNextPending(ctx, "consume")
 	testutil.AssertNoError(t, err, "claim")
 	testutil.AssertEqual(t, string(claimed.Status), "processing", "after claim")
 
-	_, err = store.CompleteTask(ctx, claimed.ID, json.RawMessage(`{"ok":true}`))
+	_, err = store.CompleteTask(ctx, claimed.TaskType, claimed.ID, json.RawMessage(`{"ok":true}`), token)
 	testutil.AssertNoError(t, err, "complete")
 
 	task, _ := store.GetTask(ctx, claimed.ID)
@@ -160,11 +160,12 @@ func TestStoreClaimAndFail(t *testing.T) {
 	_, err := createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create")
 
-	claimed, _, err := store.ClaimNextPending(ctx, "consume")
+	claimed, token, err := store.ClaimNextPending(ctx, "consume")
 	testutil.AssertNoError(t, err, "claim")
 
-	err = store.FailTask(ctx, claimed.ID, "something went wrong")
-	testutil.AssertNoError(t, err, "fail")
+	if _, err := store.FailTask(ctx, claimed.TaskType, claimed.ID, "something went wrong", token); err != nil {
+		testutil.AssertNoError(t, err, "fail")
+	}
 
 	task, _ := store.GetTask(ctx, claimed.ID)
 	testutil.AssertEqual(t, string(task.Status), "failed", "after fail")
@@ -387,44 +388,6 @@ func TestEnqueuerCustomID(t *testing.T) {
 	}})
 	testutil.AssertNoError(t, err, "enqueue")
 	testutil.AssertEqual(t, result.TaskIDs[0], "my-id", "custom id")
-}
-
-func TestRetry(t *testing.T) {
-	store, _, _ := setupTaskTest(t)
-	ctx := context.Background()
-	logger := testutil.NewTestLogger()
-
-	// happy path: retrying a failed consume restores its discarded enrich and thumbnail to waiting
-	_, err := createTaskRow(ctx, t, store.client.Queries, "enrich", "", json.RawMessage(`{}`), "retry-e1", "discarded", "")
-	testutil.AssertNoError(t, err, "create discarded enrich")
-	_, err = createTaskRow(ctx, t, store.client.Queries, "thumbnail", "", json.RawMessage(`{}`), "retry-t1", "discarded", "")
-	testutil.AssertNoError(t, err, "create discarded thumbnail")
-	_, err = createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"on_completed":"retry-e1","on_completed_thumbnail":"retry-t1"}`), "retry-c1", "failed", "")
-	testutil.AssertNoError(t, err, "create failed consume")
-
-	err = Retry(ctx, store.client, logger, "retry-c1")
-	testutil.AssertNoError(t, err, "retry")
-	consume, _ := store.GetTaskByTaskID(ctx, "retry-c1")
-	testutil.AssertEqual(t, string(consume.Status), "pending", "consume pending after retry")
-	enrich, _ := store.GetTaskByTaskID(ctx, "retry-e1")
-	testutil.AssertEqual(t, string(enrich.Status), "waiting", "enrich restored to waiting")
-	thumbnail, _ := store.GetTaskByTaskID(ctx, "retry-t1")
-	testutil.AssertEqual(t, string(thumbnail.Status), "waiting", "thumbnail restored to waiting")
-
-	// error path: only failed tasks can be retried
-	err = Retry(ctx, store.client, logger, "retry-c1")
-	testutil.AssertError(t, err, "pending task cannot be retried")
-
-	// error path: consume without on_completed retries without touching anything
-	_, err = createTaskRow(ctx, t, store.client.Queries, "enrich", "", json.RawMessage(`{}`), "retry-e2", "discarded", "")
-	testutil.AssertNoError(t, err, "create second discarded enrich")
-	_, err = createTaskRow(ctx, t, store.client.Queries, "consume", "", json.RawMessage(`{"file_path":"/tmp/x.pdf"}`), "retry-c2", "failed", "")
-	testutil.AssertNoError(t, err, "create failed consume without on_completed")
-
-	err = Retry(ctx, store.client, logger, "retry-c2")
-	testutil.AssertNoError(t, err, "retry without on_completed")
-	enrich, _ = store.GetTaskByTaskID(ctx, "retry-e2")
-	testutil.AssertEqual(t, string(enrich.Status), "discarded", "unlinked enrich untouched")
 }
 
 func TestRunnerCompletesTask(t *testing.T) {
@@ -709,7 +672,7 @@ func TestStoreCompleteBlockingTask_ReleasesLock(t *testing.T) {
 	task, token, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
 	testutil.AssertNoError(t, err, "claim")
 
-	rows, err := store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{"ok":true}`), token)
+	rows, err := store.CompleteTask(ctx, task.TaskType, task.ID, json.RawMessage(`{"ok":true}`), token)
 	testutil.AssertNoError(t, err, "complete")
 	if rows != 1 {
 		t.Fatalf("rows=%d, want 1", rows)
@@ -732,7 +695,7 @@ func TestStoreCompleteBlockingTask_WrongTokenNoop(t *testing.T) {
 	task, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
 	testutil.AssertNoError(t, err, "claim")
 
-	rows, err := store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{}`), uuid.New())
+	rows, err := store.CompleteTask(ctx, task.TaskType, task.ID, json.RawMessage(`{}`), uuid.New())
 	testutil.AssertNoError(t, err, "complete wrong-token")
 	if rows != 0 {
 		t.Fatalf("rows=%d, want 0 (token guard must noop the transition)", rows)
@@ -755,7 +718,7 @@ func TestStoreFailBlockingTask_ReleasesLock(t *testing.T) {
 	task, token, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
 	testutil.AssertNoError(t, err, "claim")
 
-	if err := store.FailBlockingTask(ctx, task.ID, "boom", token); err != nil {
+	if _, err := store.FailTask(ctx, task.TaskType, task.ID, "boom", token); err != nil {
 		t.Fatalf("fail: %v", err)
 	}
 	if lockHeld(t, client) {
@@ -776,7 +739,7 @@ func TestStoreFailBlockingTask_WrongTokenNoop(t *testing.T) {
 	task, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
 	testutil.AssertNoError(t, err, "claim")
 
-	if err := store.FailBlockingTask(ctx, task.ID, "boom", uuid.New()); err != nil {
+	if _, err := store.FailTask(ctx, task.TaskType, task.ID, "boom", uuid.New()); err != nil {
 		t.Fatalf("fail wrong-token: %v", err)
 	}
 	if !lockHeld(t, client) {
@@ -805,7 +768,7 @@ func TestStoreGuardAgainstStaleClaimant(t *testing.T) {
 		t.Fatalf("overwrite task token: %v", err)
 	}
 
-	rows, err := store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{}`), token)
+	rows, err := store.CompleteTask(ctx, task.TaskType, task.ID, json.RawMessage(`{}`), token)
 	testutil.AssertNoError(t, err, "stale complete")
 	if rows != 0 {
 		t.Fatalf("stale complete rows=%d, want 0", rows)
@@ -814,7 +777,7 @@ func TestStoreGuardAgainstStaleClaimant(t *testing.T) {
 		t.Fatal("fresh holder's lock was dropped by a stale claimant's complete")
 	}
 
-	rows, err = store.CompleteBlockingTask(ctx, task.ID, json.RawMessage(`{"ok":true}`), fresh)
+	rows, err = store.CompleteTask(ctx, task.TaskType, task.ID, json.RawMessage(`{"ok":true}`), fresh)
 	testutil.AssertNoError(t, err, "fresh complete")
 	if rows != 1 {
 		t.Fatalf("fresh complete rows=%d, want 1", rows)

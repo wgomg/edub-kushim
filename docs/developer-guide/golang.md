@@ -80,7 +80,7 @@ internal/
   service/crud.go           shared aggregate struct (CrudServices)
   static/                   embedded SvelteKit build
   tags/                     tag store, measurement, coverage audit, policy, reconciliation + the tagmeasure/tagidentity/tagaudit handlers
-  task/                     task engine: registry, transactional enqueue, runner, worker pool, RunBlocking
+  task/                     task engine: registry, transactional enqueue, runner (claim → execute → settle), worker pool
   testutil/                 shared test helpers and mocks
   tools/                    the tool adapter layer + composition root (Runner)
   tools/textreducer/        TextRank-based text reduction adapter
@@ -763,7 +763,7 @@ case <-notifyCh:
 ```
 
 Cancellable backoff selects on both the sleep and the context
-(`task/runner.go:118`):
+(`task/execute.go:118`):
 
 ```go
 select {
@@ -774,7 +774,7 @@ case <-ctx.Done():
 ```
 
 Retries use exponential backoff (50 ms doubling, max 3 attempts) in
-`task/runner.go:98` and `consumption/consumer.go:459`.
+`task/execute.go:197` and `consumption/consumer.go:459`.
 
 ---
 
@@ -1370,7 +1370,7 @@ sticks to `any`.
 | Optional interface discovery | `internal/task/registry.go:28` |
 | Struct embedding | `internal/database/client.go`, `internal/matcher/embedding_store.go`, `internal/auth/claims.go` |
 | Typed errors + `Unwrap` | `internal/errs/errs.go`, `internal/task/errors.go` |
-| `errors.Is`/`errors.As` | `internal/api/handlers/tag.go:17`, `internal/task/runner.go:62` |
+| `errors.Is`/`errors.As` | `internal/api/handlers/tag.go:17`, `internal/task/execute.go:75` |
 | Context values (typed keys) | `internal/auth/claims.go:30`, `internal/api/handlers/parambag.go:110`, `internal/api/server.go:357` |
 | Transactions (defer rollback) | `internal/service/batch.go:400`, `internal/documents/consumption/consumer.go:292` |
 | sqlc generated queries | `internal/database/document.sql.go`, `db.go`, `models.go` |

@@ -70,7 +70,7 @@ WHERE name = ANY(@lock_names::text[])
 SELECT pg_notify('lock_released', released.name)
 FROM unnest(@lock_names::text[]) AS released(name);
 
--- name: QuarantineStaleBlockingTasks :execrows
+-- name: QuarantineStaleBlockingTasks :many
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
@@ -78,7 +78,7 @@ UPDATE task SET
 WHERE task.status = 'processing'
   AND task.task_type = ANY(@types::task_type[])
   AND task.attempts >= @attempts
-  AND task.started_at < @started_at
+  AND task.started_at < NOW() - make_interval(secs => @stale_after_seconds::int)
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY(@lock_names::text[])
@@ -86,7 +86,8 @@ WHERE task.status = 'processing'
       AND (s.data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
       AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
            OR s.data->>'batch_id' = task.batch_id)
-  );
+  )
+RETURNING task_id, task_type;
 
 -- name: ResetStaleBlockingTasks :execrows
 UPDATE task SET
@@ -96,7 +97,7 @@ UPDATE task SET
 WHERE task.status = 'processing'
   AND task.task_type = ANY(@types::task_type[])
   AND task.attempts < @attempts
-  AND task.started_at < @started_at
+  AND task.started_at < NOW() - make_interval(secs => @stale_after_seconds::int)
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY(@lock_names::text[])

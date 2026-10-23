@@ -82,13 +82,9 @@ func NewConfigTaskHandler(queries *database.Queries, logger *log.Logger) *Config
 	return &ConfigTaskHandler{queries: queries, logger: logger}
 }
 
-// Handle runs one download operation, tracking progress on the task row and settling the batch when done.
+// Handle runs one download operation, tracking progress on the task row.
 func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
-	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
-	defer func() {
-		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
-	}()
 
 	var p struct {
 		ConfigDir string `json:"config_dir"`
@@ -135,25 +131,9 @@ func NewMigrateDBTaskHandler(queries *database.Queries, logger *log.Logger) *Mig
 	return &MigrateDBTaskHandler{queries: queries, logger: logger}
 }
 
-// Handle runs the database migration, tracking progress on the task row and settling the batch when done.
+// Handle runs the database migration, tracking progress on the task row.
 func (h *MigrateDBTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
-	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
-	defer func() {
-		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
-	}()
-
-	// a batch-less task has no queued row to coordinate with, so these synthetic invocations skip the claim
-	// bookkeeping
-	if t.BatchID != "" {
-		stop, err := task.HoldClaimed(ctx, h.queries, h.logger, t, "migrate-db", func(count int64) {
-			progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
-		})
-		if err != nil {
-			return nil, err
-		}
-		defer stop()
-	}
 
 	var p MigrateDBPayload
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
@@ -178,26 +158,9 @@ func NewMigrateStorageTaskHandler(queries *database.Queries, logger *log.Logger)
 	return &MigrateStorageTaskHandler{queries: queries, logger: logger}
 }
 
-// Handle runs the storage move, reporting a no-op migration as a result instead of an error, and then
-// settling the batch at the end.
+// Handle runs the storage move, reporting a no-op migration as a result instead of an error.
 func (h *MigrateStorageTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
-	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
-	defer func() {
-		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
-	}()
-
-	// a batch-less task has no queued row to coordinate with, so these synthetic invocations skip the claim
-	// bookkeeping
-	if t.BatchID != "" {
-		stop, err := task.HoldClaimed(ctx, h.queries, h.logger, t, "migrate-storage", func(count int64) {
-			progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
-		})
-		if err != nil {
-			return nil, err
-		}
-		defer stop()
-	}
 
 	var p MigrateStoragePayload
 	if err := json.Unmarshal(t.Payload, &p); err != nil {

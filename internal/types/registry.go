@@ -54,6 +54,11 @@ var lockDeclarations = map[TaskType]LockDeclaration{
 // BatchStatus is the lifecycle state of a batch.
 type BatchStatus string
 
+// Terminal reports whether the status ends a batch's lifecycle, so no transition may leave or overwrite it.
+func (s BatchStatus) Terminal() bool {
+	return s == Batch.Status.Completed || s == Batch.Status.Failed || s == Batch.Status.Cancelled
+}
+
 // TaskType names one kind of unit of work in the queue.
 type TaskType string
 

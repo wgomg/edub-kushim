@@ -8,34 +8,35 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ConsumeTaskHandler consumes one file as a blocking task: it runs the
-// consumer's Process, activates the paired waiting enrich and thumbnail
-// tasks on success, and discards them on failure, best-effort even when
-// the payload does not parse.
+// ConsumeTaskHandler consumes one file as a task: it runs the consumer's Process, activates the paired
+// waiting enrich and thumbnail tasks on success, and discards them on failure, best-effort even when the
+// payload does not parse.
 type ConsumeTaskHandler struct {
 	consumer *Consumer
 	store    *task.Store
 	queries  *database.Queries
 	logger   *log.Logger
+	catalog  task.TypeCatalog
 }
 
-// NewConsumeTaskHandler wires the handler to the consumer, the task store
-// and the queries.
-func NewConsumeTaskHandler(consumer *Consumer, store *task.Store, queries *database.Queries, logger *log.Logger) *ConsumeTaskHandler {
+// NewConsumeTaskHandler wires the handler to the consumer, the task store, the queries and the task type
+// catalog the activation path derives the children's dedup keys from.
+func NewConsumeTaskHandler(consumer *Consumer, store *task.Store, queries *database.Queries, logger *log.Logger, catalog task.TypeCatalog) *ConsumeTaskHandler {
 	return &ConsumeTaskHandler{
 		consumer: consumer,
 		store:    store,
 		queries:  queries,
 		logger:   logger,
+		catalog:  catalog,
 	}
 }
 
-// Handle consumes the payload's file and returns the document's storage
-// path as the task result; the waiting children activate only when the
-// document row was committed, and are discarded with the parent on
-// failure.
+// Handle consumes the payload's file and returns the document's storage path as the task result; the
+// waiting children activate only when the document row was committed, and are discarded with the parent
+// on failure.
 func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 
@@ -137,8 +138,16 @@ func (h *ConsumeTaskHandler) activateChildEnrich(
 	p["document_id"] = documentID
 	updatedPayload, _ := json.Marshal(p)
 
-	if err := h.store.SetPending(ctx, enrichTask.ID, updatedPayload); err != nil {
+	dedupKey, err := h.childDedupKey(enrichTask.TaskType, updatedPayload)
+	if err != nil {
 		return fmt.Errorf("activate enrich task %s: %w", enrichTask.TaskID, err)
+	}
+	outcome, err := h.store.ActivateChild(ctx, enrichTask.ID, updatedPayload, dedupKey)
+	if err != nil {
+		return fmt.Errorf("activate enrich task %s: %w", enrichTask.TaskID, err)
+	}
+	if outcome == task.DiscardedDuplicate {
+		h.logger.Info("", "enrich task %s discarded: live work already covers its dedup key", enrichTask.TaskID)
 	}
 	return nil
 }
@@ -210,10 +219,37 @@ func (h *ConsumeTaskHandler) activateChildThumbnail(
 	p["storage_path"] = storagePath
 	updatedPayload, _ := json.Marshal(p)
 
-	if err := h.store.SetPending(ctx, thumbTask.ID, updatedPayload); err != nil {
+	dedupKey, err := h.childDedupKey(thumbTask.TaskType, updatedPayload)
+	if err != nil {
 		return fmt.Errorf("activate thumbnail task %s: %w", thumbTask.TaskID, err)
 	}
+	outcome, err := h.store.ActivateChild(ctx, thumbTask.ID, updatedPayload, dedupKey)
+	if err != nil {
+		return fmt.Errorf("activate thumbnail task %s: %w", thumbTask.TaskID, err)
+	}
+	if outcome == task.DiscardedDuplicate {
+		h.logger.Info("", "thumbnail task %s discarded: live work already covers its dedup key", thumbTask.TaskID)
+	}
 	return nil
+}
+
+// childDedupKey derives a waiting child's dedup key from its type definition, the same derivation the
+// enqueue applies to pending work, so activation and enqueue agree on what a duplicate is. A missing
+// definition or an empty derived key (for example a payload without document id) fails the activation
+// instead of writing a keyless child that would bypass the duplicate protection.
+func (h *ConsumeTaskHandler) childDedupKey(taskType types.TaskType, payload json.RawMessage) (string, error) {
+	def, err := h.catalog.Definition(taskType)
+	if err != nil {
+		return "", fmt.Errorf("definition for %s: %w", taskType, err)
+	}
+	if def.DedupKey == nil {
+		return "", fmt.Errorf("task type %s declares no dedup key", taskType)
+	}
+	key := def.DedupKey(payload)
+	if key == "" {
+		return "", fmt.Errorf("task type %s derived an empty dedup key (missing document id?)", taskType)
+	}
+	return key, nil
 }
 
 func (h *ConsumeTaskHandler) deactivateChildThumbnail(

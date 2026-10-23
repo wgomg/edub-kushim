@@ -20,7 +20,7 @@ func taskHandler(c *container.Container, args []string) error {
 			"Subcommands:\n" +
 			"  list              list tasks (--batch, --status, --limit, --offset)\n" +
 			"  status <task-id>  show task details and error if failed\n" +
-			"  retry  <task-id>  re-enqueue a failed task as pending")
+			"  retry  <task-id>  resume the batch of a failed task")
 		if len(args) == 0 {
 			return fmt.Errorf("task requires a subcommand")
 		}
@@ -176,8 +176,8 @@ func taskRetryHandler(c *container.Container, args []string) error {
 	}
 	if args[0] == "--help" || args[0] == "-h" {
 		fmt.Println("Usage: kushim task retry <task-id>\n\n" +
-			"  Re-enqueue a failed task. Its status is reset to 'pending'\n" +
-			"  so a worker can pick it up on the next poll cycle.\n" +
+			"  Retry a failed task by resuming its batch with the failed tasks\n" +
+			"  reset to pending, so a worker picks them up on the next claim.\n" +
 			"  Only failed tasks can be retried.")
 		return nil
 	}
@@ -187,10 +187,15 @@ func taskRetryHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	if err := task.Retry(context.Background(), client, c.GetLogger(), args[0]); err != nil {
+	ctx := context.Background()
+	maxRetries := int32(c.GetConfig().Consumer.Reclaim.MaxRetries)
+	if err := task.RetryTask(ctx, client, c.GetLogger(), args[0], maxRetries); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return fmt.Errorf("task %q not found", args[0])
+		}
 		return err
 	}
 
-	fmt.Printf("Task %q retried — status reset to pending\n", args[0])
+	fmt.Printf("Task %q retried — its batch requeued\n", args[0])
 	return nil
 }

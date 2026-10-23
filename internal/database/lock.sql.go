@@ -110,7 +110,7 @@ func (q *Queries) NotifyLocksReleased(ctx context.Context, lockNames []string) e
 	return err
 }
 
-const quarantineStaleBlockingTasks = `-- name: QuarantineStaleBlockingTasks :execrows
+const quarantineStaleBlockingTasks = `-- name: QuarantineStaleBlockingTasks :many
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
@@ -118,7 +118,7 @@ UPDATE task SET
 WHERE task.status = 'processing'
   AND task.task_type = ANY($1::task_type[])
   AND task.attempts >= $2
-  AND task.started_at < $3
+  AND task.started_at < NOW() - make_interval(secs => $3::int)
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY($4::text[])
@@ -127,26 +127,47 @@ WHERE task.status = 'processing'
       AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
            OR s.data->>'batch_id' = task.batch_id)
   )
+RETURNING task_id, task_type
 `
 
 type QuarantineStaleBlockingTasksParams struct {
-	Types     []types.TaskType
-	Attempts  int32
-	StartedAt sql.NullTime
-	LockNames []string
+	Types             []types.TaskType
+	Attempts          int32
+	StaleAfterSeconds int32
+	LockNames         []string
 }
 
-func (q *Queries) QuarantineStaleBlockingTasks(ctx context.Context, arg QuarantineStaleBlockingTasksParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, quarantineStaleBlockingTasks,
+type QuarantineStaleBlockingTasksRow struct {
+	TaskID   string
+	TaskType types.TaskType
+}
+
+func (q *Queries) QuarantineStaleBlockingTasks(ctx context.Context, arg QuarantineStaleBlockingTasksParams) ([]QuarantineStaleBlockingTasksRow, error) {
+	rows, err := q.db.QueryContext(ctx, quarantineStaleBlockingTasks,
 		pq.Array(arg.Types),
 		arg.Attempts,
-		arg.StartedAt,
+		arg.StaleAfterSeconds,
 		pq.Array(arg.LockNames),
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	var items []QuarantineStaleBlockingTasksRow
+	for rows.Next() {
+		var i QuarantineStaleBlockingTasksRow
+		if err := rows.Scan(&i.TaskID, &i.TaskType); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const releaseLocksForBatch = `-- name: ReleaseLocksForBatch :many
@@ -273,7 +294,7 @@ UPDATE task SET
 WHERE task.status = 'processing'
   AND task.task_type = ANY($1::task_type[])
   AND task.attempts < $2
-  AND task.started_at < $3
+  AND task.started_at < NOW() - make_interval(secs => $3::int)
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY($4::text[])
@@ -285,17 +306,17 @@ WHERE task.status = 'processing'
 `
 
 type ResetStaleBlockingTasksParams struct {
-	Types     []types.TaskType
-	Attempts  int32
-	StartedAt sql.NullTime
-	LockNames []string
+	Types             []types.TaskType
+	Attempts          int32
+	StaleAfterSeconds int32
+	LockNames         []string
 }
 
 func (q *Queries) ResetStaleBlockingTasks(ctx context.Context, arg ResetStaleBlockingTasksParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, resetStaleBlockingTasks,
 		pq.Array(arg.Types),
 		arg.Attempts,
-		arg.StartedAt,
+		arg.StaleAfterSeconds,
 		pq.Array(arg.LockNames),
 	)
 	if err != nil {

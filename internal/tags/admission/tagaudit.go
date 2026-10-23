@@ -25,18 +25,17 @@ func NewTagAuditTaskHandler(queries *database.Queries, logger *log.Logger) *TagA
 
 // Handle forks the tagaudit verb for the task's batch and returns its report as the task result.
 func (h *TagAuditTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
-	return task.RunBlocking(ctx, h.queries, h.logger, t, "tag audit", func(progress *task.ProgressTracker) (json.RawMessage, error) {
-		progress.Set("run", "tagaudit --run "+t.BatchID, 0)
-		result, err := tags.ForkAndExtractReport("tagaudit", t.BatchID, AuditReportPrefix, "tag audit")
-		if err != nil {
-			return nil, err
-		}
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+	progress.Set("run", "tagaudit --run "+t.BatchID, 0)
+	result, err := tags.ForkAndExtractReport("tagaudit", t.BatchID, AuditReportPrefix, "tag audit")
+	if err != nil {
+		return nil, err
+	}
 
-		var report AuditReport
-		if parseErr := json.Unmarshal(result, &report); parseErr == nil {
-			h.logger.Info("", "tag audit run %s: sweep=%d sampled=%d flagged=%d fills=%d flags=%d pending_coverage=%d",
-				report.RunID, report.SweepCount, report.Sampled, report.Flagged, report.Fills, report.Flags, report.PendingCoverage)
-		}
-		return result, nil
-	})
+	var report AuditReport
+	if parseErr := json.Unmarshal(result, &report); parseErr == nil {
+		h.logger.Info("", "tag audit run %s: sweep=%d sampled=%d flagged=%d fills=%d flags=%d pending_coverage=%d",
+			report.RunID, report.SweepCount, report.Sampled, report.Flagged, report.Fills, report.Flags, report.PendingCoverage)
+	}
+	return result, nil
 }

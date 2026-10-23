@@ -255,6 +255,8 @@ func (c *Container) ensureTaskWiring() error {
 	store := task.NewStore(client)
 	c.store = store
 
+	c.catalog = NewCatalog(client.Queries)
+
 	consumer, err := consumption.NewConsumer(c.cfg.Load(), c.logger, client)
 	if err != nil {
 		return err
@@ -263,7 +265,7 @@ func (c *Container) ensureTaskWiring() error {
 	enricher := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.tag, matcherClient)
 
 	registry := task.NewRegistry()
-	registry.Register(types.Task.Type.Consume, consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger))
+	registry.Register(types.Task.Type.Consume, consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger, c.catalog))
 	registry.Register(types.Task.Type.Enrich, enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
 	thumbnailHandler := consumption.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() })
 	registry.Register(types.Task.Type.Thumbnail, thumbnailHandler)
@@ -278,7 +280,6 @@ func (c *Container) ensureTaskWiring() error {
 	registry.Register(types.Task.Type.TagIdentity, admission.NewTagIdentityTaskHandler(client.Queries, c.logger))
 	registry.Register(types.Task.Type.TagAudit, admission.NewTagAuditTaskHandler(client.Queries, c.logger))
 
-	c.catalog = NewCatalog(client.Queries)
 	c.enqueuer = task.NewEnqueuer(client, c.catalog)
 	c.runner = task.NewRunner(store, registry, c.logger)
 

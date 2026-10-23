@@ -71,7 +71,34 @@ func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *task
 	testutil.AssertNoError(t, err, "create consumer")
 
 	store := task.NewStore(client)
-	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, logger), store, client
+	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, logger, testTypeCatalog{}), store, client
+}
+
+// testTypeCatalog derives the enrich and thumbnail dedup keys the production catalog declares, so the
+// activation path under test writes the same keys the enqueue would.
+type testTypeCatalog struct{}
+
+func (testTypeCatalog) Definition(taskType types.TaskType) (task.TypeDefinition, error) {
+	switch taskType {
+	case types.Task.Type.Enrich:
+		return task.TypeDefinition{Type: taskType, DedupKey: documentDedupKey("enrich:doc:")}, nil
+	case types.Task.Type.Thumbnail:
+		return task.TypeDefinition{Type: taskType, DedupKey: documentDedupKey("thumbnail:doc:")}, nil
+	default:
+		return task.TypeDefinition{}, fmt.Errorf("unknown task type: %q", taskType)
+	}
+}
+
+func documentDedupKey(prefix string) func(json.RawMessage) string {
+	return func(payload json.RawMessage) string {
+		var p struct {
+			DocumentID string `json:"document_id"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil || p.DocumentID == "" {
+			return ""
+		}
+		return prefix + p.DocumentID
+	}
 }
 
 // insertConsumeEnrichPair creates a waiting enrich linked to a pending consume

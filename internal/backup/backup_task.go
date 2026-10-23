@@ -47,48 +47,48 @@ type BackupPayload struct {
 // Handle runs the configured backup schedules that are due, creates their
 // archives and applies retention, and returns the run's summary.
 func (h *BackupTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
-	return task.RunBlocking(ctx, h.queries, h.logger, t, "backup", func(progress *task.ProgressTracker) (json.RawMessage, error) {
-		var payload BackupPayload
-		if len(t.Payload) > 0 {
-			if err := json.Unmarshal(t.Payload, &payload); err != nil {
-				return nil, fmt.Errorf("parse backup payload: %w", err)
-			}
+	progress := task.NewProgressTracker(h.queries, t.TaskID)
+
+	var payload BackupPayload
+	if len(t.Payload) > 0 {
+		if err := json.Unmarshal(t.Payload, &payload); err != nil {
+			return nil, fmt.Errorf("parse backup payload: %w", err)
 		}
-		mode := BackupMode(payload.Mode)
-		if mode == "" {
-			mode = BackupModeFull
-		}
+	}
+	mode := BackupMode(payload.Mode)
+	if mode == "" {
+		mode = BackupModeFull
+	}
 
-		cfg := h.getConfig()
-		backupDir, err := resolveBackupPath(payload.Path, cfg)
-		if err != nil {
-			return nil, err
-		}
-		keep := max(payload.Keep, 0)
-		configPath := filepath.Join(cfg.App.ConfigDir, "config.yaml")
+	cfg := h.getConfig()
+	backupDir, err := resolveBackupPath(payload.Path, cfg)
+	if err != nil {
+		return nil, err
+	}
+	keep := max(payload.Keep, 0)
+	configPath := filepath.Join(cfg.App.ConfigDir, "config.yaml")
 
-		h.logger.Info("", "starting scheduled backup (mode=%s)", mode)
+	h.logger.Info("", "starting scheduled backup (mode=%s)", mode)
 
-		progress.Set("snapshot", fmt.Sprintf("%s → %s", mode, backupDir), 0)
-		result, err := Create(ctx, h.db, database.SchemaFS, mode, backupDir, configPath, cfg.Storage.StorageDir)
-		if err != nil {
-			return nil, fmt.Errorf("backup failed: %w", err)
-		}
+	progress.Set("snapshot", fmt.Sprintf("%s → %s", mode, backupDir), 0)
+	result, err := Create(ctx, h.db, database.SchemaFS, mode, backupDir, configPath, cfg.Storage.StorageDir)
+	if err != nil {
+		return nil, fmt.Errorf("backup failed: %w", err)
+	}
 
-		progress.Set("retention", "", 0)
-		if err := ApplyRetention(backupDir, mode, keep); err != nil {
-			h.logger.Error("", "retention cleanup: %v", err)
-		}
+	progress.Set("retention", "", 0)
+	if err := ApplyRetention(backupDir, mode, keep); err != nil {
+		h.logger.Error("", "retention cleanup: %v", err)
+	}
 
-		h.logger.Info("", "backup completed: %s (%d bytes)", result.Path, result.SizeBytes)
+	h.logger.Info("", "backup completed: %s (%d bytes)", result.Path, result.SizeBytes)
 
-		raw, err := json.Marshal(result)
-		if err != nil {
-			return nil, fmt.Errorf("marshal result: %w", err)
-		}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
 
-		return raw, nil
-	})
+	return raw, nil
 }
 
 func resolveBackupPath(payloadPath string, cfg *config.Config) (string, error) {

@@ -11,13 +11,17 @@ SELECT * FROM task WHERE batch_id = $1 ORDER BY created_at;
 SELECT id FROM task WHERE status = 'pending' ORDER BY created_at LIMIT 1;
 
 -- name: GetNextPendingTaskOfType :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = @task_type
+-- a task whose batch is missing or is not queued/processing is not claimable; without this filter one such
+-- row would be selected forever and stall the whole task type
+SELECT t.id FROM task t
+WHERE t.status = 'pending' AND t.task_type = @task_type
+  AND (t.batch_id IS NULL
+       OR EXISTS (SELECT 1 FROM batch b WHERE b.id = t.batch_id AND b.status IN ('queued', 'processing')))
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY(@wait_locks::text[]) AND lock_is_held(s.name)
   )
-ORDER BY created_at LIMIT 1;
+ORDER BY t.created_at LIMIT 1;
 
 -- name: ListBatchTaskTypes :many
 SELECT DISTINCT task_type FROM task WHERE batch_id = $1 ORDER BY task_type;
@@ -153,21 +157,6 @@ WHERE id = $2 AND status = 'processing' AND claim_token = $3;
 UPDATE task SET progress = $2
 WHERE task_id = $1 AND status = 'processing';
 
--- name: CompleteTask :execrows
-UPDATE task SET
-    status = 'completed',
-    result = $1,
-    completed_at = CURRENT_TIMESTAMP,
-    attempts = 0
-WHERE id = $2 AND status = 'processing';
-
--- name: FailTask :exec
-UPDATE task SET
-    status = 'failed',
-    completed_at = CURRENT_TIMESTAMP,
-    error = $1
-WHERE id = $2;
-
 -- name: RetryFailedTasksByBatch :execrows
 UPDATE task SET
     status = 'pending',
@@ -187,17 +176,6 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
 FROM task WHERE task_type = @task_type AND dedup_key = @dedup_key
 ORDER BY created_at DESC LIMIT 1;
 
--- name: RetryTask :exec
-UPDATE task SET
-    status = 'pending',
-    result = NULL,
-    error = NULL,
-    progress = NULL,
-    started_at = NULL,
-    completed_at = NULL,
-    attempts = 0
-WHERE id = $1;
-
 -- name: DeleteConfigTaskByDedupKey :execrows
 DELETE FROM task
 WHERE task_type = @task_type AND dedup_key = @dedup_key
@@ -206,10 +184,11 @@ WHERE task_type = @task_type AND dedup_key = @dedup_key
 -- name: SetEnrichTaskPending :exec
 UPDATE task SET
     status = 'pending',
-    payload = $1,
+    payload = @payload,
+    dedup_key = @dedup_key,
     error = NULL,
     completed_at = NULL
-WHERE id = $2 AND status IN ('waiting', 'discarded') AND task_type IN ('enrich', 'thumbnail');
+WHERE id = @id AND status IN ('waiting', 'discarded') AND task_type IN ('enrich', 'thumbnail');
 
 -- name: DiscardEnrichTask :execrows
 UPDATE task SET
@@ -242,25 +221,27 @@ WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'discarded'
   AND c.batch_id = $1
   AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 
--- name: DiscardWaitingEnrichesOfFailedConsumes :execrows
+-- a waiting child whose parent consume is no longer pending or processing can never be activated: the parent
+-- completed without activating it, failed, or was cancelled, so the waiting row would strand the settle
+-- name: DiscardOrphanedWaitingEnriches :execrows
 UPDATE task AS e
 SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = COALESCE(c.error, 'parent consume task failed')
+    error = COALESCE(c.error, 'parent consume task did not complete')
 FROM task AS c
 WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
-  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND c.task_type = 'consume' AND c.status NOT IN ('pending', 'processing')
   AND c.batch_id = $1
   AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 
--- name: DiscardWaitingEnrichesOfFailedConsumesGlobal :execrows
+-- name: DiscardOrphanedWaitingEnrichesGlobal :execrows
 UPDATE task AS e
 SET status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = COALESCE(c.error, 'parent consume task failed')
+    error = COALESCE(c.error, 'parent consume task did not complete')
 FROM task AS c
 WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
-  AND c.task_type = 'consume' AND c.status = 'failed'
+  AND c.task_type = 'consume' AND c.status NOT IN ('pending', 'processing')
   AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail');
 
 -- name: DiscardEnrichTaskByTaskID :execrows
@@ -275,7 +256,7 @@ DELETE FROM task WHERE id = $1;
 
 -- name: CancelPendingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
-WHERE batch_id = $1 AND status = 'pending';
+WHERE batch_id = $1 AND status IN ('pending', 'waiting');
 
 -- name: CancelProcessingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
@@ -304,20 +285,23 @@ SELECT COUNT(*) FROM task;
 -- name: CountTasksByStatus :many
 SELECT status, COUNT(*) as count FROM task GROUP BY status;
 
--- name: QuarantineStaleProcessingTasks :execrows
+-- name: QuarantineStaleProcessingTasks :many
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE status = 'processing' AND attempts >= $1 AND started_at < $2
-  AND task_type <> ALL(@types::task_type[]);
+WHERE status = 'processing' AND attempts >= @attempts
+  AND started_at < NOW() - make_interval(secs => @stale_after_seconds::int)
+  AND task_type <> ALL(@types::task_type[])
+RETURNING task_id, task_type;
 
 -- name: ResetStaleProcessingTasks :execrows
 UPDATE task SET
     status = 'pending',
     attempts = attempts + 1,
     progress = NULL
-WHERE status = 'processing' AND attempts < $1 AND started_at < $2
+WHERE status = 'processing' AND attempts < @attempts
+  AND started_at < NOW() - make_interval(secs => @stale_after_seconds::int)
   AND task_type <> ALL(@types::task_type[]);
 
 -- name: CountRecentBackupTasksByMode :one

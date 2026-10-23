@@ -5,20 +5,29 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
+	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// StaleAfter is how long a batch owner may go without a heartbeat before
-// its ownership counts as stale.
-const StaleAfter = 15 * time.Second
+// LeaseStaleSeconds is the lease staleness window every lease-liveness query compares against, evaluated by
+// the database clock.
+const LeaseStaleSeconds int32 = 15
 
 // ErrBatchLocked reports a batch owner collision with a live owner.
 var ErrBatchLocked = errors.New("batch is locked by a live owner")
+
+// ErrBatchTerminal reports a lifecycle operation that a terminal batch cannot accept.
+var ErrBatchTerminal = errors.New("batch is terminal")
+
+// ErrBatchNotResumable reports a resume request on a batch that is queued or processing.
+var ErrBatchNotResumable = errors.New("batch is not resumable")
+
+// ErrBatchNotFound reports a lifecycle operation on a batch that does not exist.
+var ErrBatchNotFound = errors.New("batch not found")
 
 // OwnerState is the liveness of a batch's owner: none, live, or stale.
 type OwnerState int
@@ -43,27 +52,77 @@ func (s OwnerState) String() string {
 	}
 }
 
-// Owner claims and holds batch ownership: Acquire takes the row or reports
-// it live or stale, Heartbeat keeps it alive, and Release gives it up. The
-// consume driver and the blocking-task protocol use it.
+// Execution authorizes the lifecycle writes of one run: the lease owner for a leased execution and the
+// task claim token for a pool execution. Settle, pause and the task transitions refuse a write whose
+// batch is no longer in the state the guard expects, so a stale executor cannot overwrite the run that
+// replaced it.
+type Execution struct {
+	BatchID string
+	Guard   uuid.UUID
+	Leased  bool
+}
+
+// TaskIdentity names one task by its public id and type, the durable identity the recovery paths use
+// instead of error-text matching.
+type TaskIdentity struct {
+	TaskID   string
+	TaskType types.TaskType
+}
+
+// ResetResult reports one batch reset: the processing tasks requeued and the tasks the reset quarantined
+// (failed because their attempts were exhausted).
+type ResetResult struct {
+	Reset       int64
+	Quarantined []TaskIdentity
+}
+
+// ConsumeTaskIDs returns the quarantined consume task ids, the only identities whose inbox file a quarantine
+// has to move.
+func (r ResetResult) ConsumeTaskIDs() []string {
+	ids := make([]string, 0, len(r.Quarantined))
+	for _, identity := range r.Quarantined {
+		if identity.TaskType == types.Task.Type.Consume {
+			ids = append(ids, identity.TaskID)
+		}
+	}
+	return ids
+}
+
+// CancelResult reports one cancel: the tasks cancelled by status and what became of the live executor.
+// PendingCancelled includes the waiting tasks, which a cancel takes with their parent. OwnerPID and
+// OwnerAlive describe the lease holder the cancel found; OwnerPID is zero when the batch carries no lease.
+type CancelResult struct {
+	PendingCancelled    int64
+	ProcessingCancelled int64
+	OwnerPID            int64
+	OwnerAlive          bool
+	Signalled           bool
+}
+
+// ResumeResult reports one resume: whether the batch was requeued, the processing tasks reset and the
+// failed tasks retried.
+type ResumeResult struct {
+	Resumed       bool
+	Reset         int64
+	FailedRetried int64
+}
+
+// Owner claims and holds batch ownership: Acquire takes the row or reports it live or stale, Heartbeat
+// keeps it alive, and Release gives it up. The consume driver uses it.
 type Owner struct {
-	queries    *database.Queries
-	ownerID    string
-	pid        int
-	logger     *log.Logger
-	client     *database.Client
-	maxRetries int32
+	queries *database.Queries
+	ownerID string
+	pid     int
+	logger  *log.Logger
 }
 
-// NewOwner prepares a batch owner; maxRetries bounds claim contention
-// retries. logger must be non-nil: every log site dereferences it without
-// a guard.
-func NewOwner(c *database.Client, ownerID string, pid int, logger *log.Logger, maxRetries int) *Owner {
-	return &Owner{queries: c.Queries, ownerID: ownerID, pid: pid, logger: logger, client: c, maxRetries: int32(maxRetries)}
+// NewOwner prepares a batch owner. logger must be non-nil: every log site dereferences it without a guard.
+func NewOwner(c *database.Client, ownerID string, pid int, logger *log.Logger) *Owner {
+	return &Owner{queries: c.Queries, ownerID: ownerID, pid: pid, logger: logger}
 }
 
-// Acquire takes a batch's ownership row, taking over one whose heartbeat is
-// older than StaleAfter and refusing a live one with ErrBatchLocked.
+// Acquire takes a batch's ownership row, taking over one whose heartbeat is stale (by the database clock)
+// and refusing a live one with ErrBatchLocked.
 func (o *Owner) Acquire(ctx context.Context, batchID string) error {
 	rows, err := o.queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
 		BatchID: batchID,
@@ -77,13 +136,11 @@ func (o *Owner) Acquire(ctx context.Context, batchID string) error {
 		return nil
 	}
 
-	cutoff := time.Now().Add(-StaleAfter)
 	rows, err = o.queries.UpdateBatchOwnerIfStale(ctx, database.UpdateBatchOwnerIfStaleParams{
-		OwnerID:       o.ownerID,
-		OwnerID_2:     o.ownerID,
-		Pid:           int64(o.pid),
-		BatchID:       batchID,
-		LastHeartbeat: cutoff,
+		OwnerID:           o.ownerID,
+		Pid:               int64(o.pid),
+		BatchID:           batchID,
+		StaleAfterSeconds: LeaseStaleSeconds,
 	})
 	if err != nil {
 		return fmt.Errorf("update stale batch owner: %w", err)
@@ -95,8 +152,8 @@ func (o *Owner) Acquire(ctx context.Context, batchID string) error {
 	return nil
 }
 
-// AcquireForce takes the ownership row regardless of who holds it, for
-// the takeover paths the cancel protocol drives.
+// AcquireForce takes the ownership row regardless of who holds it, for the takeover paths the cancel
+// protocol drives.
 func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
 	rows, err := o.queries.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
 		BatchID: batchID,
@@ -112,8 +169,8 @@ func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
 	return nil
 }
 
-// Heartbeat renews the owner's timestamp, returning the still-live
-// owner rows it saw (a zero row count means this owner's row is gone).
+// Heartbeat renews the owner's timestamp, returning the still-live owner rows it saw (a zero row count
+// means this owner's row is gone).
 func (o *Owner) Heartbeat(ctx context.Context) (int64, error) {
 	rows, err := o.queries.HeartbeatBatchOwner(ctx, o.ownerID)
 	if err != nil {
@@ -134,122 +191,373 @@ func (o *Owner) Release(ctx context.Context, batchID string) error {
 	return nil
 }
 
-// ResetProcessingByBatch re-queues a batch's processing tasks.
-func (o *Owner) ResetProcessingByBatch(ctx context.Context, batchID string) (int64, error) {
-	tx, err := o.client.BeginTx(ctx, nil)
+// ResetProcessingTasksByBatch re-queues a batch's processing tasks and reports what the reset quarantined.
+func ResetProcessingTasksByBatch(ctx context.Context, client *database.Client, batchID string, maxRetries int32) (ResetResult, error) {
+	tx, err := client.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("begin transaction for reset processing tasks by batch: %w", err)
+		return ResetResult{}, fmt.Errorf("begin transaction for reset processing tasks by batch: %w", err)
 	}
 	defer tx.Rollback()
 
-	bid := sql.NullString{String: batchID, Valid: true}
-	txQ := o.client.Queries.WithTx(tx)
-
-	if err := ReleaseLocksForBatch(ctx, txQ, batchID); err != nil {
-		return 0, fmt.Errorf("release locks for batch: %w", err)
-	}
-
-	quarantined, err := txQ.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
-		BatchID:  bid,
-		Attempts: o.maxRetries,
-	})
+	result, err := resetProcessingTx(ctx, client.Queries.WithTx(tx), batchID, maxRetries)
 	if err != nil {
-		return 0, fmt.Errorf("quarantine processing tasks by batch: %w", err)
-	}
-
-	reset, err := txQ.ResetProcessingTasksByBatch(ctx, database.ResetProcessingTasksByBatchParams{
-		BatchID:  bid,
-		Attempts: o.maxRetries,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("reset processing tasks by batch: %w", err)
-	}
-
-	if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
-		return 0, fmt.Errorf("restore discarded enrich tasks by batch: %w", err)
+		return ResetResult{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit transaction for reset processing tasks by batch: %w", err)
+		return ResetResult{}, fmt.Errorf("commit transaction for reset processing tasks by batch: %w", err)
 	}
-
-	return quarantined + reset, nil
+	return result, nil
 }
 
-// CleanupCompleted removes the ownership rows of completed batches.
-func (o *Owner) CleanupCompleted(ctx context.Context) error {
-	_, err := o.queries.CleanupCompletedBatches(ctx)
-	if err != nil {
-		return fmt.Errorf("cleanup completed batches: %w", err)
-	}
-	return nil
-}
-
-// IsOrphaned decides whether a batch needs takeover: the owner state and
-// the pending and processing counts together say whether a dead owner left
-// work behind.
+// IsOrphaned decides whether a batch needs takeover: the owner state and the pending and processing
+// counts together say whether a dead owner left work behind.
 func IsOrphaned(state OwnerState, pending, processing int64) bool {
 	return state != OwnerLive && (pending > 0 || processing > 0)
 }
 
-// MarkBatchProcessing moves a batch to processing, ignoring rows that no
-// longer exist; a failed write is logged, not returned. It and
-// FinalizeBatchStatus are the best-effort bookends of the blocking-task
-// protocol, called from defers with a non-nil logger.
-func MarkBatchProcessing(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string) {
-	if batchID == "" {
-		return
-	}
-	if err := queries.SetBatchProcessing(ctx, batchID); err != nil {
-		logger.Error("", "mark batch %s processing failed: %v", batchID, err)
-	}
+// IsAlive reports whether a PID belongs to a live process; a non-positive pid is never alive, since kill(0)
+// targets the caller's own process group and a negative pid targets another group.
+func IsAlive(pid int64) bool {
+	return pid > 0 && syscall.Kill(int(pid), 0) == nil
 }
 
-// FinalizeBatchStatus settles a batch as completed or failed based on the
-// body's error, once no sibling task is still pending or waiting, and logs
-// one INFO summary line with the settle status and the
-// completed/failed/cancelled task counts. A failed count query or status
-// write is logged, not returned, and never blocks the settle; logger must
-// be non-nil.
-func FinalizeBatchStatus(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string, failed bool) {
-	if batchID == "" {
-		return
+// SettleBatch writes a batch's terminal status once its work is over and its execution guard still authorizes
+// it. The write itself refuses while any pending, processing or waiting task remains, and settles failed when
+// any task failed, otherwise completed. A terminal batch is immutable and returns its stored status without a
+// write. The settle transaction also releases the batch's locks; the execution releases its own lease on
+// teardown, and the reaper releases a stale one before settling. logger must be non-nil.
+func SettleBatch(ctx context.Context, client *database.Client, logger *log.Logger, exec Execution) (types.BatchStatus, error) {
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin settle transaction for batch %s: %w", exec.BatchID, err)
 	}
-	bid := sql.NullString{String: batchID, Valid: true}
-	for _, status := range []types.TaskStatus{types.Task.Status.Pending, types.Task.Status.Waiting} {
-		count, err := queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
-			BatchID: bid,
-			Status:  status,
-		})
-		if err != nil {
-			logger.Error("", "finalize batch %s: count %s tasks: %v", batchID, status, err)
-			return
+	defer tx.Rollback()
+
+	txQ := client.Queries.WithTx(tx)
+	status, err := txQ.SettleBatch(ctx, database.SettleBatchParams{
+		ID:      exec.BatchID,
+		OwnerID: executionOwner(exec),
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			current, readErr := txQ.GetBatch(ctx, exec.BatchID)
+			if readErr != nil {
+				return "", fmt.Errorf("read batch %s after refused settle: %w", exec.BatchID, readErr)
+			}
+			return current.Status, nil
 		}
-		if count > 0 {
-			return
-		}
-	}
-	status := types.Batch.Status.Completed
-	if failed {
-		status = types.Batch.Status.Failed
-		if err := queries.SetBatchFailed(ctx, batchID); err != nil {
-			logger.Error("", "finalize batch %s as failed: %v", batchID, err)
-		}
-	} else if err := queries.SetBatchCompleted(ctx, batchID); err != nil {
-		logger.Error("", "finalize batch %s as completed: %v", batchID, err)
+		return "", fmt.Errorf("settle batch %s: %w", exec.BatchID, err)
 	}
 
-	counts := make([]string, 0, 3)
-	for _, taskStatus := range []types.TaskStatus{types.Task.Status.Completed, types.Task.Status.Failed, types.Task.Status.Cancelled} {
-		count, err := queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
-			BatchID: bid,
-			Status:  taskStatus,
-		})
-		if err != nil {
-			logger.Error("", "finalize batch %s: count %s tasks: %v", batchID, taskStatus, err)
-			return
-		}
-		counts = append(counts, fmt.Sprintf("%d %s", count, taskStatus))
+	if err := ReleaseLocksForBatch(ctx, txQ, exec.BatchID); err != nil {
+		return status, err
 	}
-	logger.Info("", "batch %s settled as %s: %s", batchID, status, strings.Join(counts, ", "))
+	if err := tx.Commit(); err != nil {
+		return status, fmt.Errorf("commit settle transaction for batch %s: %w", exec.BatchID, err)
+	}
+
+	counts, err := client.Queries.BatchTaskStatusCounts(ctx, sql.NullString{String: exec.BatchID, Valid: true})
+	if err != nil {
+		logger.Error("", "settle batch %s: count tasks: %v", exec.BatchID, err)
+		return status, nil
+	}
+	logSettled(logger, exec.BatchID, status, counts)
+	return status, nil
+}
+
+// PauseBatch moves a processing batch to paused and releases its locks and lease. It authorizes like the
+// settle: a leased execution must still own the lease and a pool execution must still hold a claim of the
+// batch, so a stale executor cannot pause the run that replaced it. A refused pause (another owner, a
+// terminal batch or a batch that is no longer processing) leaves everything untouched and reports nil. The
+// leased child's poll loop stops on the paused status, and with the lease gone its owner-scoped claims find
+// nothing. logger must be non-nil.
+func PauseBatch(ctx context.Context, client *database.Client, logger *log.Logger, exec Execution) error {
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin pause transaction for batch %s: %w", exec.BatchID, err)
+	}
+	defer tx.Rollback()
+
+	txQ := client.Queries.WithTx(tx)
+	rows, err := txQ.SetBatchPaused(ctx, database.SetBatchPausedParams{
+		ID:         exec.BatchID,
+		OwnerID:    executionOwner(exec),
+		ClaimToken: pauseClaimToken(exec),
+	})
+	if err != nil {
+		return fmt.Errorf("pause batch %s: %w", exec.BatchID, err)
+	}
+	if rows == 0 {
+		return nil
+	}
+	if err := ReleaseLocksForBatch(ctx, txQ, exec.BatchID); err != nil {
+		return err
+	}
+	if err := releaseOwnerRow(ctx, txQ, exec); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit pause transaction for batch %s: %w", exec.BatchID, err)
+	}
+	logger.Info("", "batch %s paused: lease and locks released, resume requeues it", exec.BatchID)
+	return nil
+}
+
+// CancelBatch is the single cancel operation: it signals a live leased execution, cancels the batch's
+// pending, waiting and processing tasks, releases its locks and lease, and writes cancelled. A missing
+// batch reports ErrBatchNotFound and a terminal one ErrBatchTerminal. A pool-claimed batch has no lease to
+// signal; its executors observe the cancellation through their guarded transitions landing zero rows.
+// logger must be non-nil.
+func CancelBatch(ctx context.Context, client *database.Client, logger *log.Logger, batchID string) (CancelResult, error) {
+	batch, err := client.Queries.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CancelResult{}, fmt.Errorf("%w: %s", ErrBatchNotFound, batchID)
+		}
+		return CancelResult{}, fmt.Errorf("get batch %s: %w", batchID, err)
+	}
+	if batch.Status.Terminal() {
+		return CancelResult{}, fmt.Errorf("%w: batch %s is %s", ErrBatchTerminal, batchID, batch.Status)
+	}
+
+	var result CancelResult
+
+	owner, ownerErr := client.Queries.GetBatchOwner(ctx, database.GetBatchOwnerParams{
+		BatchID:           batchID,
+		StaleAfterSeconds: LeaseStaleSeconds,
+	})
+	switch {
+	case ownerErr == nil:
+		result.OwnerPID = owner.Pid
+		result.OwnerAlive = IsAlive(owner.Pid)
+		if result.OwnerAlive {
+			if err := syscall.Kill(int(owner.Pid), syscall.SIGTERM); err == nil {
+				result.Signalled = true
+			} else {
+				logger.Error("", "signal SIGTERM to PID %d for batch %s: %v", owner.Pid, batchID, err)
+			}
+		}
+	case !errors.Is(ownerErr, sql.ErrNoRows):
+		return CancelResult{}, fmt.Errorf("get batch owner for %s: %w", batchID, ownerErr)
+	}
+
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return CancelResult{}, fmt.Errorf("begin cancel transaction for batch %s: %w", batchID, err)
+	}
+	defer tx.Rollback()
+
+	txQ := client.Queries.WithTx(tx)
+	bid := sql.NullString{String: batchID, Valid: true}
+
+	result.PendingCancelled, err = txQ.CancelPendingTasksByBatch(ctx, bid)
+	if err != nil {
+		return CancelResult{}, fmt.Errorf("cancel pending tasks for batch %s: %w", batchID, err)
+	}
+	result.ProcessingCancelled, err = txQ.CancelProcessingTasksByBatch(ctx, bid)
+	if err != nil {
+		return CancelResult{}, fmt.Errorf("cancel processing tasks for batch %s: %w", batchID, err)
+	}
+	if err := ReleaseLocksForBatch(ctx, txQ, batchID); err != nil {
+		return CancelResult{}, err
+	}
+	rows, err := txQ.SetBatchCancelled(ctx, batchID)
+	if err != nil {
+		return CancelResult{}, fmt.Errorf("cancel batch %s: %w", batchID, err)
+	}
+	if rows == 0 {
+		return CancelResult{}, fmt.Errorf("%w: batch %s left its cancellable states", ErrBatchTerminal, batchID)
+	}
+	if ownerErr == nil {
+		if _, err := txQ.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
+			BatchID: batchID,
+			OwnerID: owner.OwnerID,
+		}); err != nil {
+			return CancelResult{}, fmt.Errorf("release batch owner for %s: %w", batchID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return CancelResult{}, fmt.Errorf("commit cancel transaction for batch %s: %w", batchID, err)
+	}
+
+	logger.Info("", "batch %s cancelled: %d pending/waiting and %d processing tasks cancelled (signalled=%t)",
+		batchID, result.PendingCancelled, result.ProcessingCancelled, result.Signalled)
+	return result, nil
+}
+
+// ResumeBatch is the single requeue operation: from failed, completed, cancelled or paused it requeues the
+// batch, resets its processing tasks and, when includeFailed is set, retries its failed tasks together
+// with the waiting children their consumes had. A missing batch reports ErrBatchNotFound, a batch with a
+// live lease ErrBatchLocked and a queued or processing batch ErrBatchNotResumable; when the resets leave
+// no active work the batch is left untouched and Resumed is false. logger must be non-nil.
+func ResumeBatch(ctx context.Context, client *database.Client, logger *log.Logger, batchID string, maxRetries int32, includeFailed bool) (ResumeResult, error) {
+	batch, err := client.Queries.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ResumeResult{}, fmt.Errorf("%w: %s", ErrBatchNotFound, batchID)
+		}
+		return ResumeResult{}, fmt.Errorf("get batch %s: %w", batchID, err)
+	}
+	if batch.Status != types.Batch.Status.Failed && batch.Status != types.Batch.Status.Completed &&
+		batch.Status != types.Batch.Status.Cancelled && batch.Status != types.Batch.Status.Paused {
+		return ResumeResult{}, fmt.Errorf("%w: batch %s is %s", ErrBatchNotResumable, batchID, batch.Status)
+	}
+
+	owner, ownerErr := client.Queries.GetBatchOwner(ctx, database.GetBatchOwnerParams{
+		BatchID:           batchID,
+		StaleAfterSeconds: LeaseStaleSeconds,
+	})
+	if ownerErr != nil && !errors.Is(ownerErr, sql.ErrNoRows) {
+		return ResumeResult{}, fmt.Errorf("get batch owner for %s: %w", batchID, ownerErr)
+	}
+	if ownerErr == nil && !owner.Stale {
+		return ResumeResult{}, ErrBatchLocked
+	}
+
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return ResumeResult{}, fmt.Errorf("begin resume transaction for batch %s: %w", batchID, err)
+	}
+	defer tx.Rollback()
+
+	txQ := client.Queries.WithTx(tx)
+	bid := sql.NullString{String: batchID, Valid: true}
+
+	reset, err := resetProcessingTx(ctx, txQ, batchID, maxRetries)
+	if err != nil {
+		return ResumeResult{}, err
+	}
+
+	result := ResumeResult{Reset: reset.Reset}
+	if includeFailed {
+		result.FailedRetried, err = txQ.RetryFailedTasksByBatch(ctx, bid)
+		if err != nil {
+			return ResumeResult{}, fmt.Errorf("retry failed tasks for batch %s: %w", batchID, err)
+		}
+		// the retried consumes are pending now, so their discarded children are restored in this same transaction
+		// before the requeue: it must never expose a consume whose children still look dead
+		if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
+			return ResumeResult{}, fmt.Errorf("restore children of retried consumes for batch %s: %w", batchID, err)
+		}
+	}
+
+	counts, err := txQ.BatchTaskStatusCounts(ctx, bid)
+	if err != nil {
+		return ResumeResult{}, fmt.Errorf("count tasks for batch %s: %w", batchID, err)
+	}
+	if counts.Pending+counts.Waiting == 0 {
+		return result, nil
+	}
+
+	rows, err := txQ.ResumeBatch(ctx, batchID)
+	if err != nil {
+		return ResumeResult{}, fmt.Errorf("resume batch %s: %w", batchID, err)
+	}
+	if rows == 0 {
+		return result, nil
+	}
+	if ownerErr == nil {
+		// a stale owner row left behind would let the reaper act on the batch now that it is queued again
+		if _, err := txQ.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
+			BatchID: batchID,
+			OwnerID: owner.OwnerID,
+		}); err != nil {
+			return ResumeResult{}, fmt.Errorf("release stale batch owner for %s: %w", batchID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return ResumeResult{}, fmt.Errorf("commit resume transaction for batch %s: %w", batchID, err)
+	}
+
+	result.Resumed = true
+	logger.Info("", "batch %s resumed: %d processing tasks reset, %d failed tasks retried", batchID, result.Reset, result.FailedRetried)
+	return result, nil
+}
+
+// ErrTaskNotFailed reports a retry request on a task that has not failed.
+var ErrTaskNotFailed = errors.New("task is not failed")
+
+// RetryTask is the compatibility alias behind the task retry surfaces: it resolves the task and resumes its
+// batch with the failed tasks retried. An unknown id reports ErrTaskNotFound and a task that has not failed
+// reports ErrTaskNotFailed; a live lease or a non-resumable batch surfaces from ResumeBatch. logger must be
+// non-nil.
+func RetryTask(ctx context.Context, client *database.Client, logger *log.Logger, taskID string, maxRetries int32) error {
+	t, err := Get(ctx, client.Queries, taskID)
+	if err != nil {
+		return err
+	}
+	if t.Status != types.Task.Status.Failed {
+		return fmt.Errorf("%w: task %s is %s", ErrTaskNotFailed, taskID, t.Status)
+	}
+	_, err = ResumeBatch(ctx, client, logger, t.BatchID.String, maxRetries, true)
+	return err
+}
+
+func executionOwner(exec Execution) sql.NullString {
+	if !exec.Leased {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: exec.Guard.String(), Valid: true}
+}
+
+// pauseClaimToken is the pool execution's claim token for the pause guard; a leased execution authorizes
+// through its owner row instead.
+func pauseClaimToken(exec Execution) uuid.NullUUID {
+	if exec.Leased {
+		return uuid.NullUUID{}
+	}
+	return uuid.NullUUID{UUID: exec.Guard, Valid: true}
+}
+
+func releaseOwnerRow(ctx context.Context, queries *database.Queries, exec Execution) error {
+	if !exec.Leased {
+		return nil
+	}
+	if _, err := queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
+		BatchID: exec.BatchID,
+		OwnerID: exec.Guard.String(),
+	}); err != nil {
+		return fmt.Errorf("release batch owner for %s: %w", exec.BatchID, err)
+	}
+	return nil
+}
+
+func logSettled(logger *log.Logger, batchID string, status types.BatchStatus, counts database.BatchTaskStatusCountsRow) {
+	logger.Info("", "batch %s settled as %s: %d completed, %d failed, %d cancelled",
+		batchID, status, counts.Completed, counts.Failed, counts.Cancelled)
+}
+
+func resetProcessingTx(ctx context.Context, queries *database.Queries, batchID string, maxRetries int32) (ResetResult, error) {
+	bid := sql.NullString{String: batchID, Valid: true}
+
+	if err := ReleaseLocksForBatch(ctx, queries, batchID); err != nil {
+		return ResetResult{}, err
+	}
+
+	quarantined, err := queries.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{
+		BatchID:  bid,
+		Attempts: maxRetries,
+	})
+	if err != nil {
+		return ResetResult{}, fmt.Errorf("quarantine processing tasks by batch: %w", err)
+	}
+
+	reset, err := queries.ResetProcessingTasksByBatch(ctx, database.ResetProcessingTasksByBatchParams{
+		BatchID:  bid,
+		Attempts: maxRetries,
+	})
+	if err != nil {
+		return ResetResult{}, fmt.Errorf("reset processing tasks by batch: %w", err)
+	}
+
+	if _, err := queries.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
+		return ResetResult{}, fmt.Errorf("restore discarded enrich tasks by batch: %w", err)
+	}
+
+	result := ResetResult{Reset: reset}
+	for _, row := range quarantined {
+		result.Quarantined = append(result.Quarantined, TaskIdentity{TaskID: row.TaskID, TaskType: row.TaskType})
+	}
+	return result, nil
 }

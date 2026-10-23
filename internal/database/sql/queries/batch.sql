@@ -3,7 +3,10 @@ INSERT INTO batch (id, origin, schedule, status) VALUES ($1, $2, $3, $4)
 ON CONFLICT (id) DO NOTHING;
 
 -- name: GetBatchOwner :one
-SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat FROM batch_owner WHERE batch_id = $1;
+-- stale is decided by the database clock so every lease-liveness decision shares one clock.
+SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat,
+       last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int) AS stale
+FROM batch_owner WHERE batch_id = $1;
 
 -- Two-step acquire: try INSERT first, then UPDATE with stale check.
 
@@ -14,11 +17,13 @@ ON CONFLICT(batch_id) DO NOTHING;
 
 -- name: UpdateBatchOwnerIfStale :execrows
 UPDATE batch_owner SET
-  owner_id = $1,
-  pid = $2,
+  owner_id = @owner_id,
+  pid = @pid,
   acquired_at = CURRENT_TIMESTAMP,
   last_heartbeat = CURRENT_TIMESTAMP
-WHERE batch_id = $3 AND (last_heartbeat < $4 OR owner_id = $5);
+WHERE batch_id = @batch_id
+  AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
+       OR owner_id = @owner_id);
 
 -- name: AcquireBatchOwnerForce :execrows
 INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
@@ -38,12 +43,13 @@ DELETE FROM batch_owner WHERE batch_id = $1 AND owner_id = $2;
 -- name: DeleteBatchOwnerByBatchID :execrows
 DELETE FROM batch_owner WHERE batch_id = $1;
 
--- name: QuarantineProcessingTasksByBatch :execrows
+-- name: QuarantineProcessingTasksByBatch :many
 UPDATE task SET
     status = 'failed',
     error = 'Max retries exceeded (' || attempts || ')',
     completed_at = CURRENT_TIMESTAMP
-WHERE batch_id = $1 AND status = 'processing' AND attempts >= $2;
+WHERE batch_id = $1 AND status = 'processing' AND attempts >= $2
+RETURNING task_id, task_type;
 
 -- name: ResetProcessingTasksByBatch :execrows
 UPDATE task SET
@@ -52,24 +58,16 @@ UPDATE task SET
     progress = NULL
 WHERE batch_id = $1 AND status = 'processing' AND attempts < $2;
 
--- name: CleanupCompletedBatches :execrows
-DELETE FROM batch_owner WHERE batch_id IN (
-  SELECT b.batch_id FROM batch_owner b
-  WHERE NOT EXISTS (
-    SELECT 1 FROM task t WHERE t.batch_id = b.batch_id
-      AND t.status IN ('pending', 'processing', 'waiting')
-  )
-);
-
 -- name: GetNextPendingTaskOfTypeForOwner :one
-SELECT id FROM task
-WHERE status = 'pending' AND task_type = @task_type
-  AND batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
+SELECT t.id FROM task t
+WHERE t.status = 'pending' AND t.task_type = @task_type
+  AND t.batch_id IN (SELECT batch_id FROM batch_owner WHERE owner_id = @owner_id)
+  AND EXISTS (SELECT 1 FROM batch b WHERE b.id = t.batch_id AND b.status IN ('queued', 'processing'))
   AND NOT EXISTS (
     SELECT 1 FROM system_signal s
     WHERE s.name = ANY(@wait_locks::text[]) AND lock_is_held(s.name)
   )
-ORDER BY created_at LIMIT 1;
+ORDER BY t.created_at LIMIT 1;
 
 -- name: GetBatch :one
 SELECT * FROM batch WHERE id = $1;
@@ -97,38 +95,99 @@ WHERE b.status = 'queued'
   )
 ORDER BY b.created_at LIMIT 1;
 
--- name: RequeueBatch :exec
-UPDATE batch SET status = 'queued' WHERE id = $1;
+-- a claim locks the batch row and flips it into processing only on the first claim; processing stays allowed
+-- so the remaining tasks of a multi-task batch stay claimable, while any other status refuses the claim
+-- name: LockBatchForClaim :one
+SELECT status FROM batch WHERE id = $1 FOR UPDATE;
 
--- name: SetBatchProcessing :exec
-UPDATE batch SET status = 'processing' WHERE id = $1;
+-- name: MarkBatchClaimed :execrows
+UPDATE batch SET status = 'processing'
+WHERE id = $1 AND status = 'queued';
 
--- name: SetBatchCompleted :exec
-UPDATE batch SET status = 'completed' WHERE id = $1;
+-- the status is computed inside the write so a task that fails between a read and the settle cannot be lost;
+-- any active task, a non-processing batch or a foreign lease refuses the write and leaves the row untouched
+-- name: SettleBatch :one
+UPDATE batch SET status = CASE
+    WHEN EXISTS (SELECT 1 FROM task t WHERE t.batch_id = batch.id AND t.status = 'failed')
+      THEN 'failed'::batch_status
+    ELSE 'completed'::batch_status
+  END
+WHERE batch.id = @id
+  AND batch.status = 'processing'
+  AND NOT EXISTS (
+    SELECT 1 FROM task t
+    WHERE t.batch_id = batch.id AND t.status IN ('pending', 'processing', 'waiting')
+  )
+  AND (
+    NOT EXISTS (SELECT 1 FROM batch_owner bo WHERE bo.batch_id = batch.id)
+    OR EXISTS (
+      SELECT 1 FROM batch_owner bo
+      WHERE bo.batch_id = batch.id AND bo.owner_id = sqlc.narg(owner_id)::text
+    )
+  )
+RETURNING status;
 
--- name: SetBatchFailed :exec
-UPDATE batch SET status = 'failed' WHERE id = $1;
+-- pause authorizes like the settle: a leased execution must still own the lease, and a pool execution must
+-- still hold a live claim of this batch, so a stale executor cannot pause the new run that replaced it
+-- name: SetBatchPaused :execrows
+UPDATE batch SET status = 'paused'
+WHERE batch.id = @id
+  AND batch.status = 'processing'
+  AND (
+    EXISTS (
+      SELECT 1 FROM batch_owner bo
+      WHERE bo.batch_id = batch.id AND bo.owner_id = sqlc.narg(owner_id)::text
+    )
+    OR (
+      sqlc.narg(owner_id)::text IS NULL
+      AND EXISTS (
+        SELECT 1 FROM task t
+        WHERE t.batch_id = batch.id AND t.claim_token = sqlc.narg(claim_token)::uuid
+      )
+    )
+  );
 
--- name: SetBatchPaused :exec
-UPDATE batch SET status = 'paused' WHERE id = $1;
+-- name: SetBatchCancelled :execrows
+UPDATE batch SET status = 'cancelled'
+WHERE id = $1 AND status IN ('queued', 'processing', 'paused');
 
--- name: SetBatchCancelled :exec
-UPDATE batch SET status = 'cancelled' WHERE id = $1;
+-- name: RequeueProcessingBatch :execrows
+UPDATE batch SET status = 'queued' WHERE id = $1 AND status = 'processing';
+
+-- name: ResumeBatch :execrows
+UPDATE batch SET status = 'queued'
+WHERE id = $1 AND status IN ('failed', 'completed', 'cancelled', 'paused');
+
+-- name: BatchTaskStatusCounts :one
+SELECT
+    COUNT(*) FILTER (WHERE status = 'waiting')::bigint AS waiting,
+    COUNT(*) FILTER (WHERE status = 'pending')::bigint AS pending,
+    COUNT(*) FILTER (WHERE status = 'processing')::bigint AS processing,
+    COUNT(*) FILTER (WHERE status = 'completed')::bigint AS completed,
+    COUNT(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+    COUNT(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled,
+    COUNT(*) FILTER (WHERE status = 'discarded')::bigint AS discarded
+FROM task WHERE batch_id = $1;
 
 -- name: CountLiveBatches :one
 SELECT COUNT(*) FROM batch_owner
-WHERE last_heartbeat > CURRENT_TIMESTAMP - INTERVAL '15 seconds';
+WHERE last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int);
 
 -- name: ListStaleBatchOwners :many
 SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
-WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '15 seconds'
+WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
             AND t.status IN ('pending', 'processing', 'waiting'));
 
--- name: GetQuarantinedConsumeTaskPayloads :many
+-- name: GetConsumeTaskPayloadsByIDs :many
 SELECT task_id, payload FROM task
-WHERE batch_id = $1 AND status = 'failed' AND error LIKE 'Max retries exceeded%';
+WHERE task_id = ANY(@task_ids::text[]) AND task_type = 'consume';
+
+-- name: GetPermanentlyFailedConsumeTaskPayloads :many
+SELECT task_id, payload FROM task
+WHERE batch_id = @batch_id AND task_type = 'consume'
+  AND status = 'failed' AND attempts >= @attempts;
 
 -- name: BatchHasNonConsumeTask :one
 SELECT EXISTS (
@@ -155,6 +214,8 @@ SELECT
     sub.last_completed_at AS last_completed_at,
     bo.last_heartbeat AS owner_last_heartbeat,
     bo.pid AS owner_pid,
+    (bo.last_heartbeat IS NOT NULL
+      AND bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)) AS owner_stale,
     EXISTS (
         SELECT 1 FROM task t2
         WHERE t2.batch_id = b.id AND t2.task_type::text = ANY(@non_consume_types::text[])

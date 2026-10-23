@@ -1,8 +1,6 @@
-// Package consume is the per-batch consume driver: one child process per
-// batch, processing its consume, enrich and thumbnail tasks through task
-// pools, with batch ownership, heartbeat, the two-phase cancel protocol,
-// and the credit-pause handling. It also exposes IsAlive, the process
-// liveness check the queue daemon's stale reclamation shares.
+// Package consume is the per-batch consume driver: one child process per batch, processing its consume,
+// enrich and thumbnail tasks through task pools, with batch ownership, heartbeat, the cancel protocol and
+// the credit-pause handling.
 package consume
 
 import (
@@ -186,7 +184,7 @@ func Run(c *container.Container, args []string) error {
 
 		ownerID := uuid.New().String()
 		pid := os.Getpid()
-		owner := task.NewOwner(client, ownerID, pid, c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
+		owner := task.NewOwner(client, ownerID, pid, c.GetLogger())
 		c.GetLogger().Info("", "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
 		if force {
@@ -198,7 +196,10 @@ func Run(c *container.Container, args []string) error {
 			}
 		} else if err := owner.Acquire(ctx, batchIDParam); err != nil {
 			if err == task.ErrBatchLocked {
-				bo, boErr := client.GetBatchOwner(ctx, batchIDParam)
+				bo, boErr := client.GetBatchOwner(ctx, database.GetBatchOwnerParams{
+					BatchID:           batchIDParam,
+					StaleAfterSeconds: task.LeaseStaleSeconds,
+				})
 				if boErr == nil {
 					return fmt.Errorf("batch %s is being processed by PID %d (use --force to override)", batchIDParam, bo.Pid)
 				}
@@ -209,11 +210,15 @@ func Run(c *container.Container, args []string) error {
 
 		c.GetLogger().Debug("", "consume: GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
 
-		reset, _ := owner.ResetProcessingByBatch(ctx, batchIDParam)
-		if reset > 0 {
-			fmt.Printf("  reset %d orphaned processing tasks\n", reset)
+		maxRetries := int32(c.GetConfig().Consumer.Reclaim.MaxRetries)
+		reset, resetErr := task.ResetProcessingTasksByBatch(ctx, client, batchIDParam, maxRetries)
+		if resetErr != nil {
+			c.GetLogger().Error("", "reset processing tasks for batch %s: %v", batchIDParam, resetErr)
 		}
-		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.GetConfig().Storage.StorageDir, c.GetLogger(), batchIDParam); err != nil {
+		if reset.Reset > 0 {
+			fmt.Printf("  reset %d orphaned processing tasks\n", reset.Reset)
+		}
+		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.GetConfig().Storage.StorageDir, c.GetLogger(), batchIDParam, maxRetries, reset.ConsumeTaskIDs()); err != nil {
 			c.GetLogger().Error("", "quarantine files for batch %s: %v", batchIDParam, err)
 		}
 
@@ -338,7 +343,7 @@ func Run(c *container.Container, args []string) error {
 	fmt.Println("Waiting for completion...")
 
 	ownerID := uuid.New().String()
-	owner := task.NewOwner(client, ownerID, os.Getpid(), c.GetLogger(), c.GetConfig().Consumer.Reclaim.MaxRetries)
+	owner := task.NewOwner(client, ownerID, os.Getpid(), c.GetLogger())
 
 	if err := owner.Acquire(ctx, batchID); err != nil {
 		return fmt.Errorf("acquire batch %s: %w", batchID, err)
@@ -445,16 +450,30 @@ func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *con
 		return fmt.Errorf("set runner owner: %w", err)
 	}
 
+	exec, err := leasedExecution(run.ownerID, run.batchID)
+	if err != nil {
+		return err
+	}
+
 	watchSignals(ctx, cancel)
 
 	hb := task.NewHeartbeat(run.owner, heartbeatInterval, c.GetLogger())
 	hb.Start(ctx)
 
-	err := pollBatch(ctx, run, c.GetLogger())
+	err = pollBatch(ctx, run, c.GetLogger())
 	if err == nil {
-		batchSvc := service.NewBatch(run.client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-		if setErr := setBatchTerminalStatus(ctx, run.client.Queries, batchSvc, c.GetLogger(), run.batchID); setErr != nil {
-			c.GetLogger().Error("", "set batch terminal status %s: %v", run.batchID, setErr)
+		// waiting children of failed consumes block the settle, and a run that died before its quarantine
+		// must still move the failed files out; the sweep covers both before the terminal write
+		cfg := c.GetConfig()
+		if qErr := consumption.QuarantineFailedFiles(ctx, run.client.Queries, cfg.Storage.StorageDir, c.GetLogger(),
+			run.batchID, int32(cfg.Consumer.Reclaim.MaxRetries), nil); qErr != nil {
+			c.GetLogger().Error("", "quarantine files for batch %s: %v", run.batchID, qErr)
+		}
+		status, settleErr := task.SettleBatch(ctx, run.client, c.GetLogger(), exec)
+		if settleErr != nil {
+			c.GetLogger().Error("", "settle batch %s: %v", run.batchID, settleErr)
+		} else {
+			logEnrichBookend(ctx, run.client.Queries, c.GetLogger(), run.batchID, status)
 		}
 	} else if errors.Is(err, ErrBatchPaused) {
 		err = nil
@@ -463,6 +482,10 @@ func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *con
 	triggerOrphanScan(c)
 
 	hb.Stop()
+
+	// the lease is the execution's own teardown: a settle writes the terminal status and releases the locks,
+	// while the owner row goes away here (and in pause, cancel and the reaper's recovery) so a terminal batch
+	// never keeps one behind
 	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if relErr := run.owner.Release(relCtx, run.batchID); relErr != nil {
 		c.GetLogger().Error("", "release batch %s: %v", run.batchID, relErr)
@@ -470,6 +493,16 @@ func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *con
 	relCancel()
 
 	return err
+}
+
+// leasedExecution builds the guard the child's lifecycle writes carry: the lease owner, scoped to one
+// batch.
+func leasedExecution(ownerID, batchID string) (task.Execution, error) {
+	token, err := uuid.Parse(ownerID)
+	if err != nil {
+		return task.Execution{}, fmt.Errorf("batch owner token: %w", err)
+	}
+	return task.Execution{BatchID: batchID, Guard: token, Leased: true}, nil
 }
 
 func consumeCancelHandler(c *container.Container, args []string) error {
@@ -493,71 +526,23 @@ func consumeCancelHandler(c *container.Container, args []string) error {
 	cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	releaseOwner := func(ownerID string) {
-		if _, err := client.ReleaseBatchOwner(cancelCtx, database.ReleaseBatchOwnerParams{
-			BatchID: batchID,
-			OwnerID: ownerID,
-		}); err != nil {
-			c.GetLogger().Error("", "release batch owner for %s: %v", batchID, err)
-		}
-	}
-
-	count, err := client.CancelPendingTasksByBatch(cancelCtx, sql.NullString{String: batchID, Valid: true})
+	result, err := task.CancelBatch(cancelCtx, client, c.GetLogger(), batchID)
 	if err != nil {
-		return fmt.Errorf("cancel pending tasks: %w", err)
+		return err
 	}
 
-	bo, err := client.GetBatchOwner(cancelCtx, batchID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			fmt.Printf("No running process found for batch %s\n", batchID)
-			fmt.Printf("%d pending tasks cancelled\n", count)
-			return nil
-		}
-		return fmt.Errorf("get batch owner: %w", err)
+	switch {
+	case result.OwnerPID == 0:
+		fmt.Printf("No running process found for batch %s\n", batchID)
+		fmt.Printf("%d pending tasks cancelled\n", result.PendingCancelled)
+	case !result.OwnerAlive:
+		fmt.Printf("Process %d is no longer running\n", result.OwnerPID)
+		fmt.Printf("%d pending tasks cancelled\n", result.PendingCancelled)
+	default:
+		fmt.Printf("Batch %s: %d pending + %d processing cancelled, signal sent to PID %d\n",
+			batchID, result.PendingCancelled, result.ProcessingCancelled, result.OwnerPID)
 	}
-
-	if !IsAlive(bo.Pid) {
-		fmt.Printf("Process %d is no longer running\n", bo.Pid)
-		fmt.Printf("%d pending tasks cancelled\n", count)
-		releaseOwner(bo.OwnerID)
-		return nil
-	}
-
-	if err := syscall.Kill(int(bo.Pid), syscall.SIGTERM); err != nil {
-		c.GetLogger().Error("", "signal SIGTERM to PID %d for batch %s: %v", bo.Pid, batchID, err)
-	}
-
-	tx, txErr := client.BeginTx(cancelCtx, nil)
-	if txErr != nil {
-		return fmt.Errorf("begin cancel transaction: %w", txErr)
-	}
-	bid := sql.NullString{String: batchID, Valid: true}
-	txQ := client.Queries.WithTx(tx)
-	if err := task.ReleaseLocksForBatch(cancelCtx, txQ, batchID); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("release locks: %w", err)
-	}
-	procCount, procErr := txQ.CancelProcessingTasksByBatch(cancelCtx, bid)
-	if procErr != nil {
-		tx.Rollback()
-		return fmt.Errorf("cancel processing tasks: %w", procErr)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit cancel transaction: %w", err)
-	}
-
-	releaseOwner(bo.OwnerID)
-
-	fmt.Printf("Batch %s: %d pending + %d processing cancelled, signal sent to PID %d\n",
-		batchID, count, procCount, bo.Pid)
 	return nil
-}
-
-// IsAlive reports whether a PID belongs to a live process; a negative
-// pid is always false.
-func IsAlive(pid int64) bool {
-	return syscall.Kill(int(pid), 0) == nil
 }
 
 type taskDisplay struct {
@@ -720,66 +705,19 @@ func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
 	}
 }
 
-// setBatchTerminalStatus settles a batch as completed or failed by its
-// tasks' statuses and logs one INFO bookend built from them — the task
-// status counts and, when completed enrich results decoded, the aggregated
-// per-document enrich counts. An already-terminal batch skips only the
-// settle write, never the bookend. A failed settle write is returned after
-// the bookend; a failed listing returns before it, because the bookend's
-// counts come from that listing.
-func setBatchTerminalStatus(ctx context.Context, queries *database.Queries, batchSvc *service.Batch, logger *log.Logger, batchID string) error {
-	batch, err := queries.GetBatch(ctx, batchID)
-	if err != nil {
-		return fmt.Errorf("get batch: %w", err)
-	}
-
+// logEnrichBookend adds one INFO line with the aggregated per-document enrich counts over the batch's
+// completed enrich tasks, complementing the settle line SettleBatch already logged. A failed listing is
+// logged, not returned: the bookend is observability, not lifecycle.
+func logEnrichBookend(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string, status types.BatchStatus) {
 	tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{BatchID: batchID})
 	if err != nil {
-		return fmt.Errorf("list tasks: %w", err)
+		logger.Error("", "batch %s enrich bookend: list tasks: %v", batchID, err)
+		return
 	}
 
-	status := batch.Status
-	var settleErr error
-	switch status {
-	case types.Batch.Status.Completed, types.Batch.Status.Failed, types.Batch.Status.Cancelled, types.Batch.Status.Paused:
-	default:
-		hasFailed := false
-		for _, t := range tasks {
-			if t.Status == types.Task.Status.Failed {
-				hasFailed = true
-				break
-			}
-		}
-		if hasFailed {
-			status = types.Batch.Status.Failed
-			settleErr = batchSvc.SetBatchFailed(ctx, batchID)
-		} else {
-			status = types.Batch.Status.Completed
-			settleErr = batchSvc.SetBatchCompleted(ctx, batchID)
-		}
-	}
-
-	logBatchBookend(logger, batchID, status, tasks)
-	return settleErr
-}
-
-// logBatchBookend logs one INFO line with the batch's settle status, the
-// completed/failed/cancelled task counts, and — over completed enrich
-// tasks whose stored result decoded — the aggregated per-document enrich
-// counts.
-func logBatchBookend(logger *log.Logger, batchID string, status types.BatchStatus, tasks []database.Task) {
-	completed, failed, cancelled := 0, 0, 0
 	var totals enrichment.DocumentCounts
 	documents := 0
 	for _, t := range tasks {
-		switch t.Status {
-		case types.Task.Status.Completed:
-			completed++
-		case types.Task.Status.Failed:
-			failed++
-		case types.Task.Status.Cancelled:
-			cancelled++
-		}
 		if t.TaskType != types.Task.Type.Enrich || t.Status != types.Task.Status.Completed || t.Result == nil {
 			continue
 		}
@@ -790,14 +728,12 @@ func logBatchBookend(logger *log.Logger, batchID string, status types.BatchStatu
 		documents++
 		totals.Add(counts)
 	}
-
-	line := fmt.Sprintf("batch %s settled as %s: %d completed, %d failed, %d cancelled",
-		batchID, status, completed, failed, cancelled)
-	if documents > 0 {
-		line += fmt.Sprintf("; enrich: %d documents, %d assignments, %d births, %d promotions, %d rejects, %d defers, %d splits, %d keeps, %d drops",
-			documents, totals.Assignments, totals.Births, totals.Promotions, totals.Rejects, totals.Defers, totals.Splits, totals.Keeps, totals.Drops)
+	if documents == 0 {
+		return
 	}
-	logger.Info("", "%s", line)
+
+	logger.Info("", "batch %s (%s) enrich: %d documents, %d assignments, %d births, %d promotions, %d rejects, %d defers, %d splits, %d keeps, %d drops",
+		batchID, status, documents, totals.Assignments, totals.Births, totals.Promotions, totals.Rejects, totals.Defers, totals.Splits, totals.Keeps, totals.Drops)
 }
 
 func triggerOrphanScan(c *container.Container) {

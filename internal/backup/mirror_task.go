@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
@@ -39,15 +38,10 @@ type MirrorPayload struct {
 	Schedule ScheduleTiming `json:"schedule"`
 }
 
-// Handle mirrors under the claimed maintenance lock, draining the conflicting in-flight tasks while
-// reporting the queue depth, and returns the mirror stats as the result.
-func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.RawMessage, err error) {
+// Handle mirrors the storage tree and returns the mirror stats as the result. The runner owns the claimed
+// maintenance lock, its heartbeat and the drain of the waiting tasks.
+func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
-	defer func() {
-		task.FinalizeBatchStatus(ctx, h.queries, h.logger, t.BatchID, err != nil)
-	}()
-
-	task.MarkBatchProcessing(ctx, h.queries, h.logger, t.BatchID)
 
 	var payload MirrorPayload
 	if len(t.Payload) > 0 {
@@ -69,11 +63,8 @@ func (h *MirrorTaskHandler) Handle(ctx context.Context, t task.Task) (out json.R
 		return nil, err
 	}
 
-	result, timestamp, err := RunLocked(ctx, h.queries, h.logger, cfg.Storage.StorageDir, dest,
-		func(count int64) { progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0) },
-		func() { progress.Set("sync", dest, 0) },
-		uuid.NullUUID{UUID: t.ClaimToken, Valid: true},
-	)
+	result, timestamp, err := RunMirrorAndRecord(ctx, h.logger, cfg.Storage.StorageDir, dest,
+		func() { progress.Set("sync", dest, 0) })
 	if err != nil {
 		return nil, err
 	}

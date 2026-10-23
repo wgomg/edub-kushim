@@ -22,7 +22,7 @@
 
 ### Types
 
-- `Task` — domain struct with `ID int64`, `TaskID string`, `TaskType string`, `Payload json.RawMessage`
+- `Task` — domain struct with `ID int64`, `TaskID string`, `TaskType types.TaskType`, `BatchID string`, `Payload json.RawMessage`
 
 ## `errors.go`
 
@@ -49,14 +49,14 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 - `Store` — wraps `*database.Queries`
   - **Methods**:
-    - `ClaimNextPending(ctx, taskType) (database.Task, uuid.UUID, error)` — claims one pending task of the type. Types with declared holds claim through the token protocol: one transaction runs the wait-gated selection, the claim with a fresh UUID token, and the all-or-nothing acquisition of the type's holds (`ErrLockBusy` on any conflict — the task stays pending); `SetBatchHoldsAcquired(true)` switches claims to verify-waits-only, the consume child's mode after its batch-level acquisition
+    - `ClaimNextPending(ctx, taskType) (database.Task, uuid.UUID, error)` — claims one pending task of the type and returns the task row together with its execution guard. Every claim runs one transaction: the wait-gated selection (scoped by owner when the store carries an owner id, claimability-filtered by the batch's `queued`/`processing` state), the claim write with the guard (lease owner id for a leased execution, fresh UUID otherwise), the guarded batch row lock and `queued → processing` flip (zero rows rolls the whole claim back), and — for types with declared holds — the all-or-nothing acquisition (`ErrLockBusy` on any conflict — the task stays pending); `SetBatchHoldsAcquired(true)` switches claims to verify-waits-only, the consume child's mode after its batch-level acquisition
+    - `SetOwnerID(id string)` — the lease owner written on claims and ownership rows (the consume child runs through it)
     - `SetBatchHoldsAcquired(acquired bool)` — must run after the batch-level acquisition and before the claims it affects
-    - `CompleteBlockingTask(ctx, id, result, token)` / `FailBlockingTask(ctx, id, errMsg, token)` — token-guarded transitions; the release of the claim's locks is transacted with the status change
+    - `CompleteTask(ctx, taskType, id, result, token) (int64, error)` — the guarded completion (over `CompleteBlockingTask`): writes only while the task is still `processing` under the claiming guard, returns rows affected, and releases the claim's task-scoped locks in the same transaction; a type whose hold is batch-level (batch-holds mode) skips the release, that hold belongs to the run
+    - `FailTask(ctx, taskType, id, errMsg, token) (int64, error)` — the guarded failure (over `FailBlockingTask`), same guard and lock-release rule
+    - `ActivateChild(ctx, id, payload, dedupKey) (Activation, error)` — makes a waiting child pending with the definition-derived dedup key in one transaction (over `SetEnrichTaskPending`); a key colliding with live work rolls back to the savepoint and discards the duplicate child instead of failing the parent (`DiscardedDuplicate`), and an empty key is refused — a keyless child would bypass the dedup protection
     - `GetTask(ctx, id) (database.Task, error)`
     - `GetTaskByTaskID(ctx, taskID) (database.Task, error)`
-    - `CompleteTask(ctx, id, result) (int64, error)` — returns rows affected; requires `status = 'processing'` (optimistic concurrency guard)
-    - `FailTask(ctx, id, errMsg) error`
-    - `SetPending(ctx, id, payload) error` — Wraps `SetEnrichTaskPending`; matches both `waiting` and `discarded` enrich tasks
     - `Discard(ctx, id, errMsg) (int64, error)` — Wraps `DiscardEnrichTask`; returns rows affected; only matches `waiting` enrich tasks (0 rows = already discarded or activated, benign no-op)
 
 ## `registry.go`
@@ -68,15 +68,18 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
     - `Register(taskType, handler)` — registers a handler
     - `Get(taskType) (Handler, error)` — looks up a handler
 
-## `runner.go`
+## `execute.go`
 
 ### Struct
 
 - `Runner` — owns `Store` and `Registry`; implements `Nexter`
   - **Methods**:
     - `NewRunner(store, registry, logger) *Runner`
-    - `Next(ctx, taskType) error` — generic poll loop: claim next pending task, check for nil payload (fail task if nil), get handler, execute, complete (with retry+FailTask fallback); extracts `ReqID` from handler errors via `errors.As` and passes it to the logger for document-level correlation (`REQID=<doc-id> task <uuid> failed: ...`). A deferred `recover()` after the claim fails the in-flight task with `panic: <text>` (detached 10s-timeout context) and returns the error to the pool, which logs it without restarting the worker
-    - `completeTaskWithRetry(ctx, id, result) error` — private: 3× exponential backoff on `CompleteTask`, handles `rows == 0` (task already transitioned by stale-task sweep)
+    - `Next(ctx, taskType) error` — the claim-run-settle loop: claims under the execution guard, holds the locks a holding type declares (heartbeat over the guard, drains the derived wait set with `drain-wait` progress), checks for nil payload (guarded fail), dispatches the handler, completes with retry (guarded), then settles the batch through `SettleBatch` after every transition — the active-task guard defers it to the batch's last terminal transition, and a zero-rows transition settles only through guards so a taken-over execution never rewrites the winner's status; extracts `ReqID` from handler errors via `errors.AsType` for log correlation, and a `*Error` with `PauseBatch` fails the task, runs the guarded pause and skips the settle. A deferred `recover()` after the claim fails the in-flight task with `panic: <text>` (guarded fail write, detached 10s-timeout context) and returns the error to the pool, which logs it without restarting the worker
+    - `holdLocks(ctx, taskType, task, guard) (stop func(), err error)` — private: no-op for a type without holds and in batch-holds mode; starts `StartLockHeartbeat` and drains `TaskTypesWaitingOn` before the handler runs
+    - `failTask(ctx, task, exec, msg)` / `failAndSettle(ctx, task, exec, msg)` — private: the guarded fail write, with the settle expressed as fail-then-settle for callers that do not request a pause
+    - `completeTaskWithRetry(ctx, task, exec, result) (int64, error)` — private: 3× exponential backoff on the guarded completion
+    - `settle(ctx, task, exec)` — private: best-effort `SettleBatch`; a refused settle logs and keeps the batch's current status
 
 ## `enqueue.go` / `type_definition.go`
 
@@ -116,23 +119,38 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 - `Get(ctx, queries, taskID) (database.Task, error)` — By UUID task_id
 - `ListFiltered(ctx, queries, filter) ([]database.Task, error)` — By batch/status/type/pagination; handles all combinations of filters via sqlc-generated queries (`ListTasks`, `ListTasksByStatus`, `ListTasksByBatch`, `ListTasksByBatchAndStatus`, `ListTasksByType`, `ListTasksByBatchAndType`, `ListTasksByStatusAndType`, `ListTasksByBatchAndStatusAndType` and their `All` variants)
-- `Retry(ctx, queries, logger, taskID) error` — Failed tasks only (409 otherwise). For consume tasks whose payload carries `on_completed`, also restores the paired `discarded` enrich to `waiting` via `SetEnrichTaskWaiting`; a failed restore is logged at error level and the retry still succeeds (activation accepts `discarded`).
-- `RetryBatchFailed(ctx, queries, batchID string) (int64, error)` — Resets all failed tasks in a batch to pending; returns count of retried tasks. Uses `RetryFailedTasksByBatch` sqlc query with `WHERE batch_id = ? AND status = 'failed'`.
 - `CountBatchStatuses(ctx, queries, batchID) BatchCounts` — Counts per status including `waiting` and `discarded`
 - `ListBatchSummaries(ctx, queries, filter) ([]BatchCounts, error)` — Lists batch summaries with filtering; uses `ListDistinctBatchIDs` or `ListDistinctBatchIDsByStatus`
+
+### Lifecycle ops (`batch.go`)
+
+- `LeaseStaleSeconds int32 = 15` — the lease window every staleness query compares against, decided by the database clock
+- `ErrBatchLocked` / `ErrBatchTerminal` / `ErrBatchNotResumable` / `ErrTaskNotFound` / `ErrTaskNotFailed` — the lifecycle sentinels the API surfaces map
+- `Execution{BatchID, Guard, Leased}` — the authorization a caller carries for one run's writes: the lease owner for a leased execution, the task claim token for a pool execution
+- `TaskIdentity{TaskID, TaskType}` / `ResetResult{Reset, Quarantined}` (`ConsumeTaskIDs()`) / `CancelResult{PendingCancelled, ProcessingCancelled, OwnerPID, OwnerAlive, Signalled}` / `ResumeResult{Resumed, Reset, FailedRetried}`
+- `Owner` — `Acquire` (two-step: try insert, then steal from the stale heartbeat or re-acquire idempotently), `AcquireForce` (the daemon's placeholder and `--force` takeover upsert), `Heartbeat` (rows-reported renewal), `Release` (pair-guarded delete)
+- `ResetProcessingTasksByBatch(ctx, client, batchID, maxRetries) (ResetResult, error)` — one transaction: release the batch's locks, quarantine the tasks at the retry bound, reset the rest (attempts + 1), restore discarded children; returns the reset count and the quarantined identities
+- `IsOrphaned(state, pending, processing)` / `IsAlive(pid)` — the owner-liveness predicates (`IsAlive` refuses `pid <= 0`, so `kill(0)` can never target the caller's group)
+- `SettleBatch(ctx, client, logger, exec) (types.BatchStatus, error)` — the single terminal writer: `failed` when any task failed, `completed` otherwise, computed inside the guarded write; refuses (returns the current status untouched) while a pending/processing/waiting task exists, while the status is not `processing`, and when a lease row exists that is not the executor's; the settle transaction releases the batch's locks; a terminal batch is idempotent
+- `PauseBatch(ctx, client, logger, exec) error` — guarded `processing → paused` (lease owner for a leased execution, a live claim token of the batch for a pool execution), releasing the batch's locks and the caller's lease; a refused pause writes nothing
+- `CancelBatch(ctx, client, logger, batchID) (CancelResult, error)` — signals a live owner (SIGTERM through `IsAlive`), cancels pending + waiting + processing, releases the batch's locks and lease, writes `cancelled`; refuses a missing (`ErrBatchNotFound`) or terminal (`ErrBatchTerminal`) batch
+- `ResumeBatch(ctx, client, logger, batchID, maxRetries, includeFailed) (ResumeResult, error)` — the single recovery: from `failed|completed|cancelled|paused` to `queued`, resets processing tasks (quarantine-at-max + restore) in the same transaction and, when `includeFailed`, retries the failed tasks with the batch restore re-run after the retry; refuses a live lease (`ErrBatchLocked`), a queued or processing batch (`ErrBatchNotResumable`) and leaves a batch with no resurrectable work untouched (`Resumed = false`)
+- `RetryTask(ctx, client, logger, taskID, maxRetries) error` — theCompatibility alias behind the retry surfaces: resolves the task (`ErrTaskNotFound`), refuses a non-failed one (`ErrTaskNotFailed`), then resumes its batch with failed tasks reset
 
 ---
 
 ### SQL queries added
 
-- `RetryFailedTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status = 'failed'` — Resets failed batch tasks to pending with `attempts = 0` (batched retry). `Batch.RetryFailed` runs it transactionally alongside `RestoreDiscardedEnrichTasksByBatch`.
+- `RetryFailedTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status = 'failed'` — Resets failed batch tasks to pending (attempts preserved; the budget only moves on reclamation resets). Runs inside `ResumeBatch` followed, in the same transaction, by `RestoreDiscardedEnrichTasksByBatch`.
 - `GetConfigTaskByDedupKey :one` — Returns the most recent config task matching `dedup_key`. Used by `ConfigHandler.configTaskCovered` (skip enqueue when a `pending`/`processing` task already exists) and by `tryAcquireConfigTaskSlot` for the migration enqueuers. Completed/failed/cancelled tasks do not block a fresh enqueue: `enqueueConfigTasks` inserts a new task row under a new batch (the partial unique index on `dedup_key` only covers `pending`/`processing`) instead of retrying the old task.
 - `DeleteConfigTaskByDedupKey :execrows` — `DELETE FROM task WHERE task_type = 'config' AND dedup_key = ? AND status IN ('pending','failed')` — Atomic, status-guarded supersede of a stale config task (used by `enqueueDBMigration` so a task claimed between read and delete survives and wins).
 - `DiscardEnrichTask :execrows` — `UPDATE ... WHERE id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by internal `id`; returns rows affected so callers can distinguish a real discard from a no-op. Wrapped by `Store.Discard`.
-- `DiscardEnrichTaskByTaskID :execrows` — `UPDATE ... WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by UUID `task_id`. Kept for the test suite (`TestDiscardEnrichTaskByTaskID`); production discard paths now use `Store.Discard` (handler) and the sweep queries (recovery points).
-- `SetEnrichTaskWaiting :execrows` — `UPDATE ... SET status='waiting', error=NULL, completed_at=NULL WHERE task_id = ? AND status = 'discarded' AND task_type = 'enrich'` — Restores a discarded enrich when its consume is retried/reset. Targeted by UUID `task_id` (the consume payload's `on_completed`), race-free.
-- `RestoreDiscardedEnrichTasks :execrows` / `RestoreDiscardedEnrichTasksByBatch :execrows` — join-based restore (`UPDATE ... FROM task AS c WHERE e.status='discarded' AND c.status='pending' AND e.task_id = c.payload->>'on_completed'`, batch variant scoped by `c.batch_id`): re-arms every discarded enrich whose consume is pending again. Run inside the same transaction as the retry/reset.
-- `DiscardWaitingEnrichesOfFailedConsumes :execrows` / `DiscardWaitingEnrichesOfFailedConsumesGlobal :execrows` — join-based sweep: discards every waiting enrich whose consume is `failed` (batch-scoped or global), copying the parent's error text (`COALESCE(c.error, 'parent consume task failed')`). Enforces "enrich is never waiting while its consume is terminal-failed" at recovery points. Batch variant runs unconditionally in `QuarantineFailedFiles`; the global variant runs inside `Batch.ResetStaleProcessingTasks`.
+- `DiscardEnrichTaskByTaskID :execrows` — `UPDATE ... WHERE task_id = ? AND status = 'waiting' AND task_type = 'enrich'` — Discards an enrich task by UUID `task_id`. Kept for the test suite (`TestDiscardEnrichTaskByTaskID`); production discard paths use `Store.Discard` (handler) and the sweep queries (recovery points).
+- `SetEnrichTaskPending :exec` — `UPDATE ... SET status='pending', payload=@payload, dedup_key=@dedup_key, error=NULL, completed_at=NULL WHERE id = ? AND status IN ('waiting','discarded') AND task_type IN ('enrich','thumbnail')` — Children are activated with the definition-derived dedup key atomically with the pending flip,图片均 so the dedup index covers activated children; the join-based restores work from the same link.
+- `RestoreDiscardedEnrichTasks :execrows` / `RestoreDiscardedEnrichTasksByBatch :execrows` — join-based restore (`UPDATE ... FROM task AS c WHERE e.status='discarded' AND c.status='pending' AND e.task_id = c.payload->>'on_completed'`, batch variant scoped by `c.batch_id`): re-arms every discarded child whose consume is pending again. Runs inside the sweep transactions paired with the resets, and inside `ResumeBatch` a second time after the retry.
+- `DiscardOrphanedWaitingEnriches :execrows` / `DiscardOrphanedWaitingEnrichesGlobal :execrows` — join-based sweep: discards every waiting enrich or thumbnail whose parent consume is no longer `pending`/`processing` (failed, cancelled, or completed without activating its children), copying the parent's error text (`COALESCE(c.error, 'parent consume task did not complete')`). Enforces "a child is never waiting while its consume is terminal" at recovery points. The batch variant runs unconditionally in `QuarantineFailedFiles` (scoped by the batch id); the global variant runs inside `service.Batch.ResetStaleProcessingTasks`.
+- `GetConsumeTaskPayloadsByIDs :many` / `GetPermanentlyFailedConsumeTaskPayloads :many` — the quarantine's two sources: the payload rows of the identities a reclamation just failed (cross-batch, by id), and a batch's failed consume rows at or above the retry bound (the crash residue). Both feed `QuarantineFailedFiles`, which classifies by task identity and never reads error text.
+- `CancelPendingTasksByBatch :execrows` — `UPDATE ... WHERE batch_id = ? AND status IN ('pending','waiting')` — the cancel operation takes pending TASKS and their waiting children together with the processing writes.
 
 ---
 
@@ -140,11 +158,11 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ### Struct
 
-- `ConsumeTaskHandler` — `consumer *consumption.Consumer`, `store *task.Store`, `queries *database.Queries`, `logger *log.Logger`
+- `ConsumeTaskHandler` — `consumer *consumption.Consumer`, `store *task.Store`, `queries *database.Queries`, `logger *log.Logger`, `catalog task.TypeCatalog`
   - **Methods**:
-    - `NewConsumeTaskHandler(consumer, store, queries, logger) *ConsumeTaskHandler`
-    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.SetPending`. On **any** failure (payload unmarshal, empty `file_path`, `FileFromPath`, or `Process`), discards the linked enrich task via `withDiscardAttempt` — if the discard itself fails, the error is appended (`"; additionally failed to discard enrich task <id>: ..."`) so it lands in the task's `error` field.
-    - `activateChildEnrich(ctx, parent, onCompleted, documentID)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, updates its payload with the document ID, and sets it to `pending`. Works on both `waiting` and `discarded` enrich tasks so a retried consume can reactivate a previously-discarded enrich.
+    - `NewConsumeTaskHandler(consumer, store, queries, logger, catalog) *ConsumeTaskHandler` — the catalog is the seam the activation needs: the child dedup keys derive through the same `TypeDefinition.DedupKey` the enqueue applies
+    - `Handle(ctx, t) (json.RawMessage, error)` — Unmarshals payload (`file_path`, `document_id` UUID, `on_completed` enrich task ID), calls `FileFromPath` + `consumer.Process`. On success, if `on_completed` is set and a document was created, activates the linked enrich task via `Store.ActivateChild` (payload updated with the document id, key derived through the catalog; a conflicting activation is reported as `DiscardedDuplicate` and completes the parent, a failed activation is logged for enrich and fatal for thumbnail). On **any** failure (payload unmarshal, empty `file_path`, `FileFromPath`, or `Process`), discards the linked enrich task via `withDiscardAttempt` — if the discard itself fails, the error is appended (`"; additionally failed to discard enrich task <id>: ..."`) so it lands in the task's `error` field.
+    - `childDedupKey(taskType, payload) (string, error)` — Looks up the type definition and derives the child's dedup key; a missing definition or an empty derived key (missing document id) fails the activation instead of writing a keyless child that would bypass the dedup index.
     - `deactivateChildEnrich(ctx, parent, onCompleted, parentErr)` — Looks up the enrich task by UUID, validates `waiting_for` matches the parent, and sets it to `discarded` with the parent error via `Store.Discard`. Only matches `waiting` enrich tasks; 0 rows affected is a benign no-op logged at info level.
     - `withDiscardAttempt(ctx, t, onCompleted, err)` — private: attempts the enrich discard for a failing consume and merges a discard failure into the returned error.
     - `recoverOnCompleted(payload)` — private: lenient re-parse of `on_completed` from a payload that failed strict unmarshalling, so the paired enrich can still be discarded.
@@ -175,7 +193,10 @@ The config handlers live in their own package (`internal/ops/configtask/`) to ke
 
 ### Handlers
 
-Each kind is its own task type with its own handler; all three track progress on the task row (`task.NewProgressTracker`) and settle their batch (`MarkBatchProcessing` / `FinalizeBatchStatus`).
+Each kind is its own task type with its own handler; the three track progress
+on the task row (`task.NewProgressTracker`) and perform no lifecycle work —
+the runner owns the claim, the batch flip, the locks and the settle under a
+fresh per-task execution guard.
 
 - `ConfigTaskHandler` — runs the asset downloads. `Handle` unmarshals `{"config_dir":"...", "op":"tessdata|hugot", "lang":...}`, loads config from disk, and dispatches to `config.DownloadTessdataLanguage` or `config.DownloadHugotModel`
 - `MigrateDBTaskHandler` — unmarshals `MigrateDBPayload` and calls `MigrateDatabase`
@@ -183,8 +204,8 @@ Each kind is its own task type with its own handler; all three track progress on
 
 ### Package functions
 
-- `MigrateDatabase(ctx, logger, payload, report task.ProgressFunc) error` — the claim acquires the migrate type's maintenance hold (waits verified with it), the handler drains in-flight tasks via `task.HoldClaimed` (heartbeat included) before the work, then takes a best-effort gzipped pre-migration snapshot into `backup.path` (keeps the latest 5), dumps the current DB to a temp file (`database.DumpSchemaAndData`), connects to the destination (10s connect timeout), then: skips the copy when the destination already holds data (`document`/`task` row counts), refuses databases with tables but no goose history (`database.ValidateMigrationDestination`), restores the dump via `psql` (`database.RestoreDumpViaPSQL`, run per the current config's `database.runtime` — host binary or exec into the current container — connecting over TCP to the destination; `runtime: remote` refuses before dumping), and finally persists the new connection settings via `config.SaveMap` (also clearing `database.dsn` so the new fields win). Storage paths are not touched — that is the `migrate-storage` task's job.
-- `MigrateStorage(ctx, logger, payload, report task.ProgressFunc) error` — loads config from disk (so it connects to the database the current config points at — after a preceding `migrate-db` task, the new database). The claim acquires the maintenance hold and verifies the `storage` wait (through the type's lock declarations); the handler drains in-flight tasks via `task.HoldClaimed`, and for each changed directory: rewrites pending consume-task payload paths (`database.RewriteTaskPayloadPaths`, before any file move), moves the storage subdirs (`processed/`, `originals/`, `errors/`, `orphaned/`, `trash/`, `thumbnails/`) and inbox files per `storage.migration_mode` (`copy`: copy-then-delete; `move`: `os.Rename` per entry with copy fallback), rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` (`database.RewriteStoragePaths`, only when `storage_dir` changed), and persists the new dirs via `config.SaveMap` only after the moves succeed
+- `MigrateDatabase(ctx, logger, payload, report task.ProgressFunc) error` — loads config from disk, takes a best-effort gzipped pre-migration snapshot into `backup.path` (keeps the latest 5), dumps the current DB to a temp file (`database.DumpSchemaAndData`), connects to the destination (10s connect timeout), then: skips the copy when the destination already holds data (`document`/`task` row counts), refuses databases with tables but no goose history (`database.ValidateMigrationDestination`), restores the dump via `psql` (`database.RestoreDumpViaPSQL`, run per the current config's `database.runtime` — host binary or exec into the current container — connecting over TCP to the destination; `runtime: remote` refuses before dumping), and finally persists the new connection settings via `config.SaveMap` (also clearing `database.dsn` so the new fields win). Storage paths are not touched — that is the `migrate-storage` task's job. (The claim acquires the maintenance hold and the runner drains the wait set before the handler runs.)
+- `MigrateStorage(ctx, logger, payload, report task.ProgressFunc) error` — loads config from disk (so it connects to the database the current config points at — after a preceding `migrate-db` task, the new database). The claim acquires the maintenance hold and verifies the `storage` wait (through the type's lock declarations; the runner drains the conflicting tasks first), and for each changed directory: rewrites pending consume-task payload paths (`database.RewriteTaskPayloadPaths`, before any file move), moves the storage subdirs (`processed/`, `originals/`, `errors/`, `orphaned/`, `trash/`, `thumbnails/`) and inbox files per `storage.migration_mode` (`copy`: copy-then-delete; `move`: `os.Rename` per entry with copy fallback), rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` (`database.RewriteStoragePaths`, only when `storage_dir` changed), and persists the new dirs via `config.SaveMap` only after the moves succeed
 
 Dedup derivation lives in the task type catalog (`internal/ops/container`): config payloads derive `config:tessdata:<lang>` / `config:hugot`, the migrations carry the fixed per-type keys. The enqueue path in `ConfigHandler.enqueueConfigTasks` and the migration slot helpers share it via `Enqueuer.DedupKey`.
 
@@ -198,21 +219,25 @@ The `Container` registers all thirteen task types (`"consume"`, `"enrich"`, `"th
 and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
 The `"backup"` type is handled by `BackupTaskHandler` which runs with the DB-backed maintenance lock already held (acquired at claim time, in the claim transaction), waits for in-flight tasks to drain, runs the backup, and lets the runner release the lock on completion/failure (token-guarded). The catalog derives its dedup key `backup:<mode>:<date>` from the payload's mode (default `full`).
 
-The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same locks already held (claim-time acquisition), then delegates to `backup.RunLocked` (5-minute heartbeat via `database.StartLockHeartbeat` started before the drain → drain → `rsync -a --delete --info=stats2 --timeout=600` → `.edub-mirror.json` state write); the runner releases the lock on completion/failure. The catalog derives its dedup key `mirror:<UTC date>`.
+The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same locks already held (claim-time acquisition) and delegates to `backup.RunMirrorAndRecord` (the runner holds the lock heartbeat and drains the wait set before the handler; the handler runs `rsync -a --delete --info=stats2 --timeout=600` and writes the `.edub-mirror.json` state file); the runner releases the lock on completion/failure. The catalog derives its dedup key `mirror:<UTC date>`.
 
 The `"tagreconcile"` type is handled by `TagReconcileTaskHandler` which runs with the lock already held, drains in-flight tasks, and forks `kushim tagreconcile --run <batch-id>`: the child builds the reconciler on a runner with the `textreducer`, `contentanalyzer` and `tagmatcher` tools — the reducer feeds the provisional re-judge path (`Runner.ReduceContent` over the tag's first live document) — runs one pass, and prints the `tagreconcile-report: <json>` line the handler captures as the task result, while the child's exit code decides completion/failure. The catalog derives the fixed `tagreconcile` key, so any active run blocks further enqueues of the type. The `"thumbbackfill"` type is handled by the shared per-document `ThumbnailTaskHandler`: backfill batches are not claimed task-by-task — the forked consume child acquires `storage` for the whole run under the batch-owner token after verifying its declared waits, drains in-flight thumbnail tasks, and runs a dedicated 1-worker/2s pool whose claims verify their waits without acquiring; per-document `thumbnail` claims defer on both `maintenance` and `storage`, so per-document writes pause while the backfill runs.
 The `"tagmeasure"` type is handled by `TagMeasureTaskHandler` which runs with the lock already held, drains in-flight tasks, and forks `kushim tagmeasure --run <batch-id>`: the child executes the pass (`internal/tags`) in one repeatable-read transaction, writes the evidence records, and prints a report line the handler captures as the task result, while the child's exit code decides completion/failure through the attempts budget. The pass opens by reading its `tag_measure_changed` flag and short-circuits to a zero-work report (no records) when the flag is clear and a completed run exists under the current rule set; otherwise it clears the flag and sweeps, re-arming it if the sweep fails. The catalog derives the fixed `tagmeasure` key, so any active run blocks further enqueues of the type. A manual `kushim tagmeasure` enqueues the same queued task through `curation.TagMeasure`, and the pool always claims — `enricher.tag_measure.enabled` gates only automatic enqueuing.
 The `"tagidentity"` type is handled by `TagIdentityTaskHandler`, the same drain + heartbeat + fork shape: it forks `kushim tagidentity --run <batch-id>`, whose child resolves the pending identity evidence through `admission.IdentityResolver` and prints the `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/failed) the handler captures; the exit code decides completion/failure. The queue daemon runs its pool unconditionally; runs come from the review surface's `POST /api/v1/tags/identity/reevaluate`, a manual `kushim tagidentity`, and the pass's own daily 03:30 schedule, which fires only while `enricher.tag_adjudicator.enabled` is set. The catalog derives the fixed `tagidentity` key, and a run with the adjudicator disabled only counts the backlog.
 The `"tagaudit"` type is handled by `TagAuditTaskHandler`, the same drain + heartbeat + fork shape: it forks `kushim tagaudit --run <batch-id>`, whose child verifies document coverage against the vocabulary (`admission.AuditRunner`), fills the confirmed gaps, records the coverage classes, and prints the `tagaudit-report: <json>` line (sweep, sampled/flagged counts, coverage tallies by class, fills/flags/proposals, judge call counts, pending coverage) the handler captures; the exit code decides completion/failure. The catalog derives the fixed `tagaudit` key. Runs come from the anchored schedule (disabled by default), a manual `kushim tagaudit`, and `POST /api/v1/tags/audit/reevaluate`; the pool always claims, so only the schedule obeys `enricher.tag_audit.enabled`; the run draws its sample from the sweep register, which stamps a document with the sweep it was audited in, so it is audited at most once per sweep and returns exactly one sweep later.
-The task type catalog and the enqueuer are built together with the runner; the tag services and `Enricher` receive the client instead of a direct Hugot reference:
+The task type catalog is built from `client.Queries` before the handler
+registry so the consume handler and the enqueuer share one catalog; the tag
+services and `Enricher` receive the client instead of a direct Hugot
+reference:
 
 ```go
 matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
 tagSvc := curation.NewTag(client, c.GetLogger(), matcherClient)
 enricher := enrichment.NewEnricher(cfg, c.GetLogger(), client, tagSvc, matcherClient)
-c.catalog = container.NewCatalog(client.Queries)
+store := task.NewStore(client)
+c.catalog = NewCatalog(client.Queries)
 c.enqueuer = task.NewEnqueuer(client, c.catalog)
-registry.Register(types.Task.Type.Consume, consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.GetLogger()))
+registry.Register(types.Task.Type.Consume, consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.GetLogger(), c.catalog))
 registry.Register(types.Task.Type.Enrich, enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.GetLogger()))
 registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.GetLogger()))
 registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, c.GetLogger()))
