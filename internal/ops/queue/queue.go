@@ -1,8 +1,8 @@
-// Package queue is the queue daemon: it LISTENs for batch and task notifications, polls as a safety
-// net, claims queued consume batches for the per-batch consume children, dispatches every other task
-// type to their handlers, runs the blocking-task sweeps (backup, mirror, tag measure, tag audit, tag
-// reconcile, tag identity, thumbnails backfill) under the maintenance lock, and requeues stale work.
-// The per-batch consume work itself forks kushim consume children.
+// Package queue is the queue daemon: it LISTENs for batch and lock notifications, polls as a safety net,
+// claims queued batches through the dispatcher and forks each batch's task CLI in batch mode, runs the
+// blocking-task pools (backup, mirror, tag measure, tag audit, tag reconcile, tag identity, thumbnails
+// backfill) for the workloads that do not go through the dispatcher yet, schedules the recurring runs and
+// requeues stale work through the reaper.
 package queue
 
 import (
@@ -24,7 +24,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
-	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -39,6 +38,7 @@ type daemon struct {
 
 	notifyCancel context.CancelFunc
 	notifyCh     chan struct{}
+	dispatcher   *batchDispatcher
 
 	backupPool       poolState
 	mirrorPool       poolState
@@ -147,6 +147,14 @@ func Run(c *container.Container, args []string) error {
 	d.startNotify(ctx)
 	defer d.stopNotify()
 
+	wake := func() {
+		select {
+		case d.notifyCh <- struct{}{}:
+		default:
+		}
+	}
+	d.dispatcher = newBatchDispatcher(c, types.HostQueue, maxConcurrent, wake)
+
 	safetyInterval := 30 * time.Second
 	safetyTimer := time.NewTimer(safetyInterval)
 	defer safetyTimer.Stop()
@@ -157,8 +165,8 @@ func Run(c *container.Container, args []string) error {
 	for {
 		select {
 		case <-d.notifyCh:
-			if err := consumeNextQueuedBatch(ctx, d.client.Load(), d.batchSvc, maxConcurrent, c.GetLogger()); err != nil {
-				c.GetLogger().Error("", "queue consumption: %v", err)
+			if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil {
+				c.GetLogger().Error("", "queue dispatch: %v", err)
 			}
 			if !safetyTimer.Stop() {
 				select {
@@ -169,8 +177,8 @@ func Run(c *container.Container, args []string) error {
 			safetyTimer.Reset(safetyInterval)
 
 		case <-safetyTimer.C:
-			if err := consumeNextQueuedBatch(ctx, d.client.Load(), d.batchSvc, maxConcurrent, c.GetLogger()); err != nil {
-				c.GetLogger().Error("", "queue consumption: %v", err)
+			if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil {
+				c.GetLogger().Error("", "queue dispatch: %v", err)
 			}
 			safetyTimer.Reset(safetyInterval)
 
@@ -364,181 +372,6 @@ func (d *daemon) ensureTagAudit(ctx context.Context, cfg *config.Config) {
 	}
 }
 
-func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
-	if !cfg.Consumer.Reclaim.Enabled {
-		return
-	}
-	if err := reclaimStaleBatches(ctx, cfg, d.client.Load(), d.batchSvc, d.c.GetLogger()); err != nil {
-		d.c.GetLogger().Error("", "stale reclamation: %v", err)
-	}
-	minInterval := max(cfg.Consumer.Reclaim.StaleTaskAfter/10, 60)
-	if time.Since(d.lastStaleTaskClaim) > time.Duration(minInterval)*time.Second {
-		if err := reclaimStaleTasks(ctx, d.client.Load(), d.batchSvc, cfg, d.c.GetLogger()); err != nil {
-			d.c.GetLogger().Error("", "stale task reclamation: %v", err)
-		}
-		d.lastStaleTaskClaim = time.Now()
-	}
-}
-
-func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, logger *log.Logger) error {
-	owners, err := batchSvc.ListStaleBatchOwners(ctx)
-	if err != nil {
-		return fmt.Errorf("list stale batch owners: %w", err)
-	}
-	for _, owner := range owners {
-		logger.Info("", "reclaiming stale batch %s (owner=%s pid=%d)", owner.BatchID, owner.OwnerID, owner.Pid)
-		if task.IsAlive(owner.Pid) {
-			if err := syscall.Kill(int(owner.Pid), syscall.SIGTERM); err != nil {
-				logger.Error("", "signal SIGTERM to PID %d for batch %s: %v", owner.Pid, owner.BatchID, err)
-			}
-		}
-		// release only the exact row this pass listed: a fresh owner that took the batch over after the snapshot
-		// keeps its lease and its run, so the whole iteration is skipped. Releasing first also satisfies the
-		// settle guard and makes the release the identity fence for every later recovery step
-		released, err := client.Queries.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
-			BatchID: owner.BatchID,
-			OwnerID: owner.OwnerID,
-		})
-		if err != nil {
-			logger.Error("", "release stale batch owner for batch %s: %v", owner.BatchID, err)
-			continue
-		}
-		if released == 0 {
-			logger.Info("", "stale batch %s changed owner — leaving it to the new execution", owner.BatchID)
-			continue
-		}
-
-		reset, err := batchSvc.ResetProcessingTasksByBatch(ctx, owner.BatchID)
-		if err != nil {
-			logger.Error("", "reset processing tasks for batch %s: %v", owner.BatchID, err)
-			requeueReleasedBatch(ctx, client, logger, owner.BatchID)
-			continue
-		}
-		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, cfg.Storage.StorageDir, logger,
-			owner.BatchID, int32(cfg.Consumer.Reclaim.MaxRetries), reset.ConsumeTaskIDs()); err != nil {
-			logger.Error("", "quarantine files for batch %s: %v", owner.BatchID, err)
-		}
-
-		hasWork, err := batchSvc.HasPendingWork(ctx, owner.BatchID)
-		if err != nil {
-			logger.Error("", "check pending work for batch %s: %v", owner.BatchID, err)
-			requeueReleasedBatch(ctx, client, logger, owner.BatchID)
-			continue
-		}
-		if !hasWork {
-			status, settleErr := task.SettleBatch(ctx, client, logger, task.Execution{BatchID: owner.BatchID})
-			if settleErr != nil {
-				logger.Error("", "settle stale batch %s: %v", owner.BatchID, settleErr)
-				requeueReleasedBatch(ctx, client, logger, owner.BatchID)
-				continue
-			}
-			if status.Terminal() {
-				logger.Info("", "stale batch %s settled as %s — no work left", owner.BatchID, status)
-				continue
-			}
-			// work appeared between the check and the settle; with the lease already gone nothing else would
-			// pick the batch up, so hand it back to the dispatcher
-			logger.Info("", "stale batch %s could not settle (%s) — requeueing", owner.BatchID, status)
-			requeueReleasedBatch(ctx, client, logger, owner.BatchID)
-		} else {
-			if _, err := client.Queries.RequeueProcessingBatch(ctx, owner.BatchID); err != nil {
-				logger.Error("", "requeue batch %s: %v", owner.BatchID, err)
-				continue
-			}
-			logger.Info("", "stale batch %s reclaimed and requeued", owner.BatchID)
-		}
-	}
-	return nil
-}
-
-// requeueReleasedBatch hands a batch whose stale lease was already released back to the dispatcher, so a
-// recovery step that fails after the release cannot leave an ownerless processing batch behind.
-func requeueReleasedBatch(ctx context.Context, client *database.Client, logger *log.Logger, batchID string) {
-	if _, err := client.Queries.RequeueProcessingBatch(ctx, batchID); err != nil {
-		logger.Error("", "batch %s could not be requeued after its lease was released: %v (needs manual recovery)", batchID, err)
-		return
-	}
-	logger.Info("", "batch %s requeued after its released recovery did not complete", batchID)
-}
-
-func reclaimStaleTasks(ctx context.Context, client *database.Client, batchSvc *service.Batch, cfg *config.Config, logger *log.Logger) error {
-	reset, err := batchSvc.ResetStaleProcessingTasks(ctx, cfg.Consumer.Reclaim.StaleTaskAfter)
-	if err != nil {
-		return fmt.Errorf("reset stale processing tasks: %w", err)
-	}
-	consumeIDs := reset.ConsumeTaskIDs()
-	if len(consumeIDs) > 0 {
-		// the sweep's quarantined consume tasks are permanent failures, so their inbox files move right now
-		// instead of waiting for the batch's next run
-		if qErr := consumption.QuarantineFailedFiles(ctx, client.Queries, cfg.Storage.StorageDir, logger,
-			"", int32(cfg.Consumer.Reclaim.MaxRetries), consumeIDs); qErr != nil {
-			logger.Error("", "quarantine files for stale-swept tasks: %v", qErr)
-		}
-	}
-	if reset.Reset > 0 || len(reset.Quarantined) > 0 {
-		logger.Info("", "reclaimed %d stale processing tasks (%d quarantined %v, age > %ds)",
-			reset.Reset, len(reset.Quarantined), consumeIDs, cfg.Consumer.Reclaim.StaleTaskAfter)
-	}
-	return nil
-}
-
-func consumeNextQueuedBatch(ctx context.Context, client *database.Client, batchSvc *service.Batch, maxConcurrent int, logger *log.Logger) error {
-	liveCount, err := batchSvc.CountLiveBatches(ctx)
-	if err != nil {
-		return fmt.Errorf("count live batches: %w", err)
-	}
-	if liveCount >= int64(maxConcurrent) {
-		return nil
-	}
-
-	batch, err := batchSvc.GetNextQueuedBatch(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("get next queued batch: %w", err)
-	}
-
-	logger.Info("", "consuming queued batch %s", batch.ID)
-
-	claimed, err := client.Queries.MarkBatchClaimed(ctx, batch.ID)
-	if err != nil {
-		return fmt.Errorf("mark batch %s claimed: %w", batch.ID, err)
-	}
-	if claimed == 0 {
-		logger.Info("", "queued batch %s left its claimable states — skipping", batch.ID)
-		return nil
-	}
-
-	// Pre-create batch_owner row so stale reclamation can catch orphaned
-	// batches if the child crashes before acquiring the owner itself.
-	ownerID := "queue-" + batch.ID[:8]
-	if _, err := client.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
-		BatchID: batch.ID,
-		OwnerID: ownerID,
-		Pid:     int64(os.Getpid()),
-	}); err != nil {
-		logger.Error("", "pre-create owner for batch %s: %v", batch.ID, err)
-	}
-
-	// --force so the child overwrites our placeholder owner row.
-	cmd := exec.Command(os.Args[0], "consume", "--batch", batch.ID, "--force")
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		logger.Error("", "fork consume for batch %s: %v — requeueing", batch.ID, err)
-		if _, requeueErr := client.Queries.RequeueProcessingBatch(ctx, batch.ID); requeueErr != nil {
-			logger.Error("", "requeue batch %s after fork failure: %v", batch.ID, requeueErr)
-		}
-		return nil
-	}
-	go func() { _ = cmd.Wait() }()
-
-	logger.Info("", "forked kushim consume --batch %s (PID %d)", batch.ID, cmd.Process.Pid)
-	return nil
-}
-
 func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 	c := d.c
 	var missingTools []config.ExternalTool
@@ -580,8 +413,8 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 }
 
 func pollingTick(ctx context.Context, c *container.Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int, missingTools []config.ExternalTool) {
-	// only count batches that occupy a consume slot; config/backup/mirror batches own their lifecycle in
-	// their handlers (see GetNextQueuedBatch)
+	// only count batches that occupy a consume slot; maintenance and config batches own their lifecycle
+	// outside the dispatcher until they move onto the task CLI
 	queuedCount, err := batchSvc.CountQueuedConsumeBatches(ctx)
 	if err != nil {
 		c.GetLogger().Error("", "polling: count queued batches: %v", err)

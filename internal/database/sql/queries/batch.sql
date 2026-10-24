@@ -11,34 +11,42 @@ FROM batch_owner WHERE batch_id = $1;
 -- Two-step acquire: try INSERT first, then UPDATE with stale check.
 
 -- name: TryInsertBatchOwner :execrows
-INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+INSERT INTO batch_owner (batch_id, owner_id, pid, dispatcher_id, acquired_at, last_heartbeat)
+VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING;
 
 -- name: UpdateBatchOwnerIfStale :execrows
+-- a takeover is a manual execution: it clears any dispatcher identity the replaced lease carried, so the
+-- new run never charges the previous dispatcher's slot budget
 UPDATE batch_owner SET
   owner_id = @owner_id,
   pid = @pid,
+  dispatcher_id = NULL,
   acquired_at = CURRENT_TIMESTAMP,
   last_heartbeat = CURRENT_TIMESTAMP
 WHERE batch_id = @batch_id
   AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
        OR owner_id = @owner_id);
 
--- name: AcquireBatchOwnerForce :execrows
-INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(batch_id) DO UPDATE SET
-  owner_id = excluded.owner_id,
-  pid = excluded.pid,
-  acquired_at = CURRENT_TIMESTAMP,
-  last_heartbeat = CURRENT_TIMESTAMP;
-
 -- name: HeartbeatBatchOwner :execrows
 UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = $1;
 
+-- name: AdoptBatchOwner :execrows
+-- the dispatcher claims the lease with pid 0 and the child adopts it once: the owner token must still
+-- match and the lease must still be unadopted, so a cancelled, requeued or reclaimed batch, or a replayed
+-- execution token, refuses the adoption
+UPDATE batch_owner SET pid = @pid, last_heartbeat = CURRENT_TIMESTAMP
+WHERE batch_id = @batch_id AND owner_id = @owner_id AND pid = 0;
+
 -- name: ReleaseBatchOwner :execrows
 DELETE FROM batch_owner WHERE batch_id = $1 AND owner_id = $2;
+
+-- name: ReleaseStaleBatchOwner :execrows
+-- the reaper's release re-verifies what its snapshot identified: the same row, still owned by the listed
+-- pid and still stale, so a lease that was adopted or heartbeated after the snapshot survives recovery
+DELETE FROM batch_owner
+WHERE batch_id = @batch_id AND owner_id = @owner_id AND pid = @pid
+  AND last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int);
 
 -- name: DeleteBatchOwnerByBatchID :execrows
 DELETE FROM batch_owner WHERE batch_id = $1;
@@ -84,16 +92,16 @@ WHERE b.status = 'queued'
     WHERE t.batch_id = b.id AND t.task_type::text = ANY(@non_consume_types::text[])
   );
 
--- name: GetNextQueuedBatch :one
--- See CountQueuedConsumeBatches: the non-consume exclusion is passed in from the registry, not enumerated.
-SELECT b.* FROM batch b
+-- name: ListQueuedBatchesByAge :many
+-- the dispatcher filters eligibility, backoff and claimability in Go over the oldest-first rows; the task
+-- type set is the batch's composition, so the catalog stays the single source of dispatch policy
+SELECT b.id AS batch_id, b.created_at AS batch_created_at,
+       ARRAY_AGG(DISTINCT t.task_type::text)::text[] AS task_types
+FROM batch b
+JOIN task t ON t.batch_id = b.id
 WHERE b.status = 'queued'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
-  AND NOT EXISTS (
-    SELECT 1 FROM task t
-    WHERE t.batch_id = b.id AND t.task_type::text = ANY(@non_consume_types::text[])
-  )
-ORDER BY b.created_at LIMIT 1;
+GROUP BY b.id, b.created_at
+ORDER BY b.created_at;
 
 -- a claim locks the batch row and flips it into processing only on the first claim; processing stays allowed
 -- so the remaining tasks of a multi-task batch stay claimable, while any other status refuses the claim
@@ -151,6 +159,12 @@ WHERE batch.id = @id
 UPDATE batch SET status = 'cancelled'
 WHERE id = $1 AND status IN ('queued', 'processing', 'paused');
 
+-- name: SetBatchFailed :execrows
+-- the dispatcher's bounded launch-failure exit: the batch never started, so it is failed once its tasks
+-- were cancelled in the same transaction
+UPDATE batch SET status = 'failed'
+WHERE id = $1 AND status IN ('queued', 'processing');
+
 -- name: RequeueProcessingBatch :execrows
 UPDATE batch SET status = 'queued' WHERE id = $1 AND status = 'processing';
 
@@ -172,6 +186,20 @@ FROM task WHERE batch_id = $1;
 -- name: CountLiveBatches :one
 SELECT COUNT(*) FROM batch_owner
 WHERE last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int);
+
+-- name: CountLiveNoHoldsBatches :one
+-- the dispatcher's slot budget only charges batches that acquire no locks; a lock-holding batch is never
+-- charged a slot because its locks already serialize it, so it is excluded here. The identity filter keeps
+-- the budget per dispatcher process: manual runs and other hosts carry other ids (or none)
+SELECT COUNT(*) FROM batch_owner bo
+WHERE bo.dispatcher_id = @dispatcher_id::uuid
+  AND bo.last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.value = 'true'
+      AND s.data->>'batch_id' = bo.batch_id
+      AND lock_is_held(s.name)
+  );
 
 -- name: ListStaleBatchOwners :many
 SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo

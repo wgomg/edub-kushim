@@ -116,18 +116,17 @@ func Run(c *container.Container, args []string) error {
 		"  Streams per-file progress to stdout.\n\n" +
 		"  Prerequisite: kushim hugot must be running (sibling process).\n" +
 		"  Start it in a separate terminal or via systemd before running consume.\n\n" +
-		"  --batch <id>      resume processing of an existing batch\n" +
-		"  --force           override stale PID file lock\n\n" +
+		"  --batch <id>       execute one queued batch\n" +
+		"  --exec-token <id>  execution token passed by the dispatcher or batch run\n\n" +
 		"Subcommands:\n" +
 		"  cancel <id>       cancel a running batch") {
 		return nil
 	}
 
-	var batchIDParam string
+	var batchIDParam, execTokenParam string
 	fp.String("--batch", &batchIDParam)
 
-	force := false
-	fp.Bool("--force", &force)
+	fp.String("--exec-token", &execTokenParam)
 
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag: %s", rest[0])
@@ -182,38 +181,55 @@ func Run(c *container.Container, args []string) error {
 			return fmt.Errorf("inspect batch tasks: %w", tbfErr)
 		}
 
+		execToken, err := parseExecToken(execTokenParam)
+		if err != nil {
+			return err
+		}
+
 		ownerID := uuid.New().String()
+		if execToken != uuid.Nil {
+			ownerID = execToken.String()
+		}
 		pid := os.Getpid()
 		owner := task.NewOwner(client, ownerID, pid, c.GetLogger())
-		c.GetLogger().Info("", "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
 
-		if force {
-			// the queue daemon pre-creates a placeholder owner row and
-			// forks with --force: take it directly instead of failing
-			// the plain Acquire against the live placeholder first
-			if err := owner.AcquireForce(ctx, batchIDParam); err != nil {
-				return fmt.Errorf("force acquire: %w", err)
+		if execToken != uuid.Nil {
+			// the dispatcher or batch run already claimed the batch, passing the lease token to the child in
+			// the exec-token flag; the child only adopts that lease, so any cancelled, requeued or reclaimed
+			// batch refuses the run
+			c.GetLogger().Info("", "consume: adopting batch %s (PID=%d, token=%s)", batchIDParam, pid, ownerID)
+			if err := owner.Adopt(ctx, batchIDParam); err != nil {
+				return err
 			}
-		} else if err := owner.Acquire(ctx, batchIDParam); err != nil {
-			if err == task.ErrBatchLocked {
-				bo, boErr := client.GetBatchOwner(ctx, database.GetBatchOwnerParams{
-					BatchID:           batchIDParam,
-					StaleAfterSeconds: task.LeaseStaleSeconds,
-				})
-				if boErr == nil {
-					return fmt.Errorf("batch %s is being processed by PID %d (use --force to override)", batchIDParam, bo.Pid)
+		} else {
+			c.GetLogger().Info("", "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
+			if err := owner.Acquire(ctx, batchIDParam); err != nil {
+				if errors.Is(err, task.ErrBatchLocked) {
+					bo, boErr := client.GetBatchOwner(ctx, database.GetBatchOwnerParams{
+						BatchID:           batchIDParam,
+						StaleAfterSeconds: task.LeaseStaleSeconds,
+					})
+					if boErr == nil && bo.Pid > 0 {
+						return fmt.Errorf("batch %s is being processed by PID %d", batchIDParam, bo.Pid)
+					}
+					return fmt.Errorf("batch %s is being processed by another process", batchIDParam)
 				}
-				return fmt.Errorf("batch %s is being processed by another process (use --force to override)", batchIDParam)
+				return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
 			}
-			return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
 		}
 
 		c.GetLogger().Debug("", "consume: GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
 
 		maxRetries := int32(c.GetConfig().Consumer.Reclaim.MaxRetries)
-		reset, resetErr := task.ResetProcessingTasksByBatch(ctx, client, batchIDParam, maxRetries)
-		if resetErr != nil {
-			c.GetLogger().Error("", "reset processing tasks for batch %s: %v", batchIDParam, resetErr)
+		var reset task.ResetResult
+		if execToken != uuid.Nil {
+			// the claim acquired the batch locks: entry repair must keep them
+			reset, err = task.ResetProcessingTasksForClaim(ctx, client, batchIDParam, maxRetries)
+		} else {
+			reset, err = task.ResetProcessingTasksByBatch(ctx, client, batchIDParam, maxRetries)
+		}
+		if err != nil {
+			c.GetLogger().Error("", "reset processing tasks for batch %s: %v", batchIDParam, err)
 		}
 		if reset.Reset > 0 {
 			fmt.Printf("  reset %d orphaned processing tasks\n", reset.Reset)
@@ -222,7 +238,13 @@ func Run(c *container.Container, args []string) error {
 			c.GetLogger().Error("", "quarantine files for batch %s: %v", batchIDParam, err)
 		}
 
-		release, err := acquireBatchHolds(ctx, c, client, batchIDParam, ownerID)
+		var release func()
+		if execToken != uuid.Nil {
+			// the claim already acquired the batch locks: keep them fresh and drain their waiters
+			release, err = holdAcquiredBatchLocks(ctx, c, client, batchIDParam, uuid.NullUUID{UUID: execToken, Valid: true})
+		} else {
+			release, err = acquireBatchHolds(ctx, c, client, batchIDParam, ownerID)
+		}
 		if err != nil {
 			return err
 		}
@@ -379,21 +401,44 @@ func batchRunsThumbbackfill(ctx context.Context, client *database.Client, batchI
 	return len(tasks) > 0, nil
 }
 
-// acquireBatchHolds takes the locks the batch's task types declare for the whole run, waiting until
-// they are free, and returns the release function the run defers. It also tells the claim path that the
-// batch locks are already held, so per-task claims only verify their waits. A batch whose task types
-// declare no holds needs nothing and releases nothing.
-func acquireBatchHolds(ctx context.Context, c *container.Container, client *database.Client, batchID, ownerID string) (func(), error) {
+// parseExecToken accepts the optional execution token flag; an empty value means the child claims the batch
+// itself instead of adopting a dispatcher lease.
+func parseExecToken(value string) (uuid.UUID, error) {
+	if value == "" {
+		return uuid.Nil, nil
+	}
+	token, err := uuid.Parse(value)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid exec token %q: %w", value, err)
+	}
+	return token, nil
+}
+
+// batchHolds returns the union of the batch's task types' holds and the union of their waits. The child
+// uses the wider union to acquire locks when it self-claims and to drain every waiter its task types
+// declare; the claim path's batchLockSets verifies only the waits of the holding types by design, so the
+// difference between the two rules is deliberate.
+func batchHolds(ctx context.Context, client *database.Client, batchID string) (holds, waits []types.LockName, err error) {
 	taskTypes, err := client.Queries.ListBatchTaskTypes(ctx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
-		return nil, fmt.Errorf("list batch task types: %w", err)
+		return nil, nil, fmt.Errorf("list batch task types: %w", err)
 	}
-
-	var holds, waits []types.LockName
 	for _, taskType := range taskTypes {
 		declaration := types.LockDeclarationFor(taskType)
 		holds = task.UnionLockNames(holds, declaration.Holds)
 		waits = task.UnionLockNames(waits, declaration.WaitsFor)
+	}
+	return holds, waits, nil
+}
+
+// acquireBatchHolds takes the locks the batch's task types declare for the whole run, waiting until they
+// are free, and returns the hold function the run defers. It is the self-claim path: a batch claimed with
+// an execution token already holds its locks and uses holdAcquiredBatchLocks instead. A batch whose task
+// types declare no holds needs nothing and releases nothing.
+func acquireBatchHolds(ctx context.Context, c *container.Container, client *database.Client, batchID, ownerID string) (func(), error) {
+	holds, waits, err := batchHolds(ctx, client, batchID)
+	if err != nil {
+		return nil, err
 	}
 	if len(holds) == 0 {
 		return func() {}, nil
@@ -421,12 +466,27 @@ func acquireBatchHolds(ctx context.Context, c *container.Container, client *data
 		}
 	}
 
-	stopHeartbeat := database.StartLockHeartbeat(ctx, client.Queries, c.GetLogger(), task.LockHeartbeatInterval, holds, lockToken)
+	return holdAcquiredBatchLocks(ctx, c, client, batchID, lockToken)
+}
+
+// holdAcquiredBatchLocks keeps the batch's held locks fresh, drains the in-flight tasks whose waits include
+// them and tells the claim path that the batch locks are already held, so per-task claims only verify their
+// waits. The returned release stops the heartbeat and gives the locks up.
+func holdAcquiredBatchLocks(ctx context.Context, c *container.Container, client *database.Client, batchID string, token uuid.NullUUID) (func(), error) {
+	holds, _, err := batchHolds(ctx, client, batchID)
+	if err != nil {
+		return nil, err
+	}
+	if len(holds) == 0 {
+		return func() {}, nil
+	}
+
+	stopHeartbeat := database.StartLockHeartbeat(ctx, client.Queries, c.GetLogger(), task.LockHeartbeatInterval, holds, token)
 	release := func() {
 		stopHeartbeat()
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := task.ReleaseLocksForToken(releaseCtx, client.Queries, lockToken); err != nil {
+		if err := task.ReleaseLocksForToken(releaseCtx, client.Queries, token); err != nil {
 			c.GetLogger().Error("", "consume: release batch %s locks: %v", batchID, err)
 		}
 	}

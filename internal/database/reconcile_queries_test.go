@@ -342,8 +342,12 @@ func TestReconcileConsumeSlotExclusion(t *testing.T) {
 	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeTaskTypeValues()); err != nil || n != 0 {
 		t.Fatalf("tagreconcile batch counted as consume: n=%d %v", n, err)
 	}
-	if _, err := q.GetNextQueuedBatch(ctx, types.NonConsumeTaskTypeValues()); err != sql.ErrNoRows {
-		t.Fatalf("GetNextQueuedBatch must not return tagreconcile batch, got %v", err)
+	batches, err := q.ListQueuedBatchesByAge(ctx)
+	if err != nil {
+		t.Fatalf("list queued batches: %v", err)
+	}
+	if len(batches) != 1 || len(batches[0].TaskTypes) != 1 || batches[0].TaskTypes[0] != string(types.Task.Type.TagReconcile) {
+		t.Fatalf("queued listing must surface the tagreconcile task type for the dispatcher filter, got %+v", batches)
 	}
 }
 

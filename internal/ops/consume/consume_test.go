@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -144,4 +145,35 @@ func TestBatchRunsThumbbackfill(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseExecToken pins the executor contract: no token means the child claims the batch itself,
+// a token from the dispatcher is adopted unchanged, and a malformed token is refused loudly.
+func TestParseExecToken(t *testing.T) {
+	t.Run("an empty value means self-claim", func(t *testing.T) {
+		token, err := parseExecToken("")
+		if err != nil {
+			t.Fatalf("parseExecToken(\"\"): %v", err)
+		}
+		if token != uuid.Nil {
+			t.Fatalf("token = %s, want uuid.Nil for the self-claim path", token)
+		}
+	})
+
+	t.Run("a dispatcher token is adopted unchanged", func(t *testing.T) {
+		want := uuid.New()
+		token, err := parseExecToken(want.String())
+		if err != nil {
+			t.Fatalf("parseExecToken(%s): %v", want, err)
+		}
+		if token != want {
+			t.Fatalf("token = %s, want %s", token, want)
+		}
+	})
+
+	t.Run("a malformed token is refused", func(t *testing.T) {
+		if _, err := parseExecToken("not-a-uuid"); err == nil {
+			t.Fatal("a malformed token must be refused")
+		}
+	})
 }

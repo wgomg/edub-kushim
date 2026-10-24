@@ -129,16 +129,16 @@ Streams per-file progress to stdout.
 kushim consume
 ```
 
-#### `--force`
+#### `--exec-token <id>`
 
-Take over the batch ownership when resuming a batch: it overrides a stale
-lease left by a previous process (`SIGKILL` without release) and the queue
-daemon's placeholder owner row when a forked `kushim consume` picks up a
-queued batch. Without it, resuming refuses while another owner holds the
-batch.
+The execution token the `kushim queue` dispatcher and `kushim batch run`
+pass to the child: it authorizes the child's task claims and lifecycle
+writes as the lease owner of the batch it claimed. Never typed by hand —
+without it, `--batch <id>` self-claims the lease (refusing a batch another
+process currently owns).
 
 ```
-kushim consume --batch 550e8400-e29b-41d4-a716-446655440000 --force
+kushim consume --batch 550e8400-e29b-41d4-a716-446655440000
 ```
 
 #### `kushim consume cancel <batch-id>`
@@ -419,7 +419,7 @@ pending work, and prints the summary with zero progress lines. If the batch
 is being processed by another process, the command refuses:
 
 ```
-batch 550e8400-e29b-41d4-a716-446655440000 is being processed by PID 12345 (use --force to override)
+batch 550e8400-e29b-41d4-a716-446655440000 is being processed by PID 12345
 ```
 
 ### `kushim search`
@@ -537,8 +537,8 @@ Supported tasks:
 
 | Task | Arguments |
 | ---- | --------- |
-| `backup` | `--mode <full\|database\|documents>`, `--path <dir>`, `--keep N`, `--no-wait` (all optional) |
-| `mirror` | `--path <dir>`, `--no-wait` (both optional) |
+| `backup` | `--mode <full\|database\|documents>`, `--path <dir>`, `--keep N` (all optional) |
+| `mirror` | `--path <dir>` (optional) |
 | `enrich` | one or more document ids |
 | `thumbnails` | none — scans every document missing a thumbnail |
 | `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` | none |
@@ -551,6 +551,56 @@ Batch 550e8400-e29b-41d4-a716-446655440000 queued with 1 task(s) — run 'kushim
 
 When every task is already covered by a pending task (dedup), no batch is
 created and the command prints `Nothing enqueued`.
+
+### `kushim batch run <batch-id>`
+
+Claim a queued batch and run its task CLI now, in the foreground: the
+command claims the batch (status, lease and resource locks in one
+transaction), forks the batch's worker with the execution token, waits for
+it, and exits non-zero when the child fails. Only a queued batch whose task
+types have a batch-mode CLI can run — a paused batch points at `batch
+resume`, a processing one at its lease holder (a stale lease is reclaimed by
+the queue daemon), a terminal one refuses, and maintenance/config batches
+have no batch-mode worker yet. A manual run performs no
+`max_concurrent_batches` check: the budget governs automatic dispatch only.
+
+```
+kushim batch run 550e8400-e29b-41d4-a716-446655440000
+```
+
+### `kushim batch stop <batch-id>` (`cancel`)
+
+Cancel a batch — the same operation as `kushim consume cancel`: pending and
+waiting tasks are marked `cancelled`, in-flight tasks are cancelled, a live
+lease holder receives `SIGTERM`, and the batch's locks and lease release.
+
+```
+kushim batch stop 550e8400-e29b-41d4-a716-446655440000
+```
+
+### `kushim batch resume <batch-id>` / `kushim batch restart <batch-id>`
+
+Requeue a paused, failed or cancelled batch. `resume` resets its processing
+tasks and leaves failed tasks failed; `restart` also retries the failed
+tasks. Both refuse while a live lease holds the batch.
+
+```
+kushim batch resume 550e8400-e29b-41d4-a716-446655440000
+kushim batch restart 550e8400-e29b-41d4-a716-446655440000
+```
+
+### `kushim batch list` / `kushim batch status <batch-id>`
+
+`list` shows the recent batches (newest first) — status, origin, schedule,
+progress and owner state — paged with `--limit N` (1–100, default 20) and
+`--offset N`. `status <batch-id>` shows one batch's state: status, origin,
+task counts by state, lease owner and pid, and the orphan flag, with a hint
+to `kushim task list --batch <id>` for the task detail.
+
+```
+kushim batch list --limit 5
+kushim batch status 550e8400-e29b-41d4-a716-446655440000
+```
 
 ### `kushim user create`
 

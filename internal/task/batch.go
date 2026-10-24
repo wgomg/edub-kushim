@@ -26,6 +26,10 @@ var ErrBatchTerminal = errors.New("batch is terminal")
 // ErrBatchNotResumable reports a resume request on a batch that is queued or processing.
 var ErrBatchNotResumable = errors.New("batch is not resumable")
 
+// ErrBatchNotQueued reports a claim attempt on a batch that is not queued. The dispatcher skips the
+// candidate while batch run surfaces the refusal, so neither caller treats it as a failed claim.
+var ErrBatchNotQueued = errors.New("batch is not queued")
+
 // ErrBatchNotFound reports a lifecycle operation on a batch that does not exist.
 var ErrBatchNotFound = errors.New("batch not found")
 
@@ -152,19 +156,20 @@ func (o *Owner) Acquire(ctx context.Context, batchID string) error {
 	return nil
 }
 
-// AcquireForce takes the ownership row regardless of who holds it, for the takeover paths the cancel
-// protocol drives.
-func (o *Owner) AcquireForce(ctx context.Context, batchID string) error {
-	rows, err := o.queries.AcquireBatchOwnerForce(ctx, database.AcquireBatchOwnerForceParams{
+// Adopt takes over the lease the dispatcher claimed under this owner token, recording the executing
+// child's pid and refreshing the heartbeat. Zero rows means the token no longer owns the batch — it was
+// cancelled, requeued or reclaimed — so the child must not run its tasks.
+func (o *Owner) Adopt(ctx context.Context, batchID string) error {
+	rows, err := o.queries.AdoptBatchOwner(ctx, database.AdoptBatchOwnerParams{
 		BatchID: batchID,
 		OwnerID: o.ownerID,
 		Pid:     int64(o.pid),
 	})
 	if err != nil {
-		return fmt.Errorf("force acquire batch owner: %w", err)
+		return fmt.Errorf("adopt batch owner: %w", err)
 	}
 	if rows == 0 {
-		o.logger.Error("", "AcquireForce for batch %s returned 0 rows — batch_owner row not written (ownerID=%s, pid=%d)", batchID, o.ownerID, o.pid)
+		return fmt.Errorf("adopt batch %s: execution token %s no longer owns it (cancelled, requeued or reclaimed)", batchID, o.ownerID)
 	}
 	return nil
 }
@@ -191,15 +196,98 @@ func (o *Owner) Release(ctx context.Context, batchID string) error {
 	return nil
 }
 
-// ResetProcessingTasksByBatch re-queues a batch's processing tasks and reports what the reset quarantined.
+// ClaimRequest carries one batch claim: the batch, the execution token the forked child adopts, the lock
+// sets the claim acquires and verifies, and the dispatcher that owns the resulting lease. DispatcherID is
+// zero for a manual run, which therefore never charges a dispatcher's slot budget.
+type ClaimRequest struct {
+	BatchID      string
+	ExecToken    uuid.UUID
+	Holds        []types.LockName
+	Waits        []types.LockName
+	DispatcherID uuid.NullUUID
+}
+
+// ClaimBatch is the guarded batch claim of one execution: in one transaction it locks the batch row,
+// requires it to be queued, inserts the execution lease under the token with pid 0, acquires the batch's
+// holds all-or-nothing while verifying the waits its holding types declare, and flips the batch to the
+// processing state. The caller passes the token to the forked child, which adopts the lease with its own
+// pid; pid 0 is never alive, so the pre-adoption window cannot make the reaper signal a process. A busy
+// lock reports ErrLockBusy and leaves nothing acquired, a non-queued batch ErrBatchNotQueued, a missing
+// batch ErrBatchNotFound and a batch that already carries a lease ErrBatchLocked.
+func ClaimBatch(ctx context.Context, client *database.Client, claim ClaimRequest) error {
+	batchID := claim.BatchID
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin claim transaction for batch %s: %w", batchID, err)
+	}
+	defer tx.Rollback()
+
+	txQ := client.Queries.WithTx(tx)
+
+	status, err := txQ.LockBatchForClaim(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrBatchNotFound, batchID)
+		}
+		return fmt.Errorf("lock batch %s for claim: %w", batchID, err)
+	}
+	if status != types.Batch.Status.Queued {
+		return fmt.Errorf("%w: batch %s is %s", ErrBatchNotQueued, batchID, status)
+	}
+
+	inserted, err := txQ.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+		BatchID:      batchID,
+		OwnerID:      claim.ExecToken.String(),
+		Pid:          0,
+		DispatcherID: claim.DispatcherID,
+	})
+	if err != nil {
+		return fmt.Errorf("insert lease for batch %s: %w", batchID, err)
+	}
+	if inserted == 0 {
+		return fmt.Errorf("%w: batch %s already carries a lease", ErrBatchLocked, batchID)
+	}
+
+	token := uuid.NullUUID{UUID: claim.ExecToken, Valid: true}
+	if err := acquireLocks(ctx, txQ, claim.Holds, claim.Waits, token, batchID); err != nil {
+		return err
+	}
+
+	claimed, err := txQ.MarkBatchClaimed(ctx, batchID)
+	if err != nil {
+		return fmt.Errorf("mark batch %s claimed: %w", batchID, err)
+	}
+	if claimed == 0 {
+		return fmt.Errorf("mark batch %s claimed: guard refused under the row lock", batchID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit claim transaction for batch %s: %w", batchID, err)
+	}
+	return nil
+}
+
+// ResetProcessingTasksByBatch re-queues a batch's processing tasks, releases its locks and reports what
+// the reset quarantined. It is the takeover path: the caller is not holding the batch's locks.
 func ResetProcessingTasksByBatch(ctx context.Context, client *database.Client, batchID string, maxRetries int32) (ResetResult, error) {
+	return resetProcessing(ctx, client, batchID, maxRetries, true)
+}
+
+// ResetProcessingTasksForClaim re-queues a batch's processing tasks for the execution that just claimed it.
+// Unlike ResetProcessingTasksByBatch it leaves the batch's locks alone: the claim acquired them and the
+// execution holds them for the whole run, so releasing them here would drop a hold the run depends on.
+func ResetProcessingTasksForClaim(ctx context.Context, client *database.Client, batchID string, maxRetries int32) (ResetResult, error) {
+	return resetProcessing(ctx, client, batchID, maxRetries, false)
+}
+
+func resetProcessing(ctx context.Context, client *database.Client, batchID string, maxRetries int32, releaseLocks bool) (ResetResult, error) {
 	tx, err := client.BeginTx(ctx, nil)
 	if err != nil {
 		return ResetResult{}, fmt.Errorf("begin transaction for reset processing tasks by batch: %w", err)
 	}
 	defer tx.Rollback()
 
-	result, err := resetProcessingTx(ctx, client.Queries.WithTx(tx), batchID, maxRetries)
+	result, err := resetProcessingTx(ctx, client.Queries.WithTx(tx), batchID, maxRetries, releaseLocks)
 	if err != nil {
 		return ResetResult{}, err
 	}
@@ -386,6 +474,48 @@ func CancelBatch(ctx context.Context, client *database.Client, logger *log.Logge
 	return result, nil
 }
 
+// FailUnstartedBatch is the launch-failure terminal write: under the execution token's lease fence it
+// cancels the tasks that never ran, releases the batch's locks and writes failed in one transaction.
+// applied is false when the lease no longer belongs to execToken — the batch changed hands since the launch
+// decision — and nothing is written. It is the only failure terminal write besides SettleBatch.
+func FailUnstartedBatch(ctx context.Context, client *database.Client, batchID string, execToken uuid.UUID) (applied bool, err error) {
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin fail-unstarted transaction for batch %s: %w", batchID, err)
+	}
+	defer tx.Rollback()
+
+	txQ := client.Queries.WithTx(tx)
+	released, err := txQ.ReleaseBatchOwner(ctx, database.ReleaseBatchOwnerParams{
+		BatchID: batchID,
+		OwnerID: execToken.String(),
+	})
+	if err != nil {
+		return false, fmt.Errorf("release lease for batch %s: %w", batchID, err)
+	}
+	if released == 0 {
+		return false, nil
+	}
+
+	bid := sql.NullString{String: batchID, Valid: true}
+	if _, err := txQ.CancelPendingTasksByBatch(ctx, bid); err != nil {
+		return false, fmt.Errorf("cancel pending tasks for batch %s: %w", batchID, err)
+	}
+	if _, err := txQ.CancelProcessingTasksByBatch(ctx, bid); err != nil {
+		return false, fmt.Errorf("cancel processing tasks for batch %s: %w", batchID, err)
+	}
+	if err := ReleaseLocksForBatch(ctx, txQ, batchID); err != nil {
+		return false, err
+	}
+	if _, err := txQ.SetBatchFailed(ctx, batchID); err != nil {
+		return false, fmt.Errorf("fail batch %s: %w", batchID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit fail-unstarted transaction for batch %s: %w", batchID, err)
+	}
+	return true, nil
+}
+
 // ResumeBatch is the single requeue operation: from failed, completed, cancelled or paused it requeues the
 // batch, resets its processing tasks and, when includeFailed is set, retries its failed tasks together
 // with the waiting children their consumes had. A missing batch reports ErrBatchNotFound, a batch with a
@@ -424,7 +554,7 @@ func ResumeBatch(ctx context.Context, client *database.Client, logger *log.Logge
 	txQ := client.Queries.WithTx(tx)
 	bid := sql.NullString{String: batchID, Valid: true}
 
-	reset, err := resetProcessingTx(ctx, txQ, batchID, maxRetries)
+	reset, err := resetProcessingTx(ctx, txQ, batchID, maxRetries, true)
 	if err != nil {
 		return ResumeResult{}, err
 	}
@@ -528,11 +658,13 @@ func logSettled(logger *log.Logger, batchID string, status types.BatchStatus, co
 		batchID, status, counts.Completed, counts.Failed, counts.Cancelled)
 }
 
-func resetProcessingTx(ctx context.Context, queries *database.Queries, batchID string, maxRetries int32) (ResetResult, error) {
+func resetProcessingTx(ctx context.Context, queries *database.Queries, batchID string, maxRetries int32, releaseLocks bool) (ResetResult, error) {
 	bid := sql.NullString{String: batchID, Valid: true}
 
-	if err := ReleaseLocksForBatch(ctx, queries, batchID); err != nil {
-		return ResetResult{}, err
+	if releaseLocks {
+		if err := ReleaseLocksForBatch(ctx, queries, batchID); err != nil {
+			return ResetResult{}, err
+		}
 	}
 
 	quarantined, err := queries.QuarantineProcessingTasksByBatch(ctx, database.QuarantineProcessingTasksByBatchParams{

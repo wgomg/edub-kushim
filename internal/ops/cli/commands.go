@@ -52,7 +52,7 @@ var commandSets = map[string]map[string]Command{
 		},
 		"batch": {
 			Name:        "batch",
-			Description: "Enqueue work for the queue (create)",
+			Description: "Create and manage batches (create, run, stop, resume, list, status)",
 			Handler:     batchHandler,
 		},
 		"user": {

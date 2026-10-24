@@ -16,24 +16,22 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const acquireBatchOwnerForce = `-- name: AcquireBatchOwnerForce :execrows
-INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(batch_id) DO UPDATE SET
-  owner_id = excluded.owner_id,
-  pid = excluded.pid,
-  acquired_at = CURRENT_TIMESTAMP,
-  last_heartbeat = CURRENT_TIMESTAMP
+const adoptBatchOwner = `-- name: AdoptBatchOwner :execrows
+UPDATE batch_owner SET pid = $1, last_heartbeat = CURRENT_TIMESTAMP
+WHERE batch_id = $2 AND owner_id = $3 AND pid = 0
 `
 
-type AcquireBatchOwnerForceParams struct {
+type AdoptBatchOwnerParams struct {
+	Pid     int64
 	BatchID string
 	OwnerID string
-	Pid     int64
 }
 
-func (q *Queries) AcquireBatchOwnerForce(ctx context.Context, arg AcquireBatchOwnerForceParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, acquireBatchOwnerForce, arg.BatchID, arg.OwnerID, arg.Pid)
+// the dispatcher claims the lease with pid 0 and the child adopts it once: the owner token must still
+// match and the lease must still be unadopted, so a cancelled, requeued or reclaimed batch, or a replayed
+// execution token, refuses the adoption
+func (q *Queries) AdoptBatchOwner(ctx context.Context, arg AdoptBatchOwnerParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, adoptBatchOwner, arg.Pid, arg.BatchID, arg.OwnerID)
 	if err != nil {
 		return 0, err
 	}
@@ -168,6 +166,33 @@ WHERE last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => $1::int)
 
 func (q *Queries) CountLiveBatches(ctx context.Context, staleAfterSeconds int32) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countLiveBatches, staleAfterSeconds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveNoHoldsBatches = `-- name: CountLiveNoHoldsBatches :one
+SELECT COUNT(*) FROM batch_owner bo
+WHERE bo.dispatcher_id = $1::uuid
+  AND bo.last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => $2::int)
+  AND NOT EXISTS (
+    SELECT 1 FROM system_signal s
+    WHERE s.value = 'true'
+      AND s.data->>'batch_id' = bo.batch_id
+      AND lock_is_held(s.name)
+  )
+`
+
+type CountLiveNoHoldsBatchesParams struct {
+	DispatcherID      uuid.UUID
+	StaleAfterSeconds int32
+}
+
+// the dispatcher's slot budget only charges batches that acquire no locks; a lock-holding batch is never
+// charged a slot because its locks already serialize it, so it is excluded here. The identity filter keeps
+// the budget per dispatcher process: manual runs and other hosts carry other ids (or none)
+func (q *Queries) CountLiveNoHoldsBatches(ctx context.Context, arg CountLiveNoHoldsBatchesParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveNoHoldsBatches, arg.DispatcherID, arg.StaleAfterSeconds)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -421,31 +446,6 @@ func (q *Queries) GetNextPendingTaskOfTypeForOwner(ctx context.Context, arg GetN
 	return id, err
 }
 
-const getNextQueuedBatch = `-- name: GetNextQueuedBatch :one
-SELECT b.id, b.status, b.created_at, b.origin, b.schedule FROM batch b
-WHERE b.status = 'queued'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
-  AND NOT EXISTS (
-    SELECT 1 FROM task t
-    WHERE t.batch_id = b.id AND t.task_type::text = ANY($1::text[])
-  )
-ORDER BY b.created_at LIMIT 1
-`
-
-// See CountQueuedConsumeBatches: the non-consume exclusion is passed in from the registry, not enumerated.
-func (q *Queries) GetNextQueuedBatch(ctx context.Context, nonConsumeTypes []string) (Batch, error) {
-	row := q.db.QueryRowContext(ctx, getNextQueuedBatch, pq.Array(nonConsumeTypes))
-	var i Batch
-	err := row.Scan(
-		&i.ID,
-		&i.Status,
-		&i.CreatedAt,
-		&i.Origin,
-		&i.Schedule,
-	)
-	return i, err
-}
-
 const getPermanentlyFailedConsumeTaskPayloads = `-- name: GetPermanentlyFailedConsumeTaskPayloads :many
 SELECT task_id, payload FROM task
 WHERE batch_id = $1 AND task_type = 'consume'
@@ -646,6 +646,47 @@ func (q *Queries) ListPausedBatches(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listQueuedBatchesByAge = `-- name: ListQueuedBatchesByAge :many
+SELECT b.id AS batch_id, b.created_at AS batch_created_at,
+       ARRAY_AGG(DISTINCT t.task_type::text)::text[] AS task_types
+FROM batch b
+JOIN task t ON t.batch_id = b.id
+WHERE b.status = 'queued'
+GROUP BY b.id, b.created_at
+ORDER BY b.created_at
+`
+
+type ListQueuedBatchesByAgeRow struct {
+	BatchID        string
+	BatchCreatedAt sql.NullTime
+	TaskTypes      []string
+}
+
+// the dispatcher filters eligibility, backoff and claimability in Go over the oldest-first rows; the task
+// type set is the batch's composition, so the catalog stays the single source of dispatch policy
+func (q *Queries) ListQueuedBatchesByAge(ctx context.Context) ([]ListQueuedBatchesByAgeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listQueuedBatchesByAge)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQueuedBatchesByAgeRow
+	for rows.Next() {
+		var i ListQueuedBatchesByAgeRow
+		if err := rows.Scan(&i.BatchID, &i.BatchCreatedAt, pq.Array(&i.TaskTypes)); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStaleBatchOwners = `-- name: ListStaleBatchOwners :many
 SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
 WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $1::int)
@@ -768,6 +809,34 @@ func (q *Queries) ReleaseBatchOwner(ctx context.Context, arg ReleaseBatchOwnerPa
 	return result.RowsAffected()
 }
 
+const releaseStaleBatchOwner = `-- name: ReleaseStaleBatchOwner :execrows
+DELETE FROM batch_owner
+WHERE batch_id = $1 AND owner_id = $2 AND pid = $3
+  AND last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $4::int)
+`
+
+type ReleaseStaleBatchOwnerParams struct {
+	BatchID           string
+	OwnerID           string
+	Pid               int64
+	StaleAfterSeconds int32
+}
+
+// the reaper's release re-verifies what its snapshot identified: the same row, still owned by the listed
+// pid and still stale, so a lease that was adopted or heartbeated after the snapshot survives recovery
+func (q *Queries) ReleaseStaleBatchOwner(ctx context.Context, arg ReleaseStaleBatchOwnerParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseStaleBatchOwner,
+		arg.BatchID,
+		arg.OwnerID,
+		arg.Pid,
+		arg.StaleAfterSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const requeueProcessingBatch = `-- name: RequeueProcessingBatch :execrows
 UPDATE batch SET status = 'queued' WHERE id = $1 AND status = 'processing'
 `
@@ -827,6 +896,21 @@ func (q *Queries) SetBatchCancelled(ctx context.Context, id string) (int64, erro
 	return result.RowsAffected()
 }
 
+const setBatchFailed = `-- name: SetBatchFailed :execrows
+UPDATE batch SET status = 'failed'
+WHERE id = $1 AND status IN ('queued', 'processing')
+`
+
+// the dispatcher's bounded launch-failure exit: the batch never started, so it is failed once its tasks
+// were cancelled in the same transaction
+func (q *Queries) SetBatchFailed(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setBatchFailed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setBatchPaused = `-- name: SetBatchPaused :execrows
 UPDATE batch SET status = 'paused'
 WHERE batch.id = $1
@@ -853,7 +937,7 @@ type SetBatchPausedParams struct {
 }
 
 // pause authorizes like the settle: a leased execution must still own the lease, and a pool execution must
-// still hold a claim of this batch, so a stale executor cannot pause the run that replaced it
+// still hold a live claim of this batch, so a stale executor cannot pause the new run that replaced it
 func (q *Queries) SetBatchPaused(ctx context.Context, arg SetBatchPausedParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setBatchPaused, arg.ID, arg.OwnerID, arg.ClaimToken)
 	if err != nil {
@@ -900,20 +984,26 @@ func (q *Queries) SettleBatch(ctx context.Context, arg SettleBatchParams) (types
 
 const tryInsertBatchOwner = `-- name: TryInsertBatchOwner :execrows
 
-INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+INSERT INTO batch_owner (batch_id, owner_id, pid, dispatcher_id, acquired_at, last_heartbeat)
+VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING
 `
 
 type TryInsertBatchOwnerParams struct {
-	BatchID string
-	OwnerID string
-	Pid     int64
+	BatchID      string
+	OwnerID      string
+	Pid          int64
+	DispatcherID uuid.NullUUID
 }
 
 // Two-step acquire: try INSERT first, then UPDATE with stale check.
 func (q *Queries) TryInsertBatchOwner(ctx context.Context, arg TryInsertBatchOwnerParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, tryInsertBatchOwner, arg.BatchID, arg.OwnerID, arg.Pid)
+	result, err := q.db.ExecContext(ctx, tryInsertBatchOwner,
+		arg.BatchID,
+		arg.OwnerID,
+		arg.Pid,
+		arg.DispatcherID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -924,6 +1014,7 @@ const updateBatchOwnerIfStale = `-- name: UpdateBatchOwnerIfStale :execrows
 UPDATE batch_owner SET
   owner_id = $1,
   pid = $2,
+  dispatcher_id = NULL,
   acquired_at = CURRENT_TIMESTAMP,
   last_heartbeat = CURRENT_TIMESTAMP
 WHERE batch_id = $3
@@ -938,6 +1029,8 @@ type UpdateBatchOwnerIfStaleParams struct {
 	StaleAfterSeconds int32
 }
 
+// a takeover is a manual execution: it clears any dispatcher identity the replaced lease carried, so the
+// new run never charges the previous dispatcher's slot budget
 func (q *Queries) UpdateBatchOwnerIfStale(ctx context.Context, arg UpdateBatchOwnerIfStaleParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateBatchOwnerIfStale,
 		arg.OwnerID,

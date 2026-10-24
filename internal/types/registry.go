@@ -18,6 +18,17 @@ type BatchOrigin string
 // LockName names one of the closed set of resource locks an execution holds or waits for.
 type LockName string
 
+// Host names a process allowed to execute a batch: the kushim queue or its child, edub, or the wizard.
+type Host string
+
+// The declared batch execution hosts. A task type definition lists the hosts eligible to dispatch its
+// batches.
+const (
+	HostQueue  Host = "queue"
+	HostEdub   Host = "edub"
+	HostWizard Host = "wizard"
+)
+
 // The declared resource locks. Only these names exist: LockMaintenance pauses pipeline work while a
 // maintenance run executes; LockStorage serialises bulk storage writes with per-document writes.
 const (

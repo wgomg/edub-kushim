@@ -991,6 +991,82 @@ func TestBatch_CountLiveBatches(t *testing.T) {
 	})
 }
 
+func TestBatch_CountLiveNoHoldsBatches(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+	dispatcherID := uuid.New()
+	lockToken := uuid.NullUUID{UUID: uuid.New(), Valid: true}
+	t.Cleanup(func() {
+		_ = task.ReleaseLocksForToken(context.Background(), client.Queries, lockToken)
+	})
+
+	insertLease := func(batchID string, dispatcher uuid.NullUUID) {
+		t.Helper()
+		_, err := client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+			BatchID: batchID, OwnerID: "noholds-" + batchID, Pid: 81, DispatcherID: dispatcher,
+		})
+		testutil.AssertNoError(t, err, "insert lease")
+	}
+	ownLease := uuid.NullUUID{UUID: dispatcherID, Valid: true}
+
+	t.Run("a live lease on a batch that holds nothing charges this dispatcher a slot", func(t *testing.T) {
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "noholds-ingest", Origin: types.Batch.Origin.Polling, Status: types.Batch.Status.Processing,
+		})
+		testutil.AssertNoError(t, err, "create ingest batch")
+		insertLease("noholds-ingest", ownLease)
+
+		count, err := svc.CountLiveNoHoldsBatches(ctx, dispatcherID)
+		testutil.AssertNoError(t, err, "count no-holds")
+		testutil.AssertEqual(t, count, int64(1), "the holding-free batch is charged")
+	})
+
+	t.Run("other dispatchers and manual runs are never charged", func(t *testing.T) {
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "noholds-foreign", Origin: types.Batch.Origin.Polling, Status: types.Batch.Status.Processing,
+		})
+		testutil.AssertNoError(t, err, "create foreign batch")
+		insertLease("noholds-foreign", uuid.NullUUID{UUID: uuid.New(), Valid: true})
+
+		err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "noholds-manual", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+		})
+		testutil.AssertNoError(t, err, "create manual batch")
+		insertLease("noholds-manual", uuid.NullUUID{})
+
+		count, err := svc.CountLiveNoHoldsBatches(ctx, dispatcherID)
+		testutil.AssertNoError(t, err, "count other identities")
+		testutil.AssertEqual(t, count, int64(1), "only this dispatcher's lease is charged")
+	})
+
+	t.Run("a live lease on a lock-holding batch is excluded", func(t *testing.T) {
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "noholds-locking", Origin: types.Batch.Origin.Schedule, Status: types.Batch.Status.Processing,
+		})
+		testutil.AssertNoError(t, err, "create holding batch")
+		insertLease("noholds-locking", ownLease)
+
+		before, err := svc.CountLiveNoHoldsBatches(ctx, dispatcherID)
+		testutil.AssertNoError(t, err, "count before the hold")
+		testutil.AssertEqual(t, before, int64(2), "both of this dispatcher's leases charge while no lock is held")
+
+		if err := task.AcquireLocks(ctx, client, []types.LockName{types.LockStorage}, nil,
+			lockToken, "noholds-locking"); err != nil {
+			t.Fatalf("acquire storage for the holding batch: %v", err)
+		}
+		afterHold, err := svc.CountLiveNoHoldsBatches(ctx, dispatcherID)
+		testutil.AssertNoError(t, err, "count while held")
+		testutil.AssertEqual(t, afterHold, before-1, "a lock-holding batch must not consume a slot")
+
+		if err := task.ReleaseLocksForToken(ctx, client.Queries, lockToken); err != nil {
+			t.Fatalf("release storage: %v", err)
+		}
+		afterRelease, err := svc.CountLiveNoHoldsBatches(ctx, dispatcherID)
+		testutil.AssertNoError(t, err, "count after release")
+		testutil.AssertEqual(t, afterRelease, before, "the same batch charges a slot once its lock is free")
+	})
+}
+
 func TestBatch_CountPausedBatches(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
@@ -1041,11 +1117,11 @@ func TestBatch_ListPausedBatches(t *testing.T) {
 	})
 }
 
-func TestBatch_GetNextQueuedBatch(t *testing.T) {
+func TestBatch_ListQueuedBatchesByAge(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
 
-	t.Run("returns oldest queued batch", func(t *testing.T) {
+	t.Run("returns queued batches oldest first with their task types", func(t *testing.T) {
 		insertQueued := func(id string) {
 			t.Helper()
 			err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
@@ -1066,19 +1142,24 @@ func TestBatch_GetNextQueuedBatch(t *testing.T) {
 		insertQueued("q-first")
 		insertQueued("q-second")
 
-		batch, err := svc.GetNextQueuedBatch(ctx)
-		testutil.AssertNoError(t, err, "get next")
-		testutil.AssertEqual(t, batch.ID, "q-first", "oldest batch returned")
+		batches, err := svc.ListQueuedBatchesByAge(ctx)
+		testutil.AssertNoError(t, err, "list queued")
+		testutil.AssertEqual(t, len(batches), 2, "two queued batches")
+		testutil.AssertEqual(t, batches[0].BatchID, "q-first", "oldest batch first")
+		testutil.AssertEqual(t, batches[1].BatchID, "q-second", "newest batch second")
+		testutil.AssertEqual(t, len(batches[0].TaskTypes), 1, "one task type")
+		testutil.AssertEqual(t, batches[0].TaskTypes[0], string(types.Task.Type.Consume), "task type")
 	})
 
-	t.Run("returns error when no queued batches", func(t *testing.T) {
+	t.Run("returns no rows when no queued batches", func(t *testing.T) {
 		svc2, client2 := newTestBatch(t)
 		err := client2.Queries.CreateBatch(ctx, database.CreateBatchParams{
 			ID: "q-done", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Completed,
 		})
 		testutil.AssertNoError(t, err, "create completed batch")
 
-		_, err = svc2.GetNextQueuedBatch(ctx)
-		testutil.AssertError(t, err, "no queued batch")
+		batches, err := svc2.ListQueuedBatchesByAge(ctx)
+		testutil.AssertNoError(t, err, "list queued")
+		testutil.AssertEqual(t, len(batches), 0, "no queued batches")
 	})
 }

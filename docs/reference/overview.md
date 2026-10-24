@@ -173,7 +173,7 @@ internal/
 │   ├── cli/                # Command table and the `kushim` verbs
 │   │   ├── commands.go     # Command definitions and runner
  │   │   ├── backup.go       # Backup and restore commands
- │   │   ├── batch.go        # `kushim batch create <task>` enqueue command
+ │   │   ├── batch.go        # `kushim batch` queue surface: create/run/stop/cancel/resume/restart/list/status
  │   │   ├── config.go       # `kushim config` command (dump/get/set/unset/validate/path)
 │   │   ├── enrich.go       # Enrich command (single document, --limit N, or --all)
 │   │   ├── hugot.go        # Matcher RPC server over Unix socket (encode, match, rank, store ops)
@@ -193,6 +193,9 @@ internal/
  │   │   └── task_type_definitions.go # Task type catalog: one definition per type (locks, dedup key, builder) + build inputs
 │   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
 │   │   ├── queue.go        # Daemon loop: scheduling, stale reclamation, pool lifecycle, config hot-reload
+│   │   ├── dispatcher.go   # batchDispatcher: claims queued batches (status, lease, holds in one tx) and forks the task CLI
+│   │   ├── launcher.go     # Shared claim/fork + LaunchQueuedBatch (kushim batch run) + launch-failure backoff
+│   │   ├── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
 │   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
 │   ├── consume/            # `kushim consume` child process
 │   │   ├── consume.go      # Enqueues consume+enrich tasks, polls batch progress, cancel subcommand
@@ -209,7 +212,7 @@ internal/
 │   ├── people.go           # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go       # PeopleType service (NewPeopleType, batch CRUD)
 │   ├── document_type.go    # DocumentType service (NewDocumentType, batch CRUD)
- │   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, CountOrphaned, HasPendingWork, CountPausedBatches, ListPausedBatches, CountQueuedConsumeBatches, GetNextQueuedBatch, CountLiveBatches, ListStaleBatchOwners, DeleteBatchOwnerByBatchID, ResetProcessingTasksByBatch, ResetStaleProcessingTasks); BatchSummary/BatchOverview read models
+ │   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, CountOrphaned, HasPendingWork, CountPausedBatches, ListPausedBatches, CountQueuedConsumeBatches, ListQueuedBatchesByAge, CountLiveBatches, CountLiveNoHoldsBatches, ListStaleBatchOwners, DeleteBatchOwnerByBatchID, ResetProcessingTasksByBatch, ResetStaleProcessingTasks); BatchSummary/BatchOverview read models
 │   ├── orphaned.go         # Orphaned file service (scan, list, delete, restore, move-to-inbox, orphaned-thumbnail sweep)
 │   ├── trash.go            # Trash service (soft delete, restore, permanent delete, purge + hourly background purge)
 │   ├── errored.go          # Errored file service (list on disk, get path, delete, delete-all)
@@ -258,7 +261,7 @@ internal/
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
- │   ├── batch.go            # Batch ownership (Owner.Acquire/Release/Heartbeat) + the guarded lifecycle ops: SettleBatch (single terminal writer), PauseBatch (lease/token-guarded), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch
+ │   ├── batch.go            # Batch ownership (Owner.Acquire/Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease/token-guarded), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch/ForClaim
  │   ├── crud.go             # Task CRUD (Get, ListFiltered, CountBatchStatuses, ListBatchSummaries)
  │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
  │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; TypeDefinition contract

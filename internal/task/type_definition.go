@@ -41,7 +41,18 @@ type TypeDefinition struct {
 	Locks LockPolicy
 
 	// DirectLocks overrides the lock policy for direct CLI runs; nil uses the queued Locks set.
-	DirectLocks   *LockPolicy
+	DirectLocks *LockPolicy
+
+	// CLI names the command that executes one queued batch of this type in batch mode, such as "consume";
+	// an empty value means the type has no batch-mode executor yet, so the dispatcher refuses its batches
+	// and the launcher reports the missing command as the reason.
+	CLI string
+	// BatchSelector is the flag CLI takes the batch id on, such as "--batch"; the launcher always forks
+	// CLI BatchSelector <batch-id> --exec-token <token>, so the flag and its value form one contract.
+	BatchSelector string
+	// Hosts lists the processes allowed to dispatch this type's batches.
+	Hosts []types.Host
+
 	DedupKey      func(json.RawMessage) string
 	Preconditions []Precondition
 	BuildTasks    func(ctx context.Context, input BuildInput) ([]TaskSpec, error)

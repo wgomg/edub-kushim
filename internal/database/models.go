@@ -264,6 +264,7 @@ type BatchOwner struct {
 	Pid           int64
 	AcquiredAt    time.Time
 	LastHeartbeat time.Time
+	DispatcherID  uuid.NullUUID
 }
 
 type DeletedTag struct {

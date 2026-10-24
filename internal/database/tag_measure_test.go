@@ -43,8 +43,12 @@ func TestTagMeasureBatchAndTaskQueries(t *testing.T) {
 	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeTaskTypeValues()); err != nil || n != 0 {
 		t.Errorf("tagmeasure batch leaked into the consume slot: %d, %v", n, err)
 	}
-	if _, err := q.GetNextQueuedBatch(ctx, types.NonConsumeTaskTypeValues()); err != sql.ErrNoRows {
-		t.Errorf("GetNextQueuedBatch: want ErrNoRows, got %v", err)
+	batches, err := q.ListQueuedBatchesByAge(ctx)
+	if err != nil {
+		t.Fatalf("list queued batches: %v", err)
+	}
+	if len(batches) != 1 || len(batches[0].TaskTypes) != 1 || batches[0].TaskTypes[0] != string(types.Task.Type.TagMeasure) {
+		t.Errorf("queued listing must surface the tagmeasure task type for the dispatcher filter, got %+v", batches)
 	}
 
 	if _, err := q.db.ExecContext(ctx,

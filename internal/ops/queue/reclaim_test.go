@@ -114,6 +114,37 @@ func TestReclaimStaleBatches(t *testing.T) {
 			t.Fatalf("error = %q, want a quarantine reason", task.Error.String)
 		}
 	})
+	t.Run("reclaims a pid-0 lease whose child never adopted it", func(t *testing.T) {
+		err := q.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "reclaim-preadopt", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+		})
+		testutil.AssertNoError(t, err, "create batch")
+		payload := json.RawMessage(`{}`)
+		_, err = q.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "reclaim-preadopt-task", TaskType: "consume", Status: "pending", Payload: &payload,
+			BatchID: sql.NullString{String: "reclaim-preadopt", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create pending task")
+		if _, err := q.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+			BatchID: "reclaim-preadopt", OwnerID: "dispatch-token", Pid: 0,
+		}); err != nil {
+			t.Fatalf("insert claim lease: %v", err)
+		}
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE batch_owner SET last_heartbeat = NOW() - INTERVAL '5 minutes' WHERE batch_id = $1",
+			"reclaim-preadopt"); err != nil {
+			t.Fatalf("backdate heartbeat: %v", err)
+		}
+
+		testutil.AssertNoError(t, reclaimStaleBatches(ctx, cfg, client, batchSvc, logger), "reclaim")
+
+		batch, err := q.GetBatch(ctx, "reclaim-preadopt")
+		testutil.AssertNoError(t, err, "read batch")
+		testutil.AssertEqual(t, batch.Status, types.Batch.Status.Queued, "the orphaned claim is requeued")
+		if hasLeaseRow(ctx, t, client, "reclaim-preadopt") {
+			t.Fatal("the unadopted lease must be released")
+		}
+	})
 }
 
 // TestReclaimStaleTasksQuarantinesInboxFiles pins the global stale sweep's

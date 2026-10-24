@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -320,14 +321,14 @@ func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// GetNextQueuedBatch claims the next queued consume batch in creation
-// order; sql.ErrNoRows when the queue is empty.
-func (s *Batch) GetNextQueuedBatch(ctx context.Context) (database.Batch, error) {
-	b, err := s.queries.GetNextQueuedBatch(ctx, nonConsumeTaskTypeValues)
+// ListQueuedBatchesByAge returns the queued batches oldest first, with the task types each one contains.
+// The dispatcher filters eligibility, backoff and claimability over these rows.
+func (s *Batch) ListQueuedBatchesByAge(ctx context.Context) ([]database.ListQueuedBatchesByAgeRow, error) {
+	rows, err := s.queries.ListQueuedBatchesByAge(ctx)
 	if err != nil {
-		return database.Batch{}, errs.FromDB(err, "get next queued batch")
+		return nil, errs.FromDB(err, "list queued batches by age")
 	}
-	return b, nil
+	return rows, nil
 }
 
 // CountLiveBatches counts batches in a non-terminal state.
@@ -335,6 +336,20 @@ func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
 	count, err := s.queries.CountLiveBatches(ctx, task.LeaseStaleSeconds)
 	if err != nil {
 		return 0, errs.FromDB(err, "count live batches")
+	}
+	return count, nil
+}
+
+// CountLiveNoHoldsBatches counts one dispatcher's live leases on batches that hold no resource lock. It is
+// that dispatcher's slot budget: lock-holding batches are serialized by their locks, and other dispatchers'
+// or manual runs carry a different identity (or none) and are never charged.
+func (s *Batch) CountLiveNoHoldsBatches(ctx context.Context, dispatcherID uuid.UUID) (int64, error) {
+	count, err := s.queries.CountLiveNoHoldsBatches(ctx, database.CountLiveNoHoldsBatchesParams{
+		DispatcherID:      dispatcherID,
+		StaleAfterSeconds: task.LeaseStaleSeconds,
+	})
+	if err != nil {
+		return 0, errs.FromDB(err, "count live no-holds batches")
 	}
 	return count, nil
 }

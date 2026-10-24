@@ -36,21 +36,23 @@ Audience: developers touching `internal/task/`, `internal/ops/queue/queue.go`,
 The architecture is deliberately **database-as-queue**: there is no in-memory
 job queue, no Redis, no message broker. Tasks are rows in the `task` table;
 workers *claim* rows with guarded UPDATEs; a `batch_owner` table holds
-per-batch leases; a daemon (`kushim queue`) watches for queued batches, forks
-one `kushim consume --batch <id>` child per batch, and reclaims anything that
-dies.
+per-batch leases; a daemon (`kushim queue`) watches for queued batches, claims
+each one in a guarded transaction, forks its
+`kushim consume --batch <id> --exec-token <token>` child, and reclaims
+anything that dies.
 
 The cast of characters:
 
 | Component | Files | Role |
 |---|---|---|
 | `Enqueuer` | `internal/task/enqueue.go` | the single creation path (`EnqueueBatch`/`EnqueueTask`) over `BatchSpec`/`TaskSpec` |
-| `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue contract: locks, dedup key, preconditions, builder |
+| `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue and dispatch contract: locks, dedup key, preconditions, builder, batch-mode CLI surface and hosts |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
 | `Handler` | `internal/task/handler.go` | pure work function: does the job, returns the JSON result or an error; performs no batch-status write, lock or settle |
 | `Runner` | `internal/task/execute.go` | claims under the execution guard, drains and holds locks for holding types, dispatches, completes/fails, and settles |
 | `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
+| batch dispatcher / launcher | `internal/ops/queue/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the task type's CLI in batch mode |
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
 | consume command | `internal/ops/consume/consume.go` | runs one batch |
 
@@ -258,23 +260,26 @@ fail-then-settle path.
 
 Tasks belong to batches, batches belong to *one worker process at a time*.
 The `batch_owner` table is the lease table
-(`00001_baseline.sql:104-110`): one row per batch with `owner_id`, `pid`,
-`acquired_at`, `last_heartbeat`.
+(`00001_baseline.sql:104-110`, extended by migration `00050`): one row per
+batch with `owner_id`, `pid`, `dispatcher_id`, `acquired_at`,
+`last_heartbeat`. `dispatcher_id` is the claiming dispatcher's process
+identity (a UUID minted per process); it is NULL for manual runs, so the
+dispatcher's slot budget counts only its own executions.
 
-### Acquire: two-step, then force
+### Acquire, adopt and claim
 
 `Owner.Acquire` (`internal/task/batch.go`) implements the comment in the SQL
 (`batch.sql` — "try INSERT first, then UPDATE with stale check"):
 
 ```sql
 -- name: TryInsertBatchOwner :execrows
-INSERT INTO batch_owner (batch_id, owner_id, pid, acquired_at, last_heartbeat)
-VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+INSERT INTO batch_owner (batch_id, owner_id, pid, dispatcher_id, acquired_at, last_heartbeat)
+VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING;
 
 -- name: UpdateBatchOwnerIfStale :execrows
 UPDATE batch_owner SET
-  owner_id = @owner_id, pid = @pid, ...
+  owner_id = @owner_id, pid = @pid, dispatcher_id = NULL, ...
 WHERE batch_id = @batch_id
   AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
        OR owner_id = @owner_id);
@@ -284,9 +289,18 @@ If the INSERT affects 0 rows, someone owns the batch — steal only if the
 incumbent is stale (evaluated by the **database clock**; `task.LeaseStaleSeconds`
 is the one window every lease query shares) or **we already own it** (the
 `owner_id = @owner_id` clause makes re-acquire idempotent). Otherwise
-`ErrBatchLocked`.
-`AcquireBatchOwnerForce` is the unconditional upsert with
-`excluded` — used by the queue daemon's placeholder and the `--force` flag.
+`ErrBatchLocked`. A takeover is a manual execution, so the UPDATE clears
+`dispatcher_id` — the new run is never charged to the previous dispatcher's
+slot budget.
+
+Two further paths create leases. The dispatcher's `task.ClaimBatch` inserts
+the lease inside the claim transaction with **pid 0** — never alive under
+`task.IsAlive`, so the claim-to-adoption window cannot make reclamation signal
+a process — and the forked child **adopts** it (`Owner.Adopt`: same owner id,
+its own pid, one-time; an already-adopted, released or re-owned lease refuses,
+so a cancelled, requeued or reclaimed batch cannot be resurrected). A manual
+`kushim batch run` and bare `kushim consume --batch` self-claim through
+`Owner.Acquire`, whose lease carries no dispatcher identity.
 
 ### Keep-alive: heartbeat every 5 seconds
 
@@ -361,10 +375,10 @@ processes tasks itself.
 ### The wake-up loop
 
 Three mechanisms keep it responsive without busy-polling
-(`queue.go:133-316`):
+(`queue.go:145-186`):
 
 ```go
-go runPollingLoop(ctx, c, client, batchSvc, maxConcurrent)
+go d.runPollingLoop(ctx, maxConcurrent)
 
 notifyCh := make(chan struct{}, 4)
 go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.GetConfig().Db), notifyCh, c.GetLogger())
@@ -376,14 +390,14 @@ defer safetyTimer.Stop()
 for {
 	select {
 	case <-notifyCh:
-		if err := consumeNextQueuedBatch(...); err != nil { ... }
+		if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
 		if !safetyTimer.Stop() {
 			select { case <-safetyTimer.C: default: }
 		}
 		safetyTimer.Reset(safetyInterval)
 
 	case <-safetyTimer.C:
-		if err := consumeNextQueuedBatch(...); err != nil { ... }
+		if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
 		safetyTimer.Reset(safetyInterval)
 	...
 ```
@@ -404,45 +418,66 @@ for {
    stale-task reclamation (throttled to `StaleTaskAfter/10` seconds, min 60s
    — `queue.go:182-193`).
 
-### Forking workers
+### The dispatcher and the launcher
 
-`consumeNextQueuedBatch` (`queue.go:266-316`) is the daemon's core: check the
-live-owner count against `MaxConcurrentBatches` (`CountLiveBatches`), take
-the next queued batch, mark it `processing`, **pre-create a placeholder owner
-row** (`owner_id = "queue-" + batch.ID[:8]`, the daemon's own PID), and fork:
+`batchDispatcher` (`internal/ops/queue/dispatcher.go`) is the daemon's only
+queue claimant. Per wake it lists the queued batches oldest-first with their
+task types and sweeps them in order; each candidate's dispatchability comes
+from its type definitions — the `CLI`, `BatchSelector` and `Hosts` fields —
+so a type without a batch-mode CLI on this host is skipped and the batches
+carrying it stay with the queue pools (§7). The slot budget limits only
+batches that acquire no locks: `CountLiveNoHoldsBatches` counts the leases
+carrying **this dispatcher's identity** (`dispatcher_id` on the lease), a
+lock-holding batch is claimed regardless of the budget (its locks serialize
+it), and a budget-skipped no-holds candidate does not stop the sweep — a
+later holding candidate is still claimed (decision-grade invariant: an
+unclaimable or uncharged batch never blocks the ones behind it).
 
-```go
-// --force so the child overwrites our placeholder owner row.
-cmd := exec.Command(os.Args[0], "consume", "--batch", batch.ID, "--force")
-cmd.Stdin = nil; cmd.Stdout = nil; cmd.Stderr = nil
-if err := cmd.Start(); err != nil {
-	logger.Error("", "fork consume for batch %s: %v — requeueing", batch.ID, err)
-	... requeue ...
-	return nil
-}
-go func() { cmd.Wait() }()
-```
+For each claimable candidate the launcher claims it through
+`task.ClaimBatch` — one transaction: row-lock the batch, require `queued`,
+insert the pid-0 lease under a fresh **execution token**, acquire the batch's
+declared holds (verifying only the waits of the holding types; a batch that
+holds nothing claims freely and its tasks gate per claim) — then forks
+`kushim consume --batch <id> --exec-token <token>`. A batch whose locks are
+busy is refused (`ErrLockBusy`) and the sweep moves on.
 
-The placeholder row is the crash-safety trick: if the child dies between fork
-and acquire, stale reclamation finds a stale owner row (the daemon's PID) and
-recovers the batch. The child's `--force` overwrites the placeholder with its
-own lease.
+Launch failures — the fork's `Start` error, or a child that exits before
+adopting (its lease still carries pid 0, so no task was ever claimed) — are
+bounded: the lease and locks are released, the batch is requeued to cool down
+(5s, then 10s), and the third consecutive failure fails the batch through
+`task.FailUnstartedBatch` (the launch-failure terminal write: under the lease
+fence it cancels the tasks that never ran, releases the locks and writes
+`failed` in one transaction) instead of looping. A launch that ran clears the
+failure streak. The dispatcher's wait goroutine classifies a non-zero child
+exit by the lease row: pid 0 under this token ⇒ launch failure; anything else
+⇒ the child owned its outcome.
+
+`LaunchQueuedBatch` (`internal/ops/queue/launcher.go`) is the manual launcher
+behind `kushim batch run <id>`: the same claim and fork, in the foreground,
+propagating a non-zero child exit. It claims only `queued` batches — a
+paused one points at `batch resume`, a processing one at its lease holder or
+the reaper, a terminal one refuses — and performs no budget check, because
+the budget governs automatic dispatch only.
 
 ### Reclaiming stale batches
 
 `reclaimStaleBatches` runs on the housekeeping ticker: for each owner stale
 > 15s whose batch still has work (`ListStaleBatchOwners`), it **releases the
-listed ownership row first** — by the `(batch_id, owner_id)` pair it listed,
-so a fresh execution that took the batch over after the snapshot keeps its
-lease and the whole iteration is skipped on zero rows. Then it resets the
-batch's processing tasks (§10), moves the quarantined files by the returned
-task identities, and decides the batch's fate: the guarded settle when no
-work remains (completed/failed by task outcomes), the guarded requeue
-otherwise. Any recovery step failing after the release hands the batch back
-to the dispatcher through the same guarded requeue, so a released batch can
-never be left `processing` without a lease and without a dispatcher to claim
-it. `reclaimStaleTasks` moves the inbox files of the identities the global
-sweep quarantined at once, instead of waiting for the batch's next run.
+listed ownership row first** — by the row its snapshot described: the
+`(batch_id, owner_id, pid)` triple plus the same staleness re-check
+(`ReleaseStaleBatchOwner`), so an owner that adopted or heartbeated since the
+snapshot keeps its lease and the whole iteration is skipped on zero rows.
+Only then does it signal `SIGTERM` to the released owner's PID (if alive) —
+the signal can never hit a process that revalidated its lease after the
+snapshot. It then resets the batch's processing tasks (§10), moves the
+quarantined files by the returned task identities, and decides the batch's
+fate: the guarded settle when no work remains (completed/failed by task
+outcomes), the guarded requeue otherwise. Any recovery step failing after the
+release hands the batch back to the dispatcher through the same guarded
+requeue, so a released batch can never be left `processing` without a lease
+and without a dispatcher to claim it. `reclaimStaleTasks` moves the inbox
+files of the identities the global sweep quarantined at once, instead of
+waiting for the batch's next run.
 
 ---
 
@@ -453,13 +488,18 @@ per-batch worker. Batch-mode flow:
 
 1. **Paused-batch hard stop**: a paused batch refuses to run, with a message
    about resolving the LLM billing issue.
-2. **Acquire the lease** with `--force` escalation: `ErrBatchLocked` without
-   `--force` prints the incumbent PID and exits; with `--force` it calls
-   `AcquireForce` (the `excluded` upsert).
+2. **Own the batch**: with `--exec-token` (set by the dispatcher and
+   `kushim batch run`) the child **adopts** the claim's lease — `Owner.Adopt`
+   records its pid, one-time, refusing a cancelled, requeued or reclaimed
+   batch; it never acquires, because the claim already holds the locks. Bare,
+   it self-claims (`Owner.Acquire`) and refuses a live owner with the
+   incumbent PID (there is no force escalation).
 3. **Entry repair**: reset orphaned processing tasks from previous crashes
-   (`task.ResetProcessingTasksByBatch`) and quarantine the files of the
-   returned task identities plus the batch's retries-exhausted consume tasks
-   — the batch is healed before work starts.
+   and quarantine the files of the returned task identities plus the batch's
+   retries-exhausted consume tasks — the batch is healed before work starts.
+   The adopted path uses `ResetProcessingTasksForClaim`, which keeps the
+   claim's batch holds (the takeover variant releases the batch's locks, so
+   adopting children must not call it).
 4. **Heartbeat + pools**: `SetRunnerOwnerID(ownerID)`, start the heartbeat,
    start the consume and enrich pools (`pollBatch`), and monitor.
 5. **Terminal status** (`task.SettleBatch`): the single terminal writer, from
@@ -488,11 +528,11 @@ is `processing`, it also prints live `progress.step`/`detail` updates (e.g.
 Backup and mirror tasks get real batch rows (origin `schedule`, status
 `queued`) so they flow through the batches UI instead of being invisible
 orphans (`maybeScheduleTask`, `queue.go`); config batches already did this.
-The queue daemon never forks consume workers for these batches:
-`GetNextQueuedBatch` excludes batches carrying a non-consume task type
-(`config`, the two migrations, `backup`, `mirror`, and the four tag passes),
-so no watchdog holds a `max_concurrent_batches` slot for the duration of a
-long backup.
+The queue daemon never forks consume workers for these batches: the
+dispatcher's eligibility comes from the type definitions — the batch-mode CLI
+surface these types have not declared yet — and the slot budget excludes
+lock-holding batches anyway, so no watchdog holds a
+`max_concurrent_batches` slot for the duration of a long backup.
 
 These batches run through the same runner as consume work: the handler is a
 pure work function and the runner claims under a fresh per-task guard, flips
@@ -874,15 +914,18 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
   before settle.
 
 Locks live as long as the *execution*, not one task. A batch whose task types
-declare holds gets them acquired **for the run**: the consume child of a
-`thumbbackfill` batch acquires `storage` all-or-nothing under its own
-batch-owner token once the batch's waits are free (deferring in-process until
-they are), drains `thumbnail`, and then runs its pool with claims that verify
-waits but skip acquisition (`Store.SetBatchHoldsAcquired`). New `thumbnail`
-claims from ingest batches defer until the backfill settles — per-document
-thumbnails never write while the storage tree is being bulk-walked. The
-release happens when the run ends; reclamation releases by batch id, and the
-stale sweep's exemption covers both the claim token and the batch id (§10).
+declare holds gets them acquired **at the dispatcher's claim**, for the whole
+run: the claim transaction takes `storage` under the execution token
+(verifying the waits the holding types declare, so a thumbbackfill batch is
+refused while `maintenance` is held), and the child keeps the holds fresh —
+lock heartbeat, drain of the declared waiters, `SetBatchHoldsAcquired` —
+while its pool runs claims that verify waits but skip acquisition. Bare
+`kushim consume --batch` (self-claim) acquires the batch's holds itself,
+deferring in-process until they are free. New `thumbnail` claims from ingest
+batches defer until the backfill settles — per-document thumbnails never
+write while the storage tree is being bulk-walked. The release happens when
+the run ends; reclamation releases by batch id, and the stale sweep's
+exemption covers both the claim token and the batch id (§10).
 
 Direct CLI commands run under the manual holder path (`task.RunDirect`,
 `internal/task/direct.go`): acquire the policy's locks — `LocksForDirectMode`
@@ -1027,7 +1070,7 @@ mid-run.
 |---|---|---|
 | `consumer.workers` | — | consume pool size (per-batch process) |
 | `enricher.workers` | `1` | enrich pool size |
-| `srv.max_concurrent_batches` | `4` | daemon's `CountLiveBatches` cap |
+| `srv.max_concurrent_batches` | `4` | the dispatcher's per-process budget for batches that acquire no locks (the lease carries the dispatcher identity; manual runs and other hosts never charge it) |
 | `consumer.reclaim.enabled` | `true` | stale sweeps on/off |
 | `consumer.reclaim.max_retries` | `3` | the attempts budget |
 | `consumer.reclaim.stale_task_after` | `600` (s) | processing-staleness cutoff (≥ 60) |
@@ -1054,19 +1097,24 @@ mid-run.
 - **Ownership of the batch's terminal writes belongs to `SettleBatch`** —
   handlers carry no batch-status writes; diverting a "quick" status write
   into a handler reintroduces the four-writers race the single writer
-  closed.
+  closed. The one sanctioned exception is `FailUnstartedBatch`, the
+  launch-failure terminal write the dispatcher reaches only after its bounded
+  retries.
 - **`attempts` only grows on reclamation resets** — never bump it on ordinary
   handler failures; the budget exists to bound crash loops, not retries.
 - **Owner-scoped claiming is the lease's teeth** — a worker whose lease was
   stolen (heartbeat 0 rows) keeps running but claims nothing. Don't remove
   the `owner_id` gate "for simplicity".
-- **The placeholder owner row is the daemon's crash net** — if a child dies
-  before acquiring, reclamation finds the placeholder (daemon PID) stale.
-  Removing the pre-create breaks that window.
-- **`--force` has two meanings**: steal-an-active-lease (consume CLI) and
-  overwrite-my-own-placeholder (daemon fork). Both use
-  `AcquireBatchOwnerForce`; the daemon's use is safe only because the
-  placeholder's `owner_id` is its own synthetic id.
+- **The claim's pid-0 lease is the crash net** — the dispatcher's claim
+  transaction inserts the lease (pid 0) before forking; if the child dies
+  before adopting, reclamation finds the stale pid-0 row and requeues the
+  batch. Removing the lease insert breaks that window. The child adopts the
+  lease once (`Owner.Adopt` refuses an adopted, released or re-owned lease),
+  so a replayed execution token cannot resurrect a live run.
+- **The execution token is the guard, not a secret** — the launcher passes
+  `--exec-token` to the child; it authorizes the child's claims and lifecycle
+  writes as the lease owner. It is deliberately a CLI argument (visible in
+  `ps`), not ambient environment state.
 - **NOTIFY is a hint; the 30s timer is the contract.** The non-blocking send
   drops notifications when the daemon is busy — never "fix" that by making
   the channel blocking, or a full channel stalls the daemon.
@@ -1094,4 +1142,4 @@ mid-run.
 
 ---
 
-*Last verified against the tree: 2026-10-23. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-24. If code and doc disagree, code wins.*
