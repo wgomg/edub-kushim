@@ -1,4 +1,4 @@
-package queue
+package dispatch
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
-	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -150,12 +149,7 @@ func requeueAfterLaunchFailure(ctx context.Context, client *database.Client, log
 // Only a queued batch with no lease is claimable; a paused batch points at resume, a processing one at its
 // holder (a stale lease is the reaper's), and a terminal one refuses. It performs no slot check, because
 // the dispatcher budget governs automatic dispatch only.
-func LaunchQueuedBatch(ctx context.Context, c *container.Container, batchID string) error {
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-
+func LaunchQueuedBatch(ctx context.Context, client *database.Client, logger *log.Logger, catalog task.TypeCatalog, batchID string) error {
 	batch, err := client.Queries.GetBatch(ctx, batchID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -176,10 +170,6 @@ func LaunchQueuedBatch(ctx context.Context, c *container.Container, batchID stri
 	if err != nil {
 		return fmt.Errorf("list task types for batch %s: %w", batchID, err)
 	}
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
 	target, err := resolveLaunchTarget(catalog, batchID, taskTypes, types.HostQueue)
 	if err != nil {
 		return err
@@ -194,7 +184,7 @@ func LaunchQueuedBatch(ctx context.Context, c *container.Container, batchID stri
 
 	cmd, err := launchBatch(target, token, true, nil)
 	if err != nil {
-		requeueAfterLaunchFailure(ctx, client, c.GetLogger(), batchID, token)
+		requeueAfterLaunchFailure(ctx, client, logger, batchID, token)
 		return err
 	}
 	if err := cmd.Wait(); err != nil {

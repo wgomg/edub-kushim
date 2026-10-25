@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // BackupTaskHandler creates a backup archive as a blocking task, per the
@@ -42,6 +44,38 @@ type BackupPayload struct {
 	Path     string         `json:"path"`
 	Keep     int            `json:"keep"`
 	Schedule ScheduleTiming `json:"schedule"`
+}
+
+// dedupKeyDateLayout is the UTC-day component of the backup and mirror dedup keys.
+const dedupKeyDateLayout = "2006-01-02"
+
+// BackupDedupKey derives a backup task's dedup key from its payload's mode and the UTC day: one backup
+// per mode per day.
+func BackupDedupKey(payload json.RawMessage) string {
+	var p struct {
+		Mode string `json:"mode"`
+	}
+	if len(payload) > 0 {
+		_ = json.Unmarshal(payload, &p)
+	}
+	if p.Mode == "" {
+		p.Mode = string(BackupModeFull)
+	}
+	return fmt.Sprintf("backup:%s:%s", p.Mode, time.Now().UTC().Format(dedupKeyDateLayout))
+}
+
+// BackupSpecs returns the single backup task a request enqueues; the caller supplies the origin spec.
+func BackupSpecs(mode, path string, keep int, timing ScheduleTiming) ([]task.TaskSpec, error) {
+	payload, err := json.Marshal(BackupPayload{
+		Mode:     mode,
+		Path:     path,
+		Keep:     keep,
+		Schedule: timing,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal backup payload: %w", err)
+	}
+	return []task.TaskSpec{{Type: types.Task.Type.Backup, Payload: payload}}, nil
 }
 
 // Handle runs the configured backup schedules that are due, creates their

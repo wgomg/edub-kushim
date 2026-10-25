@@ -85,14 +85,6 @@ func backupHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.Backup)
-	if err != nil {
-		return fmt.Errorf("backup definition: %w", err)
-	}
 
 	backupDir := c.GetConfig().Backup.Path
 	if overridePath != "" {
@@ -114,7 +106,8 @@ func backupHandler(c *container.Container, args []string) error {
 
 	fmt.Printf("Creating %s backup...\n", backupMode)
 	var result *backup.BackupResult
-	err = task.RunDirect(ctx, client, c.GetLogger(), "backup", def.LocksForDirectMode(), !noWait, nil, func() error {
+	policy := task.DirectLockPolicyFor(types.Task.Type.Backup)
+	err = task.RunDirect(ctx, client, c.GetLogger(), "backup", policy, !noWait, nil, func() error {
 		var runErr error
 		result, runErr = backup.Create(ctx, db, database.SchemaFS, backupMode, backupDir, configPath, c.GetConfig().Storage.StorageDir)
 		if runErr != nil {

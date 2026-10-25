@@ -1,4 +1,4 @@
-package queue
+package dispatch
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -49,18 +48,18 @@ func setupLauncherTest(t *testing.T) (*database.Client, *config.Config) {
 	database.ResetTestDatabase(client.DB())
 	cfg, cleanupCfg := testutil.NewTestConfig(t)
 	t.Cleanup(cleanupCfg)
-	// the dispatch path builds the task catalog, whose consumer construction verifies the
-	// converter binary when enabled; these tests never convert a document, so the gate stays
-	// off instead of depending on a LibreOffice install
-	cfg.Consumer.Converter.Enabled = false
 	return client, cfg
 }
 
-func launcherContainer(t *testing.T, client *database.Client, cfg *config.Config) *container.Container {
+// dispatchCatalog builds the static task policy table the dispatch tests resolve against. Dispatch
+// reads no dedup hook and no worker count, so the catalog carries neither.
+func dispatchCatalog(t *testing.T) *task.Catalog {
 	t.Helper()
-	c := container.NewContainerWithDB(cfg, testutil.NewTestLogger(), client.DB())
-	t.Cleanup(func() { c.Close() })
-	return c
+	catalog, err := task.NewCatalog(nil, nil)
+	if err != nil {
+		t.Fatalf("build task catalog: %v", err)
+	}
+	return catalog
 }
 
 // seedBatch creates a queued batch with one task of the given type.
@@ -94,6 +93,14 @@ func seedClaimedBatch(t *testing.T, client *database.Client, batchID, owner stri
 	}); err != nil {
 		t.Fatalf("insert lease: %v", err)
 	}
+}
+
+func hasLeaseRow(ctx context.Context, t *testing.T, client *database.Client, batchID string) bool {
+	t.Helper()
+	_, err := client.Queries.GetBatchOwner(ctx, database.GetBatchOwnerParams{
+		BatchID: batchID, StaleAfterSeconds: 15,
+	})
+	return err == nil
 }
 
 type stubCatalog map[types.TaskType]task.TypeDefinition
@@ -153,7 +160,7 @@ func TestResolveLaunchTarget(t *testing.T) {
 	t.Run("sibling types naming the same command resolve it", func(t *testing.T) {
 		target, err := resolveLaunchTarget(catalog, batchID,
 			[]types.TaskType{types.Task.Type.Thumbnail, types.Task.Type.ThumbBackfill}, types.HostQueue)
-		testutil.AssertNoError(t, err, "resolve a thumbnail-family batch")
+		testutil.AssertNoError(t, err, "resolve a thumbnail batch")
 		testutil.AssertEqual(t, target.cli, "thumbnails", "the shared command")
 	})
 
@@ -316,8 +323,8 @@ func TestRequeueAfterLaunchFailure(t *testing.T) {
 // cannot be claimed right now gets an error that names the state and what recovers it, and nothing is
 // forked.
 func TestLaunchQueuedBatchRefusals(t *testing.T) {
-	client, cfg := setupLauncherTest(t)
-	c := launcherContainer(t, client, cfg)
+	client, _ := setupLauncherTest(t)
+	catalog := dispatchCatalog(t)
 	ctx := context.Background()
 
 	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
@@ -366,7 +373,7 @@ func TestLaunchQueuedBatchRefusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.batchID, func(t *testing.T) {
-			err := LaunchQueuedBatch(ctx, c, tc.batchID)
+			err := LaunchQueuedBatch(ctx, client, testutil.NewTestLogger(), catalog, tc.batchID)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("LaunchQueuedBatch(%s) = %v, want an error mentioning %q", tc.batchID, err, tc.want)
 			}
@@ -381,13 +388,13 @@ func TestLaunchQueuedBatchRefusals(t *testing.T) {
 // TestLaunchQueuedBatchClaimsAndForks pins the manual launcher's happy path: it claims the queued
 // batch, forks the task CLI with the execution token and surfaces a non-zero child exit.
 func TestLaunchQueuedBatchClaimsAndForks(t *testing.T) {
-	client, cfg := setupLauncherTest(t)
-	c := launcherContainer(t, client, cfg)
+	client, _ := setupLauncherTest(t)
+	catalog := dispatchCatalog(t)
 	ctx := context.Background()
 	t.Setenv(testChildExitEnv, testChildExitCode)
 
 	seedBatch(t, client, "run-fork", types.Task.Type.Consume)
-	err := LaunchQueuedBatch(ctx, c, "run-fork")
+	err := LaunchQueuedBatch(ctx, client, testutil.NewTestLogger(), catalog, "run-fork")
 	if err == nil || !strings.Contains(err.Error(), "exited with error") {
 		t.Fatalf("want the child's non-zero exit surfaced, got %v", err)
 	}

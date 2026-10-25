@@ -1,73 +1,34 @@
-// Package container is the composition root of the kushim process: it owns the dynamic configuration,
-// the database connection and its own reconnect protocol, the task type catalog with the transactional
-// enqueuer, the runner with the handler registry, the pools per task type, and all the lazily built
-// services. Everything the CLI verbs and the queue consume reads from here.
+// Package container gives one kushim CLI invocation a single lazily built dependency graph, so every
+// command shares the same connection, clients and caches, nothing is constructed before a command needs
+// it, and a database settings change reconnects and drops everything derived from the old connection in
+// one place.
 package container
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
-	"time"
 
-	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/documents/consumption"
-	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
-	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/search"
-	"github.com/wgomg/edub-kushim/internal/service"
-	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
-	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
-	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
-	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// Container is the composition root: one per process, holding the
-// dynamic config pointer and the lazily constructed dependencies.
+// Container is the CLI-side holder of the dynamic config pointer and the lazily built shared services.
 type Container struct {
 	cfg            atomic.Pointer[config.Config]
 	logger         *log.Logger
 	db             *sql.DB
 	client         *database.Client
 	engine         *search.Engine
-	catalog        *Catalog
-	enqueuer       *task.Enqueuer
-	runner         *task.Runner
-	store          *task.Store
-	registry       *task.Registry
-	services       *service.CrudServices
 	tag            *curation.Tag
 	matcherClient  *matcher.MatcherClient
 	tagToolsRunner *tools.Runner
-	pools          map[types.TaskType]*task.Pool
-}
-
-type poolSpec struct {
-	workers  func(*config.Config) int
-	interval time.Duration
-}
-
-func singleWorker(*config.Config) int { return 1 }
-
-var poolSpecs = map[types.TaskType]poolSpec{
-	types.Task.Type.Config:         {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.MigrateDB:      {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.MigrateStorage: {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.Backup:         {workers: singleWorker, interval: 60 * time.Second},
-	types.Task.Type.Mirror:         {workers: singleWorker, interval: 60 * time.Second},
-	types.Task.Type.TagReconcile:   {workers: singleWorker, interval: 60 * time.Second},
-	types.Task.Type.TagMeasure:     {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.TagIdentity:    {workers: singleWorker, interval: 5 * time.Second},
-	types.Task.Type.TagAudit:       {workers: singleWorker, interval: 5 * time.Second},
 }
 
 // NewContainer builds a container without a database; the DB attaches
@@ -82,7 +43,6 @@ func NewContainerWithDB(cfg *config.Config, logger *log.Logger, db *sql.DB) *Con
 	c := &Container{
 		logger: logger,
 		db:     db,
-		pools:  make(map[types.TaskType]*task.Pool),
 	}
 	c.cfg.Store(cfg)
 	return c
@@ -103,12 +63,17 @@ func (c *Container) GetLogger() *log.Logger {
 	return c.logger
 }
 
-// GetTagService lazily builds the curation tag service, embedding
-// through the matcher client; errors when the config lacks a model.
+// GetTagService lazily builds the curation tag service over the client, logger and matcher client; it errors
+// only when the database is unreachable.
 func (c *Container) GetTagService() (*curation.Tag, error) {
-	if err := c.ensureTaskWiring(); err != nil {
+	if c.tag != nil {
+		return c.tag, nil
+	}
+	client, err := c.GetClient()
+	if err != nil {
 		return nil, err
 	}
+	c.tag = curation.NewTag(client, c.logger, c.GetMatcherClient())
 	return c.tag, nil
 }
 
@@ -152,17 +117,10 @@ func (c *Container) InvalidateDB() {
 		c.db = nil
 	}
 	c.client = nil
-	c.catalog = nil
-	c.enqueuer = nil
-	c.runner = nil
 	c.engine = nil
-	c.store = nil
-	c.registry = nil
-	c.services = nil
 	c.tag = nil
 	c.matcherClient = nil
 	c.tagToolsRunner = nil
-	clear(c.pools)
 }
 
 // ReconnectClient closes the current connection and reopens it from the
@@ -218,137 +176,6 @@ func (c *Container) LogFileConfig(name string) log.LogFileConfig {
 	}
 }
 
-// The runner, store, catalog, enqueuer and tag services are all built together, so that GetEnqueuer,
-// GetRunner and GetTagService work in any call order.
-func (c *Container) ensureTaskWiring() error {
-	if c.runner != nil {
-		return nil
-	}
-
-	client, err := c.GetClient()
-	if err != nil {
-		return err
-	}
-
-	matcherClient := c.GetMatcherClient()
-
-	c.tag = curation.NewTag(client, c.logger, matcherClient)
-	peopleSvc := service.NewPeople(client.Queries, c.logger)
-	peopleTypeSvc := service.NewPeopleType(client.Queries)
-	docTypeSvc := service.NewDocumentType(client.Queries)
-
-	c.services = &service.CrudServices{
-		People: peopleSvc, PeopleType: peopleTypeSvc, DocumentType: docTypeSvc,
-	}
-
-	store := task.NewStore(client)
-	c.store = store
-
-	c.catalog = NewCatalog(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger)
-
-	consumer, err := consumption.NewConsumer(c.cfg.Load(), c.logger, client)
-	if err != nil {
-		return err
-	}
-
-	enricher := enrichment.NewEnricher(c.cfg.Load(), c.logger, client, c.tag, matcherClient)
-
-	registry := task.NewRegistry()
-	registry.Register(types.Task.Type.Consume, consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.logger, c.catalog))
-	registry.Register(types.Task.Type.Enrich, enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.logger))
-	thumbnailHandler := consumption.NewThumbnailTaskHandler(tools.NewRunner(c.logger, c.cfg.Load(), []string{"thumbnail"}), client.Queries, c.logger, func() *config.Config { return c.cfg.Load() })
-	registry.Register(types.Task.Type.Thumbnail, thumbnailHandler)
-	registry.Register(types.Task.Type.ThumbBackfill, thumbnailHandler)
-	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.logger))
-	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, c.logger))
-	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, c.logger))
-	registry.Register(types.Task.Type.Backup, backup.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
-	registry.Register(types.Task.Type.Mirror, backup.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger))
-	registry.Register(types.Task.Type.TagReconcile, reconcile.NewTagReconcileTaskHandler(client.Queries, c.logger))
-	registry.Register(types.Task.Type.TagMeasure, tags.NewTagMeasureTaskHandler(client.Queries, c.logger))
-	registry.Register(types.Task.Type.TagIdentity, admission.NewTagIdentityTaskHandler(client.Queries, c.logger))
-	registry.Register(types.Task.Type.TagAudit, admission.NewTagAuditTaskHandler(client.Queries, c.logger))
-
-	c.enqueuer = task.NewEnqueuer(client, c.catalog)
-	c.registry = registry
-	c.runner = task.NewRunner(store, registry, c.logger)
-
-	return nil
-}
-
-// GetCatalog lazily builds the task type catalog.
-func (c *Container) GetCatalog() (*Catalog, error) {
-	if err := c.ensureTaskWiring(); err != nil {
-		return nil, err
-	}
-	return c.catalog, nil
-}
-
-// GetEnqueuer lazily builds the transactional enqueue over the catalog.
-func (c *Container) GetEnqueuer() (*task.Enqueuer, error) {
-	if err := c.ensureTaskWiring(); err != nil {
-		return nil, err
-	}
-	return c.enqueuer, nil
-}
-
-// GetRunner lazily builds the claim runner over the registry.
-func (c *Container) GetRunner() (*task.Runner, error) {
-	if err := c.ensureTaskWiring(); err != nil {
-		return nil, err
-	}
-	return c.runner, nil
-}
-
-// GetStore returns the task lifecycle store, so a command can assemble the dependencies of a shared
-// batch execution.
-func (c *Container) GetStore() (*task.Store, error) {
-	if err := c.ensureTaskWiring(); err != nil {
-		return nil, err
-	}
-	return c.store, nil
-}
-
-// GetRegistry returns the handler registry, so a command can assemble the dependencies of a shared batch
-// execution.
-func (c *Container) GetRegistry() (*task.Registry, error) {
-	if err := c.ensureTaskWiring(); err != nil {
-		return nil, err
-	}
-	return c.registry, nil
-}
-
-// GetHandler returns the registered handler of one task type; direct-mode commands run the same handler
-// the runner dispatches, without persisting task rows.
-func (c *Container) GetHandler(taskType types.TaskType) (task.Handler, error) {
-	if err := c.ensureTaskWiring(); err != nil {
-		return nil, err
-	}
-	return c.registry.Get(taskType)
-}
-
-// GetPool builds (once) the task pool of the given type with the
-// configured worker count and interval.
-func (c *Container) GetPool(taskType types.TaskType) (*task.Pool, error) {
-	if pool := c.pools[taskType]; pool != nil {
-		return pool, nil
-	}
-
-	spec, ok := poolSpecs[taskType]
-	if !ok {
-		return nil, fmt.Errorf("unknown pool task type: %q", taskType)
-	}
-
-	runner, err := c.GetRunner()
-	if err != nil {
-		return nil, err
-	}
-
-	pool := task.NewPool(c.logger, runner, spec.workers(c.cfg.Load()), spec.interval, taskType)
-	c.pools[taskType] = pool
-	return pool, nil
-}
-
 // GetSearchEngine lazily builds the search engine.
 func (c *Container) GetSearchEngine() (*search.Engine, error) {
 	if c.engine == nil {
@@ -361,23 +188,12 @@ func (c *Container) GetSearchEngine() (*search.Engine, error) {
 	return c.engine, nil
 }
 
-// Close stops every built task pool and releases the embedder, services,
-// and the database handle.
+// Close releases the embedder and the database handle.
 func (c *Container) Close() {
-	for _, pool := range c.pools {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pool.Stop(ctx)
-		cancel()
-	}
 	if c.db != nil {
 		_ = c.db.Close()
 	}
 	if c.tag != nil {
 		c.tag.Close()
-	}
-	if c.services != nil {
-		if err := c.services.Close(); err != nil {
-			c.logger.Error("", "close services: %v", err)
-		}
 	}
 }

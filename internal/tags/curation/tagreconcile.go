@@ -28,6 +28,11 @@ func NewTagReconcile(queries *database.Queries, enqueuer *task.Enqueuer) *TagRec
 	}
 }
 
+// ReconcileSpecs returns the task set a tag reconcile run enqueues.
+func ReconcileSpecs() []task.TaskSpec {
+	return []task.TaskSpec{{Type: types.Task.Type.TagReconcile, Payload: json.RawMessage("{}")}}
+}
+
 // Enqueue queues a tag reconcile batch and its task through spec, or reports alreadyQueued when one is
 // still active.
 func (s *TagReconcile) Enqueue(ctx context.Context, spec task.BatchSpec) (batchID string, alreadyQueued bool, err error) {
@@ -39,10 +44,7 @@ func (s *TagReconcile) Enqueue(ctx context.Context, spec task.BatchSpec) (batchI
 		return "", true, nil
 	}
 
-	result, err := s.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{
-		Type:    types.Task.Type.TagReconcile,
-		Payload: json.RawMessage("{}"),
-	})
+	result, err := s.enqueuer.EnqueueBatch(ctx, spec, ReconcileSpecs())
 	if err != nil {
 		return "", false, errs.FromDB(err, "create tag reconcile task")
 	}

@@ -7,11 +7,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/backup"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
+	"github.com/wgomg/edub-kushim/internal/ops/dispatch"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
-	"github.com/wgomg/edub-kushim/internal/ops/queue"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -48,6 +54,16 @@ const batchCreateHelpText = "Usage: kushim batch create <task> [args]\n\n" +
 // this same origin.
 func cliBatchSpec() (task.BatchSpec, error) {
 	return task.NewBatchSpec(types.Batch.Origin.CLI, "")
+}
+
+// newEnqueuer builds an enqueuer whose catalog carries only the dedup hooks of the types this call site
+// enqueues; enqueueing any other pending type fails loudly instead of creating keyless work.
+func newEnqueuer(client *database.Client, hooks map[types.TaskType]task.DedupKeyFunc) (*task.Enqueuer, error) {
+	catalog, err := task.NewCatalog(hooks, nil)
+	if err != nil {
+		return nil, fmt.Errorf("task catalog: %w", err)
+	}
+	return task.NewEnqueuer(client, catalog), nil
 }
 
 func batchHandler(c *container.Container, args []string) error {
@@ -97,33 +113,35 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		return err
 	}
 
-	taskType, input, err := batchBuildInput(taskName, args[1:])
+	switch taskName {
+	case "consume", "backup", "mirror", "enrich", "thumbnails",
+		"tagreconcile", "tagmeasure", "tagidentity", "tagaudit":
+	default:
+		return fmt.Errorf("unknown task %q; supported: consume, backup, mirror, enrich, thumbnails, "+
+			"tagreconcile, tagmeasure, tagidentity, tagaudit", taskName)
+	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	ctx := context.Background()
+	spec, err := cliBatchSpec()
 	if err != nil {
 		return err
 	}
 
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(taskType)
-	if err != nil {
-		return fmt.Errorf("task type: %w", err)
-	}
-	if def.BuildTasks == nil {
-		return fmt.Errorf("task type %q cannot be enqueued with batch create", taskType)
-	}
+	var enqueuer *task.Enqueuer
+	var tasks []task.TaskSpec
 
-	ctx := context.Background()
-
-	// the paused-batch guard keeps the CLI and polling creation paths aligned: while the provider credits
-	// are broken each new batch would process a few files and pause itself; the CLI refuses while the polling
-	// scan skips its tick
-	if taskType == types.Task.Type.Consume {
-		client, err := c.GetClient()
-		if err != nil {
-			return fmt.Errorf("database: %w", err)
+	switch taskName {
+	case "consume":
+		if rest := flags.NewFlagParser(args[1:]).Rest(); len(rest) > 0 {
+			return fmt.Errorf("consume takes no arguments, got %s", rest[0])
 		}
+		// the paused-batch guard keeps the CLI and polling creation paths aligned: while the provider credits
+		// are broken each new batch would process a few files and pause itself; the CLI refuses while the polling
+		// scan skips its tick
 		pausedIDs, err := client.Queries.ListPausedBatches(ctx)
 		if err != nil {
 			return fmt.Errorf("check paused batches: %w", err)
@@ -133,24 +151,134 @@ func batchCreateHandler(c *container.Container, args []string) error {
 				"Resolve the billing issue, then resume or cancel each paused batch before creating new ones.",
 				len(pausedIDs), strings.Join(pausedIDs, ", "))
 		}
+		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+			types.Task.Type.Consume: consumption.DedupKey,
+		})
+		if err != nil {
+			return err
+		}
+		tasks, err = consumption.IngestSpecsFromInbox(c.GetConfig(), c.GetLogger())
+		if err != nil {
+			return fmt.Errorf("scan inbox: %w", err)
+		}
+
+	case "backup":
+		fp := flags.NewFlagParser(args[1:])
+		var mode, path string
+		keep := 0
+		if err := fp.String("--mode", &mode); err != nil {
+			return err
+		}
+		if err := fp.String("--path", &path); err != nil {
+			return err
+		}
+		if err := fp.Int("--keep", &keep, 0, 1_000_000); err != nil {
+			return err
+		}
+		if rest := fp.Rest(); len(rest) > 0 {
+			return fmt.Errorf("unknown argument: %s", rest[0])
+		}
+		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+			types.Task.Type.Backup: backup.BackupDedupKey,
+		})
+		if err != nil {
+			return err
+		}
+		tasks, err = backup.BackupSpecs(mode, path, keep, backup.ScheduleTiming{})
+		if err != nil {
+			return err
+		}
+
+	case "mirror":
+		fp := flags.NewFlagParser(args[1:])
+		var path string
+		if err := fp.String("--path", &path); err != nil {
+			return err
+		}
+		if rest := fp.Rest(); len(rest) > 0 {
+			return fmt.Errorf("unknown argument: %s", rest[0])
+		}
+		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+			types.Task.Type.Mirror: backup.MirrorDedupKey,
+		})
+		if err != nil {
+			return err
+		}
+		tasks, err = backup.MirrorSpecs(path, 0, backup.ScheduleTiming{})
+		if err != nil {
+			return err
+		}
+
+	case "enrich":
+		documentIDs := flags.NewFlagParser(args[1:]).Rest()
+		if len(documentIDs) == 0 {
+			return fmt.Errorf("enrich requires at least one document id, --all or --limit N")
+		}
+		for _, documentID := range documentIDs {
+			if strings.HasPrefix(documentID, "-") {
+				return fmt.Errorf("unknown flag: %s", documentID)
+			}
+		}
+		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+			types.Task.Type.Enrich: enrichment.DedupKey,
+		})
+		if err != nil {
+			return err
+		}
+		tasks, err = enrichment.EnrichSpecs(documentIDs)
+		if err != nil {
+			return err
+		}
+
+	case "thumbnails":
+		if rest := flags.NewFlagParser(args[1:]).Rest(); len(rest) > 0 {
+			return fmt.Errorf("thumbnails takes no arguments, got %s", rest[0])
+		}
+		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+			types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
+		})
+		if err != nil {
+			return err
+		}
+		tasks, err = service.ThumbnailBackfillSpecs(ctx, client.Queries)
+		if err != nil {
+			return fmt.Errorf("build thumbnail backfill tasks: %w", err)
+		}
+
+	case "tagreconcile", "tagmeasure", "tagidentity", "tagaudit":
+		if rest := flags.NewFlagParser(args[1:]).Rest(); len(rest) > 0 {
+			return fmt.Errorf("%s takes no arguments, got %s", taskName, rest[0])
+		}
+		switch taskName {
+		case "tagreconcile":
+			tasks = curation.ReconcileSpecs()
+			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+				types.Task.Type.TagReconcile: task.ConstantDedupKey(curation.TagReconcileDedupKey),
+			})
+		case "tagmeasure":
+			tasks = curation.MeasureSpecs()
+			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+				types.Task.Type.TagMeasure: task.ConstantDedupKey(tags.TagMeasureDedupKey),
+			})
+		case "tagidentity":
+			tasks = curation.IdentitySpecs()
+			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+				types.Task.Type.TagIdentity: task.ConstantDedupKey(curation.TagIdentityDedupKey),
+			})
+		case "tagaudit":
+			tasks = curation.AuditSpecs()
+			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+				types.Task.Type.TagAudit: task.ConstantDedupKey(curation.TagAuditDedupKey),
+			})
+		}
+		if err != nil {
+			return err
+		}
 	}
 
-	tasks, err := def.BuildTasks(ctx, input)
-	if err != nil {
-		return fmt.Errorf("build %s tasks: %w", taskType, err)
-	}
-
-	spec, err := cliBatchSpec()
-	if err != nil {
-		return err
-	}
-	enqueuer, err := c.GetEnqueuer()
-	if err != nil {
-		return fmt.Errorf("enqueuer: %w", err)
-	}
 	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
 	if err != nil {
-		return fmt.Errorf("enqueue %s batch: %w", taskType, err)
+		return fmt.Errorf("enqueue %s batch: %w", taskName, err)
 	}
 
 	if result.BatchID == "" {
@@ -171,7 +299,15 @@ func batchRunHandler(c *container.Container, args []string) error {
 		}
 		return nil
 	}
-	return queue.LaunchQueuedBatch(context.Background(), c, args[0])
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	catalog, err := task.NewCatalog(nil, nil)
+	if err != nil {
+		return fmt.Errorf("task catalog: %w", err)
+	}
+	return dispatch.LaunchQueuedBatch(context.Background(), client, c.GetLogger(), catalog, args[0])
 }
 
 func batchStopHandler(c *container.Container, args []string) error {
@@ -366,7 +502,7 @@ func batchStatusHandler(c *container.Container, args []string) error {
 }
 
 // batchCreateSelection routes the create verbs whose task set is selected from live data rather than an
-// explicit id list; handled is false when the verb uses the generic builder path.
+// explicit id list; handled is false when the verb reads its targets from the arguments.
 func batchCreateSelection(c *container.Container, taskName string, args []string) (handled bool, err error) {
 	switch taskName {
 	case "enrich":
@@ -427,9 +563,11 @@ func enqueueEnrichSelection(c *container.Container, limit int64) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	enqueuer, err := c.GetEnqueuer()
+	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Enrich: enrichment.DedupKey,
+	})
 	if err != nil {
-		return fmt.Errorf("enqueuer: %w", err)
+		return err
 	}
 	spec, err := cliBatchSpec()
 	if err != nil {
@@ -465,9 +603,11 @@ func enqueueThumbnailBackfillBatch(c *container.Container, sourceBatchID string)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	enqueuer, err := c.GetEnqueuer()
+	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
+	})
 	if err != nil {
-		return fmt.Errorf("enqueuer: %w", err)
+		return err
 	}
 	spec, err := cliBatchSpec()
 	if err != nil {
@@ -497,9 +637,11 @@ func enqueueThumbnailBackfillDocument(c *container.Container, documentID string)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	enqueuer, err := c.GetEnqueuer()
+	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
+	})
 	if err != nil {
-		return fmt.Errorf("enqueuer: %w", err)
+		return err
 	}
 	spec, err := cliBatchSpec()
 	if err != nil {
@@ -520,95 +662,4 @@ func enqueueThumbnailBackfillDocument(c *container.Container, documentID string)
 	}
 	fmt.Printf("Batch %s queued with 1 thumbnail task — run 'kushim queue' to process\n", batchID)
 	return nil
-}
-
-// batchBuildInput turns the task name and its remaining arguments into the task type and the typed build
-// input its definition's builder expects.
-func batchBuildInput(taskName string, args []string) (types.TaskType, task.BuildInput, error) {
-	fp := flags.NewFlagParser(args)
-
-	switch taskName {
-	case "consume":
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("consume takes no arguments, got %s", rest[0])
-		}
-		return types.Task.Type.Consume, container.NewEmptyBuildInput(types.Task.Type.Consume), nil
-
-	case "backup":
-		var mode, path string
-		keep := 0
-		if err := fp.String("--mode", &mode); err != nil {
-			return "", nil, err
-		}
-		if err := fp.String("--path", &path); err != nil {
-			return "", nil, err
-		}
-		if err := fp.Int("--keep", &keep, 0, 1_000_000); err != nil {
-			return "", nil, err
-		}
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("unknown argument: %s", rest[0])
-		}
-		return types.Task.Type.Backup, container.BackupBuildInput{
-			Mode: mode,
-			Path: path,
-			Keep: keep,
-		}, nil
-
-	case "mirror":
-		var path string
-		if err := fp.String("--path", &path); err != nil {
-			return "", nil, err
-		}
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("unknown argument: %s", rest[0])
-		}
-		return types.Task.Type.Mirror, container.MirrorBuildInput{Path: path}, nil
-
-	case "enrich":
-		documentIDs := fp.Rest()
-		if len(documentIDs) == 0 {
-			return "", nil, fmt.Errorf("enrich requires at least one document id, --all or --limit N")
-		}
-		for _, documentID := range documentIDs {
-			if strings.HasPrefix(documentID, "-") {
-				return "", nil, fmt.Errorf("unknown flag: %s", documentID)
-			}
-		}
-		return types.Task.Type.Enrich, container.EnrichBuildInput{DocumentIDs: documentIDs}, nil
-
-	case "thumbnails":
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("thumbnails takes no arguments, got %s", rest[0])
-		}
-		return types.Task.Type.ThumbBackfill, container.NewEmptyBuildInput(types.Task.Type.ThumbBackfill), nil
-
-	case "tagreconcile":
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("%s takes no arguments, got %s", taskName, rest[0])
-		}
-		return types.Task.Type.TagReconcile, container.NewEmptyBuildInput(types.Task.Type.TagReconcile), nil
-
-	case "tagmeasure":
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("%s takes no arguments, got %s", taskName, rest[0])
-		}
-		return types.Task.Type.TagMeasure, container.NewEmptyBuildInput(types.Task.Type.TagMeasure), nil
-
-	case "tagidentity":
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("%s takes no arguments, got %s", taskName, rest[0])
-		}
-		return types.Task.Type.TagIdentity, container.NewEmptyBuildInput(types.Task.Type.TagIdentity), nil
-
-	case "tagaudit":
-		if rest := fp.Rest(); len(rest) > 0 {
-			return "", nil, fmt.Errorf("%s takes no arguments, got %s", taskName, rest[0])
-		}
-		return types.Task.Type.TagAudit, container.NewEmptyBuildInput(types.Task.Type.TagAudit), nil
-
-	default:
-		return "", nil, fmt.Errorf("unknown task %q; supported: consume, backup, mirror, enrich, thumbnails, "+
-			"tagreconcile, tagmeasure, tagidentity, tagaudit", taskName)
-	}
 }

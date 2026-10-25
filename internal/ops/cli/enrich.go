@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/ops/consume"
@@ -110,9 +111,31 @@ func enrichHandler(c *container.Container, args []string) error {
 	return enrichLiveDocumentsDirect(c, effectiveLimit, noWait)
 }
 
+// newEnrichHandler constructs the enrich handler over the command's own enricher.
+func newEnrichHandler(c *container.Container, client *database.Client) (task.Handler, error) {
+	tag, err := c.GetTagService()
+	if err != nil {
+		return nil, fmt.Errorf("tag service: %w", err)
+	}
+	enricher := enrichment.NewEnricher(c.GetConfig(), c.GetLogger(), client, tag, c.GetMatcherClient())
+	return enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.GetLogger()), nil
+}
+
 // runEnrichBatch executes one claimed enrich batch and adds the batch's enrich bookend on completion.
 func runEnrichBatch(c *container.Container, batchID, execTokenParam string) error {
-	result, err := consume.RunClaimedBatch(c, batchID, execTokenParam, nil)
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	handler, err := newEnrichHandler(c, client)
+	if err != nil {
+		return err
+	}
+	store := task.NewStore(client)
+	registry := task.NewRegistry()
+	registry.Register(types.Task.Type.Enrich, handler)
+
+	result, err := consume.RunClaimedBatch(c, batchID, execTokenParam, store, registry, nil)
 	if err != nil {
 		return err
 	}
@@ -120,10 +143,6 @@ func runEnrichBatch(c *container.Container, batchID, execTokenParam string) erro
 		return nil
 	}
 
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
 	enrichment.LogBatchBookend(context.Background(), client.Queries, c.GetLogger(), batchID, result.Status)
 	return nil
 }
@@ -169,22 +188,15 @@ func enrichDocumentsDirect(c *container.Container, documentIDs []string, noWait 
 		}
 	}
 
-	catalog, err := c.GetCatalog()
+	handler, err := newEnrichHandler(c, client)
 	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.Enrich)
-	if err != nil {
-		return fmt.Errorf("enrich definition: %w", err)
-	}
-	handler, err := c.GetHandler(types.Task.Type.Enrich)
-	if err != nil {
-		return fmt.Errorf("enrich handler: %w", err)
+		return err
 	}
 
 	failed := 0
 	fmt.Printf("Enriching %d document(s)...\n", len(documentIDs))
-	err = task.RunDirect(ctx, client, c.GetLogger(), "enrich", def.LocksForDirectMode(), !noWait, nil, func() error {
+	policy := task.DirectLockPolicyFor(types.Task.Type.Enrich)
+	err = task.RunDirect(ctx, client, c.GetLogger(), "enrich", policy, !noWait, nil, func() error {
 		for i, documentID := range documentIDs {
 			payload, err := json.Marshal(map[string]string{"document_id": documentID})
 			if err != nil {

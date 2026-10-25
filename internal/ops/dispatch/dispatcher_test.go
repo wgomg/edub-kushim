@@ -1,4 +1,4 @@
-package queue
+package dispatch
 
 import (
 	"context"
@@ -43,19 +43,20 @@ func TestDispatchHonorsBudgetAndSkipsUnknownTypes(t *testing.T) {
 	client, cfg := setupLauncherTest(t)
 	ctx := context.Background()
 	batchSvc := service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
-	c := launcherContainer(t, client, cfg)
+	catalog := dispatchCatalog(t)
+	logger := testutil.NewTestLogger()
 
 	t.Run("a type without a batch-mode CLI stays queued", func(t *testing.T) {
 		seedBatch(t, client, "dispatch-backup", types.Task.Type.Backup)
-		d := newBatchDispatcher(c, types.HostQueue, 4, func() {})
-		testutil.AssertNoError(t, d.dispatch(ctx, client, batchSvc), "dispatch over a backup-only queue")
+		d := NewDispatcher(catalog, logger, types.HostQueue, 4, func() {})
+		testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch over a backup-only queue")
 		if !batchIsQueuedWithoutLease(t, client, "dispatch-backup") {
 			t.Fatal("a backup batch must never be claimed by the dispatcher")
 		}
 	})
 
 	t.Run("a full budget stops the sweep before any no-holds claim", func(t *testing.T) {
-		d := newBatchDispatcher(c, types.HostQueue, 1, func() {})
+		d := NewDispatcher(catalog, logger, types.HostQueue, 1, func() {})
 		seedBatch(t, client, "dispatch-running", types.Task.Type.Consume)
 		if _, err := client.Queries.MarkBatchClaimed(ctx, "dispatch-running"); err != nil {
 			t.Fatalf("mark the filler claimed: %v", err)
@@ -67,7 +68,7 @@ func TestDispatchHonorsBudgetAndSkipsUnknownTypes(t *testing.T) {
 			t.Fatalf("charge the slot to this dispatcher: %v", err)
 		}
 		seedBatch(t, client, "dispatch-waiting", types.Task.Type.Consume)
-		testutil.AssertNoError(t, d.dispatch(ctx, client, batchSvc), "dispatch at budget")
+		testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch at budget")
 
 		if !batchIsQueuedWithoutLease(t, client, "dispatch-waiting") {
 			t.Fatal("the one slot is taken: the waiting batch must stay queued")
@@ -85,10 +86,10 @@ func TestDispatchClaimsHoldingBatchOutsideTheBudget(t *testing.T) {
 	client, cfg := setupLauncherTest(t)
 	ctx := context.Background()
 	batchSvc := service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
-	c := launcherContainer(t, client, cfg)
+	catalog := dispatchCatalog(t)
 	t.Setenv(testChildExitEnv, "7")
 
-	d := newBatchDispatcher(c, types.HostQueue, 1, func() {})
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {})
 	seedBatch(t, client, "bypass-filler", types.Task.Type.Consume)
 	if _, err := client.Queries.MarkBatchClaimed(ctx, "bypass-filler"); err != nil {
 		t.Fatalf("mark the filler claimed: %v", err)
@@ -102,7 +103,7 @@ func TestDispatchClaimsHoldingBatchOutsideTheBudget(t *testing.T) {
 	seedBatch(t, client, "bypass-ingest", types.Task.Type.Consume)
 	seedBatch(t, client, "bypass-holding", types.Task.Type.ThumbBackfill)
 
-	testutil.AssertNoError(t, d.dispatch(ctx, client, batchSvc), "dispatch over a full budget")
+	testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch over a full budget")
 
 	waitFor(t, "the holding batch to be claimed and its failed launch requeued", func() bool {
 		return batchIsQueuedWithoutLease(t, client, "bypass-holding") &&
@@ -125,14 +126,14 @@ func TestDispatchBoundsLaunchFailures(t *testing.T) {
 	client, cfg := setupLauncherTest(t)
 	ctx := context.Background()
 	batchSvc := service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
-	c := launcherContainer(t, client, cfg)
+	catalog := dispatchCatalog(t)
 	t.Setenv(testChildExitEnv, "7")
 
 	const batchID = "dispatch-failing"
 	seedBatch(t, client, batchID, types.Task.Type.Consume)
 	seedBatch(t, client, "dispatch-untouchable", types.Task.Type.Backup)
 
-	d := newBatchDispatcher(c, types.HostQueue, 1, func() {})
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {})
 	waitRequeued := func(what string) {
 		waitFor(t, what, func() bool { return batchIsQueuedWithoutLease(t, client, batchID) })
 	}
@@ -143,7 +144,7 @@ func TestDispatchBoundsLaunchFailures(t *testing.T) {
 	}
 
 	for attempt := 1; attempt <= maxLaunchFailures; attempt++ {
-		testutil.AssertNoError(t, d.dispatch(ctx, client, batchSvc), "dispatch attempt")
+		testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch attempt")
 		if attempt == maxLaunchFailures {
 			break
 		}
@@ -171,10 +172,10 @@ func TestDispatchBoundsLaunchFailures(t *testing.T) {
 // lease owns its outcome, a foreign token means the batch moved on, and a clean exit forgets the
 // failure streak.
 func TestChildExitedClassification(t *testing.T) {
-	client, cfg := setupLauncherTest(t)
+	client, _ := setupLauncherTest(t)
 	ctx := context.Background()
-	c := launcherContainer(t, client, cfg)
-	d := newBatchDispatcher(c, types.HostQueue, 4, func() {})
+	catalog := dispatchCatalog(t)
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 4, func() {})
 	exitErr := errors.New("exit status 7")
 
 	t.Run("an adopted lease keeps its batch running", func(t *testing.T) {

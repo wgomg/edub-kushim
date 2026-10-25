@@ -423,9 +423,10 @@ six-step guided flow:
    later.
 
 The wizard server uses a stripped-down version of the full server stack: it bootstraps
-the config directory (via `config.Bootstrap`), initializes the PostgreSQL schema, creates
-the task type catalog and enqueuer with the three config-host handlers (`config`,
-`migrate-db`, `migrate-storage`) registered, and runs one single-worker pool per type
+the config directory (via `config.Bootstrap`), initializes the PostgreSQL schema, constructs
+the task catalog and enqueuer at boot with the dedup hooks of the three config-host task
+types (`config`, `migrate-db`, `migrate-storage`), registers their handlers, and runs one
+single-worker pool per type
 for background downloads and migrations. It serves the wizard UI directly via `//go:embed` on
 `internal/api/wizard/static/`.
 

@@ -42,6 +42,11 @@ type CoverageFlag struct {
 	CreatedAt     time.Time
 }
 
+// AuditSpecs returns the task set a completeness audit enqueues.
+func AuditSpecs() []task.TaskSpec {
+	return []task.TaskSpec{{Type: types.Task.Type.TagAudit, Payload: json.RawMessage("{}")}}
+}
+
 // Enqueue queues a completeness audit batch and its task through spec, or reports alreadyQueued when one
 // is still active.
 func (s *TagAudit) Enqueue(ctx context.Context, spec task.BatchSpec) (batchID string, alreadyQueued bool, err error) {
@@ -53,10 +58,7 @@ func (s *TagAudit) Enqueue(ctx context.Context, spec task.BatchSpec) (batchID st
 		return "", true, nil
 	}
 
-	result, err := s.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{
-		Type:    types.Task.Type.TagAudit,
-		Payload: json.RawMessage("{}"),
-	})
+	result, err := s.enqueuer.EnqueueBatch(ctx, spec, AuditSpecs())
 	if err != nil {
 		return "", false, errs.FromDB(err, "create tag audit task")
 	}

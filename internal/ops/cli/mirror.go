@@ -39,14 +39,6 @@ func mirrorHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.Mirror)
-	if err != nil {
-		return fmt.Errorf("mirror definition: %w", err)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -66,7 +58,8 @@ func mirrorHandler(c *container.Container, args []string) error {
 
 	fmt.Printf("Mirroring %s -> %s\n", cfg.Storage.StorageDir, dest)
 	var result *backup.Result
-	err = task.RunDirect(ctx, client, c.GetLogger(), "mirror", def.LocksForDirectMode(), !noWait, nil, func() error {
+	policy := task.DirectLockPolicyFor(types.Task.Type.Mirror)
+	err = task.RunDirect(ctx, client, c.GetLogger(), "mirror", policy, !noWait, nil, func() error {
 		var runErr error
 		result, _, runErr = backup.RunMirrorAndRecord(ctx, c.GetLogger(), cfg.Storage.StorageDir, dest, nil)
 		return runErr

@@ -169,7 +169,7 @@ internal/
 │   ├── client.go           # MatcherClient — HTTP client over Unix socket to the matcher daemon
 │   ├── bootstrap.go        # BuildTagCache — pre-compute tag embeddings at startup
 │   └── embedding_store.go  # TagEmbeddingStore (map[string][]float32 with thread-safe ops)
-├── ops/                    # Process layer: CLI verbs, queue daemon, consume child, setup, composition root
+├── ops/                    # Process layer: CLI verbs, queue daemon, dispatcher, consume child, setup, shared-services container
 │   ├── cli/                # Command table and the `kushim` verbs
 │   │   ├── commands.go     # Command definitions and runner
  │   │   ├── backup.go       # Backup and restore commands
@@ -186,17 +186,17 @@ internal/
 │   │   ├── tagmeasure.go   # `kushim tagmeasure [--run <batch-id>]` measurement child
 │   │   ├── tagreconcile.go # `kushim tagreconcile [--run <batch-id>]` enqueue / reconciliation child
 │   │   ├── task.go         # Task commands (list, status, retry)
-│   │   ├── thumbnails.go   # `kushim thumbnails <mode>` backfill enqueue
+ │   │   ├── thumbnails.go   # `kushim thumbnails` — direct thumbnail runs (--all/--document) plus the --from-batch child
 │   │   └── user.go         # User commands (create)
- │   ├── container/          # Dependency injection container
- │   │   ├── container.go    # DB, pools, cache, task-type catalog, enqueuer, task-handler registry; config/logger/services accessors
- │   │   └── task_type_definitions.go # Task type catalog: one definition per type (locks, dedup key, builder) + build inputs
-│   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
-│   │   ├── queue.go        # Daemon loop: scheduling, stale reclamation, pool lifecycle, config hot-reload
-│   │   ├── dispatcher.go   # batchDispatcher: claims queued batches (status, lease, holds in one tx) and forks the task CLI
-│   │   ├── launcher.go     # Shared claim/fork + LaunchQueuedBatch (kushim batch run) + launch-failure backoff
-│   │   ├── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
-│   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
+ │   ├── container/          # Shared-services lazy assembler (config, DB reconnect, tag service, search, matcher client, tag tools)
+ │   │   └── container.go    # Config/logger/database accessors and reconnect protocol; builds no task wiring
+ │   ├── dispatch/           # Batch dispatcher and launcher (explicit dependencies)
+ │   │   ├── dispatcher.go   # Dispatcher: claims queued batches (status, lease, holds in one tx) and forks the task CLI
+ │   │   └── launcher.go     # Shared claim/fork + LaunchQueuedBatch (kushim batch run) + launch-failure backoff
+ │   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
+ │   │   ├── queue.go        # Daemon loop: daemon task catalog, scheduling through the producers, pool lifecycle, config hot-reload
+ │   │   ├── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
+ │   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
 │   ├── consume/            # `kushim consume` child process
  │   │   ├── consume.go      # Direct inbox run + batch mode through the shared library, cancel subcommand
 │   │   └── advisories.go   # Tool-block and ocrmypdf advisories printed before a batch starts
@@ -216,7 +216,8 @@ internal/
 │   ├── orphaned.go         # Orphaned file service (scan, list, delete, restore, move-to-inbox, orphaned-thumbnail sweep)
 │   ├── trash.go            # Trash service (soft delete, restore, permanent delete, purge + hourly background purge)
 │   ├── errored.go          # Errored file service (list on disk, get path, delete, delete-all)
-│   ├── enrich.go           # Re-enrich service (single document and bulk, dedup via active task check)
+ │   ├── enrich.go           # Re-enrich service (single document and bulk, dedup via active task check)
+ │   ├── thumbnail_backfill.go # ThumbnailBackfill (batch/document enqueue paths) + ThumbnailBackfillSpecs (all-documents scan) + ThumbnailDedupKey
 │   ├── password.go         # Password validation rules (12+ chars, complexity)
 │   ├── user.go             # User service (CRUD, roles, API key hashing)
 │   └── crud.go             # CrudServices aggregate + Close() (explicit member list)
@@ -264,7 +265,9 @@ internal/
  │   ├── batch.go            # Batch ownership (Owner.Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease/token-guarded), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch/ForClaim
  │   ├── crud.go             # Task CRUD (Get, ListFiltered, CountBatchStatuses, ListBatchSummaries)
  │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
- │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; TypeDefinition contract
+ │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; refuses a pending task whose type carries no dedup hook in the boundary's catalog
+ │   ├── catalog.go          # Catalog — one boundary's task type table: static policy (locks, direct locks, CLI surface, hosts) merged with boundary-supplied dedup hooks and worker counts
+ │   ├── type_definition.go  # TypeDefinition contract + DedupKeyFunc
  │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
  │   ├── handler.go          # Handler interface — pure work functions
 │   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition; RunBatch — the leased child (adopt, repair, holds, per-type workers, settle)
@@ -273,10 +276,9 @@ internal/
 │   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
 │   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
 │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
-│   ├── registry.go         # Task type → handler registry
-│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition; RunBatch — the leased child (adopt, repair, holds, per-type workers, settle)
+ │   ├── registry.go         # Task type → handler registry (assembled at each command boundary)
  │   ├── store.go            # Task persistence (ClaimNextPending with guard + batch flip + lock gates and claim-time acquisition, CompleteTask/FailTask token-guarded transitions, ActivateChild activation with dedup discard, Discard)
-│   └── types.go            # Task domain struct
+ │   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
 ├── textnorm/               # Tag and DB-key canonicalization
 │   ├── tagname.go          # NormalizeTag — canonical tag names

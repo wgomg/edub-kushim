@@ -203,3 +203,33 @@ func TestThumbnailBackfill_BackfillBatch_AllSkippedCreatesNoBatch(t *testing.T) 
 	testutil.AssertEqual(t, skipped, 1, "skipped count")
 	testutil.AssertEqual(t, batchID, "", "no batch when nothing was enqueued")
 }
+
+// TestThumbnailBackfillSpecs pins the all-documents scan: only documents without a thumbnail, in id order.
+func TestThumbnailBackfillSpecs(t *testing.T) {
+	_, client := newThumbnailBackfill(t)
+	ctx := context.Background()
+
+	empty, err := ThumbnailBackfillSpecs(ctx, client.Queries)
+	testutil.AssertNoError(t, err, "scan an empty table")
+	testutil.AssertEqual(t, len(empty), 0, "no specs without documents")
+
+	docA := createBackfillTestDoc(t, client, "a.pdf", "specs-a")
+	docB := createBackfillTestDoc(t, client, "b.pdf", "specs-b")
+	withThumb := createBackfillTestDoc(t, client, "done.pdf", "specs-done")
+	if err := client.Queries.SetDocumentHasThumbnail(ctx, withThumb); err != nil {
+		t.Fatalf("set has_thumbnail: %v", err)
+	}
+
+	specs, err := ThumbnailBackfillSpecs(ctx, client.Queries)
+	testutil.AssertNoError(t, err, "scan")
+	testutil.AssertEqual(t, len(specs), 2, "only documents without a thumbnail")
+
+	for i, docID := range []string{docA, docB} {
+		testutil.AssertEqual(t, specs[i].Type, types.Task.Type.ThumbBackfill, "task type")
+		var payload map[string]any
+		if err := json.Unmarshal(specs[i].Payload, &payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		testutil.AssertEqual(t, payload["document_id"], docID, "document id in scan order")
+	}
+}

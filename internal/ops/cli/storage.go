@@ -6,9 +6,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type orphanAction func(ctx context.Context, id int64) error
@@ -40,9 +43,11 @@ func newOrphanedService(c *container.Container) (*service.Orphaned, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	enqueuer, err := c.GetEnqueuer()
+	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Consume: consumption.DedupKey,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("enqueuer: %w", err)
+		return nil, err
 	}
 	return service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), enqueuer), nil
 }

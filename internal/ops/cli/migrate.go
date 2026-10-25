@@ -103,19 +103,11 @@ func migrateDatabaseHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.MigrateDB)
-	if err != nil {
-		return fmt.Errorf("migrate-db definition: %w", err)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	policy := def.LocksForDirectMode()
+	policy := task.DirectLockPolicyFor(types.Task.Type.MigrateDB)
 	lockToken := uuid.NullUUID{}
 	if err := task.AcquireLocks(ctx, client, policy.Holds, policy.WaitsFor, lockToken, ""); err != nil {
 		if errors.Is(err, task.ErrLockBusy) {
@@ -205,20 +197,13 @@ func migrateStorageHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.MigrateStorage)
-	if err != nil {
-		return fmt.Errorf("migrate-storage definition: %w", err)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	fmt.Println("Migrating storage directories...")
-	err = task.RunDirect(ctx, client, c.GetLogger(), "migrate-storage", def.LocksForDirectMode(), !noWait, nil, func() error {
+	policy := task.DirectLockPolicyFor(types.Task.Type.MigrateStorage)
+	err = task.RunDirect(ctx, client, c.GetLogger(), "migrate-storage", policy, !noWait, nil, func() error {
 		return configtask.MigrateStorage(ctx, c.GetLogger(), payload, task.NoopProgress)
 	})
 	if err != nil {

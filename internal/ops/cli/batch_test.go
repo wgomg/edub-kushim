@@ -131,3 +131,12 @@ func TestBatchCreateConsumePausedGuard(t *testing.T) {
 		t.Fatalf("creation proceeds once no paused batch remains: %v", err)
 	}
 }
+
+// TestBatchCreateRejectsUnknownVerb pins that the verb is validated before any database access.
+func TestBatchCreateRejectsUnknownVerb(t *testing.T) {
+	c, _ := newTestContainer(t)
+	err := batchCreateHandler(c, []string{"frobnicate"})
+	if err == nil || !strings.Contains(err.Error(), "unknown task") {
+		t.Fatalf("want the unknown-task refusal, got %v", err)
+	}
+}

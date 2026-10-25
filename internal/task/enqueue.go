@@ -105,8 +105,8 @@ type Enqueuer struct {
 	catalog TypeCatalog
 }
 
-// NewEnqueuer wires the enqueue to the database client and to the task type catalog that is built by
-// the composition root.
+// NewEnqueuer wires the enqueue to the database client and to the task type catalog the boundary constructed
+// for its own enqueue surface.
 func NewEnqueuer(client *database.Client, catalog TypeCatalog) *Enqueuer {
 	return &Enqueuer{client: client, catalog: catalog}
 }
@@ -117,8 +117,9 @@ func NewEnqueuer(client *database.Client, catalog TypeCatalog) *Enqueuer {
 // derived per task type for pending tasks only: waiting children carry none until activation, so any
 // duplicate enqueued while they wait cannot collide with them. A task whose key already covers live
 // work is skipped, and when every task is skipped nothing at all is created and the result then carries
-// an empty BatchID. The task types in one batch must declare the same Holds; their Preconditions run
-// before any row is written and a failure creates nothing.
+// an empty BatchID. A pending task whose type has no dedup hook in this process's catalog is refused
+// instead of being created without deduplication. The task types in one batch must declare the same
+// Holds; their Preconditions run before any row is written and a failure creates nothing.
 func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []TaskSpec) (EnqueueResult, error) {
 	if err := spec.validate(); err != nil {
 		return EnqueueResult{}, err
@@ -141,6 +142,9 @@ func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []Tas
 			return EnqueueResult{}, err
 		}
 		statuses[i] = status
+		if status != types.Task.Status.Waiting && def.DedupKey == nil {
+			return EnqueueResult{}, fmt.Errorf("%s task carries no dedup hook in this process", t.Type)
+		}
 		if t.ParentTaskID != "" && status != types.Task.Status.Waiting {
 			return EnqueueResult{}, fmt.Errorf("%s task carries a parent link outside waiting status", t.Type)
 		}
@@ -256,16 +260,16 @@ func (e *Enqueuer) EnqueueTask(ctx context.Context, spec BatchSpec, t TaskSpec) 
 	return e.EnqueueBatch(ctx, spec, []TaskSpec{t})
 }
 
-// DedupKey derives the key a task of the given type would carry with the given payload, empty when the
-// type has no dedup key. Boundaries use it to pre-check coverage with the same derivation the enqueue
-// applies, instead of rebuilding the key vocabulary.
+// DedupKey derives the key a task of the given type would carry with the given payload. Boundaries use
+// it to pre-check coverage with the same derivation the enqueue applies, instead of rebuilding the key
+// vocabulary; a type without a hook in this process's catalog is an error, never an empty key.
 func (e *Enqueuer) DedupKey(taskType types.TaskType, payload json.RawMessage) (string, error) {
 	def, err := e.catalog.Definition(taskType)
 	if err != nil {
 		return "", fmt.Errorf("resolve task type %q: %w", taskType, err)
 	}
 	if def.DedupKey == nil {
-		return "", nil
+		return "", fmt.Errorf("%s task carries no dedup hook in this process", taskType)
 	}
 	return def.DedupKey(payload), nil
 }

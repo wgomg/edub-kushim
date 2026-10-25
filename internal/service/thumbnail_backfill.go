@@ -12,9 +12,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ThumbnailBackfill enqueues thumbnail tasks for documents that lack a thumbnail: one batch's worth,
-// or a single document. The all-documents scan belongs to the thumbbackfill type definition's shared
-// builder, which the CLI and the scheduler both use.
+// thumbnailBackfillPageSize bounds each page of the all-documents scan.
+const thumbnailBackfillPageSize = 500
+
+// ThumbnailBackfill enqueues thumbnail tasks for the documents of one past batch or for a single document.
+// It also owns the thumbnail types' dedup vocabulary.
 type ThumbnailBackfill struct {
 	queries  *database.Queries
 	enqueuer *task.Enqueuer
@@ -25,6 +27,48 @@ func NewThumbnailBackfill(queries *database.Queries, enqueuer *task.Enqueuer) *T
 	return &ThumbnailBackfill{
 		queries:  queries,
 		enqueuer: enqueuer,
+	}
+}
+
+// ThumbnailDedupKey derives the thumbnail and thumbbackfill tasks' dedup key from the payload's document
+// id: one live thumbnail task per document.
+func ThumbnailDedupKey(payload json.RawMessage) string {
+	var p struct {
+		DocumentID string `json:"document_id"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil || p.DocumentID == "" {
+		return ""
+	}
+	return "thumbnail:doc:" + p.DocumentID
+}
+
+// ThumbnailBackfillSpecs returns one thumbnail-backfill task per document that lacks a thumbnail, scanning
+// the table in id order; the enqueuer settles documents whose task is already live.
+func ThumbnailBackfillSpecs(ctx context.Context, queries *database.Queries) ([]task.TaskSpec, error) {
+	var specs []task.TaskSpec
+	var lastID int64
+	for {
+		rows, err := queries.ListDocumentsWithoutThumbnails(ctx, database.ListDocumentsWithoutThumbnailsParams{
+			ID:    lastID,
+			Limit: thumbnailBackfillPageSize,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list documents without thumbnails: %w", err)
+		}
+		if len(rows) == 0 {
+			return specs, nil
+		}
+		for _, row := range rows {
+			lastID = row.ID
+			payload, err := json.Marshal(map[string]string{
+				"document_id":  row.DocumentID,
+				"storage_path": row.StoragePath,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("marshal thumbnail payload: %w", err)
+			}
+			specs = append(specs, task.TaskSpec{Type: types.Task.Type.ThumbBackfill, Payload: payload})
+		}
 	}
 }
 

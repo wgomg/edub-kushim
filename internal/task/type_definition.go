@@ -7,15 +7,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// BuildInput is the typed input a task-set builder accepts. Each task type declares its own input struct
-// implementing this interface next to its definition; a boundary parses all its raw surface input (CLI
-// arguments, API fields, schedule settings) into that concrete struct and passes the struct, never the
-// raw arguments. The interface cannot seal its implementers, because TaskType is exported; a builder must
-// verify TaskType and then assert its own struct before reading any field, rejecting a mismatch.
-type BuildInput interface {
-	TaskType() types.TaskType
-}
-
 // Precondition checks one environment requirement of a task type before any work is created, such as
 // an external tool being installed. The batch enqueue evaluates the preconditions of every selected task
 // type definition before anything is created; one failure aborts the enqueue with a typed error and
@@ -32,10 +23,11 @@ type LockPolicy struct {
 
 // TypeDefinition is the declaration of one task type. It is a composition of concern-specific values,
 // not one struct owning every concern: identity, the queued and direct lock policy, dedup derivation,
-// preconditions, the typed task-set builder, the CLI surface, hosting eligibility and the worker count.
-// Fields are added only by the stage that consumes them, into this same type. It never carries a handler,
-// an attach pass, handler construction, a legacy source, a pool interval, a pooling predicate or any
-// lifecycle-ownership flag; handlers stay in the registry.
+// preconditions, the CLI surface, hosting eligibility and the worker count. Fields are added only by the
+// stage that consumes them, into this same type. It never carries a handler, an attach pass, handler
+// construction, a legacy source, a pool interval, a pooling predicate or any lifecycle-ownership flag;
+// handlers stay in the registry. It carries no task-set builder: the producers that own the work build
+// their own []TaskSpec and hand it to the enqueue surface.
 type TypeDefinition struct {
 	Type  types.TaskType
 	Locks LockPolicy
@@ -57,23 +49,19 @@ type TypeDefinition struct {
 	// batch execution; a value below 1 means one worker. It replaces the per-type pool worker count.
 	Concurrency int
 
-	DedupKey      func(json.RawMessage) string
+	// DedupKey derives the type's dedup key from a task payload; the owning producer package supplies it
+	// when the process constructs the catalog. A pending task of a type without a hook in the process's
+	// catalog is refused by the enqueue surface instead of being created without deduplication.
+	DedupKey      DedupKeyFunc
 	Preconditions []Precondition
-	BuildTasks    func(ctx context.Context, input BuildInput) ([]TaskSpec, error)
 }
 
-// LocksForDirectMode returns the lock policy a direct CLI run of the type uses: its declared direct
-// policy when one is set, otherwise the queued lock set.
-func (d TypeDefinition) LocksForDirectMode() LockPolicy {
-	if d.DirectLocks != nil {
-		return *d.DirectLocks
-	}
-	return d.Locks
-}
-
-// TypeCatalog looks up the task type definitions built by the composition root. Enqueue, dispatch and
+// TypeCatalog looks up the task type definitions built at a process boundary. Enqueue, dispatch and
 // scheduling read definitions through this interface; they do not build or attach them.
 type TypeCatalog interface {
 	// Definition returns the entry for a task type; an unknown type is an error.
 	Definition(taskType types.TaskType) (TypeDefinition, error)
 }
+
+// DedupKeyFunc derives the dedup key of one task from its payload.
+type DedupKeyFunc func(json.RawMessage) string

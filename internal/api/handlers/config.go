@@ -306,24 +306,23 @@ func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Conf
 	var tasks []task.TaskSpec
 
 	for _, lang := range config.MissingTessdataLanguages(cfg) {
-		payload, _ := json.Marshal(map[string]string{
-			"config_dir": cfg.App.ConfigDir,
-			"op":         configtask.OpTessdata,
-			"lang":       lang,
-		})
-		if h.configTaskCovered(ctx, itypes.Task.Type.Config, payload) {
+		taskSpec, specErr := configtask.TessdataSpec(cfg.App.ConfigDir, lang)
+		if specErr != nil {
+			h.logger.Error("", "build tessdata task for %s: %v", lang, specErr)
 			continue
 		}
-		tasks = append(tasks, task.TaskSpec{Type: itypes.Task.Type.Config, Payload: payload})
+		if h.configTaskCovered(ctx, taskSpec.Type, taskSpec.Payload) {
+			continue
+		}
+		tasks = append(tasks, taskSpec)
 	}
 
 	if config.MissingHugotModel(cfg) {
-		payload, _ := json.Marshal(map[string]string{
-			"config_dir": cfg.App.ConfigDir,
-			"op":         configtask.OpHugot,
-		})
-		if !h.configTaskCovered(ctx, itypes.Task.Type.Config, payload) {
-			tasks = append(tasks, task.TaskSpec{Type: itypes.Task.Type.Config, Payload: payload})
+		taskSpec, specErr := configtask.HugotSpec(cfg.App.ConfigDir)
+		if specErr != nil {
+			h.logger.Error("", "build hugot task: %v", specErr)
+		} else if !h.configTaskCovered(ctx, taskSpec.Type, taskSpec.Payload) {
+			tasks = append(tasks, taskSpec)
 		}
 	}
 
@@ -499,7 +498,7 @@ func (h *ConfigHandler) tryAcquireConfigTaskSlot(ctx context.Context, w http.Res
 
 func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseWriter, newDB config.DatabaseConfig) bool {
 	cfg := h.getConfig()
-	payload := configtask.MigrateDBPayload{
+	taskSpec, err := configtask.MigrateDBSpec(configtask.MigrateDBPayload{
 		ConfigDir: cfg.App.ConfigDir,
 		Host:      newDB.Host,
 		Port:      strconv.Itoa(newDB.Port),
@@ -507,20 +506,24 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 		Password:  newDB.Password,
 		Database:  newDB.Database,
 		SSLMode:   newDB.SSLMode,
+	})
+	if err != nil {
+		h.logger.Error("", "build database migration task: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
+		return false
 	}
-	payloadJSON, _ := json.Marshal(payload)
 
-	dedupKey, err := h.enqueuer.DedupKey(itypes.Task.Type.MigrateDB, payloadJSON)
+	dedupKey, err := h.enqueuer.DedupKey(taskSpec.Type, taskSpec.Payload)
 	if err != nil {
 		h.logger.Error("", "derive database migration dedup key: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue database migration"})
 		return false
 	}
-	if !h.tryAcquireConfigTaskSlot(ctx, w, itypes.Task.Type.MigrateDB, dedupKey, "database migration") {
+	if !h.tryAcquireConfigTaskSlot(ctx, w, taskSpec.Type, dedupKey, "database migration") {
 		return false
 	}
 
-	if !h.enqueueMigration(ctx, w, itypes.Task.Type.MigrateDB, payloadJSON, "failed to enqueue database migration") {
+	if !h.enqueueMigration(ctx, w, taskSpec, "failed to enqueue database migration") {
 		return false
 	}
 
@@ -530,37 +533,42 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 
 func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.ResponseWriter, body map[string]any) bool {
 	cfg := h.getConfig()
-	payload := configtask.MigrateStoragePayload{
+	newStorageDir := storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir)
+	taskSpec, err := configtask.MigrateStorageSpec(configtask.MigrateStoragePayload{
 		ConfigDir:         cfg.App.ConfigDir,
 		OldStorageDir:     cfg.Storage.StorageDir,
-		NewStorageDir:     storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir),
+		NewStorageDir:     newStorageDir,
 		OldConsumptionDir: cfg.Storage.ConsumptionDir,
 		NewConsumptionDir: storageDirFromBody(body, "storage.consumption_dir", cfg.Storage.ConsumptionDir),
+	})
+	if err != nil {
+		h.logger.Error("", "build storage migration task: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
+		return false
 	}
-	payloadJSON, _ := json.Marshal(payload)
 
-	dedupKey, err := h.enqueuer.DedupKey(itypes.Task.Type.MigrateStorage, payloadJSON)
+	dedupKey, err := h.enqueuer.DedupKey(taskSpec.Type, taskSpec.Payload)
 	if err != nil {
 		h.logger.Error("", "derive storage migration dedup key: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
 		return false
 	}
-	if !h.tryAcquireConfigTaskSlot(ctx, w, itypes.Task.Type.MigrateStorage, dedupKey, "storage migration") {
+	if !h.tryAcquireConfigTaskSlot(ctx, w, taskSpec.Type, dedupKey, "storage migration") {
 		return false
 	}
 
-	if !h.enqueueMigration(ctx, w, itypes.Task.Type.MigrateStorage, payloadJSON, "failed to enqueue storage migration") {
+	if !h.enqueueMigration(ctx, w, taskSpec, "failed to enqueue storage migration") {
 		return false
 	}
 
-	h.logger.Info("", "storage migration queued: %s -> %s", cfg.Storage.StorageDir, payload.NewStorageDir)
+	h.logger.Info("", "storage migration queued: %s -> %s", cfg.Storage.StorageDir, newStorageDir)
 	return true
 }
 
 // enqueueMigration queues one migration task through the transactional enqueue; a failure is reported
 // through the response writer and leaves no batch behind. The caller has already claimed the task's
 // dedup slot.
-func (h *ConfigHandler) enqueueMigration(ctx context.Context, w http.ResponseWriter, taskType itypes.TaskType, payloadJSON []byte, failure string) bool {
+func (h *ConfigHandler) enqueueMigration(ctx context.Context, w http.ResponseWriter, taskSpec task.TaskSpec, failure string) bool {
 	spec, err := task.NewBatchSpec(itypes.Batch.Origin.Wizard, "")
 	if err != nil {
 		h.logger.Error("", "build migration batch spec: %v", err)
@@ -568,8 +576,8 @@ func (h *ConfigHandler) enqueueMigration(ctx context.Context, w http.ResponseWri
 		return false
 	}
 
-	if _, err := h.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{Type: taskType, Payload: payloadJSON}); err != nil {
-		h.logger.Error("", "enqueue %s task: %v", taskType, err)
+	if _, err := h.enqueuer.EnqueueBatch(ctx, spec, []task.TaskSpec{taskSpec}); err != nil {
+		h.logger.Error("", "enqueue %s task: %v", taskSpec.Type, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": failure})
 		return false
 	}

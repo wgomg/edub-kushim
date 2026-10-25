@@ -2,6 +2,7 @@ package consumption
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -130,6 +131,44 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	}
 
 	return result.BatchID, enqueued, nil
+}
+
+// DedupKey derives a consume task's dedup key from the payload's content checksum: one live consume
+// task per file content.
+func DedupKey(payload json.RawMessage) string {
+	var p struct {
+		MD5 string `json:"md5"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil || p.MD5 == "" {
+		return ""
+	}
+	return "consume:" + p.MD5
+}
+
+// IngestSpecsFromInbox scans the consumption directory once and returns one consume task set per readable
+// file. Unlike the polling scan it does not query existing documents: the enqueue's dedup keys settle
+// duplicates, so a rescan skips them. An unreadable file is reported and skipped, matching the polling and
+// direct paths, so one bad file cannot block the batch creation.
+func IngestSpecsFromInbox(cfg *config.Config, logger *log.Logger) ([]task.TaskSpec, error) {
+	files, err := GetFiles(cfg.Storage.ConsumptionDir, cfg.Consumer.SupportedFiles, cfg.Consumer.MaxFilesPerBatch)
+	if err != nil {
+		return nil, fmt.Errorf("scan inbox: %w", err)
+	}
+	specs := make([]task.TaskSpec, 0, len(files)*2)
+	for i, file := range files {
+		md5hash, md5Err := storage.CalculateMD5(file.OriginalPath)
+		if md5Err != nil {
+			logger.Error("", "batch create consume: md5 %s: %v", file.OriginalPath, md5Err)
+			continue
+		}
+		specs = append(specs, IngestTaskSpecs(IngestFile{
+			Path:       file.OriginalPath,
+			Index:      i + 1,
+			MD5:        md5hash,
+			DocumentID: uuid.New().String(),
+		}, cfg.Consumer.Thumbnail.Enabled)...)
+	}
+	return specs, nil
 }
 
 // duplicateInfo pairs an existing document's ID with its stored SHA512 for

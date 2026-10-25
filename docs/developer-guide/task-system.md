@@ -48,18 +48,20 @@ The cast of characters:
 | Component | Files | Role |
 |---|---|---|
 | `Enqueuer` | `internal/task/enqueue.go` | the single creation path (`EnqueueBatch`/`EnqueueTask`) over `BatchSpec`/`TaskSpec` |
-| `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue and dispatch contract: locks, dedup key, preconditions, builder, batch-mode CLI surface and hosts |
+| `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue and dispatch contract: queued and direct locks, dedup hook, preconditions, batch-mode CLI surface and hosts |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
 | `Handler` | `internal/task/handler.go` | pure work function: does the job, returns the JSON result or an error; performs no batch-status write, lock or settle |
 | `Runner` | `internal/task/execute.go` | claims under the execution guard, drains and holds locks for holding types, dispatches, completes/fails, and settles |
 | `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
-| batch dispatcher / launcher | `internal/ops/queue/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the batch's owning task CLI in batch mode |
+| batch dispatcher / launcher | `internal/ops/dispatch/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the batch's owning task CLI in batch mode |
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
 | task CLIs | `internal/ops/consume/consume.go`, `internal/ops/cli/enrich.go`, `internal/ops/cli/thumbnails.go` | batch mode: one claimed batch through the shared execution library; direct mode: the action now, no queue rows |
 
-The thirteen task types (declared in `internal/types`, registered in
-`internal/ops/container/container.go`): `consume`, `enrich`, `thumbnail`,
+The thirteen task types (declared in `internal/types`, registered in the
+registry each command boundary assembles — the ingest-family executor, the
+queue daemon's pool registries, the edub and wizard config registries):
+`consume`, `enrich`, `thumbnail`,
 `config`, `migrate-db`, `migrate-storage`, `backup`, `mirror`,
 `tagreconcile`, `thumbbackfill`, `tagmeasure`, `tagidentity`, `tagaudit`.
 
@@ -380,14 +382,14 @@ defer safetyTimer.Stop()
 for {
 	select {
 	case <-notifyCh:
-		if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
+		if err := d.dispatcher.Dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
 		if !safetyTimer.Stop() {
 			select { case <-safetyTimer.C: default: }
 		}
 		safetyTimer.Reset(safetyInterval)
 
 	case <-safetyTimer.C:
-		if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
+		if err := d.dispatcher.Dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
 		safetyTimer.Reset(safetyInterval)
 	...
 ```
@@ -410,8 +412,10 @@ for {
 
 ### The dispatcher and the launcher
 
-`batchDispatcher` (`internal/ops/queue/dispatcher.go`) is the daemon's only
-queue claimant. Per wake it lists the queued batches oldest-first with their
+`dispatch.Dispatcher` (`internal/ops/dispatch/dispatcher.go`) is the daemon's only
+queue claimant. The daemon hands it the task catalog, the logger, the host, the
+batch slot budget and the daemon's wake callback at construction; per wake it
+lists the queued batches oldest-first with their
 task types and sweeps them in order; each candidate's dispatchability comes
 from its type definitions — the `CLI`, `BatchSelector` and `Hosts` fields —
 so a type without a batch-mode CLI on this host is skipped and the batches
@@ -444,7 +448,7 @@ failure streak. The dispatcher's wait goroutine classifies a non-zero child
 exit by the lease row: pid 0 under this token ⇒ launch failure; anything else
 ⇒ the child owned its outcome.
 
-`LaunchQueuedBatch` (`internal/ops/queue/launcher.go`) is the manual launcher
+`LaunchQueuedBatch` (`internal/ops/dispatch/launcher.go`) is the manual launcher
 behind `kushim batch run <id>`: the same claim and fork, in the foreground,
 propagating a non-zero child exit. It claims only `queued` batches — a
 paused one points at `batch resume`, a processing one at its lease holder or
@@ -486,10 +490,12 @@ its batch through the shared library.
 
 ### Batch mode: the shared claimed-batch executor
 
-`consume.RunClaimedBatch` (`internal/ops/consume/consume.go`) is the wrapper
+`consume.RunClaimedBatch` (`internal/ops/consume/consume.go`) is the executor
 all three batch modes share: it parses the execution token (required — the
 bare selector is not a self-claim path and errors pointing at
-`kushim batch run`), assembles the `task.BatchRunDeps`, silences the logger,
+`kushim batch run`), takes the task store and the handler registry the calling
+command assembled (the handlers act on the same store the run does), assembles
+the `task.BatchRunDeps` over them, silences the logger,
 watches signals, streams the progress reporter and calls `task.RunBatch`. The
 paused pre-check prints the resume hint before adoption; the mid-run pause
 prints the re-queue hint. Cancel exits non-zero; pause exits zero.
@@ -558,7 +564,7 @@ tasks (payloads without child links), reporting each step and continuing past
 failures; a provider credit/balance error (`PauseBatch`-flagged) aborts the
 remaining run; the command exits non-zero when anything failed. Direct
 `enrich` selects documents (one id, `--limit N`, or `--all` over live
-documents); direct `thumbnails` selects through the thumbbackfill builder
+documents); direct `thumbnails` selects through the thumbnail service
 (`--all`) or the no-thumbnail lookup (`--document <id>`), gated by
 `consumer.thumbnail.enabled` with `--force`. `--no-wait` makes a cron
 invocation exit non-zero instead of waiting for a lock or in-flight work.
@@ -624,8 +630,8 @@ result, err := enqueuer.EnqueueBatch(ctx, spec, tasks) // the waiting child ride
 On consume success, the child is **activated** (`activateChildEnrich` /
 `activateChildThumbnail`, `internal/documents/consumption/consume.go`): the
 handler validates the `waiting_for` link, injects `document_id` into the
-payload, derives the child's dedup key through the type definition (the same
-derivation `EnqueueBatch` applies), and flips the child to `pending` through
+payload, derives the child's dedup key through the consume handler's catalog
+(the same derivation `EnqueueBatch` applies), and flips the child to `pending` through
 `Store.ActivateChild`:
 
 ```sql
@@ -705,9 +711,14 @@ CREATE UNIQUE INDEX idx_task_dedup ON task(task_type, dedup_key)
 
 Uniqueness holds **only while the task is live** — once it completes/fails,
 the row drops out of the index and the same key becomes insertable again
-(that's how a re-ingest after a crash works). The Go side derives keys in the
-task type catalog (`internal/ops/container/task_type_definitions.go`), one
-derivation per task type; `EnqueueBatch` applies it to pending tasks and the
+(that's how a re-ingest after a crash works). The Go side derives keys through
+the task catalog (`internal/task/catalog.go`), one derivation per task type,
+supplied by the owning producer package when a process boundary constructs its
+catalog: the catalog's static table carries the policy, the boundary wires the
+hooks, and a process refusing to enqueue a type does not import its producer.
+`EnqueueBatch` refuses a pending task whose type carries no hook in the
+process's catalog instead of creating keyless work, applies the hook to pending
+tasks, and the
 consume handler applies the same derivation to its waiting children at
 activation (§8), so the differentiated children carry keys too.
 
@@ -977,10 +988,11 @@ the run ends; reclamation releases by batch id, and the stale sweep's
 exemption covers both the claim token and the batch id (§10).
 
 Direct CLI commands run under the manual holder path (`task.RunDirect`,
-`internal/task/direct.go`): acquire the policy's locks — `LocksForDirectMode`
-defaults to the queued set, and a type's `DirectLocks` overrides it (consume
+`internal/task/direct.go`): acquire the policy's locks —
+`task.DirectLockPolicyFor` returns a type's declared direct policy (consume
 and enrich hold `maintenance`; `thumbnails` holds `storage` and waits
-`maintenance`) — all-or-nothing with a NULL token, heartbeat, drain, run the body, release. The release is
+`maintenance`), falling back to the queued set for the types without an
+override — all-or-nothing with a NULL token, heartbeat, drain, run the body, release. The release is
 scoped to the locks the run itself acquired: manual runs share the NULL token,
 so releasing every name would drop a concurrent manual run's lock. Waiting is the default; `--no-wait`
 exits non-zero instead of waiting for a lock or drain.
@@ -1197,4 +1209,4 @@ mid-run.
 
 ---
 
-*Last verified against the tree: 2026-10-24. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-25. If code and doc disagree, code wins.*

@@ -25,20 +25,27 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
+	"github.com/wgomg/edub-kushim/internal/ops/dispatch"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 type daemon struct {
 	c        *container.Container
+	catalog  *task.Catalog
 	client   atomic.Pointer[database.Client]
 	batchSvc *service.Batch
+	pools    map[types.TaskType]*task.Pool
 
 	notifyCancel context.CancelFunc
 	notifyCh     chan struct{}
-	dispatcher   *batchDispatcher
+	dispatcher   *dispatch.Dispatcher
 
 	backupPool       poolState
 	mirrorPool       poolState
@@ -129,6 +136,20 @@ func Run(c *container.Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Consume:       consumption.DedupKey,
+		types.Task.Type.Backup:        backup.BackupDedupKey,
+		types.Task.Type.Mirror:        backup.MirrorDedupKey,
+		types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
+		types.Task.Type.TagReconcile:  task.ConstantDedupKey(curation.TagReconcileDedupKey),
+		types.Task.Type.TagMeasure:    task.ConstantDedupKey(tags.TagMeasureDedupKey),
+		types.Task.Type.TagIdentity:   task.ConstantDedupKey(curation.TagIdentityDedupKey),
+		types.Task.Type.TagAudit:      task.ConstantDedupKey(curation.TagAuditDedupKey),
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("task catalog: %w", err)
+	}
+
 	maxConcurrent := c.GetConfig().Srv.MaxConcurrentBatches
 	if maxConcurrent < 1 {
 		maxConcurrent = 2
@@ -138,7 +159,9 @@ func Run(c *container.Container, args []string) error {
 
 	d := &daemon{
 		c:        c,
+		catalog:  catalog,
 		batchSvc: service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries),
+		pools:    make(map[types.TaskType]*task.Pool),
 	}
 	d.client.Store(client)
 
@@ -153,7 +176,7 @@ func Run(c *container.Container, args []string) error {
 		default:
 		}
 	}
-	d.dispatcher = newBatchDispatcher(c, types.HostQueue, maxConcurrent, wake)
+	d.dispatcher = dispatch.NewDispatcher(catalog, c.GetLogger(), types.HostQueue, maxConcurrent, wake)
 
 	safetyInterval := 30 * time.Second
 	safetyTimer := time.NewTimer(safetyInterval)
@@ -165,7 +188,7 @@ func Run(c *container.Container, args []string) error {
 	for {
 		select {
 		case <-d.notifyCh:
-			if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil {
+			if err := d.dispatcher.Dispatch(ctx, d.client.Load(), d.batchSvc); err != nil {
 				c.GetLogger().Error("", "queue dispatch: %v", err)
 			}
 			if !safetyTimer.Stop() {
@@ -177,7 +200,7 @@ func Run(c *container.Container, args []string) error {
 			safetyTimer.Reset(safetyInterval)
 
 		case <-safetyTimer.C:
-			if err := d.dispatcher.dispatch(ctx, d.client.Load(), d.batchSvc); err != nil {
+			if err := d.dispatcher.Dispatch(ctx, d.client.Load(), d.batchSvc); err != nil {
 				c.GetLogger().Error("", "queue dispatch: %v", err)
 			}
 			safetyTimer.Reset(safetyInterval)
@@ -206,18 +229,40 @@ func (d *daemon) stopNotify() {
 	}
 }
 
-func startPool(ctx context.Context, c *container.Container, taskType types.TaskType, state *poolState) error {
+// pool lazily builds the pool of one maintenance type: the caller supplies the type's handler constructor,
+// because only that call site knows what the handler needs. The pool caches until a reconnect drops the
+// client it wraps.
+func (d *daemon) pool(taskType types.TaskType, interval time.Duration, newHandler func(*database.Client) (task.Handler, error)) (*task.Pool, error) {
+	if pool := d.pools[taskType]; pool != nil {
+		return pool, nil
+	}
+
+	client := d.client.Load()
+	handler, err := newHandler(client)
+	if err != nil {
+		return nil, err
+	}
+	registry := task.NewRegistry()
+	registry.Register(taskType, handler)
+	runner := task.NewRunner(task.NewStore(client), registry, d.c.GetLogger())
+
+	pool := task.NewPool(d.c.GetLogger(), runner, 1, interval, taskType)
+	d.pools[taskType] = pool
+	return pool, nil
+}
+
+func (d *daemon) startPool(ctx context.Context, taskType types.TaskType, state *poolState, interval time.Duration, newHandler func(*database.Client) (task.Handler, error)) error {
 	if state.started {
 		return nil
 	}
-	pool, err := c.GetPool(taskType)
+	pool, err := d.pool(taskType, interval, newHandler)
 	if err != nil {
 		return err
 	}
 	pool.Start(ctx)
 	state.pool = pool
 	state.started = true
-	c.GetLogger().Info("", "%s pool started (delayed)", taskType)
+	d.c.GetLogger().Info("", "%s pool started (delayed)", taskType)
 	return nil
 }
 
@@ -244,20 +289,22 @@ func (d *daemon) stopPools() {
 func (d *daemon) tick(ctx context.Context) {
 	d.reloadConfig(ctx)
 	cfg := d.c.GetConfig()
+	client := d.client.Load()
+	enqueuer := task.NewEnqueuer(client, d.catalog)
 
-	d.ensureBackup(ctx, cfg)
-	d.ensureMirror(ctx, cfg)
+	d.ensureBackup(ctx, cfg, client, enqueuer)
+	d.ensureMirror(ctx, cfg, client, enqueuer)
 
 	if cfg.Consumer.Thumbnail.Enabled && cfg.Consumer.Thumbnail.BackfillInterval > 0 {
-		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.thumbnailBackfill, thumbnailBackfillSpec); err != nil {
+		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.thumbnailBackfill, thumbnailBackfillSpec); err != nil {
 			d.c.GetLogger().Error("", "thumbnail backfill scheduling: %v", err)
 		}
 	}
 
-	d.ensureTagReconcile(ctx, cfg)
-	d.ensureTagMeasure(ctx, cfg)
-	d.ensureTagIdentity(ctx, cfg)
-	d.ensureTagAudit(ctx, cfg)
+	d.ensureTagReconcile(ctx, cfg, client, enqueuer)
+	d.ensureTagMeasure(ctx, cfg, client, enqueuer)
+	d.ensureTagIdentity(ctx, cfg, client, enqueuer)
+	d.ensureTagAudit(ctx, cfg, client, enqueuer)
 
 	d.reclaimStale(ctx, cfg)
 }
@@ -283,6 +330,7 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 	}
 
 	d.stopPools()
+	clear(d.pools)
 	d.client.Store(newClient)
 	d.batchSvc = service.NewBatch(newClient, d.c.GetConfig().Consumer.Reclaim.MaxRetries)
 
@@ -290,16 +338,22 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 	d.startNotify(ctx)
 }
 
-func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config) {
+func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
 	if cfg.Backup.Enabled {
-		if err := startPool(ctx, d.c, types.Task.Type.Backup, &d.backupPool); err != nil {
+		if err := d.startPool(ctx, types.Task.Type.Backup, &d.backupPool, time.Minute, func(client *database.Client) (task.Handler, error) {
+			db, err := d.c.GetDB()
+			if err != nil {
+				return nil, fmt.Errorf("database: %w", err)
+			}
+			return backup.NewBackupTaskHandler(db, client.Queries, d.c.GetConfig, d.c.GetLogger()), nil
+		}); err != nil {
 			d.c.GetLogger().Error("", "backup pool: %v", err)
 		}
-		locked, lockErr := d.client.Load().Queries.IsLockHeld(ctx, string(types.LockMaintenance))
+		locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 		if lockErr != nil {
 			d.c.GetLogger().Error("", "backup lock check: %v", lockErr)
 		} else if locked == 0 {
-			if err := maybeScheduleBackup(ctx, d.c, cfg); err != nil {
+			if err := maybeScheduleBackup(ctx, d.c, client, enqueuer, cfg); err != nil {
 				d.c.GetLogger().Error("", "backup scheduling: %v", err)
 			}
 		}
@@ -309,16 +363,18 @@ func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config) {
 	}
 }
 
-func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config) {
+func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
 	if cfg.Mirror.Enabled {
-		if err := startPool(ctx, d.c, types.Task.Type.Mirror, &d.mirrorPool); err != nil {
+		if err := d.startPool(ctx, types.Task.Type.Mirror, &d.mirrorPool, time.Minute, func(client *database.Client) (task.Handler, error) {
+			return backup.NewMirrorTaskHandler(client.Queries, d.c.GetConfig, d.c.GetLogger()), nil
+		}); err != nil {
 			d.c.GetLogger().Error("", "mirror pool: %v", err)
 		}
-		locked, lockErr := d.client.Load().Queries.IsLockHeld(ctx, string(types.LockMaintenance))
+		locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 		if lockErr != nil {
 			d.c.GetLogger().Error("", "mirror lock check: %v", lockErr)
 		} else if locked == 0 {
-			if err := maybeScheduleMirror(ctx, d.c, cfg); err != nil {
+			if err := maybeScheduleMirror(ctx, d.c, client, enqueuer, cfg); err != nil {
 				d.c.GetLogger().Error("", "mirror scheduling: %v", err)
 			}
 		}
@@ -328,45 +384,53 @@ func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config) {
 	}
 }
 
-func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config) {
-	if err := startPool(ctx, d.c, types.Task.Type.TagReconcile, &d.tagReconcilePool); err != nil {
+func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
+	if err := d.startPool(ctx, types.Task.Type.TagReconcile, &d.tagReconcilePool, time.Minute, func(client *database.Client) (task.Handler, error) {
+		return reconcile.NewTagReconcileTaskHandler(client.Queries, d.c.GetLogger()), nil
+	}); err != nil {
 		d.c.GetLogger().Error("", "tag reconcile pool: %v", err)
 	}
 	if cfg.Enricher.TagReconcile.Enabled {
-		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagReconcile, tagReconcileSpec); err != nil {
+		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagReconcile, tagReconcileSpec); err != nil {
 			d.c.GetLogger().Error("", "tag reconcile scheduling: %v", err)
 		}
 	}
 }
 
-func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config) {
-	if err := startPool(ctx, d.c, types.Task.Type.TagMeasure, &d.tagMeasurePool); err != nil {
+func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
+	if err := d.startPool(ctx, types.Task.Type.TagMeasure, &d.tagMeasurePool, 5*time.Second, func(client *database.Client) (task.Handler, error) {
+		return tags.NewTagMeasureTaskHandler(client.Queries, d.c.GetLogger()), nil
+	}); err != nil {
 		d.c.GetLogger().Error("", "tag measure pool: %v", err)
 	}
 	if cfg.Enricher.TagMeasure.Enabled {
-		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagMeasure, tagMeasureSpec); err != nil {
+		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagMeasure, tagMeasureSpec); err != nil {
 			d.c.GetLogger().Error("", "tag measure scheduling: %v", err)
 		}
 	}
 }
 
-func (d *daemon) ensureTagIdentity(ctx context.Context, cfg *config.Config) {
-	if err := startPool(ctx, d.c, types.Task.Type.TagIdentity, &d.tagIdentityPool); err != nil {
+func (d *daemon) ensureTagIdentity(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
+	if err := d.startPool(ctx, types.Task.Type.TagIdentity, &d.tagIdentityPool, 5*time.Second, func(client *database.Client) (task.Handler, error) {
+		return admission.NewTagIdentityTaskHandler(client.Queries, d.c.GetLogger()), nil
+	}); err != nil {
 		d.c.GetLogger().Error("", "tag identity pool: %v", err)
 	}
 	if cfg.Enricher.TagAdjudicator.Enabled {
-		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagIdentity, tagIdentitySpec); err != nil {
+		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagIdentity, tagIdentitySpec); err != nil {
 			d.c.GetLogger().Error("", "tag identity scheduling: %v", err)
 		}
 	}
 }
 
-func (d *daemon) ensureTagAudit(ctx context.Context, cfg *config.Config) {
-	if err := startPool(ctx, d.c, types.Task.Type.TagAudit, &d.tagAuditPool); err != nil {
+func (d *daemon) ensureTagAudit(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
+	if err := d.startPool(ctx, types.Task.Type.TagAudit, &d.tagAuditPool, 5*time.Second, func(client *database.Client) (task.Handler, error) {
+		return admission.NewTagAuditTaskHandler(client.Queries, d.c.GetLogger()), nil
+	}); err != nil {
 		d.c.GetLogger().Error("", "tag audit pool: %v", err)
 	}
 	if cfg.Enricher.TagAudit.Enabled {
-		if err := maybeScheduleAnchored(ctx, d.c, d.client.Load(), cfg, &d.tagAudit, tagAuditSpec); err != nil {
+		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagAudit, tagAuditSpec); err != nil {
 			d.c.GetLogger().Error("", "tag audit scheduling: %v", err)
 		}
 	}
@@ -396,7 +460,7 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 			} else if locked > 0 {
 				c.GetLogger().Debug("", "polling: skipped — backup in progress")
 			} else {
-				pollingTick(ctx, c, client, batchSvc, maxConcurrent, missingTools)
+				pollingTick(ctx, c, client, batchSvc, task.NewEnqueuer(client, d.catalog), maxConcurrent, missingTools)
 			}
 		} else if pollingCfg.Enabled {
 			c.GetLogger().Debug("", "polling: disabled — outside active windows")
@@ -412,7 +476,7 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 	}
 }
 
-func pollingTick(ctx context.Context, c *container.Container, client *database.Client, batchSvc *service.Batch, maxConcurrent int, missingTools []config.ExternalTool) {
+func pollingTick(ctx context.Context, c *container.Container, client *database.Client, batchSvc *service.Batch, enqueuer *task.Enqueuer, maxConcurrent int, missingTools []config.ExternalTool) {
 	// only count batches that occupy a consume slot; maintenance and config batches own their lifecycle
 	// outside the dispatcher until they move onto the task CLI
 	queuedCount, err := batchSvc.CountQueuedConsumeBatches(ctx)
@@ -436,12 +500,6 @@ func pollingTick(ctx context.Context, c *container.Container, client *database.C
 			names[i] = t.Engine
 		}
 		c.GetLogger().Error("", "polling: skipped — missing external tools: %s", strings.Join(names, ", "))
-		return
-	}
-
-	enqueuer, err := c.GetEnqueuer()
-	if err != nil {
-		c.GetLogger().Error("", "polling: get enqueuer: %v", err)
 		return
 	}
 
@@ -474,39 +532,20 @@ const (
 	scheduleTagAudit          = "tagaudit"
 )
 
-// enqueueScheduledBatch builds the task set of one scheduled run and enqueues it, returning the full
+// enqueueScheduledBatch enqueues the producer-built task set of one scheduled run, returning the full
 // result. The schedule name and origin are set here, at the scheduler boundary.
-func enqueueScheduledBatch(ctx context.Context, c *container.Container, taskType types.TaskType, scheduleName string, input task.BuildInput) (task.EnqueueResult, error) {
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return task.EnqueueResult{}, fmt.Errorf("get task catalog: %w", err)
-	}
-	def, err := catalog.Definition(taskType)
-	if err != nil {
-		return task.EnqueueResult{}, fmt.Errorf("resolve %s definition: %w", taskType, err)
-	}
-	if def.BuildTasks == nil {
-		return task.EnqueueResult{}, fmt.Errorf("%s has no builder", taskType)
-	}
-	tasks, err := def.BuildTasks(ctx, input)
-	if err != nil {
-		return task.EnqueueResult{}, fmt.Errorf("build %s tasks: %w", taskType, err)
-	}
+func enqueueScheduledBatch(ctx context.Context, enqueuer *task.Enqueuer, scheduleName string, tasks []task.TaskSpec) (task.EnqueueResult, error) {
 	spec, err := task.NewBatchSpec(types.Batch.Origin.Schedule, scheduleName)
 	if err != nil {
 		return task.EnqueueResult{}, fmt.Errorf("build %s batch spec: %w", scheduleName, err)
 	}
-	enqueuer, err := c.GetEnqueuer()
-	if err != nil {
-		return task.EnqueueResult{}, fmt.Errorf("get enqueuer: %w", err)
-	}
 	return enqueuer.EnqueueBatch(ctx, spec, tasks)
 }
 
-func maybeScheduleTask(ctx context.Context, c *container.Container, taskType types.TaskType, scheduleName string, active func(context.Context) (int64, error), due func(context.Context) (bool, error), input task.BuildInput) error {
+func maybeScheduleTask(ctx context.Context, c *container.Container, enqueuer *task.Enqueuer, scheduleName string, active func(context.Context) (int64, error), due func(context.Context) (bool, error), specs func() ([]task.TaskSpec, error)) error {
 	activeCount, err := active(ctx)
 	if err != nil {
-		return fmt.Errorf("check active %s tasks: %w", taskType, err)
+		return fmt.Errorf("check active %s tasks: %w", scheduleName, err)
 	}
 	if activeCount > 0 {
 		return nil
@@ -514,13 +553,17 @@ func maybeScheduleTask(ctx context.Context, c *container.Container, taskType typ
 
 	ok, err := due(ctx)
 	if err != nil {
-		return fmt.Errorf("check %s due: %w", taskType, err)
+		return fmt.Errorf("check %s due: %w", scheduleName, err)
 	}
 	if !ok {
 		return nil
 	}
 
-	result, err := enqueueScheduledBatch(ctx, c, taskType, scheduleName, input)
+	tasks, err := specs()
+	if err != nil {
+		return fmt.Errorf("build %s tasks: %w", scheduleName, err)
+	}
+	result, err := enqueueScheduledBatch(ctx, enqueuer, scheduleName, tasks)
 	if err != nil {
 		return err
 	}
@@ -532,28 +575,20 @@ func maybeScheduleTask(ctx context.Context, c *container.Container, taskType typ
 	return nil
 }
 
-func maybeScheduleBackup(ctx context.Context, c *container.Container, cfg *config.Config) error {
+func maybeScheduleBackup(ctx context.Context, c *container.Container, client *database.Client, enqueuer *task.Enqueuer, cfg *config.Config) error {
 	if !cfg.Backup.Enabled {
 		return nil
 	}
 
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-
 	for _, schedule := range cfg.Backup.Schedules {
 		s := schedule
-		input := container.BackupBuildInput{
-			Mode:     s.Mode,
-			Path:     s.Path,
-			Keep:     s.Keep,
-			Schedule: backup.ScheduleTiming{Interval: s.Interval, Time: s.Time},
-		}
-		if err := maybeScheduleTask(ctx, c, types.Task.Type.Backup, scheduleBackup,
+		if err := maybeScheduleTask(ctx, c, enqueuer, scheduleBackup,
 			func(ctx context.Context) (int64, error) { return client.Queries.CountActiveBackupTasks(ctx) },
 			func(ctx context.Context) (bool, error) { return backup.IsBackupDue(ctx, client.Queries, s) },
-			input,
+			func() ([]task.TaskSpec, error) {
+				return backup.BackupSpecs(s.Mode, s.Path, s.Keep,
+					backup.ScheduleTiming{Interval: s.Interval, Time: s.Time})
+			},
 		); err != nil {
 			return err
 		}
@@ -561,25 +596,18 @@ func maybeScheduleBackup(ctx context.Context, c *container.Container, cfg *confi
 	return nil
 }
 
-func maybeScheduleMirror(ctx context.Context, c *container.Container, cfg *config.Config) error {
+func maybeScheduleMirror(ctx context.Context, c *container.Container, client *database.Client, enqueuer *task.Enqueuer, cfg *config.Config) error {
 	if !cfg.Mirror.Enabled {
 		return nil
 	}
 
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-
-	input := container.MirrorBuildInput{
-		Path:     cfg.Mirror.Path,
-		Interval: cfg.Mirror.Interval,
-		Schedule: backup.ScheduleTiming{Interval: cfg.Mirror.Interval, Time: cfg.Mirror.Time},
-	}
-	return maybeScheduleTask(ctx, c, types.Task.Type.Mirror, scheduleMirror,
+	return maybeScheduleTask(ctx, c, enqueuer, scheduleMirror,
 		func(ctx context.Context) (int64, error) { return client.Queries.CountActiveMirrorTasks(ctx) },
 		func(ctx context.Context) (bool, error) { return backup.IsMirrorDue(ctx, client.Queries, cfg.Mirror) },
-		input,
+		func() ([]task.TaskSpec, error) {
+			return backup.MirrorSpecs(cfg.Mirror.Path, cfg.Mirror.Interval,
+				backup.ScheduleTiming{Interval: cfg.Mirror.Interval, Time: cfg.Mirror.Time})
+		},
 	)
 }
 
@@ -618,7 +646,7 @@ type anchoredTaskSpec struct {
 	timing    func(*config.Config) backup.ScheduleTiming
 	active    func(context.Context, *database.Queries) (int64, error)
 	lockGated bool
-	execute   func(ctx context.Context, c *container.Container, client *database.Client, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error
+	execute   func(ctx context.Context, c *container.Container, client *database.Client, enqueuer *task.Enqueuer, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error
 }
 
 var (
@@ -702,7 +730,7 @@ var (
 	}
 )
 
-func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *database.Client, cfg *config.Config, state *scheduleState, spec anchoredTaskSpec) error {
+func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *database.Client, enqueuer *task.Enqueuer, cfg *config.Config, state *scheduleState, spec anchoredTaskSpec) error {
 	if !spec.enabled(cfg) {
 		return nil
 	}
@@ -750,12 +778,16 @@ func maybeScheduleAnchored(ctx context.Context, c *container.Container, client *
 		}
 	}
 
-	return spec.execute(ctx, c, client, state, timing, next)
+	return spec.execute(ctx, c, client, enqueuer, state, timing, next)
 }
 
-func executeThumbnailBackfill(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error {
-	result, err := enqueueScheduledBatch(ctx, c, types.Task.Type.ThumbBackfill, scheduleThumbnailBackfill,
-		container.NewEmptyBuildInput(types.Task.Type.ThumbBackfill))
+func executeThumbnailBackfill(ctx context.Context, c *container.Container, client *database.Client, enqueuer *task.Enqueuer, state *scheduleState, timing backup.ScheduleTiming, next time.Time) error {
+	specs, err := service.ThumbnailBackfillSpecs(ctx, client.Queries)
+	if err != nil {
+		c.GetLogger().Error("", "enqueue thumbnail backfill: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
+		return nil
+	}
+	result, err := enqueueScheduledBatch(ctx, enqueuer, scheduleThumbnailBackfill, specs)
 	if err != nil {
 		c.GetLogger().Error("", "enqueue thumbnail backfill: %v (last_run=%s, next=%s)", err, state.lastRun.Format(time.RFC3339), next.Format(time.RFC3339))
 		return nil
@@ -772,24 +804,24 @@ func executeThumbnailBackfill(ctx context.Context, c *container.Container, _ *da
 	return nil
 }
 
-func executeTagReconcile(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagReconcile, scheduleTagReconcile, "tag reconcile")
+func executeTagReconcile(ctx context.Context, c *container.Container, _ *database.Client, enqueuer *task.Enqueuer, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, enqueuer, state, timing, curation.ReconcileSpecs(), scheduleTagReconcile, "tag reconcile")
 }
 
-func executeTagMeasure(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagMeasure, scheduleTagMeasure, "tag measure")
+func executeTagMeasure(ctx context.Context, c *container.Container, _ *database.Client, enqueuer *task.Enqueuer, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, enqueuer, state, timing, curation.MeasureSpecs(), scheduleTagMeasure, "tag measure")
 }
 
-func executeTagAudit(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagAudit, scheduleTagAudit, "tag audit")
+func executeTagAudit(ctx context.Context, c *container.Container, _ *database.Client, enqueuer *task.Enqueuer, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, enqueuer, state, timing, curation.AuditSpecs(), scheduleTagAudit, "tag audit")
 }
 
-func executeTagIdentity(ctx context.Context, c *container.Container, _ *database.Client, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
-	return enqueueScheduled(ctx, c, state, timing, types.Task.Type.TagIdentity, scheduleTagIdentity, "tag identity")
+func executeTagIdentity(ctx context.Context, c *container.Container, _ *database.Client, enqueuer *task.Enqueuer, state *scheduleState, timing backup.ScheduleTiming, _ time.Time) error {
+	return enqueueScheduled(ctx, c, enqueuer, state, timing, curation.IdentitySpecs(), scheduleTagIdentity, "tag identity")
 }
 
-func enqueueScheduled(ctx context.Context, c *container.Container, state *scheduleState, timing backup.ScheduleTiming, taskType types.TaskType, scheduleName, name string) error {
-	result, err := enqueueScheduledBatch(ctx, c, taskType, scheduleName, container.NewEmptyBuildInput(taskType))
+func enqueueScheduled(ctx context.Context, c *container.Container, enqueuer *task.Enqueuer, state *scheduleState, timing backup.ScheduleTiming, tasks []task.TaskSpec, scheduleName, name string) error {
+	result, err := enqueueScheduledBatch(ctx, enqueuer, scheduleName, tasks)
 	if err != nil {
 		return err
 	}

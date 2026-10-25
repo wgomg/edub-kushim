@@ -95,15 +95,29 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 - `Enqueuer` — the single creation path for queued work; owns the DB client and the `TypeCatalog`
   - **Methods**:
     - `NewEnqueuer(client, catalog) *Enqueuer`
-    - `EnqueueBatch(ctx, spec, tasks []TaskSpec) (EnqueueResult, error)` — one transaction inserts the batch (origin, schedule, `queued`) and its tasks; a violation of the dedup index skips that task, a collision on any other unique constraint (the task id) aborts, zero survivors create nothing, and the batch types must share one `Holds` set; preconditions run before any row is written
+    - `EnqueueBatch(ctx, spec, tasks []TaskSpec) (EnqueueResult, error)` — one transaction inserts the batch (origin, schedule, `queued`) and its tasks; a violation of the dedup index skips that task, a collision on any other unique constraint (the task id) aborts, zero survivors create nothing, and the batch types must share one `Holds` set; preconditions run before any row is written; a pending task whose type carries no dedup hook in the process's catalog is refused instead of being created without deduplication
     - `EnqueueTask(ctx, spec, task)` — single-task convenience over `EnqueueBatch`
-    - `DedupKey(taskType, payload) (string, error)` — the derivation a task of that type would carry, for boundary-side coverage checks
+    - `DedupKey(taskType, payload) (string, error)` — the derivation a task of that type would carry, for boundary-side coverage checks; a type without a hook in the catalog is an error, never an empty key
 
 ### Type definitions
 
-- `TypeDefinition` — one task type's enqueue contract: `Type`, `Locks LockPolicy` (`Holds`/`WaitsFor` over the closed `types.LockName` set, populated from `types.LockDeclarationFor`), `DirectLocks *LockPolicy` (the direct CLI run's policy; nil uses the queued set), `DedupKey func(payload) string` (empty result = no dedup), `Preconditions []func(ctx) error`, `BuildTasks func(ctx, BuildInput) ([]TaskSpec, error)` — the typed task-set builder used by `kushim batch create` and the scheduler
-- `TypeCatalog` — `Definition(taskType) (TypeDefinition, error)`; the concrete table lives in `internal/ops/container` (`Catalog`)
-- `BuildInput` — interface (`TaskType() types.TaskType`); concrete inputs live with the catalog
+- `TypeDefinition` — one task type's enqueue and dispatch contract: `Type`, `Locks LockPolicy` (`Holds`/`WaitsFor` over the closed `types.LockName` set, populated from `types.LockDeclarationFor`), `DirectLocks *LockPolicy` (the direct CLI run's policy; nil uses the queued set), `DedupKey DedupKeyFunc` (a hook the owning producer supplies at catalog construction; an empty derived key means no dedup), `Preconditions []func(ctx) error`, `CLI`/`BatchSelector`/`Hosts` (the batch-mode dispatch surface) and `Concurrency`
+- `TypeCatalog` — `Definition(taskType) (TypeDefinition, error)`; the concrete table is `task.Catalog` (`catalog.go`), built per process boundary
+- `DedupKeyFunc` — `func(json.RawMessage) string`, the dedup derivation one type carries
+
+## `catalog.go`
+
+### Struct
+
+- `Catalog` — one process boundary's task type table: the package-level static policy (per type: identity, queued and direct locks, batch-mode `CLI`/`BatchSelector`, `Hosts`) merged with the boundary's values
+  - **Methods**:
+    - `NewCatalog(dedupHooks map[types.TaskType]DedupKeyFunc, concurrency map[types.TaskType]int) (*Catalog, error)` — applies the two per-type maps over the static table; either map may be nil or partial (it names the types this process enqueues), and a key that is not a declared task type fails at construction
+    - `Definition(taskType) (TypeDefinition, error)` — the entry for a task type; an unknown type is an error
+
+### Package functions
+
+- `DirectLockPolicyFor(taskType) LockPolicy` — the lock policy a direct CLI run uses: the type's declared direct override when one exists (consume and enrich hold `maintenance`; `thumbnails` holds `storage` and waits `maintenance`), otherwise the queued lock set
+- `ConstantDedupKey(key) DedupKeyFunc` — the hook the fixed-key types carry (the four tag passes and the two migrations), wrapping a producer-owned constant
 
 ## `crud.go`
 
@@ -208,64 +222,80 @@ fresh per-task execution guard.
 
 ### Package functions
 
+- `TessdataSpec(configDir, lang) / HugotSpec(configDir)` — the config task's payload constructors (`config:tessdata:<lang>` / `config:hugot` ops); the API config handler enqueues only the languages/model the config is missing and pre-checks coverage through `Enqueuer.DedupKey`
+- `MigrateDBSpec(MigrateDBPayload) (task.TaskSpec, error)` / `MigrateStorageSpec(MigrateStoragePayload) (task.TaskSpec, error)` — the two migration payloads marshalled into ready specs
 - `MigrateDatabase(ctx, logger, payload, report task.ProgressFunc) error` — loads config from disk, takes a best-effort gzipped pre-migration snapshot into `backup.path` (keeps the latest 5), dumps the current DB to a temp file (`database.DumpSchemaAndData`), connects to the destination (10s connect timeout), then: skips the copy when the destination already holds data (`document`/`task` row counts), refuses databases with tables but no goose history (`database.ValidateMigrationDestination`), restores the dump via `psql` (`database.RestoreDumpViaPSQL`, run per the current config's `database.runtime` — host binary or exec into the current container — connecting over TCP to the destination; `runtime: remote` refuses before dumping), and finally persists the new connection settings via `config.SaveMap` (also clearing `database.dsn` so the new fields win). Storage paths are not touched — that is the `migrate-storage` task's job. (The claim acquires the maintenance hold and the runner drains the wait set before the handler runs.)
 - `MigrateStorage(ctx, logger, payload, report task.ProgressFunc) error` — loads config from disk (so it connects to the database the current config points at — after a preceding `migrate-db` task, the new database). The claim acquires the maintenance hold and verifies the `storage` wait (through the type's lock declarations; the runner drains the conflicting tasks first), and for each changed directory: rewrites pending consume-task payload paths (`database.RewriteTaskPayloadPaths`, before any file move), moves the storage subdirs (`processed/`, `originals/`, `errors/`, `orphaned/`, `trash/`, `thumbnails/`) and inbox files per `storage.migration_mode` (`copy`: copy-then-delete; `move`: `os.Rename` per entry with copy fallback), rewrites `document.storage_path`/`original_path` and `orphaned_file.file_path` (`database.RewriteStoragePaths`, only when `storage_dir` changed), and persists the new dirs via `config.SaveMap` only after the moves succeed
 
-Dedup derivation lives in the task type catalog (`internal/ops/container`): config payloads derive `config:tessdata:<lang>` / `config:hugot`, the migrations carry the fixed per-type keys. The enqueue path in `ConfigHandler.enqueueConfigTasks` and the migration slot helpers share it via `Enqueuer.DedupKey`.
+Dedup derivation lives with each type's producer package (`configtask.ConfigDedupKey` for config payloads; the migration types carry the fixed per-type keys), and the process catalog receives them as hooks at construction. The enqueue path in `ConfigHandler.enqueueConfigTasks` and the migration slot helpers share it via `Enqueuer.DedupKey`.
 
 ---
 
-## Container Integration (`internal/ops/container/container.go`)
+## Task wiring at the process boundaries
+
+There is no shared task-wiring point: each process boundary constructs its own
+task catalog (dedup hooks naming the types it enqueues), its enqueuers, its
+handler registries and — for the queue daemon — its pools. The task package
+contains none of this; producers own their task-set construction.
 
 ### CLI (`kushim`)
 
-The `Container` registers all thirteen task types (`"consume"`, `"enrich"`, `"thumbnail"`, `"config"`, `"migrate-db"`, `"migrate-storage"`, `"backup"`, `"mirror"`, `"tagreconcile"`, `"thumbbackfill"`, `"tagmeasure"`, `"tagidentity"`, `"tagaudit"`)
-and creates a `MatcherClient` connected to the Unix socket at `<config_dir>/kushim-hugot.sock`.
-The `"backup"` type is handled by `BackupTaskHandler` which runs with the DB-backed maintenance lock already held (acquired at claim time, in the claim transaction), waits for in-flight tasks to drain, runs the backup, and lets the runner release the lock on completion/failure (token-guarded). The catalog derives its dedup key `backup:<mode>:<date>` from the payload's mode (default `full`).
+`Container` (`internal/ops/container`) is a lazy assembler for the shared
+dependency services only — config, the database connection and its reconnect
+protocol, the tag service, the search engine, the matcher client and the tag
+tools runner. It builds no task catalog, enqueuer, handler or pool. The
+`consume`/`enrich`/`thumbnail` handlers and the ingest family's registry are
+built in `internal/ops/consume` (`newConsumeHandler`/`newEnrichHandler`/
+`newThumbnailHandler` over the command's own consumer, enricher and thumbnail
+tools): the direct mode builds the handlers it runs, and the batch modes build
+a store and the registry of the types their batch carries before calling
+`consume.RunClaimedBatch`. The `enrich`/`thumbnails` batch modes
+(`ops/cli/enrich.go`, `ops/cli/thumbnails.go`) assemble the same way and pass
+`nil` quarantine hooks. Every enqueue call site builds its own enqueuer over a
+catalog wired with exactly the hooks of the types it creates, and builds its
+task sets through the owning producer:
 
-The `"mirror"` type is handled by `MirrorTaskHandler` which runs with the same locks already held (claim-time acquisition) and delegates to `backup.RunMirrorAndRecord` (the runner holds the lock heartbeat and drains the wait set before the handler; the handler runs `rsync -a --delete --info=stats2 --timeout=600` and writes the `.edub-mirror.json` state file); the runner releases the lock on completion/failure. The catalog derives its dedup key `mirror:<UTC date>`.
+- inbox scans: `consumption.IngestSpecsFromInbox` (`batch create consume`,
+  `kushim batch create consume` paused-guard) and `consumption.ScanAndEnqueue`
+  (polling) / the orphan restore (`service.Orphaned.Restore` via
+  `consumption.IngestTaskSpecs`)
+- re-enrichment: `enrichment.EnrichSpecs` (explicit ids) and
+  `service.ReEnrich` (the `--all | --limit` selection)
+- thumbnails: `service.ThumbnailBackfillSpecs` (the all-documents scan) and
+  `service.ThumbnailBackfill.BackfillBatch`/`BackfillDocument` (selections)
+- backups and mirrors: `backup.BackupSpecs` / `backup.MirrorSpecs`
+- the tag passes: the four `Enqueue` services over their spec constructors
+  (`curation.ReconcileSpecs`, `curation.MeasureSpecs`,
+  `curation.IdentitySpecs`, `curation.AuditSpecs`)
 
-The `"tagreconcile"` type is handled by `TagReconcileTaskHandler` which runs with the lock already held, drains in-flight tasks, and forks `kushim tagreconcile --run <batch-id>`: the child builds the reconciler on a runner with the `textreducer`, `contentanalyzer` and `tagmatcher` tools — the reducer feeds the provisional re-judge path (`Runner.ReduceContent` over the tag's first live document) — runs one pass, and prints the `tagreconcile-report: <json>` line the handler captures as the task result, while the child's exit code decides completion/failure. The catalog derives the fixed `tagreconcile` key, so any active run blocks further enqueues of the type. The `"thumbbackfill"` type is handled by the shared per-document `ThumbnailTaskHandler`: backfill batches are not claimed task-by-task — the dispatcher's claim takes the `storage` lock for the whole run after verifying its declared waits, and the forked `kushim thumbnails --from-batch` child adopts the lease, keeps the hold fresh (lock heartbeat plus drain of in-flight thumbnail tasks) and runs one worker for the type (its declared concurrency; claims verify their waits without acquiring); per-document `thumbnail` claims defer on both `maintenance` and `storage`, so per-document writes pause while the backfill runs.
-The `"tagmeasure"` type is handled by `TagMeasureTaskHandler` which runs with the lock already held, drains in-flight tasks, and forks `kushim tagmeasure --run <batch-id>`: the child executes the pass (`internal/tags`) in one repeatable-read transaction, writes the evidence records, and prints a report line the handler captures as the task result, while the child's exit code decides completion/failure through the attempts budget. The pass opens by reading its `tag_measure_changed` flag and short-circuits to a zero-work report (no records) when the flag is clear and a completed run exists under the current rule set; otherwise it clears the flag and sweeps, re-arming it if the sweep fails. The catalog derives the fixed `tagmeasure` key, so any active run blocks further enqueues of the type. A manual `kushim tagmeasure` enqueues the same queued task through `curation.TagMeasure`, and the pool always claims — `enricher.tag_measure.enabled` gates only automatic enqueuing.
-The `"tagidentity"` type is handled by `TagIdentityTaskHandler`, the same drain + heartbeat + fork shape: it forks `kushim tagidentity --run <batch-id>`, whose child resolves the pending identity evidence through `admission.IdentityResolver` and prints the `tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/failed) the handler captures; the exit code decides completion/failure. The queue daemon runs its pool unconditionally; runs come from the review surface's `POST /api/v1/tags/identity/reevaluate`, a manual `kushim tagidentity`, and the pass's own daily 03:30 schedule, which fires only while `enricher.tag_adjudicator.enabled` is set. The catalog derives the fixed `tagidentity` key, and a run with the adjudicator disabled only counts the backlog.
-The `"tagaudit"` type is handled by `TagAuditTaskHandler`, the same drain + heartbeat + fork shape: it forks `kushim tagaudit --run <batch-id>`, whose child verifies document coverage against the vocabulary (`admission.AuditRunner`), fills the confirmed gaps, records the coverage classes, and prints the `tagaudit-report: <json>` line (sweep, sampled/flagged counts, coverage tallies by class, fills/flags/proposals, judge call counts, pending coverage) the handler captures; the exit code decides completion/failure. The catalog derives the fixed `tagaudit` key. Runs come from the anchored schedule (disabled by default), a manual `kushim tagaudit`, and `POST /api/v1/tags/audit/reevaluate`; the pool always claims, so only the schedule obeys `enricher.tag_audit.enabled`; the run draws its sample from the sweep register, which stamps a document with the sweep it was audited in, so it is audited at most once per sweep and returns exactly one sweep later.
-The task type catalog is built from `client.Queries` and the live config accessor before the handler
-registry so the consume handler and the enqueuer share one catalog; the tag
-services and `Enricher` receive the client instead of a direct Hugot
-reference:
+### Queue daemon (`kushim queue`)
+
+`queue.Run` builds the daemon catalog once — the enqueue hooks of the types
+the daemon creates (polling's `consume`, the schedules' `backup`, `mirror`,
+`thumbbackfill` and the four tag passes) — and hands it to
+`dispatch.NewDispatcher`; the scheduler and the polling tick construct
+`task.NewEnqueuer(client, catalog)` over the current connection at each use,
+so a reconnect carries. The daemon builds its six maintenance pools itself
+(one runner over a single-type registry per pool), and its scheduler enqueues
+through the producers above with origin `schedule`.
+
+### edub and the wizard
+
+Both processes construct their own catalog at boot/`rebuild` and their own
+enqueuer over it. edub wires the hooks of everything its handlers can enqueue
+(`consume`, `enrich`, `thumbbackfill`, `config`, `migrate-db`,
+`migrate-storage`, `tagidentity`, `tagaudit`), the wizard the three
+config-host types. `internal/api/server.go` registers the config-host task
+types (`config`, `migrate-db`, `migrate-storage`) into the registry and runs
+one single-worker pool per type for migrations; consume/enrich/thumbnail
+pools are **not started** — the server enqueues tasks and the `kushim queue`
+daemon forks the batches' owning task CLIs instead:
 
 ```go
-matcherClient := matcher.NewMatcherClient(c.SocketPath(), matcher.MaxMatchBodyBytes(cfg.Enricher.TagMatcher.ReduceTargetWords))
-tagSvc := curation.NewTag(client, c.GetLogger(), matcherClient)
-enricher := enrichment.NewEnricher(cfg, c.GetLogger(), client, tagSvc, matcherClient)
-store := task.NewStore(client)
-c.catalog = NewCatalog(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger)
-c.enqueuer = task.NewEnqueuer(client, c.catalog)
-registry.Register(types.Task.Type.Consume, consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.GetLogger(), c.catalog))
-registry.Register(types.Task.Type.Enrich, enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.GetLogger()))
-registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, c.GetLogger()))
-registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, c.GetLogger()))
-registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, c.GetLogger()))
-registry.Register(types.Task.Type.Backup, backup.NewBackupTaskHandler(c.db, client.Queries, func() *config.Config { return c.GetConfig() }, c.GetLogger()))
-registry.Register(types.Task.Type.Mirror, backup.NewMirrorTaskHandler(client.Queries, func() *config.Config { return c.GetConfig() }, c.GetLogger()))
+catalog, _ := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{ ... }, nil)
+enqueuer := task.NewEnqueuer(client, catalog)
+// wizard: same shape with the three config-host hooks only
 ```
-
-The `BackupTaskHandler` receives a config getter closure used for the backup-root fallback (`backup.path`) and the config path; the backup `mode`/`path`/`keep` come from the task payload (the shared `backup.BackupPayload`), with the path validated against the configured backup roots. The `MirrorTaskHandler` receives the queries and a config getter; the mirror destination comes from the payload (falling back to `mirror.path`) and is validated via `backup.ValidateDestination`. The config pool is started alongside
-the maintenance pools when a CLI command runs.
-
-### Server (`edub`)
-
-The `Server` registers the three config-host task types (`config`, `migrate-db`, `migrate-storage`). Consume/enrich pools are **not started**
-— the server enqueues tasks and the `kushim queue` daemon forks the batches' owning task CLIs (`kushim consume|enrich|thumbnails --from-batch <id> --exec-token <token>`) instead:
-
-```go
-registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, logger))
-registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, logger))
-registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, logger))
-```
-
-One pool per type (1 worker, 5s poll interval) is started on server boot and
-stopped on shutdown.
 
 ---
 

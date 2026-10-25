@@ -7,11 +7,15 @@ import (
 	"slices"
 
 	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/ops/consume"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -74,7 +78,18 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 		if batchID == "" {
 			return fmt.Errorf("--exec-token requires --from-batch <id>")
 		}
-		_, err := consume.RunClaimedBatch(c, batchID, execTokenParam, nil)
+		client, err := c.GetClient()
+		if err != nil {
+			return fmt.Errorf("database: %w", err)
+		}
+		handler, err := newThumbnailHandler(c, client)
+		if err != nil {
+			return err
+		}
+		store := task.NewStore(client)
+		registry := task.NewRegistry()
+		registry.Register(types.Task.Type.ThumbBackfill, handler)
+		_, err = consume.RunClaimedBatch(c, batchID, execTokenParam, store, registry, nil)
 		return err
 	}
 
@@ -98,20 +113,16 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 	return runThumbnailsDirect(c, specs, noWait)
 }
 
-// thumbnailSpecsForAll runs the thumbbackfill definition's builder over every document missing a thumbnail,
-// the same selection the schedule and `batch create thumbnails` use.
+// thumbnailSpecsForAll asks the thumbnail service for every document missing a thumbnail, the same selection
+// the schedule and `batch create thumbnails` use.
 func thumbnailSpecsForAll(c *container.Container) ([]task.TaskSpec, error) {
-	catalog, err := c.GetCatalog()
+	client, err := c.GetClient()
 	if err != nil {
-		return nil, fmt.Errorf("task catalog: %w", err)
+		return nil, fmt.Errorf("database: %w", err)
 	}
-	def, err := catalog.Definition(types.Task.Type.ThumbBackfill)
+	specs, err := service.ThumbnailBackfillSpecs(context.Background(), client.Queries)
 	if err != nil {
-		return nil, fmt.Errorf("thumbbackfill definition: %w", err)
-	}
-	specs, err := def.BuildTasks(context.Background(), container.NewEmptyBuildInput(types.Task.Type.ThumbBackfill))
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build thumbnail backfill tasks: %w", err)
 	}
 	return specs, nil
 }
@@ -149,6 +160,12 @@ func thumbnailSpecsForDocument(c *container.Container, documentID string) ([]tas
 	return []task.TaskSpec{{Type: types.Task.Type.ThumbBackfill, Payload: payload}}, nil
 }
 
+// newThumbnailHandler constructs the thumbnail handler over the command's own thumbnail tools.
+func newThumbnailHandler(c *container.Container, client *database.Client) (task.Handler, error) {
+	thumbnailTools := tools.NewRunner(c.GetLogger(), c.GetConfig(), []string{"thumbnail"})
+	return consumption.NewThumbnailTaskHandler(thumbnailTools, client.Queries, c.GetLogger(), c.GetConfig), nil
+}
+
 // runThumbnailsDirect generates the selected thumbnails immediately under the manual storage hold. A
 // failed document is reported and the run continues; the command exits non-zero when any failed.
 func runThumbnailsDirect(c *container.Container, specs []task.TaskSpec, noWait bool) error {
@@ -161,23 +178,16 @@ func runThumbnailsDirect(c *container.Container, specs []task.TaskSpec, noWait b
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	catalog, err := c.GetCatalog()
+	handler, err := newThumbnailHandler(c, client)
 	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.Thumbnail)
-	if err != nil {
-		return fmt.Errorf("thumbnail definition: %w", err)
-	}
-	handler, err := c.GetHandler(types.Task.Type.Thumbnail)
-	if err != nil {
-		return fmt.Errorf("thumbnail handler: %w", err)
+		return err
 	}
 
 	ctx := context.Background()
 	failed := 0
 	fmt.Printf("Generating %d thumbnail(s)...\n", len(specs))
-	err = task.RunDirect(ctx, client, c.GetLogger(), "thumbnails", def.LocksForDirectMode(), !noWait, nil, func() error {
+	policy := task.DirectLockPolicyFor(types.Task.Type.Thumbnail)
+	err = task.RunDirect(ctx, client, c.GetLogger(), "thumbnails", policy, !noWait, nil, func() error {
 		for i, spec := range specs {
 			_, err := handler.Handle(ctx, task.Task{
 				TaskID:   uuid.New().String(),

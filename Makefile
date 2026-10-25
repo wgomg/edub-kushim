@@ -301,6 +301,7 @@ test-db:
 		./internal/tags/ \
 		./internal/tags/curation/ \
 		./internal/api/handlers/ \
+		./internal/ops/dispatch/ \
 		./internal/documents/consumption/
 
 # Backup tests also require PostgreSQL via TEST_DATABASE_URL.

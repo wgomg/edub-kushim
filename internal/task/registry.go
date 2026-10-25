@@ -6,9 +6,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// Registry maps task types to their handlers, wired once at the
-// composition root. It is read-only after startup and safe for concurrent
-// use.
+// Registry maps task types to their handlers, as assembled at each command boundary. It is read-only after
+// startup and safe for concurrent use.
 type Registry struct {
 	handlers map[types.TaskType]Handler
 }

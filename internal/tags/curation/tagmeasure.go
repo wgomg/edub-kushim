@@ -25,6 +25,11 @@ func NewTagMeasure(queries *database.Queries, enqueuer *task.Enqueuer) *TagMeasu
 	}
 }
 
+// MeasureSpecs returns the task set a tag measure run enqueues.
+func MeasureSpecs() []task.TaskSpec {
+	return []task.TaskSpec{{Type: types.Task.Type.TagMeasure, Payload: json.RawMessage("{}")}}
+}
+
 // Enqueue queues a tag measure batch and its task through spec, or reports alreadyQueued when one is
 // still active.
 func (s *TagMeasure) Enqueue(ctx context.Context, spec task.BatchSpec) (batchID string, alreadyQueued bool, err error) {
@@ -36,10 +41,7 @@ func (s *TagMeasure) Enqueue(ctx context.Context, spec task.BatchSpec) (batchID 
 		return "", true, nil
 	}
 
-	result, err := s.enqueuer.EnqueueTask(ctx, spec, task.TaskSpec{
-		Type:    types.Task.Type.TagMeasure,
-		Payload: json.RawMessage("{}"),
-	})
+	result, err := s.enqueuer.EnqueueBatch(ctx, spec, MeasureSpecs())
 	if err != nil {
 		return "", false, errs.FromDB(err, "create tag measure task")
 	}

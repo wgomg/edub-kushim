@@ -1,28 +1,54 @@
-package container
+package task_test
 
 import (
 	"encoding/json"
 	"regexp"
 	"testing"
 
-	"github.com/wgomg/edub-kushim/internal/config"
-	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/backup"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// testCatalog builds the type table over the zero configuration; these tests pin dedup derivations and
-// lock declarations, so the worker counts they do not exercise are whatever the zero config declares.
-func testCatalog() *Catalog {
-	return NewCatalog(nil, func() *config.Config { return &config.Config{} }, log.NewDiscardLogger())
+// productionHooks wires every type's producer-owned dedup derivation, the way a process boundary that
+// enqueues the whole task vocabulary builds its catalog.
+func productionHooks() map[types.TaskType]task.DedupKeyFunc {
+	return map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Consume:        consumption.DedupKey,
+		types.Task.Type.Enrich:         enrichment.DedupKey,
+		types.Task.Type.Thumbnail:      service.ThumbnailDedupKey,
+		types.Task.Type.ThumbBackfill:  service.ThumbnailDedupKey,
+		types.Task.Type.Backup:         backup.BackupDedupKey,
+		types.Task.Type.Mirror:         backup.MirrorDedupKey,
+		types.Task.Type.TagReconcile:   task.ConstantDedupKey(curation.TagReconcileDedupKey),
+		types.Task.Type.TagMeasure:     task.ConstantDedupKey(tags.TagMeasureDedupKey),
+		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
+		types.Task.Type.TagAudit:       task.ConstantDedupKey(curation.TagAuditDedupKey),
+		types.Task.Type.Config:         configtask.ConfigDedupKey,
+		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
+		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
+	}
+}
+
+func testCatalog(t *testing.T) *task.Catalog {
+	t.Helper()
+	catalog, err := task.NewCatalog(productionHooks(), nil)
+	if err != nil {
+		t.Fatalf("build task catalog: %v", err)
+	}
+	return catalog
 }
 
 // TestDedupKeys pins the derivation each task type owns: the enqueue derives the key from the definition
 // and nothing else, so these values are the dedup contract for every boundary.
 func TestDedupKeys(t *testing.T) {
-	catalog := testCatalog()
+	catalog := testCatalog(t)
 
 	tests := []struct {
 		name     string
@@ -71,7 +97,7 @@ func TestDedupKeys(t *testing.T) {
 // type's direct path overrides it: consume and enrich hold maintenance, thumbnails holds storage and
 // waits for maintenance.
 func TestLockDeclarationsMatchVocabulary(t *testing.T) {
-	catalog := testCatalog()
+	catalog := testCatalog(t)
 
 	directOverrides := map[types.TaskType]struct {
 		holds []types.LockName
@@ -136,7 +162,7 @@ func equalLockNames(a, b []types.LockName) bool {
 
 // TestDailyDedupKeys pins the date-scoped keys of the daily backup and mirror runs.
 func TestDailyDedupKeys(t *testing.T) {
-	catalog := testCatalog()
+	catalog := testCatalog(t)
 	dateSuffix := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 	t.Run("backup keeps the mode and the UTC day", func(t *testing.T) {
@@ -167,6 +193,98 @@ func TestDailyDedupKeys(t *testing.T) {
 		got := def.DedupKey(json.RawMessage(`{}`))
 		if len(got) <= len("mirror:") || got[:len("mirror:")] != "mirror:" || !dateSuffix.MatchString(got[len("mirror:"):]) {
 			t.Fatalf("mirror key = %q, want mirror:<YYYY-MM-DD>", got)
+		}
+	})
+}
+
+// TestNewCatalogRejectsUndeclaredWiringKeys pins that a wiring typo fails at construction.
+func TestNewCatalogRejectsUndeclaredWiringKeys(t *testing.T) {
+	if _, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.TaskType("bogus"): nil,
+	}, nil); err == nil {
+		t.Fatal("an undeclared dedup-hook key must be refused at construction")
+	}
+	if _, err := task.NewCatalog(nil, map[types.TaskType]int{
+		types.TaskType("bogus"): 4,
+	}); err == nil {
+		t.Fatal("an undeclared concurrency key must be refused at construction")
+	}
+}
+
+// TestNewCatalogPartialWiring pins the per-boundary contract: an unwired type still resolves its static
+// policy, with a nil hook the enqueue surface refuses at use rather than a missing definition.
+func TestNewCatalogPartialWiring(t *testing.T) {
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Consume: func(json.RawMessage) string { return "consume-key" },
+	}, nil)
+	if err != nil {
+		t.Fatalf("build task catalog: %v", err)
+	}
+
+	consumeDef, err := catalog.Definition(types.Task.Type.Consume)
+	if err != nil {
+		t.Fatalf("consume definition: %v", err)
+	}
+	if consumeDef.DedupKey == nil {
+		t.Fatal("the wired type must carry its hook")
+	}
+	if consumeDef.CLI != "consume" {
+		t.Fatalf("consume CLI = %q, want consume", consumeDef.CLI)
+	}
+
+	backupDef, err := catalog.Definition(types.Task.Type.Backup)
+	if err != nil {
+		t.Fatalf("unwired type must still resolve: %v", err)
+	}
+	if backupDef.DedupKey != nil {
+		t.Fatal("an unwired type carries no hook; the enqueue refuses its pending tasks")
+	}
+	if backupDef.Type != types.Task.Type.Backup {
+		t.Fatalf("backup type = %q, want the declared type", backupDef.Type)
+	}
+	declaration := types.LockDeclarationFor(types.Task.Type.Backup)
+	if !equalLockNames(backupDef.Locks.Holds, declaration.Holds) {
+		t.Fatalf("backup holds = %v, want the queued declaration %v", backupDef.Locks.Holds, declaration.Holds)
+	}
+}
+
+// TestDirectLockPolicyFor pins the direct-mode lookup: the declared overrides, the queued fallback, and
+// no lock for a type outside the static table.
+func TestDirectLockPolicyFor(t *testing.T) {
+	cases := []struct {
+		name  string
+		task  types.TaskType
+		holds []types.LockName
+		waits []types.LockName
+	}{
+		{name: "consume holds maintenance directly", task: types.Task.Type.Consume, holds: []types.LockName{types.LockMaintenance}},
+		{name: "enrich holds maintenance directly", task: types.Task.Type.Enrich, holds: []types.LockName{types.LockMaintenance}},
+		{name: "thumbnail overrides to storage and waits", task: types.Task.Type.Thumbnail, holds: []types.LockName{types.LockStorage}, waits: []types.LockName{types.LockMaintenance}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := task.DirectLockPolicyFor(tc.task)
+			if !equalLockNames(got.Holds, tc.holds) {
+				t.Errorf("holds = %v, want %v", got.Holds, tc.holds)
+			}
+			if !equalLockNames(got.WaitsFor, tc.waits) {
+				t.Errorf("waits = %v, want %v", got.WaitsFor, tc.waits)
+			}
+		})
+	}
+
+	t.Run("a type without an override falls back to its queued declaration", func(t *testing.T) {
+		declaration := types.LockDeclarationFor(types.Task.Type.ThumbBackfill)
+		got := task.DirectLockPolicyFor(types.Task.Type.ThumbBackfill)
+		if !equalLockNames(got.Holds, declaration.Holds) || !equalLockNames(got.WaitsFor, declaration.WaitsFor) {
+			t.Fatalf("fallback = %+v, want the queued declaration %+v", got, declaration)
+		}
+	})
+
+	t.Run("an undeclared type declares no lock", func(t *testing.T) {
+		got := task.DirectLockPolicyFor(types.TaskType("bogus"))
+		if len(got.Holds) != 0 || len(got.WaitsFor) != 0 {
+			t.Fatalf("undeclared type policy = %+v, want no locks", got)
 		}
 	})
 }

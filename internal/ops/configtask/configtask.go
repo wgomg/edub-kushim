@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // ErrNoOp is returned by the migrations when old and new paths match.
@@ -68,6 +69,71 @@ type MigrateStoragePayload struct {
 	NewStorageDir     string `json:"new_storage_dir"`
 	OldConsumptionDir string `json:"old_consumption_dir"`
 	NewConsumptionDir string `json:"new_consumption_dir"`
+}
+
+// configPayload is the asset-download task's input; Lang is present only for tessdata downloads.
+type configPayload struct {
+	ConfigDir string `json:"config_dir"`
+	Op        string `json:"op"`
+	Lang      string `json:"lang,omitempty"`
+}
+
+// TessdataSpec returns the config task that downloads one tessdata language, or an error when its payload
+// cannot be marshalled.
+func TessdataSpec(configDir, lang string) (task.TaskSpec, error) {
+	return configSpec(configPayload{ConfigDir: configDir, Op: OpTessdata, Lang: lang})
+}
+
+// HugotSpec returns the config task that downloads the hugot model, or an error when its payload cannot be
+// marshalled.
+func HugotSpec(configDir string) (task.TaskSpec, error) {
+	return configSpec(configPayload{ConfigDir: configDir, Op: OpHugot})
+}
+
+func configSpec(payload configPayload) (task.TaskSpec, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return task.TaskSpec{}, fmt.Errorf("marshal config payload: %w", err)
+	}
+	return task.TaskSpec{Type: types.Task.Type.Config, Payload: raw}, nil
+}
+
+// MigrateDBSpec returns the database migration task for the given target.
+func MigrateDBSpec(payload MigrateDBPayload) (task.TaskSpec, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return task.TaskSpec{}, fmt.Errorf("marshal database migration payload: %w", err)
+	}
+	return task.TaskSpec{Type: types.Task.Type.MigrateDB, Payload: raw}, nil
+}
+
+// MigrateStorageSpec returns the storage migration task for the given move.
+func MigrateStorageSpec(payload MigrateStoragePayload) (task.TaskSpec, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return task.TaskSpec{}, fmt.Errorf("marshal storage migration payload: %w", err)
+	}
+	return task.TaskSpec{Type: types.Task.Type.MigrateStorage, Payload: raw}, nil
+}
+
+// ConfigDedupKey derives a config task's dedup key from its payload's operation and language: each tessdata
+// language and the hugot model collapse onto their own key.
+func ConfigDedupKey(payload json.RawMessage) string {
+	var p struct {
+		Op   string `json:"op"`
+		Lang string `json:"lang"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return ""
+	}
+	switch p.Op {
+	case OpTessdata:
+		return DedupKeyTessdataPrefix + p.Lang
+	case OpHugot:
+		return DedupKeyHugot
+	default:
+		return ""
+	}
 }
 
 // ConfigTaskHandler runs the environment asset downloads: tessdata languages and the hugot model download,

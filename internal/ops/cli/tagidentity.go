@@ -12,6 +12,8 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 const tagIdentityHelpText = "Usage: kushim tagidentity [--run <batch-id>]\n\n" +
@@ -51,9 +53,11 @@ func enqueueTagIdentity(c *container.Container) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	enqueuer, err := c.GetEnqueuer()
+	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.TagIdentity: task.ConstantDedupKey(curation.TagIdentityDedupKey),
+	})
 	if err != nil {
-		return fmt.Errorf("enqueuer: %w", err)
+		return err
 	}
 	spec, err := cliBatchSpec()
 	if err != nil {

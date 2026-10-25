@@ -8,7 +8,33 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+// DedupKey derives a re-enrichment task's dedup key from the payload's document id: one live enrich task
+// per document.
+func DedupKey(payload json.RawMessage) string {
+	var p struct {
+		DocumentID string `json:"document_id"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil || p.DocumentID == "" {
+		return ""
+	}
+	return "enrich:doc:" + p.DocumentID
+}
+
+// EnrichSpecs returns one re-enrichment task per document id, in the given order.
+func EnrichSpecs(documentIDs []string) ([]task.TaskSpec, error) {
+	specs := make([]task.TaskSpec, 0, len(documentIDs))
+	for _, documentID := range documentIDs {
+		payload, err := json.Marshal(map[string]string{"document_id": documentID})
+		if err != nil {
+			return nil, fmt.Errorf("marshal enrich payload: %w", err)
+		}
+		specs = append(specs, task.TaskSpec{Type: types.Task.Type.Enrich, Payload: payload})
+	}
+	return specs, nil
+}
 
 // EnrichTaskHandler enriches one stored document as a blocking task: it
 // loads the document row, runs the enrichment coordinator, and stores the

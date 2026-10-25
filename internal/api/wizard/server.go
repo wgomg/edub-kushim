@@ -17,7 +17,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
-	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -110,7 +109,14 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, s.logger))
 	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, s.logger))
 
-	catalog := container.NewCatalog(client.Queries, func() *config.Config { return cfg }, s.logger)
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Config:         configtask.ConfigDedupKey,
+		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
+		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
+	}, nil)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("task catalog: %w", err)
+	}
 	enqueuer := task.NewEnqueuer(client, catalog)
 	runner := task.NewRunner(store, registry, s.logger)
 	s.pools = []*task.Pool{

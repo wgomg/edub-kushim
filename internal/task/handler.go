@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 )
 
-// Handler is the per-task-type seam: the domain packages implement it and the composition root registers
-// the implementations on the Registry. Handle receives one claimed task and returns the result stored on
+// Handler is the per-task-type seam: the domain packages implement it and each command boundary's registry
+// registers the implementations it runs. Handle receives one claimed task and returns the result stored on
 // the task row; an error fails the task, and a wrapped *Error adds a request id for log correlation and,
 // with PauseBatch, pauses the whole batch. Handlers are pure work functions: they perform no batch-status
 // write, lock acquisition, drain or settle.

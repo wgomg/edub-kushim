@@ -1,6 +1,6 @@
 // Package consume is the kushim consume verb: the direct mode that consumes the inbox immediately under
-// the manual maintenance lock, the batch mode that executes one claimed consume-family batch through the
-// shared execution library, and the cancel subcommand.
+// the manual maintenance lock, the batch mode that executes one claimed batch through the shared execution
+// library, and the cancel subcommand.
 package consume
 
 import (
@@ -26,6 +26,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -95,8 +96,8 @@ func Run(c *container.Container, args []string) error {
 	return runDirect(c, noWait)
 }
 
-// runBatchMode executes one claimed consume-family batch: it gates on the external tools a consume task
-// needs, then hands the run to `RunClaimedBatch` with the consume file-quarantine hook.
+// runBatchMode executes one claimed batch: it gates on the external tools a consume task needs, then hands
+// the run to `RunClaimedBatch` with the consume file-quarantine hook.
 func runBatchMode(c *container.Container, batchID, execTokenParam string) error {
 	client, err := c.GetClient()
 	if err != nil {
@@ -117,7 +118,25 @@ func runBatchMode(c *container.Container, batchID, execTokenParam string) error 
 	maxRetries := int32(cfg.Consumer.Reclaim.MaxRetries)
 	defer triggerOrphanScan(c)
 
-	result, err := RunClaimedBatch(c, batchID, execTokenParam, func(qctx context.Context, taskIDs []string) error {
+	store := task.NewStore(client)
+	consumeHandler, err := newConsumeHandler(c, store, client)
+	if err != nil {
+		return fmt.Errorf("consume handler: %w", err)
+	}
+	enrichHandler, err := newEnrichHandler(c, client)
+	if err != nil {
+		return fmt.Errorf("enrich handler: %w", err)
+	}
+	thumbnailHandler, err := newThumbnailHandler(c, client)
+	if err != nil {
+		return fmt.Errorf("thumbnail handler: %w", err)
+	}
+	registry := task.NewRegistry()
+	registry.Register(types.Task.Type.Consume, consumeHandler)
+	registry.Register(types.Task.Type.Enrich, enrichHandler)
+	registry.Register(types.Task.Type.Thumbnail, thumbnailHandler)
+
+	result, err := RunClaimedBatch(c, batchID, execTokenParam, store, registry, func(qctx context.Context, taskIDs []string) error {
 		return consumption.QuarantineFailedFiles(qctx, client.Queries, cfg.Storage.StorageDir,
 			c.GetLogger(), batchID, maxRetries, taskIDs)
 	})
@@ -134,10 +153,12 @@ func runBatchMode(c *container.Container, batchID, execTokenParam string) error 
 
 // RunClaimedBatch executes one claimed batch through the shared execution library. The dispatcher and
 // batch run own the claim and pass the execution token, so this child adopts the lease, runs the batch's
-// tasks through their registered handlers and settles. quarantine is the host's consume-file cleanup
-// hook; nil is correct for commands whose batches never carry consume tasks. The paused notice is printed
-// here; an error means the run was interrupted or could not start, and the process must exit non-zero.
-func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, quarantine func(ctx context.Context, taskIDs []string) error) (task.BatchRunResult, error) {
+// tasks through the registry its command assembled and settles. The caller supplies the store and the
+// registry because the handlers act on the same store the run does, and only the command knows which
+// task types its batch carries. quarantine is the host's consume-file cleanup hook; nil is correct for
+// commands whose batches never carry consume tasks. The paused notice is printed here; an error means
+// the run was interrupted or could not start, and the process must exit non-zero.
+func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, store *task.Store, registry *task.Registry, quarantine func(ctx context.Context, taskIDs []string) error) (task.BatchRunResult, error) {
 	token, err := parseExecToken(execTokenParam)
 	if err != nil {
 		return task.BatchRunResult{}, err
@@ -147,17 +168,14 @@ func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, qua
 	if err != nil {
 		return task.BatchRunResult{}, fmt.Errorf("failed to get database: %w", err)
 	}
-	catalog, err := c.GetCatalog()
+	cfg := c.GetConfig()
+	catalog, err := task.NewCatalog(nil, map[types.TaskType]int{
+		types.Task.Type.Consume:   cfg.Consumer.Workers,
+		types.Task.Type.Enrich:    cfg.Enricher.Workers,
+		types.Task.Type.Thumbnail: cfg.Consumer.Thumbnail.Workers,
+	})
 	if err != nil {
 		return task.BatchRunResult{}, fmt.Errorf("task catalog: %w", err)
-	}
-	store, err := c.GetStore()
-	if err != nil {
-		return task.BatchRunResult{}, fmt.Errorf("task store: %w", err)
-	}
-	registry, err := c.GetRegistry()
-	if err != nil {
-		return task.BatchRunResult{}, fmt.Errorf("task registry: %w", err)
 	}
 
 	deps := task.BatchRunDeps{
@@ -229,14 +247,6 @@ func runDirect(c *container.Container, noWait bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to get database: %w", err)
 	}
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.Consume)
-	if err != nil {
-		return fmt.Errorf("consume definition: %w", err)
-	}
 
 	run, err := newDirectRun(c, cfg.Consumer.Thumbnail.Enabled)
 	if err != nil {
@@ -248,7 +258,8 @@ func runDirect(c *container.Container, noWait bool) error {
 	watchSignals(ctx, cancel)
 
 	fmt.Printf("Consuming %d file(s)...\n", len(files))
-	err = task.RunDirect(ctx, client, c.GetLogger(), "consume", def.LocksForDirectMode(), !noWait, nil, func() error {
+	policy := task.DirectLockPolicyFor(types.Task.Type.Consume)
+	err = task.RunDirect(ctx, client, c.GetLogger(), "consume", policy, !noWait, nil, func() error {
 		return run.process(ctx, files)
 	})
 	if err != nil {
@@ -260,6 +271,39 @@ func runDirect(c *container.Container, noWait bool) error {
 
 	triggerOrphanScan(c)
 	return nil
+}
+
+// newConsumeHandler constructs the ingest handler over the store the execution and its activated children
+// share; the child catalog carries only the two dedup hooks activation derives keys with.
+func newConsumeHandler(c *container.Container, store *task.Store, client *database.Client) (task.Handler, error) {
+	consumer, err := consumption.NewConsumer(c.GetConfig(), c.GetLogger(), client)
+	if err != nil {
+		return nil, err
+	}
+	childCatalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Enrich:    enrichment.DedupKey,
+		types.Task.Type.Thumbnail: service.ThumbnailDedupKey,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("task catalog: %w", err)
+	}
+	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.GetLogger(), childCatalog), nil
+}
+
+// newEnrichHandler constructs the enrich handler over the command's own enricher.
+func newEnrichHandler(c *container.Container, client *database.Client) (task.Handler, error) {
+	tag, err := c.GetTagService()
+	if err != nil {
+		return nil, fmt.Errorf("tag service: %w", err)
+	}
+	enricher := enrichment.NewEnricher(c.GetConfig(), c.GetLogger(), client, tag, c.GetMatcherClient())
+	return enrichment.NewEnrichTaskHandler(enricher, client.Queries, c.GetLogger()), nil
+}
+
+// newThumbnailHandler constructs the thumbnail handler over the command's own thumbnail tools.
+func newThumbnailHandler(c *container.Container, client *database.Client) (task.Handler, error) {
+	thumbnailTools := tools.NewRunner(c.GetLogger(), c.GetConfig(), []string{"thumbnail"})
+	return consumption.NewThumbnailTaskHandler(thumbnailTools, client.Queries, c.GetLogger(), c.GetConfig), nil
 }
 
 // directRun holds the handlers and counters of one immediate inbox run: tasks counts every attempted step
@@ -275,17 +319,22 @@ type directRun struct {
 }
 
 func newDirectRun(c *container.Container, thumbnailsEnabled bool) (*directRun, error) {
-	consumeHandler, err := c.GetHandler(types.Task.Type.Consume)
+	client, err := c.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+	store := task.NewStore(client)
+	consumeHandler, err := newConsumeHandler(c, store, client)
 	if err != nil {
 		return nil, fmt.Errorf("consume handler: %w", err)
 	}
-	enrichHandler, err := c.GetHandler(types.Task.Type.Enrich)
+	enrichHandler, err := newEnrichHandler(c, client)
 	if err != nil {
 		return nil, fmt.Errorf("enrich handler: %w", err)
 	}
 	run := &directRun{consume: consumeHandler, enrich: enrichHandler, showThumbs: thumbnailsEnabled}
 	if thumbnailsEnabled {
-		thumbnailHandler, err := c.GetHandler(types.Task.Type.Thumbnail)
+		thumbnailHandler, err := newThumbnailHandler(c, client)
 		if err != nil {
 			return nil, fmt.Errorf("thumbnail handler: %w", err)
 		}
@@ -622,11 +671,14 @@ func triggerOrphanScan(c *container.Container) {
 		c.GetLogger().Error("", "orphan scan: get client: %v", err)
 		return
 	}
-	enqueuer, err := c.GetEnqueuer()
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Consume: consumption.DedupKey,
+	}, nil)
 	if err != nil {
-		c.GetLogger().Error("", "orphan scan: get enqueuer: %v", err)
+		c.GetLogger().Error("", "orphan scan: task catalog: %v", err)
 		return
 	}
+	enqueuer := task.NewEnqueuer(client, catalog)
 	svc := service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), enqueuer)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

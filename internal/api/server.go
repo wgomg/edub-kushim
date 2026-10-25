@@ -17,11 +17,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/auth"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/llm"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
-	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/static"
@@ -100,7 +101,19 @@ func (s *Server) rebuild(client *database.Client) {
 
 	configStore := task.NewStore(client)
 
-	catalog := container.NewCatalog(client.Queries, func() *config.Config { return s.cfg.Load() }, s.logger)
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Consume:        consumption.DedupKey,
+		types.Task.Type.Enrich:         enrichment.DedupKey,
+		types.Task.Type.ThumbBackfill:  service.ThumbnailDedupKey,
+		types.Task.Type.Config:         configtask.ConfigDedupKey,
+		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
+		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
+		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
+		types.Task.Type.TagAudit:       task.ConstantDedupKey(curation.TagAuditDedupKey),
+	}, nil)
+	if err != nil {
+		s.logger.Fatal("build task catalog: ", err)
+	}
 	enqueuer := task.NewEnqueuer(client, catalog)
 
 	services.Orphaned = service.NewOrphaned(client.Queries, cfg, s.logger, enqueuer)

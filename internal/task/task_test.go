@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -388,6 +389,92 @@ func TestEnqueuerCustomID(t *testing.T) {
 	}})
 	testutil.AssertNoError(t, err, "enqueue")
 	testutil.AssertEqual(t, result.TaskIDs[0], "my-id", "custom id")
+}
+
+// newHooklessEnqueuerForTest wires an enqueuer whose catalog defines one type without a dedup hook: the
+// shape a boundary produces when it wires only part of its enqueue surface.
+func newHooklessEnqueuerForTest(t *testing.T) (*Enqueuer, *database.Client) {
+	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	_, db := database.NewTestQueries(t)
+	database.ResetTestDatabase(db)
+	client := database.NewClient(db)
+	catalog := testCatalog{defs: map[types.TaskType]TypeDefinition{
+		types.Task.Type.Consume: {
+			Type:     types.Task.Type.Consume,
+			DedupKey: func(json.RawMessage) string { return "consume-key" },
+		},
+		types.Task.Type.Backup: {Type: types.Task.Type.Backup},
+	}}
+	return NewEnqueuer(client, catalog), client
+}
+
+// TestEnqueuerRefusesPendingTaskWithoutHook pins the loud-failure rule: a pending task whose type carries
+// no hook fails the whole enqueue instead of creating keyless work.
+func TestEnqueuerRefusesPendingTaskWithoutHook(t *testing.T) {
+	enqueuer, client := newHooklessEnqueuerForTest(t)
+	defer client.DB().Close()
+	ctx := context.Background()
+
+	spec, err := NewBatchSpec(types.Batch.Origin.CLI, "")
+	testutil.AssertNoError(t, err, "spec")
+	_, err = enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type:   types.Task.Type.Backup,
+		TaskID: "hookless-pending",
+	}})
+	testutil.AssertError(t, err, "pending task without a hook must be refused")
+	if !strings.Contains(err.Error(), "no dedup hook") {
+		t.Fatalf("error = %v, want it to name the missing dedup hook", err)
+	}
+	if _, getErr := client.Queries.GetTaskByTaskID(ctx, "hookless-pending"); getErr == nil {
+		t.Fatal("a refused enqueue must write nothing")
+	}
+}
+
+// TestEnqueuerWaitingChildWithoutHookIsAllowed pins that the hook guard covers pending work only: a
+// waiting child stays keyless until activation derives its key from the hook-bearing handler.
+func TestEnqueuerWaitingChildWithoutHookIsAllowed(t *testing.T) {
+	enqueuer, client := newHooklessEnqueuerForTest(t)
+	defer client.DB().Close()
+	ctx := context.Background()
+
+	spec, err := NewBatchSpec(types.Batch.Origin.CLI, "")
+	testutil.AssertNoError(t, err, "spec")
+	result, err := enqueuer.EnqueueBatch(ctx, spec, []TaskSpec{{
+		Type:    types.Task.Type.Consume,
+		TaskID:  "hookless-parent",
+		Payload: json.RawMessage(`{"key":"p"}`),
+	}, {
+		Type:         types.Task.Type.Backup,
+		TaskID:       "hookless-child",
+		ParentTaskID: "hookless-parent",
+		Status:       types.Task.Status.Waiting,
+	}})
+	testutil.AssertNoError(t, err, "waiting child of a hookless type may be enqueued")
+	testutil.AssertEqual(t, len(result.TaskIDs), 2, "both tasks created")
+
+	child, err := client.Queries.GetTaskByTaskID(ctx, "hookless-child")
+	testutil.AssertNoError(t, err, "get child")
+	if child.DedupKey.Valid {
+		t.Fatalf("waiting child carries dedup key %q before activation", child.DedupKey.String)
+	}
+}
+
+// TestEnqueuerDedupKeyPrecheck pins the coverage pre-check the config API relies on: a hooked type derives
+// its key and a hookless one errors, never an empty key that reads as no key at all.
+func TestEnqueuerDedupKeyPrecheck(t *testing.T) {
+	enqueuer, client := newHooklessEnqueuerForTest(t)
+	defer client.DB().Close()
+
+	key, err := enqueuer.DedupKey(types.Task.Type.Consume, json.RawMessage(`{}`))
+	testutil.AssertNoError(t, err, "derive the hooked key")
+	testutil.AssertEqual(t, key, "consume-key", "hooked key")
+
+	if _, err := enqueuer.DedupKey(types.Task.Type.Backup, json.RawMessage(`{}`)); err == nil {
+		t.Fatal("a hookless type must be an error, not an empty key")
+	}
 }
 
 func TestRunnerCompletesTask(t *testing.T) {

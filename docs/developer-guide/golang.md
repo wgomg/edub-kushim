@@ -1174,9 +1174,12 @@ are plain `switch args[0]` dispatch (`internal/ops/cli/task.go:31`).
 
 ### The DI container
 
-`container.Container` (`internal/ops/container/container.go`) is the composition root
-for the CLI: it lazily builds the logger, DB client, services, and tools, and
-holds the `atomic.Pointer[config.Config]` for hot reload (§10).
+`container.Container` (`internal/ops/container/container.go`) is the CLI side of
+the process: one lazily built dependency graph per invocation, so commands
+share the same connection, clients and caches, and the hot-reload
+`atomic.Pointer[config.Config]` lives here (§10). Task catalogs, enqueuers,
+handler registries and pools are built at each command's own boundary, not
+here.
 
 ### Flags: a tiny parser
 

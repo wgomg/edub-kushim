@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
@@ -36,6 +38,24 @@ type MirrorPayload struct {
 	Path     string         `json:"path"`
 	Interval float64        `json:"interval"`
 	Schedule ScheduleTiming `json:"schedule"`
+}
+
+// MirrorDedupKey derives the mirror task's dedup key from the UTC day: one mirror per day.
+func MirrorDedupKey(json.RawMessage) string {
+	return fmt.Sprintf("mirror:%s", time.Now().UTC().Format(dedupKeyDateLayout))
+}
+
+// MirrorSpecs returns the single mirror task a request enqueues; the caller supplies the origin spec.
+func MirrorSpecs(path string, interval float64, timing ScheduleTiming) ([]task.TaskSpec, error) {
+	payload, err := json.Marshal(MirrorPayload{
+		Path:     path,
+		Interval: interval,
+		Schedule: timing,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal mirror payload: %w", err)
+	}
+	return []task.TaskSpec{{Type: types.Task.Type.Mirror, Payload: payload}}, nil
 }
 
 // Handle mirrors the storage tree and returns the mirror stats as the result. The runner owns the claimed
