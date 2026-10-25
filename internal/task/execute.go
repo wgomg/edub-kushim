@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -214,4 +216,247 @@ func (r *Runner) completeTaskWithRetry(ctx context.Context, task database.Task, 
 			backoff *= 2
 		}
 	}
+}
+
+// Execution cadence of a leased batch execution: the owner heartbeat interval, the per-worker claim
+// cadence and the monitor tick that observes pause, cancellation and completion.
+const (
+	batchHeartbeatInterval = 5 * time.Second
+	batchClaimCadence      = time.Second
+	batchMonitorInterval   = 500 * time.Millisecond
+	batchShutdownTimeout   = 5 * time.Second
+)
+
+// BatchRunDeps carries the dependencies of one leased batch execution: the database client and logger,
+// the type catalog that declares per-type worker counts, the store and registry the runner dispatches
+// through, the retry budget entry repair applies, and the host-provided file quarantine hook. The hook
+// keeps this package free of the documents package: the command layer supplies the consume-side cleanup.
+// Client, Logger, Catalog, Store and Registry are required; a nil Quarantine disables file quarantine.
+type BatchRunDeps struct {
+	Client     *database.Client
+	Logger     *log.Logger
+	Catalog    TypeCatalog
+	Store      *Store
+	Registry   *Registry
+	MaxRetries int32
+	Quarantine func(ctx context.Context, taskIDs []string) error
+}
+
+// BatchRunResult reports how a leased batch execution ended: the batch status the settle wrote or found,
+// and whether the run stopped because the batch was paused.
+type BatchRunResult struct {
+	Status types.BatchStatus
+	Paused bool
+}
+
+// RunBatch is the leased task-CLI child. It adopts the execution lease the launcher claimed under token and
+// heartbeats it from adoption on, repairs the batch's entry state (processing-task reset and the host's file
+// quarantine), keeps the batch's locks fresh and drains their waiters, runs the batch's pending tasks through
+// the registered handlers — one worker set per task type, sized by that type's declared concurrency and
+// settling the batch after every transition — then sweeps failed consume files, settles the batch and
+// releases the lease. A batch paused before or during the run returns Paused without settling. An aborted
+// run — failed entry repair, failed drain, interrupted context or failed settle — releases its heartbeats,
+// lease and locks, then requeues the batch, because releasing the lease removes the reaper's handle on it.
+// A settle refused with tasks still active is logged and left to recovery. The lease is always released.
+func RunBatch(ctx context.Context, deps BatchRunDeps, batchID string, token uuid.UUID) (BatchRunResult, error) {
+	if deps.Client == nil || deps.Logger == nil || deps.Catalog == nil || deps.Store == nil || deps.Registry == nil {
+		return BatchRunResult{}, fmt.Errorf("run batch %s: incomplete dependencies", batchID)
+	}
+
+	batch, err := deps.Client.Queries.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return BatchRunResult{}, fmt.Errorf("batch %s not found", batchID)
+		}
+		return BatchRunResult{}, fmt.Errorf("get batch %s: %w", batchID, err)
+	}
+	switch {
+	case batch.Status == types.Batch.Status.Paused:
+		return BatchRunResult{Paused: true}, nil
+	case batch.Status != types.Batch.Status.Processing:
+		return BatchRunResult{Status: batch.Status}, fmt.Errorf("batch %s is %s, not a claimed processing batch", batchID, batch.Status)
+	}
+
+	typesPresent, err := deps.Client.Queries.ListBatchTaskTypes(ctx, sql.NullString{String: batchID, Valid: true})
+	if err != nil {
+		return BatchRunResult{}, fmt.Errorf("list batch task types: %w", err)
+	}
+	if len(typesPresent) == 0 {
+		return BatchRunResult{}, fmt.Errorf("batch %s has no task types", batchID)
+	}
+	taskTypes := make([]types.TaskType, 0, len(typesPresent))
+	for _, value := range typesPresent {
+		taskTypes = append(taskTypes, types.TaskType(value))
+	}
+
+	// the batch's held locks, computed before adoption so the teardown can release them on every path
+	var held []types.LockName
+	for _, taskType := range taskTypes {
+		held = UnionLockNames(held, types.LockDeclarationFor(taskType).Holds)
+	}
+	holdsHeld := len(held) > 0
+	lockToken := uuid.NullUUID{UUID: token, Valid: true}
+	heldNames := lockNameStrings(held)
+
+	owner := NewOwner(deps.Client, token.String(), os.Getpid())
+	if err := owner.Adopt(ctx, batchID); err != nil {
+		return BatchRunResult{}, err
+	}
+
+	// the lease is heartbeated from adoption on: entry repair, quarantine and the drain can outlast the 15s
+	// lease window, and a stale lease makes the reaper release the batch and signal this still-live child
+	ownerHeartbeat := NewHeartbeat(owner, batchHeartbeatInterval, deps.Logger)
+	ownerHeartbeat.Start(ctx)
+	stopHeldHeartbeat := func() {}
+	if holdsHeld {
+		stopHeldHeartbeat = database.StartLockHeartbeat(ctx, deps.Client.Queries, deps.Logger,
+			LockHeartbeatInterval, held, lockToken)
+	}
+
+	requeue := false
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), batchShutdownTimeout)
+		defer cancel()
+		ownerHeartbeat.Stop()
+		stopHeldHeartbeat()
+		if err := owner.Release(releaseCtx, batchID); err != nil {
+			deps.Logger.Error("", "release batch %s: %v", batchID, err)
+		}
+		if err := releaseLocksForToken(releaseCtx, deps.Client.Queries, lockToken, heldNames); err != nil {
+			deps.Logger.Error("", "release batch %s locks: %v", batchID, err)
+		}
+		// a released lease is invisible to the reaper, so an aborted run hands the batch back to the queue
+		// itself; the guard refuses a batch a settle, pause or cancel already moved out of processing
+		if !requeue {
+			return
+		}
+		if rows, err := deps.Client.Queries.RequeueProcessingBatch(releaseCtx, batchID); err != nil {
+			deps.Logger.Error("", "requeue batch %s: %v", batchID, err)
+		} else if rows > 0 {
+			deps.Logger.Info("", "batch %s: requeued after an aborted execution", batchID)
+		}
+	}()
+
+	reset, err := ResetProcessingTasksForClaim(ctx, deps.Client, batchID, deps.MaxRetries)
+	if err != nil {
+		requeue = true
+		return BatchRunResult{}, fmt.Errorf("reset processing tasks for batch %s: %w", batchID, err)
+	}
+	if reset.Reset > 0 {
+		deps.Logger.Info("", "batch %s: reset %d orphaned processing tasks", batchID, reset.Reset)
+	}
+	if deps.Quarantine != nil {
+		if err := deps.Quarantine(ctx, reset.ConsumeTaskIDs()); err != nil {
+			deps.Logger.Error("", "quarantine files for batch %s: %v", batchID, err)
+		}
+	}
+
+	// the claim acquired the batch's holds: keep them fresh and drain the in-flight tasks waiting on them;
+	// an ingest batch holds nothing and skips all of it
+	if holdsHeld {
+		if err := database.WaitForTaskDrain(ctx, deps.Client.Queries, deps.Logger, "batch "+batchID,
+			types.TaskTypesWaitingOn(held...), nil); err != nil {
+			requeue = true
+			return BatchRunResult{}, fmt.Errorf("hold batch %s locks: %w", batchID, err)
+		}
+	}
+
+	deps.Store.SetBatchHoldsAcquired(holdsHeld)
+	deps.Store.SetOwnerID(token.String())
+
+	runCtx, stopWorkers := context.WithCancel(ctx)
+	defer stopWorkers()
+
+	// one worker set per task type; the declared count is read once, when the set is sized
+	runner := NewRunner(deps.Store, deps.Registry, deps.Logger)
+	var workers sync.WaitGroup
+	for _, taskType := range taskTypes {
+		workersForType := 1
+		if def, lookupErr := deps.Catalog.Definition(taskType); lookupErr == nil && def.Concurrency > 1 {
+			workersForType = def.Concurrency
+		}
+		for range workersForType {
+			workers.Go(func() {
+				for {
+					select {
+					case <-runCtx.Done():
+						return
+					case <-time.After(batchClaimCadence):
+					}
+					if err := runner.Next(runCtx, taskType); err != nil {
+						deps.Logger.Error("", "%s worker: %v", taskType, err)
+					}
+				}
+			})
+		}
+	}
+
+	stopAndWait := func(op string) {
+		stopWorkers()
+		done := make(chan struct{})
+		go func() { workers.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(batchShutdownTimeout):
+			deps.Logger.Info("", "batch %s: %s worker shutdown timed out", batchID, op)
+		}
+	}
+
+	ticker := time.NewTicker(batchMonitorInterval)
+	defer ticker.Stop()
+
+	paused := false
+monitor:
+	for {
+		select {
+		case <-ctx.Done():
+			stopAndWait("interrupted")
+			requeue = true
+			return BatchRunResult{}, ctx.Err()
+		case <-ticker.C:
+			current, readErr := deps.Client.Queries.GetBatch(ctx, batchID)
+			if readErr != nil {
+				continue
+			}
+			switch {
+			case current.Status == types.Batch.Status.Paused:
+				stopAndWait("paused")
+				paused = true
+				break monitor
+			case current.Status != types.Batch.Status.Processing:
+				stopAndWait("settled")
+				break monitor
+			}
+			counts, countErr := deps.Client.Queries.BatchTaskStatusCounts(ctx, sql.NullString{String: batchID, Valid: true})
+			if countErr != nil {
+				continue
+			}
+			if counts.Pending+counts.Processing == 0 {
+				stopAndWait("completed")
+				break monitor
+			}
+		}
+	}
+	if paused {
+		return BatchRunResult{Paused: true}, nil
+	}
+
+	// the closing sweep covers the files of consumes that exhausted their attempts and the ones a run that
+	// died before its own quarantine left behind, before the terminal write
+	if deps.Quarantine != nil {
+		if err := deps.Quarantine(ctx, nil); err != nil {
+			deps.Logger.Error("", "quarantine files for batch %s: %v", batchID, err)
+		}
+	}
+	exec := Execution{BatchID: batchID, Guard: token, Leased: true}
+	status, err := SettleBatch(ctx, deps.Client, deps.Logger, exec)
+	if err != nil {
+		deps.Logger.Error("", "settle batch %s: %v", batchID, err)
+		requeue = true
+	} else if status == types.Batch.Status.Processing {
+		// a refused settle means tasks are still active (a waiting child nobody cleared): no retry would change
+		// that, so the lease is released and the batch is left to operator recovery
+		deps.Logger.Error("", "batch %s: settle refused — tasks remain active; left to recovery", batchID)
+	}
+	return BatchRunResult{Status: status}, nil
 }

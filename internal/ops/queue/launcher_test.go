@@ -111,27 +111,50 @@ func (s stubCatalog) Definition(taskType types.TaskType) (task.TypeDefinition, e
 // CLI keeps its batches off this dispatcher.
 func TestResolveLaunchTarget(t *testing.T) {
 	batchID := "rlt-batch"
-	queued := task.TypeDefinition{CLI: "consume", BatchSelector: "--batch", Hosts: []types.Host{types.HostQueue}}
+	consume := task.TypeDefinition{CLI: "consume", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue}}
+	enrich := task.TypeDefinition{CLI: "enrich", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue}}
+	thumbnails := task.TypeDefinition{CLI: "thumbnails", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue}}
 	catalog := stubCatalog{
-		types.Task.Type.Consume: queued,
-		types.Task.Type.Enrich:  queued,
-		types.Task.Type.Backup:  {Type: types.Task.Type.Backup},
+		types.Task.Type.Consume:       consume,
+		types.Task.Type.Enrich:        enrich,
+		types.Task.Type.Thumbnail:     thumbnails,
+		types.Task.Type.ThumbBackfill: thumbnails,
+		types.Task.Type.Backup:        {Type: types.Task.Type.Backup},
 		types.Task.Type.TagAudit: {
-			CLI: "kushim-tag-audit-not-on-this-host", BatchSelector: "--batch",
+			CLI: "kushim-tag-audit-not-on-this-host", BatchSelector: "--from-batch",
 			Hosts: []types.Host{types.HostEdub},
 		},
 		types.Task.Type.TagMeasure: {
 			CLI: "tagmeasure", BatchSelector: "--run", Hosts: []types.Host{types.HostQueue},
 		},
+		types.Task.Type.TagIdentity: {
+			CLI: "tagidentity", BatchSelector: "--run", Hosts: []types.Host{types.HostQueue},
+		},
 	}
 
-	t.Run("agreement resolves the shared command", func(t *testing.T) {
+	t.Run("a pure batch resolves to its own command", func(t *testing.T) {
 		target, err := resolveLaunchTarget(catalog, batchID,
-			[]types.TaskType{types.Task.Type.Consume, types.Task.Type.Enrich}, types.HostQueue)
-		testutil.AssertNoError(t, err, "resolve agreeing types")
+			[]types.TaskType{types.Task.Type.Enrich}, types.HostQueue)
+		testutil.AssertNoError(t, err, "resolve a pure enrich batch")
 		testutil.AssertEqual(t, target.batchID, batchID, "batch id")
-		testutil.AssertEqual(t, target.cli, "consume", "shared command")
-		testutil.AssertEqual(t, target.selector, "--batch", "shared selector")
+		testutil.AssertEqual(t, target.cli, "enrich", "the type's own command")
+		testutil.AssertEqual(t, target.selector, "--from-batch", "the batch selector")
+	})
+
+	t.Run("a mixed ingest batch resolves to the owning command", func(t *testing.T) {
+		target, err := resolveLaunchTarget(catalog, batchID,
+			[]types.TaskType{types.Task.Type.Consume, types.Task.Type.Enrich, types.Task.Type.Thumbnail},
+			types.HostQueue)
+		testutil.AssertNoError(t, err, "resolve a mixed ingest batch")
+		testutil.AssertEqual(t, target.cli, "consume", "the consume type owns the batch")
+		testutil.AssertEqual(t, target.selector, "--from-batch", "the batch selector")
+	})
+
+	t.Run("sibling types naming the same command resolve it", func(t *testing.T) {
+		target, err := resolveLaunchTarget(catalog, batchID,
+			[]types.TaskType{types.Task.Type.Thumbnail, types.Task.Type.ThumbBackfill}, types.HostQueue)
+		testutil.AssertNoError(t, err, "resolve a thumbnail-family batch")
+		testutil.AssertEqual(t, target.cli, "thumbnails", "the shared command")
 	})
 
 	t.Run("a batch with no task types is refused", func(t *testing.T) {
@@ -154,9 +177,9 @@ func TestResolveLaunchTarget(t *testing.T) {
 		}
 	})
 
-	t.Run("types that disagree on the executor fail loudly", func(t *testing.T) {
+	t.Run("types outside the precedence list that disagree fail loudly", func(t *testing.T) {
 		_, err := resolveLaunchTarget(catalog, batchID,
-			[]types.TaskType{types.Task.Type.Consume, types.Task.Type.TagMeasure}, types.HostQueue)
+			[]types.TaskType{types.Task.Type.TagMeasure, types.Task.Type.TagIdentity}, types.HostQueue)
 		if err == nil || !strings.Contains(err.Error(), "disagree") {
 			t.Fatalf("want the disagreement refusal, got %v", err)
 		}

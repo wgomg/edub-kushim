@@ -66,7 +66,8 @@ Hugot v0.7.5 does not serialize inference at the library level either:
 
 Because nothing serializes inference, concurrent requests do not queue up —
 they *contend*. The concurrency source is the queue daemon: `kushim queue` forks
-up to `server.max_concurrent_batches` `kushim consume --batch <id>` processes,
+up to `server.max_concurrent_batches` batch-child processes (`<task cli>
+--from-batch <id>`),
 each creating its own `MatcherClient` (`internal/ops/container/container.go:163`) and
 running up to `enricher.workers` (default 1) enrichment workers. So concurrent
 matcher requests = `max_concurrent_batches × enricher.workers`. (The `edub`

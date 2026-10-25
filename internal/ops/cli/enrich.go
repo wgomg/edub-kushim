@@ -2,30 +2,43 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/ops/consume"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
-	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const enrichHelpText = "Usage: kushim enrich [<document-id>] [--limit N | --all]\n\n" +
-	"  Re-run enrichment (LLM classification).\n\n" +
-	"  With a document id: enqueue that single document.\n" +
-	"  Without a document id: enqueue one batch of live documents, oldest first.\n\n" +
-	"  --limit N         cap the run at N documents (default: consumer.max_files_per_batch)\n" +
-	"  --all             enqueue every live document\n\n" +
-	"  Creates a queued batch with one pending enrich task per document.\n" +
-	"  Start 'kushim queue' to process the batch."
+const enrichHelpText = "Usage: kushim enrich [<document-id>] [--limit N | --all] [--no-wait]\n\n" +
+	"  Re-run enrichment (LLM classification) for stored documents.\n\n" +
+	"  With a document id: enrich that single document now.\n" +
+	"  Without a document id: enrich live documents, oldest first.\n\n" +
+	"  --limit N          cap the run at N documents (default: consumer.max_files_per_batch)\n" +
+	"  --all              select every live document\n" +
+	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n\n" +
+	"  Runs immediately under the maintenance lock, creating no queue rows.\n" +
+	"  To enqueue enrichment: kushim batch create enrich <document-id>... | --all | --limit N"
 
 func enrichHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
 
 	if fp.Help(enrichHelpText) {
 		return nil
+	}
+
+	if slices.Contains(args, "--batch") {
+		return fmt.Errorf("--batch is now --from-batch: run 'kushim batch run <id>' to execute a queued batch, " +
+			"or 'kushim batch create enrich' to enqueue one")
 	}
 
 	var all bool
@@ -35,6 +48,17 @@ func enrichHandler(c *container.Container, args []string) error {
 	if err := fp.String("--limit", &limitRaw); err != nil {
 		return err
 	}
+
+	var batchID, execTokenParam string
+	if err := fp.String("--from-batch", &batchID); err != nil {
+		return err
+	}
+	if err := fp.String("--exec-token", &execTokenParam); err != nil {
+		return err
+	}
+
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
 
 	limit := 0
 	if limitRaw != "" {
@@ -54,11 +78,21 @@ func enrichHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("unknown flag: %s", rest[0])
 	}
 
+	if batchID != "" || execTokenParam != "" {
+		if len(rest) > 0 || all || limit > 0 {
+			return fmt.Errorf("--from-batch cannot be combined with a document selection")
+		}
+		if batchID == "" {
+			return fmt.Errorf("--exec-token requires --from-batch <id>")
+		}
+		return runEnrichBatch(c, batchID, execTokenParam)
+	}
+
 	if len(rest) == 1 {
 		if all || limit > 0 {
 			return fmt.Errorf("a document ID cannot be combined with --limit or --all")
 		}
-		return enrichDocument(c, rest[0])
+		return enrichDocumentsDirect(c, []string{rest[0]}, noWait)
 	}
 
 	if all && limit > 0 {
@@ -73,79 +107,115 @@ func enrichHandler(c *container.Container, args []string) error {
 		effectiveLimit = int64(c.GetConfig().Consumer.MaxFilesPerBatch)
 	}
 
-	return enrichMany(c, effectiveLimit)
+	return enrichLiveDocumentsDirect(c, effectiveLimit, noWait)
 }
 
-func enrichDocument(c *container.Container, documentID string) error {
-	svc, err := newReEnrichService(c)
+// runEnrichBatch executes one claimed enrich batch and adds the batch's enrich bookend on completion.
+func runEnrichBatch(c *container.Container, batchID, execTokenParam string) error {
+	result, err := consume.RunClaimedBatch(c, batchID, execTokenParam, nil)
 	if err != nil {
 		return err
 	}
-
-	spec, err := cliBatchSpec()
-	if err != nil {
-		return err
-	}
-
-	batchID, err := svc.ReEnrich(context.Background(), spec, documentID)
-	if err != nil {
-		kind := errs.KindOf(err)
-		switch kind {
-		case errs.KindNotFound:
-			return fmt.Errorf("document %s not found", documentID)
-		case errs.KindConflict:
-			return fmt.Errorf("re-enrich already queued for document %s", documentID)
-		default:
-			return fmt.Errorf("re-enrich: %w", err)
-		}
-	}
-
-	fmt.Printf("Batch %s queued — run 'kushim queue' to process\n", batchID)
-	return nil
-}
-
-func enrichMany(c *container.Container, limit int64) error {
-	svc, err := newReEnrichService(c)
-	if err != nil {
-		return err
-	}
-
-	spec, err := cliBatchSpec()
-	if err != nil {
-		return err
-	}
-
-	batchID, enqueued, skipped, err := svc.ReEnrichMany(context.Background(), spec, limit)
-	if err != nil {
-		return fmt.Errorf("re-enrich: %w", err)
-	}
-
-	if batchID == "" {
-		if skipped == 0 {
-			fmt.Println("No live documents to enrich")
-			return nil
-		}
-		fmt.Printf("No documents enqueued: %d document(s) already have a pending enrich task\n", skipped)
+	if result.Paused {
 		return nil
 	}
 
-	fmt.Printf("Batch %s queued with %d enrich task(s)", batchID, enqueued)
-	if skipped > 0 {
-		fmt.Printf(", %d skipped (an enrich task is already pending)", skipped)
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
 	}
-	fmt.Println(" — run 'kushim queue' to process")
+	enrichment.LogBatchBookend(context.Background(), client.Queries, c.GetLogger(), batchID, result.Status)
 	return nil
 }
 
-func newReEnrichService(c *container.Container) (*service.ReEnrich, error) {
+// enrichLiveDocumentsDirect selects live documents, oldest first, capped by limit (0 means no cap).
+func enrichLiveDocumentsDirect(c *container.Container, limit int64, noWait bool) error {
 	client, err := c.GetClient()
 	if err != nil {
-		return nil, fmt.Errorf("database: %w", err)
+		return fmt.Errorf("database: %w", err)
 	}
 
-	enqueuer, err := c.GetEnqueuer()
+	documentIDs, err := client.Queries.ListLiveDocumentIDs(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("enqueuer: %w", err)
+		return errs.FromDB(err, "list live documents")
 	}
-	return service.NewReEnrich(client.Queries, enqueuer), nil
+	if limit > 0 && int64(len(documentIDs)) > limit {
+		documentIDs = documentIDs[:limit]
+	}
+	if len(documentIDs) == 0 {
+		fmt.Println("No live documents to enrich")
+		return nil
+	}
+
+	return enrichDocumentsDirect(c, documentIDs, noWait)
+}
+
+// enrichDocumentsDirect enriches the selected documents immediately under the manual lock path. A failed
+// document is reported and the run continues; a provider credit error aborts it. The command exits non-zero
+// when any document failed.
+func enrichDocumentsDirect(c *container.Container, documentIDs []string, noWait bool) error {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+
+	ctx := context.Background()
+	if len(documentIDs) == 1 {
+		if _, err := client.Queries.GetDocument(ctx, documentIDs[0]); err != nil {
+			if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
+				return fmt.Errorf("document %s not found", documentIDs[0])
+			}
+			return fmt.Errorf("get document %s: %w", documentIDs[0], err)
+		}
+	}
+
+	catalog, err := c.GetCatalog()
+	if err != nil {
+		return fmt.Errorf("task catalog: %w", err)
+	}
+	def, err := catalog.Definition(types.Task.Type.Enrich)
+	if err != nil {
+		return fmt.Errorf("enrich definition: %w", err)
+	}
+	handler, err := c.GetHandler(types.Task.Type.Enrich)
+	if err != nil {
+		return fmt.Errorf("enrich handler: %w", err)
+	}
+
+	failed := 0
+	fmt.Printf("Enriching %d document(s)...\n", len(documentIDs))
+	err = task.RunDirect(ctx, client, c.GetLogger(), "enrich", def.LocksForDirectMode(), !noWait, nil, func() error {
+		for i, documentID := range documentIDs {
+			payload, err := json.Marshal(map[string]string{"document_id": documentID})
+			if err != nil {
+				failed++
+				fmt.Printf("  [%d/%d] %s ... failed: %v\n", i+1, len(documentIDs), documentID, err)
+				continue
+			}
+			_, err = handler.Handle(ctx, task.Task{
+				TaskID:   uuid.New().String(),
+				TaskType: types.Task.Type.Enrich,
+				Payload:  payload,
+			})
+			if err != nil {
+				failed++
+				fmt.Printf("  [%d/%d] %s ... failed: %v\n", i+1, len(documentIDs), documentID, err)
+				if tErr, ok := errors.AsType[*task.Error](err); ok && tErr.PauseBatch {
+					return fmt.Errorf("enrich aborted: %w", err)
+				}
+				continue
+			}
+			fmt.Printf("  [%d/%d] %s ... done\n", i+1, len(documentIDs), documentID)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if failed > 0 {
+		fmt.Printf("\nSummary: %d document(s) — %d successful, %d failed\n", len(documentIDs), len(documentIDs)-failed, failed)
+		return fmt.Errorf("%d document(s) failed", failed)
+	}
+	fmt.Printf("\nSummary: %d document(s) — all successful\n", len(documentIDs))
+	return nil
 }

@@ -983,7 +983,6 @@ func (q *Queries) SettleBatch(ctx context.Context, arg SettleBatchParams) (types
 }
 
 const tryInsertBatchOwner = `-- name: TryInsertBatchOwner :execrows
-
 INSERT INTO batch_owner (batch_id, owner_id, pid, dispatcher_id, acquired_at, last_heartbeat)
 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING
@@ -996,47 +995,12 @@ type TryInsertBatchOwnerParams struct {
 	DispatcherID uuid.NullUUID
 }
 
-// Two-step acquire: try INSERT first, then UPDATE with stale check.
 func (q *Queries) TryInsertBatchOwner(ctx context.Context, arg TryInsertBatchOwnerParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, tryInsertBatchOwner,
 		arg.BatchID,
 		arg.OwnerID,
 		arg.Pid,
 		arg.DispatcherID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const updateBatchOwnerIfStale = `-- name: UpdateBatchOwnerIfStale :execrows
-UPDATE batch_owner SET
-  owner_id = $1,
-  pid = $2,
-  dispatcher_id = NULL,
-  acquired_at = CURRENT_TIMESTAMP,
-  last_heartbeat = CURRENT_TIMESTAMP
-WHERE batch_id = $3
-  AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $4::int)
-       OR owner_id = $1)
-`
-
-type UpdateBatchOwnerIfStaleParams struct {
-	OwnerID           string
-	Pid               int64
-	BatchID           string
-	StaleAfterSeconds int32
-}
-
-// a takeover is a manual execution: it clears any dispatcher identity the replaced lease carried, so the
-// new run never charges the previous dispatcher's slot budget
-func (q *Queries) UpdateBatchOwnerIfStale(ctx context.Context, arg UpdateBatchOwnerIfStaleParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateBatchOwnerIfStale,
-		arg.OwnerID,
-		arg.Pid,
-		arg.BatchID,
-		arg.StaleAfterSeconds,
 	)
 	if err != nil {
 		return 0, err

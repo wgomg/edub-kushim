@@ -32,10 +32,10 @@ type LockPolicy struct {
 
 // TypeDefinition is the declaration of one task type. It is a composition of concern-specific values,
 // not one struct owning every concern: identity, the queued and direct lock policy, dedup derivation,
-// preconditions and the typed task-set builder. Fields are added only by the stage that consumes them
-// (CLI surface, hosts, concurrency, schedules), into this same type. It never carries a handler, an
-// attach pass, handler construction, a legacy source, a pool interval or worker count, and a pooling
-// predicate or a lifecycle-ownership flag; handlers stay in the registry.
+// preconditions, the typed task-set builder, the CLI surface, hosting eligibility and the worker count.
+// Fields are added only by the stage that consumes them, into this same type. It never carries a handler,
+// an attach pass, handler construction, a legacy source, a pool interval, a pooling predicate or any
+// lifecycle-ownership flag; handlers stay in the registry.
 type TypeDefinition struct {
 	Type  types.TaskType
 	Locks LockPolicy
@@ -43,15 +43,19 @@ type TypeDefinition struct {
 	// DirectLocks overrides the lock policy for direct CLI runs; nil uses the queued Locks set.
 	DirectLocks *LockPolicy
 
-	// CLI names the command that executes one queued batch of this type in batch mode, such as "consume";
-	// an empty value means the type has no batch-mode executor yet, so the dispatcher refuses its batches
-	// and the launcher reports the missing command as the reason.
+	// CLI names the command that executes this type's tasks in batch mode, such as "consume"; an empty
+	// value means the type has no batch-mode task CLI yet, so the dispatcher refuses its batches and the
+	// launcher reports the missing command as the reason.
 	CLI string
-	// BatchSelector is the flag CLI takes the batch id on, such as "--batch"; the launcher always forks
-	// CLI BatchSelector <batch-id> --exec-token <token>, so the flag and its value form one contract.
+	// BatchSelector is the flag CLI takes the batch id on, such as "--from-batch"; the launcher always
+	// forks CLI BatchSelector <batch-id> --exec-token <token>, so the flag and its value form one contract.
 	BatchSelector string
 	// Hosts lists the processes allowed to dispatch this type's batches.
 	Hosts []types.Host
+
+	// Concurrency is the number of workers the shared execution library runs for this task type inside a
+	// batch execution; a value below 1 means one worker. It replaces the per-type pool worker count.
+	Concurrency int
 
 	DedupKey      func(json.RawMessage) string
 	Preconditions []Precondition

@@ -31,16 +31,27 @@ type launchTarget struct {
 // retried.
 const maxLaunchFailures = 3
 
+// batchExecutorPrecedence orders the task types whose batches may mix: an ingest batch carries consume
+// tasks and their enrich and thumbnail children, so the command that owns the batch's root work executes
+// it. Later stages extend the list as more types gain batch-mode CLIs.
+var batchExecutorPrecedence = []types.TaskType{
+	types.Task.Type.Consume,
+	types.Task.Type.Enrich,
+	types.Task.Type.Thumbnail,
+	types.Task.Type.ThumbBackfill,
+}
+
 // resolveLaunchTarget checks that every task type in the batch is dispatchable on host and resolves the
-// single task CLI that executes the batch. A type is dispatchable when its definition declares the CLI
-// command and the batch selector and lists the host. Types that disagree on the command fail loudly; when
-// Stage 5 gives the consume-family types their own commands, per-type resolution replaces this agreement
-// rule.
+// task CLI that owns the batch. A type is dispatchable when its definition declares the CLI command and
+// the batch selector and lists the host. A pure batch resolves to its own type's command; a mixed batch
+// resolves by batchExecutorPrecedence, because its child roots are the owning type's tasks and one execution
+// must settle the whole batch. Types outside the precedence list that disagree fail loudly.
 func resolveLaunchTarget(catalog task.TypeCatalog, batchID string, taskTypes []types.TaskType, host types.Host) (launchTarget, error) {
 	if len(taskTypes) == 0 {
 		return launchTarget{}, fmt.Errorf("batch %s has no task types", batchID)
 	}
-	target := launchTarget{batchID: batchID}
+
+	resolved := make(map[types.TaskType]task.TypeDefinition, len(taskTypes))
 	for _, taskType := range taskTypes {
 		def, err := catalog.Definition(taskType)
 		if err != nil {
@@ -52,17 +63,24 @@ func resolveLaunchTarget(catalog task.TypeCatalog, batchID string, taskTypes []t
 		if !slices.Contains(def.Hosts, host) {
 			return launchTarget{}, fmt.Errorf("batch %s: task type %s is not dispatchable on host %s", batchID, taskType, host)
 		}
-		if target.cli == "" {
-			target.cli = def.CLI
-			target.selector = def.BatchSelector
-			continue
-		}
-		if def.CLI != target.cli || def.BatchSelector != target.selector {
-			return launchTarget{}, fmt.Errorf("batch %s: task types disagree on the executor (%s %s vs %s %s)",
-				batchID, target.cli, target.selector, def.CLI, def.BatchSelector)
+		resolved[taskType] = def
+	}
+
+	for _, preferred := range batchExecutorPrecedence {
+		if def, ok := resolved[preferred]; ok {
+			return launchTarget{batchID: batchID, cli: def.CLI, selector: def.BatchSelector}, nil
 		}
 	}
-	return target, nil
+
+	first := resolved[taskTypes[0]]
+	for _, taskType := range taskTypes[1:] {
+		def := resolved[taskType]
+		if def.CLI != first.CLI || def.BatchSelector != first.BatchSelector {
+			return launchTarget{}, fmt.Errorf("batch %s: task types disagree on the executor (%s %s vs %s %s)",
+				batchID, first.CLI, first.BatchSelector, def.CLI, def.BatchSelector)
+		}
+	}
+	return launchTarget{batchID: batchID, cli: first.CLI, selector: first.BatchSelector}, nil
 }
 
 // launchBatch forks the target's task CLI in batch mode with the execution token. A non-nil onExit receives

@@ -198,7 +198,7 @@ internal/
 │   │   ├── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
 │   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
 │   ├── consume/            # `kushim consume` child process
-│   │   ├── consume.go      # Enqueues consume+enrich tasks, polls batch progress, cancel subcommand
+ │   │   ├── consume.go      # Direct inbox run + batch mode through the shared library, cancel subcommand
 │   │   └── advisories.go   # Tool-block and ocrmypdf advisories printed before a batch starts
 │   ├── setup/              # Setup command — launches web wizard by default, --cli for terminal mode
 │   │   └── setup.go
@@ -261,20 +261,20 @@ internal/
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
- │   ├── batch.go            # Batch ownership (Owner.Acquire/Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease/token-guarded), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch/ForClaim
+ │   ├── batch.go            # Batch ownership (Owner.Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease/token-guarded), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch/ForClaim
  │   ├── crud.go             # Task CRUD (Get, ListFiltered, CountBatchStatuses, ListBatchSummaries)
  │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
  │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; TypeDefinition contract
  │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
  │   ├── handler.go          # Handler interface — pure work functions
-│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition
+│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition; RunBatch — the leased child (adopt, repair, holds, per-type workers, settle)
 │   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
 │   ├── locks.go            # Resource-lock lifecycle: ErrLockBusy, AcquireLocks (all-or-nothing, canonical order), ReleaseLocksForToken/Batch/StaleHolders, UnionLockNames, LockHeartbeatInterval
 │   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
 │   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
 │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
 │   ├── registry.go         # Task type → handler registry
-│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition
+│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition; RunBatch — the leased child (adopt, repair, holds, per-type workers, settle)
  │   ├── store.go            # Task persistence (ClaimNextPending with guard + batch flip + lock gates and claim-time acquisition, CompleteTask/FailTask token-guarded transitions, ActivateChild activation with dedup discard, Discard)
 │   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)

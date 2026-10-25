@@ -37,8 +37,10 @@ The architecture is deliberately **database-as-queue**: there is no in-memory
 job queue, no Redis, no message broker. Tasks are rows in the `task` table;
 workers *claim* rows with guarded UPDATEs; a `batch_owner` table holds
 per-batch leases; a daemon (`kushim queue`) watches for queued batches, claims
-each one in a guarded transaction, forks its
-`kushim consume --batch <id> --exec-token <token>` child, and reclaims
+each one in a guarded transaction, forks the batch's owning task CLI as
+`<cli> --from-batch <id> --exec-token <token>` (`consume`, `enrich` or
+`thumbnails` today; the ingest family's children hang from their batch, so a
+mixed batch resolves to `consume`), and reclaims
 anything that dies.
 
 The cast of characters:
@@ -52,9 +54,9 @@ The cast of characters:
 | `Runner` | `internal/task/execute.go` | claims under the execution guard, drains and holds locks for holding types, dispatches, completes/fails, and settles |
 | `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
-| batch dispatcher / launcher | `internal/ops/queue/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the task type's CLI in batch mode |
+| batch dispatcher / launcher | `internal/ops/queue/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the batch's owning task CLI in batch mode |
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
-| consume command | `internal/ops/consume/consume.go` | runs one batch |
+| task CLIs | `internal/ops/consume/consume.go`, `internal/ops/cli/enrich.go`, `internal/ops/cli/thumbnails.go` | batch mode: one claimed batch through the shared execution library; direct mode: the action now, no queue rows |
 
 The thirteen task types (declared in `internal/types`, registered in
 `internal/ops/container/container.go`): `consume`, `enrich`, `thumbnail`,
@@ -166,7 +168,7 @@ means) and treats 0 as "someone else got it" (`internal/task/store.go`).
 
 **Every claim records a guard and claims its batch in the same transaction.**
 The guard (`task.claim_token`) is the lease owner's id for a leased execution
-(the consume child, via `SetRunnerOwnerID`) and a fresh UUID per task under
+(the batch's child, via the store's owner id) and a fresh UUID per task under
 every other claim path; the same token later authorizes the guarded
 transitions and settle (§4). The claim transaction also locks the batch row
 (`LockBatchForClaim`) — the selected task's batch must be `queued` or
@@ -188,7 +190,7 @@ a guarded UPDATE with rows-affected acknowledgment** — `ClaimTask`,
 `CompleteBlockingTask`, `FailBlockingTask`, the batch lifecycle writes
 (`SettleBatch`, `SetBatchPaused`, `SetBatchCancelled`, `MarkBatchClaimed`,
 `ResumeBatch`, `RequeueProcessingBatch`), `TryInsertBatchOwner`,
-`UpdateBatchOwnerIfStale`, `HeartbeatBatchOwner`, `ReleaseBatchOwner`,
+`HeartbeatBatchOwner`, `ReleaseBatchOwner`,
 `AcquireLocks`. Nothing is ever "SELECT then UPDATE"; the guard and the write
 are one statement.
 
@@ -266,10 +268,17 @@ batch with `owner_id`, `pid`, `dispatcher_id`, `acquired_at`,
 identity (a UUID minted per process); it is NULL for manual runs, so the
 dispatcher's slot budget counts only its own executions.
 
-### Acquire, adopt and claim
+### Claim and adopt
 
-`Owner.Acquire` (`internal/task/batch.go`) implements the comment in the SQL
-(`batch.sql` — "try INSERT first, then UPDATE with stale check"):
+Leases are created in exactly one place: the dispatcher's `task.ClaimBatch`
+inserts the lease inside the claim transaction with **pid 0** — never alive
+under `task.IsAlive`, so the claim-to-adoption window cannot make reclamation
+signal a process. The forked child then **adopts** it (`Owner.Adopt`:
+`AdoptBatchOwner` sets the child's pid only while the lease still carries the
+same owner token and is still unadopted — one time; an already-adopted,
+released or re-owned lease refuses, so a cancelled, requeued or reclaimed
+batch cannot be resurrected). There is no self-claim path: a batch-mode child
+only ever runs with the execution token a launcher claimed for it.
 
 ```sql
 -- name: TryInsertBatchOwner :execrows
@@ -277,30 +286,10 @@ INSERT INTO batch_owner (batch_id, owner_id, pid, dispatcher_id, acquired_at, la
 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING;
 
--- name: UpdateBatchOwnerIfStale :execrows
-UPDATE batch_owner SET
-  owner_id = @owner_id, pid = @pid, dispatcher_id = NULL, ...
-WHERE batch_id = @batch_id
-  AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
-       OR owner_id = @owner_id);
+-- name: AdoptBatchOwner :execrows
+UPDATE batch_owner SET pid = @pid, last_heartbeat = CURRENT_TIMESTAMP
+WHERE batch_id = @batch_id AND owner_id = @owner_id AND pid = 0;
 ```
-
-If the INSERT affects 0 rows, someone owns the batch — steal only if the
-incumbent is stale (evaluated by the **database clock**; `task.LeaseStaleSeconds`
-is the one window every lease query shares) or **we already own it** (the
-`owner_id = @owner_id` clause makes re-acquire idempotent). Otherwise
-`ErrBatchLocked`. A takeover is a manual execution, so the UPDATE clears
-`dispatcher_id` — the new run is never charged to the previous dispatcher's
-slot budget.
-
-Two further paths create leases. The dispatcher's `task.ClaimBatch` inserts
-the lease inside the claim transaction with **pid 0** — never alive under
-`task.IsAlive`, so the claim-to-adoption window cannot make reclamation signal
-a process — and the forked child **adopts** it (`Owner.Adopt`: same owner id,
-its own pid, one-time; an already-adopted, released or re-owned lease refuses,
-so a cancelled, requeued or reclaimed batch cannot be resurrected). A manual
-`kushim batch run` and bare `kushim consume --batch` self-claim through
-`Owner.Acquire`, whose lease carries no dispatcher identity.
 
 ### Keep-alive: heartbeat every 5 seconds
 
@@ -350,8 +339,9 @@ WHERE t.status = 'pending' AND t.task_type = @task_type
 ORDER BY t.created_at LIMIT 1;
 ```
 
-The `ownerID` is a per-process UUID set via `SetRunnerOwnerID`
-(`consume.go`). Batches without an owner row are invisible to a leased
+The `ownerID` is the execution token the launcher claimed with, set on the
+store by the shared batch execution (`task.RunBatch`). Batches without an
+owner row are invisible to a leased
 runner — the lease table partitions the leased work; pool executions (the
 daemon's maintenance pools, the edub/wizard config pools) claim globally
 under their fresh per-task guard.
@@ -438,7 +428,9 @@ For each claimable candidate the launcher claims it through
 insert the pid-0 lease under a fresh **execution token**, acquire the batch's
 declared holds (verifying only the waits of the holding types; a batch that
 holds nothing claims freely and its tasks gate per claim) — then forks
-`kushim consume --batch <id> --exec-token <token>`. A batch whose locks are
+`kushim consume --from-batch <id> --exec-token <token>` (or the batch's owning
+CLI — `enrich` for re-enrichment batches, `thumbnails` for the
+thumbnail family). A batch whose locks are
 busy is refused (`ErrLockBusy`) and the sweep moves on.
 
 Launch failures — the fork's `Start` error, or a child that exits before
@@ -481,56 +473,113 @@ waiting for the batch's next run.
 
 ---
 
-## 7. The consume command
+## 7. The task CLIs and the shared execution library
 
-`kushim consume --batch <id>` (`internal/ops/consume/consume.go`) is the
-per-batch worker. Batch-mode flow:
+`kushim consume`, `kushim enrich` and `kushim thumbnails` are the ingest
+family's task CLIs (`internal/ops/consume/consume.go`, `internal/ops/cli/enrich.go`,
+`internal/ops/cli/thumbnails.go`). Each has a **batch mode** (`--from-batch <id>
+--exec-token <token>` — the dispatcher and `kushim batch run` fork them) and a
+**direct mode** (no flags: the action runs now, creating no batch or task
+rows). One execution settles the whole batch, so a mixed ingest batch (consume
+tasks with enrich/thumbnail children) forks `consume` and runs every type in
+its batch through the shared library.
 
-1. **Paused-batch hard stop**: a paused batch refuses to run, with a message
-   about resolving the LLM billing issue.
-2. **Own the batch**: with `--exec-token` (set by the dispatcher and
-   `kushim batch run`) the child **adopts** the claim's lease — `Owner.Adopt`
-   records its pid, one-time, refusing a cancelled, requeued or reclaimed
-   batch; it never acquires, because the claim already holds the locks. Bare,
-   it self-claims (`Owner.Acquire`) and refuses a live owner with the
-   incumbent PID (there is no force escalation).
+### Batch mode: the shared claimed-batch executor
+
+`consume.RunClaimedBatch` (`internal/ops/consume/consume.go`) is the wrapper
+all three batch modes share: it parses the execution token (required — the
+bare selector is not a self-claim path and errors pointing at
+`kushim batch run`), assembles the `task.BatchRunDeps`, silences the logger,
+watches signals, streams the progress reporter and calls `task.RunBatch`. The
+paused pre-check prints the resume hint before adoption; the mid-run pause
+prints the re-queue hint. Cancel exits non-zero; pause exits zero.
+
+`task.RunBatch` (`internal/task/execute.go`) is the leased child, one
+function:
+
+1. **Paused-batch hard stop**: a paused batch returns the paused result
+   without adopting.
+2. **Own the batch**: `Owner.Adopt` records the child's pid over the
+   dispatcher's claim — one-time, refusing a cancelled, requeued or reclaimed
+   batch; it never acquires, because the claim already holds the locks. The
+   owner heartbeat starts here, before repair and drain: those steps can
+   outlast the 15 s lease window, and a stale lease makes the reaper release
+   the batch and signal this still-live child.
 3. **Entry repair**: reset orphaned processing tasks from previous crashes
-   and quarantine the files of the returned task identities plus the batch's
-   retries-exhausted consume tasks — the batch is healed before work starts.
-   The adopted path uses `ResetProcessingTasksForClaim`, which keeps the
-   claim's batch holds (the takeover variant releases the batch's locks, so
-   adopting children must not call it).
-4. **Heartbeat + pools**: `SetRunnerOwnerID(ownerID)`, start the heartbeat,
-   start the consume and enrich pools (`pollBatch`), and monitor.
-5. **Terminal status** (`task.SettleBatch`): the single terminal writer, from
+   (`ResetProcessingTasksForClaim`, which keeps the claim's batch holds) and
+   run the host's quarantine hook over the returned consume task identities —
+   the batch is healed before work starts. A repair failure is fatal:
+   continuing with orphaned `processing` rows means no worker can claim them
+   and the run can never reach its completion condition. Quarantine failures
+   stay best-effort.
+4. **Holds**: a batch whose types hold locks (thumbbackfill batches hold
+   `storage`) keeps them fresh — lock heartbeat over the execution token,
+   drain of the types waiting on them, and the store's batch-holds flag so
+   claims verify their waits without re-acquiring. An ingest batch holds
+   nothing and skips all of it.
+5. **Task loop**: one worker set per task type in the batch, sized once at
+   start from the type definition's `Concurrency` (below 1 means one worker);
+   each worker polls `Runner.Next` on the fixed claim cadence — owner-scoped
+   claims, per-task waits verified, handler dispatched, settle after every
+   transition. A monitor tick watches the batch row: `paused` stops the loop
+   (the pause already released lease and locks), a non-`processing` status
+   stops it without settling, and zero pending+processing tasks ends the run.
+6. **Terminal status** (`task.SettleBatch`): the single terminal writer, from
    task outcomes — `failed` if any task failed, else `completed`; already-
-   terminal states return their stored status without a write. The settle
-   logs one INFO line with the completed/failed/cancelled counts; the
-   consume child then adds the enrich bookend (`logEnrichBookend`) — the
-   aggregated per-document enrich counts over decoded completed enrich
-   results. `ErrBatchPaused` is swallowed as success (the pause was the
-   outcome). Before the final settle the run drains the still-`waiting`
-   children whose parents are no longer active (`QuarantineFailedFiles`
-   without an id set covers the whole batch), because a settle with an
+   terminal states return their stored status without a write. A settle error
+   is logged and the batch requeued; a settle refused with tasks still active
+   (a waiting child nobody clears) is logged loudly — the wrapper also warns
+   on stdout — and the batch is left to operator recovery, because no retry
+   would clear the child. Before the final settle the run sweeps the batch's
+   failed consume files
+   (`QuarantineFailedFiles` without an id set), because a settle with an
    active-waiting child would refuse and leave the settlement to nobody.
-6. **Cleanup**: stop heartbeat, release the lease with a 5s timeout, trigger
-   a post-batch orphan scan (`triggerOrphanScan`, 5-minute budget).
+7. **Cleanup**: stop heartbeats, release the lease and the execution's holds
+   with a bounded context, then requeue the batch if the run aborted before
+   settling — a released lease is invisible to the reaper, so the child hands
+   the batch back to the queue itself (the guarded `processing → queued`
+   write refuses a batch a settle, pause or cancel already finished). The
+   settle and pause transactions release the batch locks themselves.
 
-`pollBatch` is the progress monitor: a 500ms ticker
-watches the batch row, prints per-file transitions (pending→processing,
-→completed, →failed) from a `previous` map, detects the pause transition
-(`ErrBatchPaused`), and prints the summary when `remain == 0`. While a task
-is `processing`, it also prints live `progress.step`/`detail` updates (e.g.
-`ocr page 3/12`) whenever the recorded progress changes.
+Command-level extras live with their verbs: the enrich bookend
+(`enrichment.LogBatchBookend`, the aggregated per-document enrich counts over
+decoded completed enrich results) runs for the consume and enrich wrappers,
+and the post-batch orphan scan (`triggerOrphanScan`, 5-minute budget) runs for
+the consume wrapper — ingestion is what creates orphans.
+
+### Direct mode
+
+No flags means the command runs the selected work immediately under
+`task.RunDirect` with the type's direct-mode lock declaration — `consume` and
+`enrich` hold `maintenance`; `thumbnails` holds `storage` and waits
+`maintenance` — and never enqueues. Direct `consume` scans the inbox and, per
+file, runs the registered consume/enrich/thumbnail handlers with synthetic
+tasks (payloads without child links), reporting each step and continuing past
+failures; a provider credit/balance error (`PauseBatch`-flagged) aborts the
+remaining run; the command exits non-zero when anything failed. Direct
+`enrich` selects documents (one id, `--limit N`, or `--all` over live
+documents); direct `thumbnails` selects through the thumbbackfill builder
+(`--all`) or the no-thumbnail lookup (`--document <id>`), gated by
+`consumer.thumbnail.enabled` with `--force`. `--no-wait` makes a cron
+invocation exit non-zero instead of waiting for a lock or in-flight work.
+Enqueueing the same work is `kushim batch create`'s job.
+
+### The progress reporter
+
+`streamBatchProgress` is a read-only goroutine: a 500ms ticker prints per-file
+transitions (pending→processing, →completed, →failed) from a `previous` map,
+live `progress.step`/`detail` updates while a task is `processing` (e.g.
+`ocr page 3/12`), and the summary when no pending or processing task is left.
+The library owns pause, completion and settlement; the reporter only observes.
 
 ### Non-consume batches: backup, mirror, config
 
 Backup and mirror tasks get real batch rows (origin `schedule`, status
 `queued`) so they flow through the batches UI instead of being invisible
 orphans (`maybeScheduleTask`, `queue.go`); config batches already did this.
-The queue daemon never forks consume workers for these batches: the
-dispatcher's eligibility comes from the type definitions — the batch-mode CLI
-surface these types have not declared yet — and the slot budget excludes
+The queue daemon never forks these batches' task CLIs — they have none yet:
+the dispatcher's eligibility comes from the type definitions — the batch-mode
+CLI surface these types have not declared yet — and the slot budget excludes
 lock-holding batches anyway, so no watchdog holds a
 `max_concurrent_batches` slot for the duration of a long backup.
 
@@ -541,13 +590,13 @@ the batch `queued → processing` in the claim transaction, and settles through
 is watching. Because there is no `batch_owner` row on that path, the service
 layer forces `Orphaned = false` for batches with a non-consume task —
 otherwise the UI would show a bogus orphan state and a Resume button that
-forks a consume worker (`internal/service/batch.go`).
+forks a task CLI.
 
-Standalone mode (no daemon) refuses to run while any
-paused batch exists, scans the inbox, enqueues the consume+enrich task pairs,
-and — only if no other batch is queued — runs the same
-owner/heartbeat/pollBatch sequence in-process; the leased execution settles
-through `SettleBatch` like the daemon-forked one.
+Manual ingest needs no daemon: direct `kushim consume` runs the inbox now
+under the maintenance lock (no queue rows, `--no-wait` for unattended runs),
+and `kushim batch create consume` enqueues an ingest batch for the dispatcher
+— refusing while credit-paused batches exist, the same no-bypass rule the
+polling scan enforces.
 
 ---
 
@@ -734,8 +783,8 @@ reclamation.
 swept only when no fresh resource-lock row belongs to its execution: the
 sweep's exemption matches a lock whose `owner_token` equals the task's
 `claim_token` (a claim-held lock) or whose `batch_id` equals the task's batch
-(a batch-held lock — the consume child of a `thumbbackfill` batch holds
-`storage` for the whole run under its own batch-owner token), with the row's
+(a batch-held lock — the dispatcher's claim for a `thumbbackfill` batch holds
+`storage` for the whole run under its execution token), with the row's
 `started_at` key inside the 30-minute freshness window. A live holder
 (5-minute heartbeat refreshing) keeps both the task row and the lock; a
 crashed holder is recovered exactly once. The sweep transaction releases
@@ -919,9 +968,9 @@ run: the claim transaction takes `storage` under the execution token
 (verifying the waits the holding types declare, so a thumbbackfill batch is
 refused while `maintenance` is held), and the child keeps the holds fresh —
 lock heartbeat, drain of the declared waiters, `SetBatchHoldsAcquired` —
-while its pool runs claims that verify waits but skip acquisition. Bare
-`kushim consume --batch` (self-claim) acquires the batch's holds itself,
-deferring in-process until they are free. New `thumbnail` claims from ingest
+while its worker set runs claims that verify waits but skip acquisition.
+There is no self-claim path: the child only runs with the execution token a
+launcher claimed for it. New `thumbnail` claims from ingest
 batches defer until the backfill settles — per-document thumbnails never
 write while the storage tree is being bulk-walked. The release happens when
 the run ends; reclamation releases by batch id, and the stale sweep's
@@ -929,7 +978,11 @@ exemption covers both the claim token and the batch id (§10).
 
 Direct CLI commands run under the manual holder path (`task.RunDirect`,
 `internal/task/direct.go`): acquire the policy's locks — `LocksForDirectMode`
-defaults to the queued set — all-or-nothing with a NULL token, heartbeat, drain, run the body, release. Waiting is the default; `--no-wait`
+defaults to the queued set, and a type's `DirectLocks` overrides it (consume
+and enrich hold `maintenance`; `thumbnails` holds `storage` and waits
+`maintenance`) — all-or-nothing with a NULL token, heartbeat, drain, run the body, release. The release is
+scoped to the locks the run itself acquired: manual runs share the NULL token,
+so releasing every name would drop a concurrent manual run's lock. Waiting is the default; `--no-wait`
 exits non-zero instead of waiting for a lock or drain.
 `kushim backup` works with polling enabled — it waits for the lock and drains
 rather than refusing. `kushim restore` and `kushim migrate database` keep
@@ -1043,19 +1096,21 @@ applies re-arm the flags through the table triggers (migration `00044`;
 "changed since it last ran".
 
 The **thumbbackfill** task (`internal/documents/consumption/thumbnail.go`'s
-per-document `ThumbnailTaskHandler`) holds its lock at batch level: its
-dedicated pool runs inside the forked consume child, which acquires
-`storage` for the whole run after verifying `maintenance` is free, drains
-in-flight thumbnail tasks before starting, and runs the same 5-minute
-heartbeat across the run; its per-task claims verify the maintenance wait but
+per-document `ThumbnailTaskHandler`) holds its lock at batch level: the
+dispatcher's claim acquires
+`storage` for the whole run after verifying `maintenance` is free, and the
+forked `kushim thumbnails --from-batch` child drains
+in-flight thumbnail tasks before starting, runs the same 5-minute
+heartbeat across the run, and keeps the hold fresh; its per-task claims verify the maintenance wait but
 skip acquisition (§12, batch-held locks). `ThumbnailBackfill`
 (`internal/service/thumbnail_backfill.go`) creates `thumbbackfill` tasks
 (dedup key `thumbnail:doc:<uuid>`) in `thumbbackfill` batches.
 
 Direct CLI holders (`kushim backup`, `kushim restore`, `kushim mirror`,
-`kushim migrate`) are NULL-token lock rows: their release is guarded by
-`owner_token`-or-`batch_id` matching a NULL, so it can never drop a loaded
-task- or child-held lock.
+`kushim migrate`) are NULL-token lock rows: their release is scoped to the
+locks their own policy acquired, so a concurrent manual run holding a
+different lock keeps it, and a loaded task- or child-held lock (a non-NULL
+token) can never be dropped.
 
 A lock-holding task longer than 30 minutes keeps its locks alive via the
 5-minute heartbeat, and the age sweep leaves it alone: lock-holding recovery

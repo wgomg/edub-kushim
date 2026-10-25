@@ -111,49 +111,17 @@ type ResumeResult struct {
 	FailedRetried int64
 }
 
-// Owner claims and holds batch ownership: Acquire takes the row or reports it live or stale, Heartbeat
-// keeps it alive, and Release gives it up. The consume driver uses it.
+// Owner holds a claimed batch lease: Adopt takes the row over under the dispatcher's execution token,
+// Heartbeat keeps it alive, and Release gives it up.
 type Owner struct {
 	queries *database.Queries
 	ownerID string
 	pid     int
-	logger  *log.Logger
 }
 
-// NewOwner prepares a batch owner. logger must be non-nil: every log site dereferences it without a guard.
-func NewOwner(c *database.Client, ownerID string, pid int, logger *log.Logger) *Owner {
-	return &Owner{queries: c.Queries, ownerID: ownerID, pid: pid, logger: logger}
-}
-
-// Acquire takes a batch's ownership row, taking over one whose heartbeat is stale (by the database clock)
-// and refusing a live one with ErrBatchLocked.
-func (o *Owner) Acquire(ctx context.Context, batchID string) error {
-	rows, err := o.queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-		BatchID: batchID,
-		OwnerID: o.ownerID,
-		Pid:     int64(o.pid),
-	})
-	if err != nil {
-		return fmt.Errorf("insert batch owner: %w", err)
-	}
-	if rows > 0 {
-		return nil
-	}
-
-	rows, err = o.queries.UpdateBatchOwnerIfStale(ctx, database.UpdateBatchOwnerIfStaleParams{
-		OwnerID:           o.ownerID,
-		Pid:               int64(o.pid),
-		BatchID:           batchID,
-		StaleAfterSeconds: LeaseStaleSeconds,
-	})
-	if err != nil {
-		return fmt.Errorf("update stale batch owner: %w", err)
-	}
-	if rows == 0 {
-		o.logger.Error("", "acquire batch %s failed: live owner holds it", batchID)
-		return ErrBatchLocked
-	}
-	return nil
+// NewOwner prepares a batch owner for the given execution token.
+func NewOwner(c *database.Client, ownerID string, pid int) *Owner {
+	return &Owner{queries: c.Queries, ownerID: ownerID, pid: pid}
 }
 
 // Adopt takes over the lease the dispatcher claimed under this owner token, recording the executing

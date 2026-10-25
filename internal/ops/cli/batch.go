@@ -27,19 +27,21 @@ const batchHelpText = "Usage: kushim batch <subcommand> [args]\n\n" +
 	"  list [--limit N] [--offset N]   List recent batches\n" +
 	"  status <batch-id>               Show one batch's state and task counts\n\n" +
 	"Tasks for create:\n" +
+	"  consume                                       Scan the inbox and enqueue an ingest batch\n" +
 	"  backup --mode <full|database|documents> [--path <dir>] [--keep N]\n" +
 	"  mirror [--path <dir>]\n" +
-	"  enrich <document-id> [<document-id> ...]\n" +
-	"  thumbnails              Backfill every document missing a thumbnail\n" +
+	"  enrich <document-id>... | --all | --limit N\n" +
+	"  thumbnails [--from-batch <id> | --document <id>]\n" +
 	"  tagreconcile | tagmeasure | tagidentity | tagaudit\n\n" +
 	"  Direct commands (for example 'kushim backup') run immediately and create\n" +
 	"  no queue rows; this command is the queue surface."
 
 const batchCreateHelpText = "Usage: kushim batch create <task> [args]\n\n" +
+	"  consume\n" +
 	"  backup --mode <full|database|documents> [--path <dir>] [--keep N]\n" +
 	"  mirror [--path <dir>]\n" +
-	"  enrich <document-id> [<document-id> ...]\n" +
-	"  thumbnails\n" +
+	"  enrich <document-id>... | --all | --limit N\n" +
+	"  thumbnails [--from-batch <id> | --document <id>]\n" +
 	"  tagreconcile | tagmeasure | tagidentity | tagaudit"
 
 // cliBatchSpec returns the spec of a CLI-triggered enqueue; every CLI boundary that creates work uses
@@ -91,6 +93,10 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("batch create requires a task name")
 	}
 
+	if handled, err := batchCreateSelection(c, taskName, args[1:]); handled {
+		return err
+	}
+
 	taskType, input, err := batchBuildInput(taskName, args[1:])
 	if err != nil {
 		return err
@@ -109,6 +115,26 @@ func batchCreateHandler(c *container.Container, args []string) error {
 	}
 
 	ctx := context.Background()
+
+	// the paused-batch guard keeps the CLI and polling creation paths aligned: while the provider credits
+	// are broken each new batch would process a few files and pause itself; the CLI refuses while the polling
+	// scan skips its tick
+	if taskType == types.Task.Type.Consume {
+		client, err := c.GetClient()
+		if err != nil {
+			return fmt.Errorf("database: %w", err)
+		}
+		pausedIDs, err := client.Queries.ListPausedBatches(ctx)
+		if err != nil {
+			return fmt.Errorf("check paused batches: %w", err)
+		}
+		if len(pausedIDs) > 0 {
+			return fmt.Errorf("%d paused batch(es) exist due to LLM credit/balance errors: %s\n"+
+				"Resolve the billing issue, then resume or cancel each paused batch before creating new ones.",
+				len(pausedIDs), strings.Join(pausedIDs, ", "))
+		}
+	}
+
 	tasks, err := def.BuildTasks(ctx, input)
 	if err != nil {
 		return fmt.Errorf("build %s tasks: %w", taskType, err)
@@ -339,12 +365,175 @@ func batchStatusHandler(c *container.Container, args []string) error {
 	return nil
 }
 
+// batchCreateSelection routes the create verbs whose task set is selected from live data rather than an
+// explicit id list; handled is false when the verb uses the generic builder path.
+func batchCreateSelection(c *container.Container, taskName string, args []string) (handled bool, err error) {
+	switch taskName {
+	case "enrich":
+		fp := flags.NewFlagParser(args)
+		var all bool
+		if err := fp.Bool("--all", &all); err != nil {
+			return true, err
+		}
+		limit := 0
+		if err := fp.Int("--limit", &limit, 1, 1_000_000); err != nil {
+			return true, err
+		}
+		if !all && limit == 0 {
+			return false, nil
+		}
+		if rest := fp.Rest(); len(rest) > 0 {
+			return true, fmt.Errorf("a document ID cannot be combined with --limit or --all")
+		}
+		if all && limit > 0 {
+			return true, fmt.Errorf("--limit and --all are mutually exclusive")
+		}
+		effectiveLimit := int64(limit)
+		if all {
+			effectiveLimit = 0
+		}
+		return true, enqueueEnrichSelection(c, effectiveLimit)
+
+	case "thumbnails":
+		fp := flags.NewFlagParser(args)
+		var fromBatch, documentID string
+		if err := fp.String("--from-batch", &fromBatch); err != nil {
+			return true, err
+		}
+		if err := fp.String("--document", &documentID); err != nil {
+			return true, err
+		}
+		if fromBatch == "" && documentID == "" {
+			return false, nil
+		}
+		if fromBatch != "" && documentID != "" {
+			return true, fmt.Errorf("--from-batch and --document are mutually exclusive")
+		}
+		if rest := fp.Rest(); len(rest) > 0 {
+			return true, fmt.Errorf("unknown argument: %s", rest[0])
+		}
+		if fromBatch != "" {
+			return true, enqueueThumbnailBackfillBatch(c, fromBatch)
+		}
+		return true, enqueueThumbnailBackfillDocument(c, documentID)
+	}
+	return false, nil
+}
+
+// enqueueEnrichSelection enqueues enrichment for live documents, oldest first, capped by limit (0 means
+// no cap).
+func enqueueEnrichSelection(c *container.Container, limit int64) error {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return fmt.Errorf("enqueuer: %w", err)
+	}
+	spec, err := cliBatchSpec()
+	if err != nil {
+		return err
+	}
+
+	svc := service.NewReEnrich(client.Queries, enqueuer)
+	batchID, enqueued, skipped, err := svc.ReEnrichMany(context.Background(), spec, limit)
+	if err != nil {
+		return fmt.Errorf("re-enrich: %w", err)
+	}
+
+	if batchID == "" {
+		if skipped == 0 {
+			fmt.Println("No live documents to enrich")
+			return nil
+		}
+		fmt.Printf("No documents enqueued: %d document(s) already have a pending enrich task\n", skipped)
+		return nil
+	}
+
+	fmt.Printf("Batch %s queued with %d enrich task(s)", batchID, enqueued)
+	if skipped > 0 {
+		fmt.Printf(", %d skipped (an enrich task is already pending)", skipped)
+	}
+	fmt.Println(" — run 'kushim queue' to process")
+	return nil
+}
+
+// enqueueThumbnailBackfillBatch enqueues thumbnails for the documents of one past batch.
+func enqueueThumbnailBackfillBatch(c *container.Container, sourceBatchID string) error {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return fmt.Errorf("enqueuer: %w", err)
+	}
+	spec, err := cliBatchSpec()
+	if err != nil {
+		return err
+	}
+
+	svc := service.NewThumbnailBackfill(client.Queries, enqueuer)
+	batchID, enqueued, skipped, err := svc.BackfillBatch(context.Background(), spec, sourceBatchID)
+	if err != nil {
+		return fmt.Errorf("backfill thumbnails for batch: %w", err)
+	}
+	if enqueued == 0 && skipped == 0 {
+		fmt.Println("No documents missing thumbnails in that batch.")
+		return nil
+	}
+	if enqueued == 0 {
+		fmt.Printf("%d document(s) in that batch already have a pending thumbnail task.\n", skipped)
+		return nil
+	}
+	fmt.Printf("Batch %s queued with %d thumbnail task(s) — run 'kushim queue' to process\n", batchID, enqueued)
+	return nil
+}
+
+// enqueueThumbnailBackfillDocument enqueues one document's thumbnail task.
+func enqueueThumbnailBackfillDocument(c *container.Container, documentID string) error {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	enqueuer, err := c.GetEnqueuer()
+	if err != nil {
+		return fmt.Errorf("enqueuer: %w", err)
+	}
+	spec, err := cliBatchSpec()
+	if err != nil {
+		return err
+	}
+
+	svc := service.NewThumbnailBackfill(client.Queries, enqueuer)
+	batchID, err := svc.BackfillDocument(context.Background(), spec, documentID)
+	if err != nil {
+		switch errs.KindOf(err) {
+		case errs.KindNotFound:
+			return fmt.Errorf("document %s not found", documentID)
+		case errs.KindConflict:
+			return fmt.Errorf("document %s already has a thumbnail or a task is already queued", documentID)
+		default:
+			return fmt.Errorf("backfill thumbnail: %w", err)
+		}
+	}
+	fmt.Printf("Batch %s queued with 1 thumbnail task — run 'kushim queue' to process\n", batchID)
+	return nil
+}
+
 // batchBuildInput turns the task name and its remaining arguments into the task type and the typed build
 // input its definition's builder expects.
 func batchBuildInput(taskName string, args []string) (types.TaskType, task.BuildInput, error) {
 	fp := flags.NewFlagParser(args)
 
 	switch taskName {
+	case "consume":
+		if rest := fp.Rest(); len(rest) > 0 {
+			return "", nil, fmt.Errorf("consume takes no arguments, got %s", rest[0])
+		}
+		return types.Task.Type.Consume, container.NewEmptyBuildInput(types.Task.Type.Consume), nil
+
 	case "backup":
 		var mode, path string
 		keep := 0
@@ -379,7 +568,12 @@ func batchBuildInput(taskName string, args []string) (types.TaskType, task.Build
 	case "enrich":
 		documentIDs := fp.Rest()
 		if len(documentIDs) == 0 {
-			return "", nil, fmt.Errorf("enrich requires at least one document id")
+			return "", nil, fmt.Errorf("enrich requires at least one document id, --all or --limit N")
+		}
+		for _, documentID := range documentIDs {
+			if strings.HasPrefix(documentID, "-") {
+				return "", nil, fmt.Errorf("unknown flag: %s", documentID)
+			}
 		}
 		return types.Task.Type.Enrich, container.EnrichBuildInput{DocumentIDs: documentIDs}, nil
 
@@ -414,6 +608,7 @@ func batchBuildInput(taskName string, args []string) (types.TaskType, task.Build
 		return types.Task.Type.TagAudit, container.NewEmptyBuildInput(types.Task.Type.TagAudit), nil
 
 	default:
-		return "", nil, fmt.Errorf("unknown task %q; supported: backup, mirror, enrich, thumbnails, tagreconcile, tagmeasure, tagidentity, tagaudit", taskName)
+		return "", nil, fmt.Errorf("unknown task %q; supported: consume, backup, mirror, enrich, thumbnails, "+
+			"tagreconcile, tagmeasure, tagidentity, tagaudit", taskName)
 	}
 }

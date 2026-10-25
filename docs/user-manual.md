@@ -53,14 +53,9 @@ kushim setup
 # Or use terminal-based setup (headless / CI)
 kushim setup --cli --languages eng,spa
 
-# Process documents
+# Process documents now (no queue rows; enqueue instead with `kushim batch create consume`)
 cp my-documents/*.pdf ~/.config/edub-kushim/inbox/
-
-# CLI mode (enqueue + direct-fallback if queue empty + show per-file progress)
 kushim consume
-
-# Resume an existing batch
-kushim consume --batch <batch-id>
 
 # API server mode
 edub
@@ -122,24 +117,26 @@ absolute paths or paths starting with `~` (expanded to the home directory).
 
 ### `kushim consume`
 
-Scan the inbox directory, create one task per file, and process them.
-Streams per-file progress to stdout.
+Scan the inbox directory and consume its files immediately, in this process,
+under the `maintenance` resource lock. Creates no batch and no task rows:
+each file is processed and reported as it runs. To enqueue the same work for
+the `kushim queue` daemon instead, use `kushim batch create consume`.
 
 ```
 kushim consume
 ```
 
-#### `--exec-token <id>`
+`--no-wait` exits non-zero instead of waiting when the `maintenance` lock is
+held or in-flight pipeline work is still draining — useful for unattended
+runs that must not block on the daemon.
 
-The execution token the `kushim queue` dispatcher and `kushim batch run`
-pass to the child: it authorizes the child's task claims and lifecycle
-writes as the lease owner of the batch it claimed. Never typed by hand —
-without it, `--batch <id>` self-claims the lease (refusing a batch another
-process currently owns).
+#### `--from-batch <id> --exec-token <id>`
 
-```
-kushim consume --batch 550e8400-e29b-41d4-a716-446655440000
-```
+The `kushim queue` dispatcher's and `kushim batch run`'s contract: execute one
+claimed batch's tasks. The execution token authorizes the child's task claims
+and lifecycle writes as the lease owner of the batch the launcher claimed.
+Never typed by hand, and the token is required: a `--from-batch` without it
+errors pointing at `kushim batch run <id>`.
 
 #### `kushim consume cancel <batch-id>`
 
@@ -178,11 +175,14 @@ No running process found for batch 550e8400-e29b-41d4-a716-446655440000
 5 pending tasks cancelled
 ```
 
-### `kushim enrich [<document-id>] [--limit N | --all]`
+### `kushim enrich [<document-id>] [--limit N | --all] [--no-wait]`
 
-Run enrichment (LLM classification: title, document type, tags, people, language)
-on **already-consumed** documents. Does not re-extract text or re-OCR: the
-documents' existing text content from the database is re-classified.
+Re-run enrichment (LLM classification: title, document type, tags, people, language)
+on **already-consumed** documents — now, in this process, under the
+`maintenance` resource lock. Does not re-extract text or re-OCR: the
+documents' existing text content from the database is re-classified. Creates
+no batch and no task rows; to enqueue enrichment for the `kushim queue`
+daemon instead, use `kushim batch create enrich`.
 
 Single document:
 
@@ -205,50 +205,48 @@ kushim enrich --all         # every live document
 | `--limit N` | The oldest N live documents |
 | `--all` | Every live document |
 
+`--no-wait` exits non-zero instead of waiting when the `maintenance` lock is
+held or in-flight pipeline work is still draining.
+
 Bulk selection is deterministic: live (non-trashed) documents ordered by internal
-id ascending, so repeated `--limit` runs select the same head. Documents whose
-dedup key already has a pending or in-flight enrich task are counted as skipped
-and never abort the run. A bulk run creates one queued batch holding one pending
-enrich task per selected document; when every selected document is skipped, no
-batch is created.
+id ascending, so repeated `--limit` runs select the same head.
 
 `--limit` and `--all` are mutually exclusive and cannot be combined with a
 document id; `--limit` must be a positive integer.
 
-Output (single document):
+Output:
 
 ```
-Batch 660e8400-e29b-41d4-a716-446655440001 queued — run 'kushim queue' to process
-```
+Enriching 2 document(s)...
+  [1/2] 550e8400-e29b-41d4-a716-446655440000 ... done
+  [2/2] 660e8400-e29b-41d4-a716-446655440001 ... done
 
-Output (bulk):
-
-```
-Batch 660e8400-e29b-41d4-a716-446655440001 queued with 10 enrich task(s) — run 'kushim queue' to process
+Summary: 2 document(s) — all successful
 ```
 
 | Condition | Message |
 | --------- | ------- |
 | Document not found | `Error: document <id> not found` |
-| Re-enrich already queued (dedup, single) | `Error: re-enrich already queued for document <id>` |
 | Nothing selected | `No live documents to enrich` |
-| Every selected document skipped | `No documents enqueued: N document(s) already have a pending enrich task` |
+| A document fails | `  [i/N] <id> ... failed: <provider error>` — the run continues with the rest and exits non-zero |
+| Provider credit/balance error | aborts the remaining run with the provider's message (no batch exists to pause) |
 | Invalid flags | `Error: --limit and --all are mutually exclusive` / `Error: a document ID cannot be combined with --limit or --all` / `Error: --limit: must be a positive integer` |
 
-The `kushim queue` daemon picks the batch up and processes it. Run `kushim queue`
-if the daemon is not running. Works on hosts without OCR/PDF tools because no
-consume tasks are created.
+A document whose enrich task is already queued is enriched again now — the
+queued task runs later too. To avoid that double work, enqueue instead and
+let the daemon's dedup skip already-queued documents. Works on hosts without
+OCR/PDF tools: nothing here touches files.
 
 ### `kushim thumbnails <mode>`
 
-Backfill thumbnails for documents that don't have one yet (`has_thumbnail = FALSE`).
-Enqueues `pending` `thumbbackfill` tasks into a new `queued` batch — nothing is
-processed inline; run `kushim queue` (or leave the daemon running) to generate
-the thumbnails.
+Generate thumbnails now, in this process, for documents that don't have one
+yet (`has_thumbnail = FALSE`), under the `storage` resource lock (waiting for
+`maintenance` to free first). Creates no batch and no task rows; to enqueue a
+backfill for the `kushim queue` daemon instead, use
+`kushim batch create thumbnails`.
 
 ```
 kushim thumbnails --all
-kushim thumbnails --batch 550e8400-e29b-41d4-a716-446655440000
 kushim thumbnails --document 550e8400-e29b-41d4-a716-446655440000
 ```
 
@@ -257,7 +255,6 @@ Exactly one mode is required:
 | Mode | Scope |
 | ---- | ----- |
 | `--all` | Every document missing a thumbnail (paginated, 500 per page) |
-| `--batch <id>` | Documents whose completed `consume` task is in the given batch |
 | `--document <id>` | A single document |
 
 `--force` proceeds even when `consumer.thumbnail.enabled` is `false`.
@@ -265,24 +262,37 @@ Exactly one mode is required:
 Output:
 
 ```
-Batch 660e8400-e29b-41d4-a716-446655440001 queued with 12 thumbnail task(s) — run 'kushim queue' to process
+Generating 12 thumbnail(s)...
+  [1/12] ... done
+  ...
+
+Summary: 12 thumbnail(s) — all successful
 ```
 
 | Condition | Message |
 | --------- | ------- |
-| Nothing to do (`--all` / `--batch`) | `No documents missing thumbnails.` / `No documents missing thumbnails in that batch.` |
-| All candidates already pending (dedup) | `N document(s) already have a pending thumbnail task.` |
+| Nothing to do (`--all`) | `No documents missing thumbnails.` |
 | Document not found (`--document`) | `Error: document <id> not found` |
-| Document already has a thumbnail or a task is queued (`--document`) | `Error: document <id> already has a thumbnail or a task is already queued` |
+| Document already has a thumbnail (`--document`) | `Error: document <id> already has a thumbnail` |
 | Thumbnails disabled in config | `Error: thumbnails are disabled in config (consumer.thumbnail.enabled); use --force to override` |
 
-Documents whose thumbnail task is already `pending` are skipped — the dedup key
-`thumbnail:doc:<uuid>` (unique partial index) prevents duplicate queued tasks.
-Failed tasks fall outside the index, so a re-run re-enqueues them. The
-backfill run holds the `storage` resource lock for its whole batch (mutually
-exclusive with a running backup's maintenance hold on the storage wait) and
-waits for in-flight thumbnail tasks to drain before rendering; regular
-thumbnail tasks from ingest pause until the backfill settles.
+Enqueueing the same backfills for the daemon (they render later, in a queued
+batch the daemon claims):
+
+| Command | Scope |
+| ------- | ----- |
+| `kushim batch create thumbnails` | Every document missing a thumbnail |
+| `kushim batch create thumbnails --from-batch <id>` | Documents whose completed `consume` task is in the given batch |
+| `kushim batch create thumbnails --document <id>` | A single document |
+
+Queued backfill tasks dedup by the key `thumbnail:doc:<uuid>` (unique partial
+index): already-pending documents are skipped in bulk modes and surface as a
+conflict for `--document`. Failed tasks fall outside the index, so a re-run
+re-enqueues them. The backfill run holds the `storage` resource lock for its
+whole batch (mutually exclusive with a running backup's maintenance hold on
+the storage wait) and waits for in-flight thumbnail tasks to drain before
+rendering; regular thumbnail tasks from ingest pause until the backfill
+settles.
 
 #### Scheduled backfill
 
@@ -298,7 +308,8 @@ are exposed in the settings UI (Thumbnails section).
 
 ### Pre-flight Tool Check
 
-Before scanning the inbox or resuming a batch, `kushim consume` checks that all
+Before the `kushim consume` verb touches the inbox — direct mode or batch
+mode — it checks that all
 required external tools are available in `PATH`:
 
 - **Engine binaries**: `ocrmypdf`, `gs`, `pdftotext` — checked only when the
@@ -313,17 +324,18 @@ tesseract language packs are shown as advisory notes but do not block.
 
 ### Paused Batch Guard
 
-If one or more batches are paused due to LLM provider credit/balance errors,
-`kushim consume` (without `--batch`) refuses with a hard error listing the
-paused batch IDs:
+Ingest batch creation is guarded while batches are paused due to LLM provider
+credit/balance errors: the polling daemon skips its inbox-scanning tick (it
+logs a line and waits for the next interval), and `kushim batch create
+consume` refuses with a hard error listing the paused batch IDs:
 
 ```
 Error: 2 paused batch(es) exist due to LLM credit/balance errors: 550e8400-e29b-41d4-a716-446655440000, 660e8400-e29b-41d4-a716-446655440001
 Resolve the billing issue, then resume or cancel each paused batch before creating new ones.
 ```
 
-The polling daemon (`kushim queue`) also skips inbox scanning ticks when
-paused batches exist — it logs a line and waits for the next interval.
+Direct `kushim consume` needs no guard: it creates no batch — it processes
+the files immediately and stops on the same credit error.
 Resolving the billing issue and resuming or cancelling all paused batches
 lifts the guard automatically.
 
@@ -362,43 +374,37 @@ Make sure the tesseract language packs for your configured languages are install
     macOS:          brew install tesseract (bundles common languages)
 ```
 
-Output during processing (default mode):
+Output during processing (direct mode):
 
 ```
-[1/3] report.pdf → queued
-[2/3] invoice.pdf → queued
-[3/3] contract.pdf → queued
-Waiting for completion...
-  [1/3] consume  report.pdf ... processing
+Consuming 3 file(s)...
   [1/3] consume  report.pdf ... done
-  [2/3] consume  invoice.pdf ... processing
+  [1/3] enrich   report.pdf ... done
   [2/3] consume  invoice.pdf ... done
-  [3/3] consume  contract.pdf ... processing
+  [2/3] enrich   invoice.pdf ... done
   [3/3] consume  contract.pdf ... done
+  [3/3] enrich   contract.pdf ... done
 
 Summary: 3 files, 6 tasks — all successful
 ```
 
-Each file produces two linked tasks (`consume` then `enrich`). Both
-are shown as they progress. The `enrich` tasks appear as they become
-pending after their associated `consume` task completes. Partial
-failures show per-task error messages:
+Each file produces two steps (`consume` then `enrich`), shown as they run. A
+failed step reports its error and the run continues with the next file:
 
 ```
   [3/3] consume  contract.pdf ... failed: text extraction failed
 ```
 
-#### `--batch <id>`
+The command exits non-zero when anything failed; a failed file stays in the
+inbox, so a later run picks it up again.
 
-Resume processing of an already-enqueued batch. Skips the inbox scan
-and picks up where the batch left off. Useful for retrying failed tasks
-or restarting a background batch.
+#### `--from-batch <id>` (batch mode)
 
-```
-kushim consume --batch 550e8400-e29b-41d4-a716-446655440000
-```
-
-Output on resume (progress lines are printed only for tasks that change state):
+The dispatcher and `kushim batch run` claim the batch and fork its owning CLI
+with the execution token; the child adopts the lease, repairs the batch's
+entry state, and runs every task type in the batch through the shared
+execution library — the enrich/thumbnail children activate as their consume
+parents complete. Progress lines print only for tasks that change state:
 
 ```
   [2/3] consume  invoice.pdf ... done
@@ -414,13 +420,10 @@ Batch 550e8400-e29b-41d4-a716-446655440000 is paused due to an LLM provider cred
 Resolve the billing issue, then re-queue the batch and run this command again.
 ```
 
-If the batch is already finished, the command re-acquires it, finds no
-pending work, and prints the summary with zero progress lines. If the batch
-is being processed by another process, the command refuses:
-
-```
-batch 550e8400-e29b-41d4-a716-446655440000 is being processed by PID 12345
-```
+A batch-mode invocation is the launcher's contract, not a recovery command:
+a terminal or unclaimed batch is refused, and running it without the
+execution token errors pointing at `kushim batch run <id>`. A cancelled batch
+exits non-zero.
 
 ### `kushim search`
 
@@ -525,9 +528,10 @@ the batch to settle first.
 
 ### `kushim batch create <task> [args]`
 
-Enqueue a task set for the `kushim queue` daemon without running anything
-inline. Unlike the per-task commands, this only creates the queued batch —
-processing is left to the daemon.
+The queue's enqueue surface: create the queued batch the `kushim queue`
+daemon processes. The task commands run their work directly instead
+(`kushim consume`, `kushim enrich`, `kushim thumbnails`); this command is
+what queues them for background processing.
 
 ```
 kushim batch create backup --mode full
@@ -537,10 +541,11 @@ Supported tasks:
 
 | Task | Arguments |
 | ---- | --------- |
+| `consume` | none — one ingest batch from the current inbox contents (refuses while credit-paused batches exist; see the Paused Batch Guard) |
 | `backup` | `--mode <full\|database\|documents>`, `--path <dir>`, `--keep N` (all optional) |
 | `mirror` | `--path <dir>` (optional) |
-| `enrich` | one or more document ids |
-| `thumbnails` | none — scans every document missing a thumbnail |
+| `enrich` | one or more document ids, or `--all` / `--limit N` (the same oldest-first live-document selection the direct command uses) |
+| `thumbnails` | none — scans every document missing a thumbnail; `--from-batch <id>` selects the documents whose completed `consume` task is in that batch; `--document <id>` selects a single one |
 | `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` | none |
 
 Output:
@@ -3454,7 +3459,7 @@ The server starts the **config pool** for background downloads (tessdata,
 Hugot model). Logs are written to stdout. Graceful shutdown on SIGINT/SIGTERM.
 
 When `POST /api/v1/consume` or `POST /api/v1/consume/upload` is called, the
-server enqueues tasks in the database with `status='queued'`; the `kushim queue` daemon picks up the batch and **forks** `kushim consume --batch <id>`
+server enqueues tasks in the database with `status='queued'`; the `kushim queue` daemon picks up the batch and **forks** `kushim consume --from-batch <id> --exec-token <token>`
 
 The maximum number of concurrent worker processes is controlled by
 `server.max_concurrent_batches` (default 4). The `kushim queue` daemon enforces

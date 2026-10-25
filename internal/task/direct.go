@@ -50,7 +50,7 @@ func RunDirect(
 	defer func() {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := ReleaseLocksForToken(releaseCtx, client.Queries, token); err != nil {
+		if err := releaseLocksForToken(releaseCtx, client.Queries, token, lockNameStrings(policy.Holds)); err != nil {
 			logger.Error("", "%s: release locks: %v", what, err)
 		}
 	}()

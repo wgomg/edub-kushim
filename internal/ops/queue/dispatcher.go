@@ -164,8 +164,8 @@ func (d *batchDispatcher) handleLaunchFailure(ctx context.Context, client *datab
 
 // batchLockSets accumulates a batch claim's lock sets: the union of every selected type's holds and the
 // waits declared by the types that hold locks. A type that holds nothing does not make the batch wait —
-// its tasks verify their own waits at claim. The consume child's batchHolds applies the wider all-types
-// wait union when it self-claims and drains, so the narrower claim rule here is deliberate.
+// its tasks verify their own waits at claim. The execution library drains the types waiting on the held
+// locks after adoption, so the narrower claim rule here is deliberate.
 func batchLockSets(taskTypes []types.TaskType) (holds, waits []types.LockName) {
 	for _, taskType := range taskTypes {
 		declaration := types.LockDeclarationFor(taskType)

@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -150,7 +149,7 @@ func TestOwnerAdopt(t *testing.T) {
 	}
 
 	adopt := func(ownerToken string) error {
-		owner := NewOwner(client, ownerToken, 4321, log.NewDiscardLogger())
+		owner := NewOwner(client, ownerToken, 4321)
 		return owner.Adopt(ctx, "adopt-batch")
 	}
 
@@ -238,41 +237,6 @@ func TestFailUnstartedBatch(t *testing.T) {
 			t.Fatalf("storage held=%d, want the foreign claim's hold kept", held)
 		}
 	})
-}
-
-// TestOwnerAcquireClearsDispatcherIdentity pins the manual takeover: it clears the previous dispatcher's
-// lease identity, so the new run is never charged to that dispatcher's slot budget.
-func TestOwnerAcquireClearsDispatcherIdentity(t *testing.T) {
-	client := setupClaimTest(t, "takeover-batch")
-	ctx := context.Background()
-	if err := ClaimBatch(ctx, client, ClaimRequest{
-		BatchID: "takeover-batch", ExecToken: uuid.New(),
-		Holds:        []types.LockName{types.LockStorage},
-		Waits:        []types.LockName{types.LockMaintenance},
-		DispatcherID: uuid.NullUUID{UUID: uuid.New(), Valid: true},
-	}); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE batch_owner SET last_heartbeat = NOW() - INTERVAL '5 minutes' WHERE batch_id = $1",
-		"takeover-batch"); err != nil {
-		t.Fatalf("stale the lease: %v", err)
-	}
-
-	owner := NewOwner(client, uuid.New().String(), 4321, log.NewDiscardLogger())
-	if err := owner.Acquire(ctx, "takeover-batch"); err != nil {
-		t.Fatalf("take over the stale lease: %v", err)
-	}
-
-	var dispatcherID sql.NullString
-	if err := client.DB().QueryRowContext(ctx,
-		"SELECT dispatcher_id::text FROM batch_owner WHERE batch_id = $1",
-		"takeover-batch").Scan(&dispatcherID); err != nil {
-		t.Fatalf("read dispatcher identity: %v", err)
-	}
-	if dispatcherID.Valid {
-		t.Fatalf("dispatcher_id = %q after a manual takeover, want NULL", dispatcherID.String)
-	}
 }
 
 // TestResetProcessingTasksForClaimKeepsLocks pins the claim-path entry repair: unlike the takeover

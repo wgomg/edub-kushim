@@ -8,25 +8,10 @@ SELECT batch_id, owner_id, pid, acquired_at, last_heartbeat,
        last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int) AS stale
 FROM batch_owner WHERE batch_id = $1;
 
--- Two-step acquire: try INSERT first, then UPDATE with stale check.
-
 -- name: TryInsertBatchOwner :execrows
 INSERT INTO batch_owner (batch_id, owner_id, pid, dispatcher_id, acquired_at, last_heartbeat)
 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(batch_id) DO NOTHING;
-
--- name: UpdateBatchOwnerIfStale :execrows
--- a takeover is a manual execution: it clears any dispatcher identity the replaced lease carried, so the
--- new run never charges the previous dispatcher's slot budget
-UPDATE batch_owner SET
-  owner_id = @owner_id,
-  pid = @pid,
-  dispatcher_id = NULL,
-  acquired_at = CURRENT_TIMESTAMP,
-  last_heartbeat = CURRENT_TIMESTAMP
-WHERE batch_id = @batch_id
-  AND (last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
-       OR owner_id = @owner_id);
 
 -- name: HeartbeatBatchOwner :execrows
 UPDATE batch_owner SET last_heartbeat = CURRENT_TIMESTAMP WHERE owner_id = $1;

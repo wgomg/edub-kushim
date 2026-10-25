@@ -110,7 +110,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, s.logger))
 	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, s.logger))
 
-	catalog := container.NewCatalog(client.Queries)
+	catalog := container.NewCatalog(client.Queries, func() *config.Config { return cfg }, s.logger)
 	enqueuer := task.NewEnqueuer(client, catalog)
 	runner := task.NewRunner(store, registry, s.logger)
 	s.pools = []*task.Pool{

@@ -61,6 +61,10 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress, claim_token
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC;
 
+-- name: ListBatchTaskProgress :many
+SELECT task_id, task_type, status, payload, error, progress
+FROM task WHERE batch_id = $1 ORDER BY created_at DESC;
+
 -- name: ListAllTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress, claim_token

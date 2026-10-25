@@ -21,7 +21,7 @@ type Store struct {
 	ownerID string
 
 	// batchHoldsAcquired tells claims that the execution already holds the batch locks, so a claim verifies
-	// its waits and takes the guard without acquiring. The consume child sets it after its batch-level
+	// its waits and takes the guard without acquiring. The shared batch execution sets it after its batch-level
 	// acquisition.
 	batchHoldsAcquired bool
 }

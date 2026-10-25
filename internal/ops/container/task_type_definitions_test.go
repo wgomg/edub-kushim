@@ -5,16 +5,24 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// testCatalog builds the type table over the zero configuration; these tests pin dedup derivations and
+// lock declarations, so the worker counts they do not exercise are whatever the zero config declares.
+func testCatalog() *Catalog {
+	return NewCatalog(nil, func() *config.Config { return &config.Config{} }, log.NewDiscardLogger())
+}
+
 // TestDedupKeys pins the derivation each task type owns: the enqueue derives the key from the definition
 // and nothing else, so these values are the dedup contract for every boundary.
 func TestDedupKeys(t *testing.T) {
-	catalog := NewCatalog(nil)
+	catalog := testCatalog()
 
 	tests := []struct {
 		name     string
@@ -59,10 +67,27 @@ func TestDedupKeys(t *testing.T) {
 
 // TestLockDeclarationsMatchVocabulary pins the definitions' queued lock policy to the closed vocabulary
 // table: the enqueue validates common holds through the definitions while the claim, drain and sweep
-// paths read the table, so neither side may drift. Direct mode defaults to the queued set everywhere
-// until a type's direct path declares otherwise.
+// paths read the table, so neither side may drift. Direct mode defaults to the queued set except where a
+// type's direct path overrides it: consume and enrich hold maintenance, thumbnails holds storage and
+// waits for maintenance.
 func TestLockDeclarationsMatchVocabulary(t *testing.T) {
-	catalog := NewCatalog(nil)
+	catalog := testCatalog()
+
+	directOverrides := map[types.TaskType]struct {
+		holds []types.LockName
+		waits []types.LockName
+	}{
+		types.Task.Type.Consume: {
+			holds: []types.LockName{types.LockMaintenance},
+		},
+		types.Task.Type.Enrich: {
+			holds: []types.LockName{types.LockMaintenance},
+		},
+		types.Task.Type.Thumbnail: {
+			holds: []types.LockName{types.LockStorage},
+			waits: []types.LockName{types.LockMaintenance},
+		},
+	}
 
 	for _, taskType := range types.AllTaskTypes() {
 		def, err := catalog.Definition(taskType)
@@ -76,8 +101,23 @@ func TestLockDeclarationsMatchVocabulary(t *testing.T) {
 		if !equalLockNames(def.Locks.WaitsFor, declaration.WaitsFor) {
 			t.Errorf("%q waits = %v, want %v", taskType, def.Locks.WaitsFor, declaration.WaitsFor)
 		}
-		if def.DirectLocks != nil {
-			t.Errorf("%q direct locks = %+v, want nil (defaults to the queued set)", taskType, *def.DirectLocks)
+
+		override, hasOverride := directOverrides[taskType]
+		if !hasOverride {
+			if def.DirectLocks != nil {
+				t.Errorf("%q direct locks = %+v, want nil (defaults to the queued set)", taskType, *def.DirectLocks)
+			}
+			continue
+		}
+		if def.DirectLocks == nil {
+			t.Errorf("%q has no direct lock override", taskType)
+			continue
+		}
+		if !equalLockNames(def.DirectLocks.Holds, override.holds) {
+			t.Errorf("%q direct holds = %v, want %v", taskType, def.DirectLocks.Holds, override.holds)
+		}
+		if !equalLockNames(def.DirectLocks.WaitsFor, override.waits) {
+			t.Errorf("%q direct waits = %v, want %v", taskType, def.DirectLocks.WaitsFor, override.waits)
 		}
 	}
 }
@@ -96,7 +136,7 @@ func equalLockNames(a, b []types.LockName) bool {
 
 // TestDailyDedupKeys pins the date-scoped keys of the daily backup and mirror runs.
 func TestDailyDedupKeys(t *testing.T) {
-	catalog := NewCatalog(nil)
+	catalog := testCatalog()
 	dateSuffix := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 	t.Run("backup keeps the mode and the UTC day", func(t *testing.T) {

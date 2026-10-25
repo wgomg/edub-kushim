@@ -1,8 +1,17 @@
 package cli
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/ops/container"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func TestBatchHandler_Subcommands(t *testing.T) {
@@ -68,5 +77,57 @@ func TestBatchListValidatesFlags(t *testing.T) {
 				t.Fatalf("batch list %v = %v, want an error mentioning %q", tc.args, err, tc.want)
 			}
 		})
+	}
+}
+
+// TestBatchCreateConsumePausedGuard pins the no-bypass rule on the CLI ingest creation path: while a
+// credit-paused batch exists the consume creation refuses with the paused ids, and once none remains the
+// same call proceeds — the guard the polling scan enforces independently on its own path.
+func TestBatchCreateConsumePausedGuard(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	configDir := t.TempDir()
+	yaml := "database:\n  dsn: " + os.Getenv("TEST_DATABASE_URL") + "\n" +
+		"consumer:\n  ocr:\n    languages:\n      - eng\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(configDir, "inbox"), 0o755); err != nil {
+		t.Fatalf("create inbox: %v", err)
+	}
+	cfg, err := config.Load(configDir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	c := container.NewContainer(cfg, log.NewLogger("error"))
+	t.Cleanup(func() { c.Close() })
+
+	ctx := context.Background()
+	client, err := c.GetClient()
+	if err != nil {
+		t.Fatalf("container client: %v", err)
+	}
+	// a crashed previous run must not leave a stale row that breaks the creation path below
+	if _, err := client.DB().ExecContext(ctx, "DELETE FROM batch WHERE id = 'guard-paused'"); err != nil {
+		t.Fatalf("clear a previous run's row: %v", err)
+	}
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID: "guard-paused", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Paused,
+	}); err != nil {
+		t.Fatalf("seed paused batch: %v", err)
+	}
+
+	err = batchCreateHandler(c, []string{"consume"})
+	if err == nil || !strings.Contains(err.Error(), "paused batch(es) exist") {
+		t.Fatalf("want the paused-batch refusal, got %v", err)
+	}
+
+	if _, err := client.DB().ExecContext(ctx, "DELETE FROM batch WHERE id = 'guard-paused'"); err != nil {
+		t.Fatalf("resolve the paused batch: %v", err)
+	}
+	if err := batchCreateHandler(c, []string{"consume"}); err != nil {
+		t.Fatalf("creation proceeds once no paused batch remains: %v", err)
 	}
 }

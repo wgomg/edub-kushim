@@ -77,11 +77,18 @@ func acquireLocks(ctx context.Context, queries *database.Queries, holds, waits [
 	return nil
 }
 
-// ReleaseLocksForToken releases the locks held under token and notifies the waiters; the NULL token
-// releases the manual holder's locks. It is safe to call when nothing is held.
+// ReleaseLocksForToken releases every lock held under a unique token and notifies the waiters; it is safe
+// to call when nothing is held. Manual holders share the NULL token and use the scoped variant below.
 func ReleaseLocksForToken(ctx context.Context, queries *database.Queries, token uuid.NullUUID) error {
+	return releaseLocksForToken(ctx, queries, token, types.LockNameValues())
+}
+
+// releaseLocksForToken releases the named locks the token holds and notifies their waiters. A manual
+// holder shares the NULL token with every other manual run, so it must release only the names its own
+// policy acquired: releasing every name would drop a concurrent manual run's distinct lock.
+func releaseLocksForToken(ctx context.Context, queries *database.Queries, token uuid.NullUUID, names []string) error {
 	released, err := queries.ReleaseLocksForToken(ctx, database.ReleaseLocksForTokenParams{
-		LockNames:  types.LockNameValues(),
+		LockNames:  names,
 		OwnerToken: token,
 	})
 	if err != nil {

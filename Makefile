@@ -359,6 +359,9 @@ test-cgo:
 		./internal/llm/analyzer/ \
 		./internal/matcher/ \
 		./internal/tools/ \
+		./internal/api/ \
+		./internal/api/wizard/ \
+		./internal/ops/container/ \
 		./internal/ops/cli/ \
 		./internal/ops/consume/ \
 		./internal/ops/queue/ \

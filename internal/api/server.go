@@ -100,7 +100,7 @@ func (s *Server) rebuild(client *database.Client) {
 
 	configStore := task.NewStore(client)
 
-	catalog := container.NewCatalog(client.Queries)
+	catalog := container.NewCatalog(client.Queries, func() *config.Config { return s.cfg.Load() }, s.logger)
 	enqueuer := task.NewEnqueuer(client, catalog)
 
 	services.Orphaned = service.NewOrphaned(client.Queries, cfg, s.logger, enqueuer)

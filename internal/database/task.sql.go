@@ -1082,6 +1082,50 @@ func (q *Queries) ListAllTasksByType(ctx context.Context, taskType types.TaskTyp
 	return items, nil
 }
 
+const listBatchTaskProgress = `-- name: ListBatchTaskProgress :many
+SELECT task_id, task_type, status, payload, error, progress
+FROM task WHERE batch_id = $1 ORDER BY created_at DESC
+`
+
+type ListBatchTaskProgressRow struct {
+	TaskID   string
+	TaskType types.TaskType
+	Status   types.TaskStatus
+	Payload  *json.RawMessage
+	Error    sql.NullString
+	Progress *json.RawMessage
+}
+
+func (q *Queries) ListBatchTaskProgress(ctx context.Context, batchID sql.NullString) ([]ListBatchTaskProgressRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBatchTaskProgress, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBatchTaskProgressRow
+	for rows.Next() {
+		var i ListBatchTaskProgressRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.TaskType,
+			&i.Status,
+			&i.Payload,
+			&i.Error,
+			&i.Progress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBatchTaskTypes = `-- name: ListBatchTaskTypes :many
 SELECT DISTINCT task_type FROM task WHERE batch_id = $1 ORDER BY task_type
 `

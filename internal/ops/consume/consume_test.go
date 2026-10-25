@@ -3,62 +3,64 @@ package consume
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-func payloadTask(taskType types.TaskType, payload string) database.Task {
-	raw := json.RawMessage(payload)
-	return database.Task{TaskType: taskType, Payload: &raw}
+// stubHandler records how many steps reached it and answers every call with an empty result.
+type stubHandler struct {
+	calls int
 }
 
-func assertSamePools(t *testing.T, got, want []*task.Pool) {
+func (h *stubHandler) Handle(_ context.Context, _ task.Task) (json.RawMessage, error) {
+	h.calls++
+	return json.RawMessage(`{}`), nil
+}
+
+// captureStdout runs fn and returns everything it printed, restoring os.Stdout even when fn panics.
+func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("forThumbbackfill returned %d pools, want %d", len(got), len(want))
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
 	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Fatalf("forThumbbackfill pool[%d] = %p, want %p", i, got[i], want[i])
-		}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
 	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured output: %v", err)
+	}
+	return string(out)
 }
 
-func TestPoolSetThumbbackfill(t *testing.T) {
-	consumePool := &task.Pool{}
-	enrichPool := &task.Pool{}
-	thumbnailPool := &task.Pool{}
-	backfillPool := &task.Pool{}
-	set := poolSet{
-		consume:       consumePool,
-		enrich:        enrichPool,
-		thumbnail:     thumbnailPool,
-		thumbbackfill: backfillPool,
-	}
-
-	t.Run("a thumbnail backfill batch runs on the backfill pool alone", func(t *testing.T) {
-		assertSamePools(t, set.forThumbbackfill(true), []*task.Pool{backfillPool})
-	})
-
-	t.Run("other batches run the consume, enrich and thumbnail pools", func(t *testing.T) {
-		assertSamePools(t, set.forThumbbackfill(false), []*task.Pool{consumePool, enrichPool, thumbnailPool})
-	})
+func payloadTask(taskType types.TaskType, payload string) database.ListBatchTaskProgressRow {
+	raw := json.RawMessage(payload)
+	return database.ListBatchTaskProgressRow{TaskType: taskType, Payload: &raw}
 }
 
 func TestTotalFiles(t *testing.T) {
 	cases := []struct {
 		name  string
-		tasks []database.Task
+		tasks []database.ListBatchTaskProgressRow
 		want  int
 	}{
 		{
 			name: "consume tasks report their highest file index",
-			tasks: []database.Task{
+			tasks: []database.ListBatchTaskProgressRow{
 				payloadTask(types.Task.Type.Consume, `{"file_index":1}`),
 				payloadTask(types.Task.Type.Consume, `{"file_index":4}`),
 				payloadTask(types.Task.Type.Enrich, `{"file_index":9}`),
@@ -67,7 +69,7 @@ func TestTotalFiles(t *testing.T) {
 		},
 		{
 			name: "consume tasks without an index are counted",
-			tasks: []database.Task{
+			tasks: []database.ListBatchTaskProgressRow{
 				payloadTask(types.Task.Type.Consume, `{"file_name":"a.pdf"}`),
 				payloadTask(types.Task.Type.Consume, `{"file_name":"b.pdf"}`),
 			},
@@ -75,7 +77,7 @@ func TestTotalFiles(t *testing.T) {
 		},
 		{
 			name: "non-consume tasks are ignored",
-			tasks: []database.Task{
+			tasks: []database.ListBatchTaskProgressRow{
 				payloadTask(types.Task.Type.Enrich, `{"file_name":"a.pdf"}`),
 			},
 			want: 0,
@@ -96,67 +98,12 @@ func TestTotalFiles(t *testing.T) {
 	}
 }
 
-func TestBatchRunsThumbbackfill(t *testing.T) {
-	if os.Getenv("TEST_DATABASE_URL") == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
-	client := database.NewTestClient(t)
-	database.ResetTestDatabase(client.DB())
-	ctx := context.Background()
-
-	insert := func(t *testing.T, batchID, taskType string) {
-		t.Helper()
-		if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID:     batchID,
-			Origin: types.Batch.Origin.CLI,
-			Status: types.Batch.Status.Queued,
-		}); err != nil {
-			t.Fatalf("create batch %s: %v", batchID, err)
-		}
-		if taskType == "" {
-			return
-		}
-		if _, err := client.DB().ExecContext(ctx,
-			`INSERT INTO task (task_id, task_type, status, batch_id) VALUES ($1, $2, 'pending', $3)`,
-			batchID+"-t", taskType, batchID); err != nil {
-			t.Fatalf("insert task for %s: %v", batchID, err)
-		}
-	}
-
-	cases := []struct {
-		name     string
-		taskType string
-		want     bool
-	}{
-		{"a thumbbackfill task selects the backfill pool", "thumbbackfill", true},
-		{"consume tasks stay on the consume family", "consume", false},
-		{"a batch without tasks runs neither", "", false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			batchID := "probe-" + c.taskType
-			insert(t, batchID, c.taskType)
-			got, err := batchRunsThumbbackfill(ctx, client, batchID)
-			if err != nil {
-				t.Fatalf("batchRunsThumbbackfill: %v", err)
-			}
-			if got != c.want {
-				t.Errorf("batchRunsThumbbackfill = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
-// TestParseExecToken pins the executor contract: no token means the child claims the batch itself,
-// a token from the dispatcher is adopted unchanged, and a malformed token is refused loudly.
+// TestParseExecToken pins the executor contract: the token is required and adopted unchanged, and a
+// malformed token is refused loudly. The bare selector is no longer a self-claim path.
 func TestParseExecToken(t *testing.T) {
-	t.Run("an empty value means self-claim", func(t *testing.T) {
-		token, err := parseExecToken("")
-		if err != nil {
-			t.Fatalf("parseExecToken(\"\"): %v", err)
-		}
-		if token != uuid.Nil {
-			t.Fatalf("token = %s, want uuid.Nil for the self-claim path", token)
+	t.Run("an empty value is refused", func(t *testing.T) {
+		if _, err := parseExecToken(""); err == nil {
+			t.Fatal("an empty exec token must be refused")
 		}
 	})
 
@@ -174,6 +121,55 @@ func TestParseExecToken(t *testing.T) {
 	t.Run("a malformed token is refused", func(t *testing.T) {
 		if _, err := parseExecToken("not-a-uuid"); err == nil {
 			t.Fatal("a malformed token must be refused")
+		}
+	})
+}
+
+// TestDirectRunSummaryCountsFailedSteps pins the direct-run summary arithmetic: every failure lands inside
+// a counted step, so the printed successful count cannot go negative when a step fails before any handler
+// runs, and successful runs count each attempted step once.
+func TestDirectRunSummaryCountsFailedSteps(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a file that cannot be checksummed counts as one failed step", func(t *testing.T) {
+		handler := &stubHandler{}
+		run := &directRun{consume: handler}
+		files := []consumption.File{{Name: "gone.pdf", OriginalPath: filepath.Join(t.TempDir(), "gone.pdf")}}
+
+		var runErr error
+		out := captureStdout(t, func() { runErr = run.process(ctx, files) })
+		if runErr != nil {
+			t.Fatalf("process reports and continues: %v", runErr)
+		}
+		if handler.calls != 0 {
+			t.Fatalf("handler ran %d time(s) for an unhashable file, want 0", handler.calls)
+		}
+		want := "Summary: 1 files, 1 tasks — 0 successful, 1 failed"
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary %q not found in output:\n%s", want, out)
+		}
+	})
+
+	t.Run("successful steps are counted once each", func(t *testing.T) {
+		handler := &stubHandler{}
+		run := &directRun{consume: handler, enrich: handler}
+		path := filepath.Join(t.TempDir(), "doc.pdf")
+		if err := os.WriteFile(path, []byte("content"), 0o600); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+		files := []consumption.File{{Name: "doc.pdf", OriginalPath: path}}
+
+		var runErr error
+		out := captureStdout(t, func() { runErr = run.process(ctx, files) })
+		if runErr != nil {
+			t.Fatalf("process: %v", runErr)
+		}
+		if handler.calls != 2 {
+			t.Fatalf("handler ran %d time(s), want 2 (consume then enrich)", handler.calls)
+		}
+		want := "1 files, 2 tasks — all successful"
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary %q not found in output:\n%s", want, out)
 		}
 	})
 }

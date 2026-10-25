@@ -140,7 +140,7 @@ flowchart TB
         Q["LISTEN/NOTIFY + forks workers"]
     end
 
-    subgraph Worker["kushim consume --batch\n(forked worker)"]
+    subgraph Worker["kushim <task> --from-batch\n(forked worker)"]
         CP["Extract → OCR → Optimize → Store"]
         EP["TextRank → Tag match →\nLLM → Identity planning"]
     end

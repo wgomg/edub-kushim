@@ -6,8 +6,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/backup"
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/consumption"
+	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
@@ -34,39 +39,48 @@ func lockPolicy(taskType types.TaskType) task.LockPolicy {
 	return task.LockPolicy{Holds: declaration.Holds, WaitsFor: declaration.WaitsFor}
 }
 
-// NewCatalog builds the task type table; builders read the database through the queries it carries.
-func NewCatalog(queries *database.Queries) *Catalog {
+// NewCatalog builds the task type table; builders read the database through the queries it carries, the
+// worker counts through the config accessor, and report skipped inputs through the logger, so a hot-reloaded
+// configuration reaches the next batch execution without rebuilding the table.
+func NewCatalog(queries *database.Queries, getCfg func() *config.Config, logger *log.Logger) *Catalog {
 	return &Catalog{definitions: map[types.TaskType]task.TypeDefinition{
 		types.Task.Type.Consume: {
 			Type:          types.Task.Type.Consume,
 			Locks:         lockPolicy(types.Task.Type.Consume),
+			DirectLocks:   &task.LockPolicy{Holds: []types.LockName{types.LockMaintenance}},
 			CLI:           "consume",
-			BatchSelector: "--batch",
+			BatchSelector: "--from-batch",
 			Hosts:         []types.Host{types.HostQueue},
+			Concurrency:   getCfg().Consumer.Workers,
 			DedupKey:      consumeDedupKey,
+			BuildTasks:    buildIngestTasks(getCfg, logger),
 		},
 		types.Task.Type.Enrich: {
 			Type:          types.Task.Type.Enrich,
 			Locks:         lockPolicy(types.Task.Type.Enrich),
-			CLI:           "consume",
-			BatchSelector: "--batch",
+			DirectLocks:   &task.LockPolicy{Holds: []types.LockName{types.LockMaintenance}},
+			CLI:           "enrich",
+			BatchSelector: "--from-batch",
 			Hosts:         []types.Host{types.HostQueue},
+			Concurrency:   getCfg().Enricher.Workers,
 			DedupKey:      enrichDedupKey,
 			BuildTasks:    buildEnrichTasks,
 		},
 		types.Task.Type.Thumbnail: {
 			Type:          types.Task.Type.Thumbnail,
 			Locks:         lockPolicy(types.Task.Type.Thumbnail),
-			CLI:           "consume",
-			BatchSelector: "--batch",
+			DirectLocks:   &task.LockPolicy{Holds: []types.LockName{types.LockStorage}, WaitsFor: []types.LockName{types.LockMaintenance}},
+			CLI:           "thumbnails",
+			BatchSelector: "--from-batch",
 			Hosts:         []types.Host{types.HostQueue},
+			Concurrency:   getCfg().Consumer.Thumbnail.Workers,
 			DedupKey:      thumbnailDedupKey,
 		},
 		types.Task.Type.ThumbBackfill: {
 			Type:          types.Task.Type.ThumbBackfill,
 			Locks:         lockPolicy(types.Task.Type.ThumbBackfill),
-			CLI:           "consume",
-			BatchSelector: "--batch",
+			CLI:           "thumbnails",
+			BatchSelector: "--from-batch",
 			Hosts:         []types.Host{types.HostQueue},
 			DedupKey:      thumbnailDedupKey,
 			BuildTasks:    buildThumbnailBackfillTasks(queries),
@@ -248,6 +262,38 @@ func buildEnrichTasks(_ context.Context, input task.BuildInput) ([]task.TaskSpec
 		specs = append(specs, task.TaskSpec{Type: types.Task.Type.Enrich, Payload: payload})
 	}
 	return specs, nil
+}
+
+// buildIngestTasks scans the inbox and returns one consume task plus its pre-linked waiting children per
+// file, the same task set the polling scan uses. A file whose checksum cannot be read is reported and
+// skipped, matching the polling and direct paths: one unreadable file must not block the whole enqueue.
+// Dedup handles files already covered by live work, so a rescan skips them at enqueue.
+func buildIngestTasks(getCfg func() *config.Config, logger *log.Logger) func(context.Context, task.BuildInput) ([]task.TaskSpec, error) {
+	return func(_ context.Context, input task.BuildInput) ([]task.TaskSpec, error) {
+		if err := requireTaskType(input, types.Task.Type.Consume); err != nil {
+			return nil, err
+		}
+		cfg := getCfg()
+		files, err := consumption.GetFiles(cfg.Storage.ConsumptionDir, cfg.Consumer.SupportedFiles, cfg.Consumer.MaxFilesPerBatch)
+		if err != nil {
+			return nil, fmt.Errorf("scan inbox: %w", err)
+		}
+		specs := make([]task.TaskSpec, 0, len(files)*2)
+		for i, file := range files {
+			md5hash, err := storage.CalculateMD5(file.OriginalPath)
+			if err != nil {
+				logger.Error("", "batch create consume: md5 %s: %v", file.OriginalPath, err)
+				continue
+			}
+			specs = append(specs, consumption.IngestTaskSpecs(consumption.IngestFile{
+				Path:       file.OriginalPath,
+				Index:      i + 1,
+				MD5:        md5hash,
+				DocumentID: uuid.New().String(),
+			}, cfg.Consumer.Thumbnail.Enabled)...)
+		}
+		return specs, nil
+	}
 }
 
 func buildThumbnailBackfillTasks(queries *database.Queries) func(context.Context, task.BuildInput) ([]task.TaskSpec, error) {

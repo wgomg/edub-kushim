@@ -2,14 +2,15 @@ package cli
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"time"
+	"slices"
 
+	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/ops/consume"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
-	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -18,35 +19,63 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
 	if fp.Help("Usage: kushim thumbnails <mode> [flags]\n\n" +
 		"Modes:\n" +
-		"  --all                Enqueue thumbnail tasks for every document missing one\n" +
-		"  --batch <id>         Enqueue for documents in the given batch\n" +
-		"  --document <id>      Enqueue for a single document\n\n" +
+		"  --all                Generate every missing thumbnail now\n" +
+		"  --document <id>      Generate one document's thumbnail now\n\n" +
 		"Flags:\n" +
-		"  --force              Proceed even if thumbnails are disabled in config") {
+		"  --force              Proceed even if thumbnails are disabled in config\n" +
+		"  --no-wait            Exit non-zero instead of waiting for a lock or in-flight work\n\n" +
+		"  Runs immediately under the storage hold, creating no queue rows.\n" +
+		"  To enqueue a backfill: kushim batch create thumbnails [--from-batch <id> | --document <id>]") {
 		return nil
+	}
+
+	if slices.Contains(args, "--batch") {
+		return fmt.Errorf("--batch is now --from-batch: use 'kushim batch create thumbnails --from-batch <id>' " +
+			"to enqueue a backfill for a batch's documents, or 'kushim batch run <id>' to execute a queued batch")
 	}
 
 	var all bool
 	fp.Bool("--all", &all)
-	var batchID string
-	fp.String("--batch", &batchID)
 	var documentID string
-	fp.String("--document", &documentID)
+	if err := fp.String("--document", &documentID); err != nil {
+		return err
+	}
+	var batchID, execTokenParam string
+	if err := fp.String("--from-batch", &batchID); err != nil {
+		return err
+	}
+	if err := fp.String("--exec-token", &execTokenParam); err != nil {
+		return err
+	}
 	var force bool
 	fp.Bool("--force", &force)
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
+
+	if rest := fp.Rest(); len(rest) > 0 {
+		return fmt.Errorf("unknown argument: %s", rest[0])
+	}
 
 	modes := 0
 	if all {
 		modes++
 	}
-	if batchID != "" {
-		modes++
-	}
 	if documentID != "" {
 		modes++
 	}
+	if batchID != "" || execTokenParam != "" {
+		modes++
+	}
 	if modes != 1 {
-		return fmt.Errorf("exactly one of --all, --batch <id>, --document <id> is required")
+		return fmt.Errorf("exactly one of --all, --document <id>, --from-batch <id> is required")
+	}
+
+	if batchID != "" || execTokenParam != "" {
+		if batchID == "" {
+			return fmt.Errorf("--exec-token requires --from-batch <id>")
+		}
+		_, err := consume.RunClaimedBatch(c, batchID, execTokenParam, nil)
+		return err
 	}
 
 	cfg := c.GetConfig()
@@ -54,95 +83,123 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("thumbnails are disabled in config (consumer.thumbnail.enabled); use --force to override")
 	}
 
+	var specs []task.TaskSpec
+	var err error
+	switch {
+	case all:
+		specs, err = thumbnailSpecsForAll(c)
+	case documentID != "":
+		specs, err = thumbnailSpecsForDocument(c, documentID)
+	}
+	if err != nil {
+		return err
+	}
+
+	return runThumbnailsDirect(c, specs, noWait)
+}
+
+// thumbnailSpecsForAll runs the thumbbackfill definition's builder over every document missing a thumbnail,
+// the same selection the schedule and `batch create thumbnails` use.
+func thumbnailSpecsForAll(c *container.Container) ([]task.TaskSpec, error) {
+	catalog, err := c.GetCatalog()
+	if err != nil {
+		return nil, fmt.Errorf("task catalog: %w", err)
+	}
+	def, err := catalog.Definition(types.Task.Type.ThumbBackfill)
+	if err != nil {
+		return nil, fmt.Errorf("thumbbackfill definition: %w", err)
+	}
+	specs, err := def.BuildTasks(context.Background(), container.NewEmptyBuildInput(types.Task.Type.ThumbBackfill))
+	if err != nil {
+		return nil, err
+	}
+	return specs, nil
+}
+
+// thumbnailSpecsForDocument selects one document's missing thumbnail.
+func thumbnailSpecsForDocument(c *container.Container, documentID string) ([]task.TaskSpec, error) {
+	client, err := c.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+	ctx := context.Background()
+
+	if _, err := client.Queries.GetDocument(ctx, documentID); err != nil {
+		if errs.KindOf(errs.FromDB(err, "get document")) == errs.KindNotFound {
+			return nil, fmt.Errorf("document %s not found", documentID)
+		}
+		return nil, errs.FromDB(err, "get document")
+	}
+
+	row, err := client.Queries.GetDocumentWithoutThumbnail(ctx, documentID)
+	if err != nil {
+		if errs.KindOf(errs.FromDB(err, "get document without thumbnail")) == errs.KindNotFound {
+			return nil, fmt.Errorf("document %s already has a thumbnail", documentID)
+		}
+		return nil, errs.FromDB(err, "get document without thumbnail")
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"document_id":  row.DocumentID,
+		"storage_path": row.StoragePath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal thumbnail payload: %w", err)
+	}
+	return []task.TaskSpec{{Type: types.Task.Type.ThumbBackfill, Payload: payload}}, nil
+}
+
+// runThumbnailsDirect generates the selected thumbnails immediately under the manual storage hold. A
+// failed document is reported and the run continues; the command exits non-zero when any failed.
+func runThumbnailsDirect(c *container.Container, specs []task.TaskSpec, noWait bool) error {
+	if len(specs) == 0 {
+		fmt.Println("No documents missing thumbnails.")
+		return nil
+	}
+
 	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-
-	enqueuer, err := c.GetEnqueuer()
+	catalog, err := c.GetCatalog()
 	if err != nil {
-		return fmt.Errorf("enqueuer: %w", err)
+		return fmt.Errorf("task catalog: %w", err)
 	}
-	spec, err := cliBatchSpec()
+	def, err := catalog.Definition(types.Task.Type.Thumbnail)
+	if err != nil {
+		return fmt.Errorf("thumbnail definition: %w", err)
+	}
+	handler, err := c.GetHandler(types.Task.Type.Thumbnail)
+	if err != nil {
+		return fmt.Errorf("thumbnail handler: %w", err)
+	}
+
+	ctx := context.Background()
+	failed := 0
+	fmt.Printf("Generating %d thumbnail(s)...\n", len(specs))
+	err = task.RunDirect(ctx, client, c.GetLogger(), "thumbnails", def.LocksForDirectMode(), !noWait, nil, func() error {
+		for i, spec := range specs {
+			_, err := handler.Handle(ctx, task.Task{
+				TaskID:   uuid.New().String(),
+				TaskType: spec.Type,
+				Payload:  spec.Payload,
+			})
+			if err != nil {
+				failed++
+				fmt.Printf("  [%d/%d] ... failed: %v\n", i+1, len(specs), err)
+				continue
+			}
+			fmt.Printf("  [%d/%d] ... done\n", i+1, len(specs))
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	svc := service.NewThumbnailBackfill(client.Queries, enqueuer)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-
-	switch {
-	case all:
-		result, err := enqueueThumbnailBackfillAll(ctx, c, enqueuer, spec)
-		if err != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				if len(result.TaskIDs) == 0 {
-					return fmt.Errorf("backfill thumbnails: %w — timed out before any task was queued; re-run to continue", err)
-				}
-				return fmt.Errorf("backfill thumbnails: %w — timed out after enqueueing %d task(s); re-run to continue", err, len(result.TaskIDs))
-			}
-			return fmt.Errorf("backfill thumbnails: %w", err)
-		}
-		if result.BatchID == "" {
-			if result.Skipped == 0 {
-				fmt.Println("No documents missing thumbnails.")
-			} else {
-				fmt.Printf("%d document(s) already have a pending thumbnail task.\n", result.Skipped)
-			}
-			return nil
-		}
-		fmt.Printf("Batch %s queued with %d thumbnail task(s) — run 'kushim queue' to process\n", result.BatchID, len(result.TaskIDs))
-	case batchID != "":
-		newBatchID, enqueued, skipped, err := svc.BackfillBatch(ctx, spec, batchID)
-		if err != nil {
-			return fmt.Errorf("backfill thumbnails for batch: %w", err)
-		}
-		if enqueued == 0 && skipped == 0 {
-			fmt.Println("No documents missing thumbnails in that batch.")
-			return nil
-		}
-		if enqueued == 0 {
-			fmt.Printf("%d document(s) in that batch already have a pending thumbnail task.\n", skipped)
-			return nil
-		}
-		fmt.Printf("Batch %s queued with %d thumbnail task(s) — run 'kushim queue' to process\n", newBatchID, enqueued)
-	case documentID != "":
-		batchID, err := svc.BackfillDocument(ctx, spec, documentID)
-		if err != nil {
-			switch errs.KindOf(err) {
-			case errs.KindNotFound:
-				return fmt.Errorf("document %s not found", documentID)
-			case errs.KindConflict:
-				return fmt.Errorf("document %s already has a thumbnail or a task is already queued", documentID)
-			default:
-				return fmt.Errorf("backfill thumbnail: %w", err)
-			}
-		}
-		fmt.Printf("Batch %s queued with 1 thumbnail task — run 'kushim queue' to process\n", batchID)
+	if failed > 0 {
+		fmt.Printf("\nSummary: %d thumbnail(s) — %d successful, %d failed\n", len(specs), len(specs)-failed, failed)
+		return fmt.Errorf("%d thumbnail(s) failed", failed)
 	}
-
+	fmt.Printf("\nSummary: %d thumbnail(s) — all successful\n", len(specs))
 	return nil
-}
-
-// enqueueThumbnailBackfillAll runs the thumbbackfill definition's builder over every document missing
-// a thumbnail and enqueues the resulting batch.
-func enqueueThumbnailBackfillAll(ctx context.Context, c *container.Container, enqueuer *task.Enqueuer, spec task.BatchSpec) (task.EnqueueResult, error) {
-	catalog, err := c.GetCatalog()
-	if err != nil {
-		return task.EnqueueResult{}, fmt.Errorf("task catalog: %w", err)
-	}
-	def, err := catalog.Definition(types.Task.Type.ThumbBackfill)
-	if err != nil {
-		return task.EnqueueResult{}, fmt.Errorf("thumbbackfill definition: %w", err)
-	}
-	tasks, err := def.BuildTasks(ctx, container.NewEmptyBuildInput(types.Task.Type.ThumbBackfill))
-	if err != nil {
-		return task.EnqueueResult{}, err
-	}
-	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
-	if err != nil {
-		return result, err
-	}
-	return result, nil
 }

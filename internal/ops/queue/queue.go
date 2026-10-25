@@ -1,8 +1,8 @@
 // Package queue is the queue daemon: it LISTENs for batch and lock notifications, polls as a safety net,
 // claims queued batches through the dispatcher and forks each batch's task CLI in batch mode, runs the
-// blocking-task pools (backup, mirror, tag measure, tag audit, tag reconcile, tag identity, thumbnails
-// backfill) for the workloads that do not go through the dispatcher yet, schedules the recurring runs and
-// requeues stale work through the reaper.
+// blocking-task pools (backup, mirror, tag measure, tag audit, tag reconcile, tag identity) for the
+// workloads that do not go through the dispatcher yet, schedules the recurring runs and requeues stale
+// work through the reaper.
 package queue
 
 import (

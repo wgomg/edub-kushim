@@ -197,6 +197,41 @@ func TestRunDirect_RunsBodyAndReleases(t *testing.T) {
 	}
 }
 
+// TestRunDirect_ReleasesOnlyItsOwnHolds pins the manual-holder release scope: every direct run shares the
+// NULL owner token, so a run may release only the names its own policy acquired — releasing every
+// NULL-token lock would drop a concurrent manual run's lock and let a third process in while both still
+// believe they hold theirs exclusively.
+func TestRunDirect_ReleasesOnlyItsOwnHolds(t *testing.T) {
+	_, _, client := setupTaskTestClient(t)
+	ctx := context.Background()
+	storage := []types.LockName{types.LockStorage}
+	maintenance := []types.LockName{types.LockMaintenance}
+	policy := LockPolicy{Holds: storage, WaitsFor: maintenance}
+	t.Cleanup(func() { _ = ReleaseLocksForToken(context.Background(), client.Queries, uuid.NullUUID{}) })
+
+	err := RunDirect(ctx, client, log.NewDiscardLogger(), "thumb-first", policy, false, nil, func() error {
+		// a second manual run starts under the same NULL token while this one holds storage
+		if err := AcquireLocks(ctx, client, maintenance, nil, uuid.NullUUID{}, ""); err != nil {
+			t.Fatalf("the concurrent manual run must acquire maintenance: %v", err)
+		}
+		if held := heldLocks(t, client, policy.Holds); held != 1 {
+			t.Fatalf("held=%d for our storage lock inside the body, want 1", held)
+		}
+		if held := heldLocks(t, client, maintenance); held != 1 {
+			t.Fatalf("held=%d for the concurrent run's lock inside the body, want 1", held)
+		}
+		return nil
+	})
+	testutil.AssertNoError(t, err, "RunDirect")
+
+	if held := heldLocks(t, client, storage); held != 0 {
+		t.Fatalf("held=%d after our release, want 0 (our storage lock released)", held)
+	}
+	if held := heldLocks(t, client, maintenance); held != 1 {
+		t.Fatalf("held=%d after our release, want 1 (the concurrent run's lock must survive)", held)
+	}
+}
+
 func TestRunDirect_NoWaitRefusesBusyLock(t *testing.T) {
 	_, _, client := setupTaskTestClient(t)
 	ctx := context.Background()

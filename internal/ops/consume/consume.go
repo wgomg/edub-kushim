@@ -1,6 +1,6 @@
-// Package consume is the per-batch consume driver: one child process per batch, processing its consume,
-// enrich and thumbnail tasks through task pools, with batch ownership, heartbeat, the cancel protocol and
-// the credit-pause handling.
+// Package consume is the kushim consume verb: the direct mode that consumes the inbox immediately under
+// the manual maintenance lock, the batch mode that executes one claimed consume-family batch through the
+// shared execution library, and the cancel subcommand.
 package consume
 
 import (
@@ -11,8 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
-	"strings"
+	"slices"
 	"syscall"
 	"time"
 
@@ -30,13 +29,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const (
-	heartbeatInterval = 5 * time.Second
-)
-
-// ErrBatchPaused tells the queue the batch hit a credit or balance error
-// and should pause instead of fail.
-var ErrBatchPaused = errors.New("batch paused due to LLM credit/balance error")
+const progressInterval = 500 * time.Millisecond
 
 func watchSignals(ctx context.Context, cancel context.CancelFunc) {
 	sigCh := make(chan os.Signal, 1)
@@ -51,59 +44,10 @@ func watchSignals(ctx context.Context, cancel context.CancelFunc) {
 	}()
 }
 
-type poolSet struct {
-	consume       *task.Pool
-	enrich        *task.Pool
-	thumbnail     *task.Pool
-	thumbbackfill *task.Pool
-}
-
-func (p poolSet) forThumbbackfill(thumbbackfill bool) []*task.Pool {
-	if thumbbackfill {
-		return []*task.Pool{p.thumbbackfill}
-	}
-	return []*task.Pool{p.consume, p.enrich, p.thumbnail}
-}
-
-func fetchPools(c *container.Container) (poolSet, error) {
-	consumePool, err := c.GetPool(types.Task.Type.Consume)
-	if err != nil {
-		return poolSet{}, fmt.Errorf("failed to get pool: %w", err)
-	}
-	enrichPool, err := c.GetPool(types.Task.Type.Enrich)
-	if err != nil {
-		return poolSet{}, fmt.Errorf("failed to get enrich pool: %w", err)
-	}
-	thumbnailPool, err := c.GetPool(types.Task.Type.Thumbnail)
-	if err != nil {
-		return poolSet{}, fmt.Errorf("failed to get thumbnail pool: %w", err)
-	}
-	backfillPool, err := c.GetPool(types.Task.Type.ThumbBackfill)
-	if err != nil {
-		return poolSet{}, fmt.Errorf("failed to get thumbbackfill pool: %w", err)
-	}
-	return poolSet{
-		consume:       consumePool,
-		enrich:        enrichPool,
-		thumbnail:     thumbnailPool,
-		thumbbackfill: backfillPool,
-	}, nil
-}
-
-type batchRun struct {
-	client        *database.Client
-	owner         *task.Owner
-	ownerID       string
-	batchID       string
-	thumbbackfill bool
-	pools         poolSet
-}
-
-// Run is the kushim consume verb: with "cancel" it drives the batch
-// cancel protocol; otherwise it claims the given (or next queued) batch,
-// takes ownership, and runs its tasks through the pools until done or
-// interrupted. The parent process stays clean and shells the heavy
-// lifting to per-task children where the adapter does so.
+// Run is the kushim consume verb. With "cancel" it cancels a running batch; with --from-batch it executes
+// one claimed batch under the execution token the dispatcher or batch run passed; otherwise it consumes
+// the inbox immediately, creating no batch or task rows. Use "kushim batch create consume" to enqueue
+// ingest work for the queue.
 func Run(c *container.Container, args []string) error {
 	if len(args) > 0 && args[0] == "cancel" {
 		return consumeCancelHandler(c, args[1:])
@@ -111,301 +55,374 @@ func Run(c *container.Container, args []string) error {
 
 	fp := flags.NewFlagParser(args)
 
-	if fp.Help("Usage: kushim consume [--batch <id>]\n" +
-		"  Scan inbox, create one task per file, and process them.\n" +
-		"  Streams per-file progress to stdout.\n\n" +
-		"  Prerequisite: kushim hugot must be running (sibling process).\n" +
-		"  Start it in a separate terminal or via systemd before running consume.\n\n" +
-		"  --batch <id>       execute one queued batch\n" +
-		"  --exec-token <id>  execution token passed by the dispatcher or batch run\n\n" +
+	if fp.Help("Usage: kushim consume [--from-batch <id> --exec-token <id>] [--no-wait]\n" +
+		"  Scan the inbox and consume its files immediately, without queue rows.\n\n" +
+		"  --from-batch <id>  execute one claimed batch (dispatcher and 'kushim batch run' contract)\n" +
+		"  --exec-token <id>  execution token passed with --from-batch\n" +
+		"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n\n" +
+		"  To enqueue an ingest batch: kushim batch create consume\n\n" +
 		"Subcommands:\n" +
 		"  cancel <id>       cancel a running batch") {
 		return nil
 	}
 
-	var batchIDParam, execTokenParam string
-	fp.String("--batch", &batchIDParam)
+	if slices.Contains(args, "--batch") {
+		return fmt.Errorf("--batch is now --from-batch: run 'kushim batch run <id>' to execute a queued batch, " +
+			"or 'kushim batch create consume' to enqueue one")
+	}
 
-	fp.String("--exec-token", &execTokenParam)
+	var batchID, execTokenParam string
+	if err := fp.String("--from-batch", &batchID); err != nil {
+		return err
+	}
+	if err := fp.String("--exec-token", &execTokenParam); err != nil {
+		return err
+	}
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
 
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag: %s", rest[0])
 	}
 
-	pools, err := fetchPools(c)
+	if batchID != "" || execTokenParam != "" {
+		if batchID == "" {
+			return fmt.Errorf("--exec-token requires --from-batch <id>")
+		}
+		return runBatchMode(c, batchID, execTokenParam)
+	}
+
+	return runDirect(c, noWait)
+}
+
+// runBatchMode executes one claimed consume-family batch: it gates on the external tools a consume task
+// needs, then hands the run to `RunClaimedBatch` with the consume file-quarantine hook.
+func runBatchMode(c *container.Container, batchID, execTokenParam string) error {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("failed to get database: %w", err)
+	}
+	ctx := context.Background()
+
+	missingTools := config.FilterToolErrors(config.MissingExternalTools(c.GetConfig()))
+	if len(missingTools) > 0 {
+		hasConsumeTasks, listErr := batchHasConsumeTasks(ctx, client, batchID)
+		if listErr != nil || hasConsumeTasks {
+			printToolBlock(missingTools)
+			return fmt.Errorf("consume blocked: missing required external tools")
+		}
+	}
+
+	cfg := c.GetConfig()
+	maxRetries := int32(cfg.Consumer.Reclaim.MaxRetries)
+	defer triggerOrphanScan(c)
+
+	result, err := RunClaimedBatch(c, batchID, execTokenParam, func(qctx context.Context, taskIDs []string) error {
+		return consumption.QuarantineFailedFiles(qctx, client.Queries, cfg.Storage.StorageDir,
+			c.GetLogger(), batchID, maxRetries, taskIDs)
+	})
 	if err != nil {
 		return err
+	}
+	if result.Paused {
+		return nil
+	}
+
+	enrichment.LogBatchBookend(ctx, client.Queries, c.GetLogger(), batchID, result.Status)
+	return nil
+}
+
+// RunClaimedBatch executes one claimed batch through the shared execution library. The dispatcher and
+// batch run own the claim and pass the execution token, so this child adopts the lease, runs the batch's
+// tasks through their registered handlers and settles. quarantine is the host's consume-file cleanup
+// hook; nil is correct for commands whose batches never carry consume tasks. The paused notice is printed
+// here; an error means the run was interrupted or could not start, and the process must exit non-zero.
+func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, quarantine func(ctx context.Context, taskIDs []string) error) (task.BatchRunResult, error) {
+	token, err := parseExecToken(execTokenParam)
+	if err != nil {
+		return task.BatchRunResult{}, err
+	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return task.BatchRunResult{}, fmt.Errorf("failed to get database: %w", err)
+	}
+	catalog, err := c.GetCatalog()
+	if err != nil {
+		return task.BatchRunResult{}, fmt.Errorf("task catalog: %w", err)
+	}
+	store, err := c.GetStore()
+	if err != nil {
+		return task.BatchRunResult{}, fmt.Errorf("task store: %w", err)
+	}
+	registry, err := c.GetRegistry()
+	if err != nil {
+		return task.BatchRunResult{}, fmt.Errorf("task registry: %w", err)
+	}
+
+	deps := task.BatchRunDeps{
+		Client:     client,
+		Logger:     c.GetLogger(),
+		Catalog:    catalog,
+		Store:      store,
+		Registry:   registry,
+		MaxRetries: int32(c.GetConfig().Consumer.Reclaim.MaxRetries),
+		Quarantine: quarantine,
+	}
+
+	c.GetLogger().SetLevel(log.LevelSilent)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	watchSignals(ctx, cancel)
+
+	if batch, readErr := client.Queries.GetBatch(ctx, batchID); readErr == nil && batch.Status == types.Batch.Status.Paused {
+		fmt.Printf("Batch %s is paused due to an LLM provider credit/balance error.\n", batchID)
+		fmt.Printf("Resolve the billing issue, then re-queue the batch and run this command again.\n")
+		return task.BatchRunResult{Status: batch.Status, Paused: true}, nil
+	}
+
+	progressCtx, stopProgress := context.WithCancel(ctx)
+	defer stopProgress()
+	go streamBatchProgress(progressCtx, client.Queries, batchID)
+
+	result, err := task.RunBatch(ctx, deps, batchID, token)
+	stopProgress()
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Println("\nBatch cancelled")
+		}
+		return result, err
+	}
+	if result.Paused {
+		fmt.Printf("\nBatch paused: LLM provider credit/balance error detected. Resolve billing and re-queue the batch.\n")
+	}
+	if result.Status == types.Batch.Status.Processing {
+		fmt.Printf("\nWarning: batch %s did not settle; tasks remain active and the batch is left to recovery.\n", batchID)
+	}
+	return result, nil
+}
+
+// runDirect consumes the inbox immediately under the manual maintenance lock: no batch and no task rows
+// are created, the tasks of a failed file are reported and skipped, and the command exits non-zero when
+// anything failed.
+func runDirect(c *container.Container, noWait bool) error {
+	cfg := c.GetConfig()
+	allTools := config.MissingExternalTools(cfg)
+	missingTools := config.FilterToolErrors(allTools)
+	if len(missingTools) > 0 {
+		printToolBlock(missingTools)
+		return fmt.Errorf("consume blocked: missing required external tools")
+	}
+	printOcrmypdfAdvisory(cfg, allTools)
+
+	files, err := consumption.GetFiles(cfg.Storage.ConsumptionDir, cfg.Consumer.SupportedFiles, cfg.Consumer.MaxFilesPerBatch)
+	if err != nil {
+		return fmt.Errorf("failed to scan inbox: %w", err)
+	}
+	if len(files) == 0 {
+		fmt.Println("No files found in consumption directory")
+		return nil
 	}
 
 	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database: %w", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	allTools := config.MissingExternalTools(c.GetConfig())
-	missingTools := config.FilterToolErrors(allTools)
-	if len(missingTools) > 0 {
-		printToolBlock(missingTools)
-	}
-
-	if batchIDParam != "" {
-		if len(missingTools) > 0 {
-			tasks, listErr := task.ListFiltered(ctx, client.Queries, task.TaskFilter{
-				BatchID: batchIDParam,
-			})
-			hasConsumeTasks := false
-			if listErr == nil {
-				for _, t := range tasks {
-					if t.TaskType == types.Task.Type.Consume {
-						hasConsumeTasks = true
-						break
-					}
-				}
-			}
-			if hasConsumeTasks || listErr != nil {
-				return fmt.Errorf("consume blocked: missing required external tools")
-			}
-		}
-
-		batch, batchErr := client.Queries.GetBatch(ctx, batchIDParam)
-		if batchErr == nil && batch.Status == types.Batch.Status.Paused {
-			fmt.Printf("Batch %s is paused due to an LLM provider credit/balance error.\n", batchIDParam)
-			fmt.Printf("Resolve the billing issue, then re-queue the batch and run this command again.\n")
-			return nil
-		}
-
-		thumbbackfill, tbfErr := batchRunsThumbbackfill(ctx, client, batchIDParam)
-		if tbfErr != nil {
-			return fmt.Errorf("inspect batch tasks: %w", tbfErr)
-		}
-
-		execToken, err := parseExecToken(execTokenParam)
-		if err != nil {
-			return err
-		}
-
-		ownerID := uuid.New().String()
-		if execToken != uuid.Nil {
-			ownerID = execToken.String()
-		}
-		pid := os.Getpid()
-		owner := task.NewOwner(client, ownerID, pid, c.GetLogger())
-
-		if execToken != uuid.Nil {
-			// the dispatcher or batch run already claimed the batch, passing the lease token to the child in
-			// the exec-token flag; the child only adopts that lease, so any cancelled, requeued or reclaimed
-			// batch refuses the run
-			c.GetLogger().Info("", "consume: adopting batch %s (PID=%d, token=%s)", batchIDParam, pid, ownerID)
-			if err := owner.Adopt(ctx, batchIDParam); err != nil {
-				return err
-			}
-		} else {
-			c.GetLogger().Info("", "consume: acquiring batch %s (PID=%d, ownerID=%s)", batchIDParam, pid, ownerID)
-			if err := owner.Acquire(ctx, batchIDParam); err != nil {
-				if errors.Is(err, task.ErrBatchLocked) {
-					bo, boErr := client.GetBatchOwner(ctx, database.GetBatchOwnerParams{
-						BatchID:           batchIDParam,
-						StaleAfterSeconds: task.LeaseStaleSeconds,
-					})
-					if boErr == nil && bo.Pid > 0 {
-						return fmt.Errorf("batch %s is being processed by PID %d", batchIDParam, bo.Pid)
-					}
-					return fmt.Errorf("batch %s is being processed by another process", batchIDParam)
-				}
-				return fmt.Errorf("acquire batch %s: %w", batchIDParam, err)
-			}
-		}
-
-		c.GetLogger().Debug("", "consume: GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
-
-		maxRetries := int32(c.GetConfig().Consumer.Reclaim.MaxRetries)
-		var reset task.ResetResult
-		if execToken != uuid.Nil {
-			// the claim acquired the batch locks: entry repair must keep them
-			reset, err = task.ResetProcessingTasksForClaim(ctx, client, batchIDParam, maxRetries)
-		} else {
-			reset, err = task.ResetProcessingTasksByBatch(ctx, client, batchIDParam, maxRetries)
-		}
-		if err != nil {
-			c.GetLogger().Error("", "reset processing tasks for batch %s: %v", batchIDParam, err)
-		}
-		if reset.Reset > 0 {
-			fmt.Printf("  reset %d orphaned processing tasks\n", reset.Reset)
-		}
-		if err := consumption.QuarantineFailedFiles(ctx, client.Queries, c.GetConfig().Storage.StorageDir, c.GetLogger(), batchIDParam, maxRetries, reset.ConsumeTaskIDs()); err != nil {
-			c.GetLogger().Error("", "quarantine files for batch %s: %v", batchIDParam, err)
-		}
-
-		var release func()
-		if execToken != uuid.Nil {
-			// the claim already acquired the batch locks: keep them fresh and drain their waiters
-			release, err = holdAcquiredBatchLocks(ctx, c, client, batchIDParam, uuid.NullUUID{UUID: execToken, Valid: true})
-		} else {
-			release, err = acquireBatchHolds(ctx, c, client, batchIDParam, ownerID)
-		}
-		if err != nil {
-			return err
-		}
-		defer release()
-
-		return runBatchThroughPools(ctx, cancel, c, batchRun{
-			client:        client,
-			owner:         owner,
-			ownerID:       ownerID,
-			batchID:       batchIDParam,
-			thumbbackfill: thumbbackfill,
-			pools:         pools,
-		})
-	}
-
-	printOcrmypdfAdvisory(c.GetConfig(), allTools)
-
-	if len(missingTools) > 0 {
-		return fmt.Errorf("consume blocked: missing required external tools")
-	}
-
-	pausedIDs, err := client.Queries.ListPausedBatches(ctx)
+	catalog, err := c.GetCatalog()
 	if err != nil {
-		return fmt.Errorf("check paused batches: %w", err)
+		return fmt.Errorf("task catalog: %w", err)
 	}
-	if len(pausedIDs) > 0 {
-		return fmt.Errorf(
-			"%d paused batch(es) exist due to LLM credit/balance errors: %s\n"+
-				"Resolve the billing issue, then resume or cancel each paused batch before creating new ones.",
-			len(pausedIDs), strings.Join(pausedIDs, ", "),
-		)
-	}
-
-	files, err := consumption.GetFiles(
-		c.GetConfig().Storage.ConsumptionDir,
-		c.GetConfig().Consumer.SupportedFiles,
-		c.GetConfig().Consumer.MaxFilesPerBatch,
-	)
+	def, err := catalog.Definition(types.Task.Type.Consume)
 	if err != nil {
-		return fmt.Errorf("failed to scan inbox: %w", err)
+		return fmt.Errorf("consume definition: %w", err)
 	}
 
-	if len(files) == 0 {
-		fmt.Println("No files found in consumption directory")
-		return nil
-	}
-
-	enqueuer, err := c.GetEnqueuer()
-	if err != nil {
-		return fmt.Errorf("failed to get enqueuer: %w", err)
-	}
-
-	batchSvc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-
-	countBefore, err := batchSvc.CountQueuedConsumeBatches(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to check queue: %w", err)
-	}
-
-	thumbnailsEnabled := c.GetConfig().Consumer.Thumbnail.Enabled
-	var tasks []task.TaskSpec
-	consumeTaskIDs := make(map[string]struct{}, len(files))
-	for i, f := range files {
-		md5hash, md5Err := storage.CalculateMD5(f.OriginalPath)
-		if md5Err != nil {
-			c.GetLogger().Error("", "md5 %s: %v", f.OriginalPath, md5Err)
-			continue
-		}
-
-		fileTasks := consumption.IngestTaskSpecs(consumption.IngestFile{
-			Path:       f.OriginalPath,
-			Index:      i + 1,
-			MD5:        md5hash,
-			DocumentID: uuid.New().String(),
-		}, thumbnailsEnabled)
-		consumeTaskIDs[fileTasks[0].TaskID] = struct{}{}
-		tasks = append(tasks, fileTasks...)
-	}
-
-	if len(tasks) == 0 {
-		fmt.Printf("No new files to consume\n")
-		return nil
-	}
-
-	spec, err := task.NewBatchSpec(types.Batch.Origin.CLI, "")
-	if err != nil {
-		return fmt.Errorf("build batch spec: %w", err)
-	}
-
-	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
-	if err != nil {
-		return fmt.Errorf("enqueue batch: %w", err)
-	}
-
-	enqueued := 0
-	for _, taskID := range result.TaskIDs {
-		if _, ok := consumeTaskIDs[taskID]; ok {
-			enqueued++
-		}
-	}
-	if enqueued == 0 || result.BatchID == "" {
-		fmt.Printf("No new files to consume\n")
-		return nil
-	}
-
-	batchID := result.BatchID
-	fmt.Printf("Batch: %s\n", batchID)
-
-	if countBefore > 0 {
-		fmt.Println("Batch queued — kushim queue will pick it up. Run 'kushim queue' if you haven't started it yet.")
-		return nil
-	}
-
-	for i, file := range files {
-		fmt.Printf("[%d/%d] %s → queued\n", i+1, len(files), file.Name)
-	}
-
-	fmt.Println("Waiting for completion...")
-
-	ownerID := uuid.New().String()
-	owner := task.NewOwner(client, ownerID, os.Getpid(), c.GetLogger())
-
-	if err := owner.Acquire(ctx, batchID); err != nil {
-		return fmt.Errorf("acquire batch %s: %w", batchID, err)
-	}
-
-	release, err := acquireBatchHolds(ctx, c, client, batchID, ownerID)
+	run, err := newDirectRun(c, cfg.Consumer.Thumbnail.Enabled)
 	if err != nil {
 		return err
 	}
-	defer release()
 
-	return runBatchThroughPools(ctx, cancel, c, batchRun{
-		client:        client,
-		owner:         owner,
-		ownerID:       ownerID,
-		batchID:       batchID,
-		thumbbackfill: false,
-		pools:         pools,
-	})
-}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	watchSignals(ctx, cancel)
 
-// batchRunsThumbbackfill reports whether the batch carries thumbbackfill tasks, which select the backfill
-// pool instead of the consume family.
-func batchRunsThumbbackfill(ctx context.Context, client *database.Client, batchID string) (bool, error) {
-	tasks, err := task.ListFiltered(ctx, client.Queries, task.TaskFilter{
-		BatchID:  batchID,
-		TaskType: string(types.Task.Type.ThumbBackfill),
-		Limit:    1,
+	fmt.Printf("Consuming %d file(s)...\n", len(files))
+	err = task.RunDirect(ctx, client, c.GetLogger(), "consume", def.LocksForDirectMode(), !noWait, nil, func() error {
+		return run.process(ctx, files)
 	})
 	if err != nil {
-		return false, err
+		return err
 	}
-	return len(tasks) > 0, nil
+	if run.failed > 0 {
+		return fmt.Errorf("%d task(s) failed", run.failed)
+	}
+
+	triggerOrphanScan(c)
+	return nil
 }
 
-// parseExecToken accepts the optional execution token flag; an empty value means the child claims the batch
-// itself instead of adopting a dispatcher lease.
+// directRun holds the handlers and counters of one immediate inbox run: tasks counts every attempted step
+// and every failure lands inside one, so the derived successful count cannot go negative.
+type directRun struct {
+	consume    task.Handler
+	enrich     task.Handler
+	thumbnail  task.Handler
+	files      int
+	tasks      int
+	failed     int
+	showThumbs bool
+}
+
+func newDirectRun(c *container.Container, thumbnailsEnabled bool) (*directRun, error) {
+	consumeHandler, err := c.GetHandler(types.Task.Type.Consume)
+	if err != nil {
+		return nil, fmt.Errorf("consume handler: %w", err)
+	}
+	enrichHandler, err := c.GetHandler(types.Task.Type.Enrich)
+	if err != nil {
+		return nil, fmt.Errorf("enrich handler: %w", err)
+	}
+	run := &directRun{consume: consumeHandler, enrich: enrichHandler, showThumbs: thumbnailsEnabled}
+	if thumbnailsEnabled {
+		thumbnailHandler, err := c.GetHandler(types.Task.Type.Thumbnail)
+		if err != nil {
+			return nil, fmt.Errorf("thumbnail handler: %w", err)
+		}
+		run.thumbnail = thumbnailHandler
+	}
+	return run, nil
+}
+
+// process consumes the scanned files sequentially: the consume action, then the document's enrichment
+// and, when enabled, its thumbnail. A failed step is reported and the run continues with the next file;
+// a provider credit error aborts, because every remaining document would fail the same way.
+func (r *directRun) process(ctx context.Context, files []consumption.File) error {
+	r.files = len(files)
+	for i, file := range files {
+		index := i + 1
+
+		r.tasks++
+		md5hash, err := storage.CalculateMD5(file.OriginalPath)
+		if err != nil {
+			r.fail(index, types.Task.Type.Consume, file.Name, fmt.Errorf("md5: %w", err))
+			continue
+		}
+
+		documentID := uuid.New().String()
+		consumePayload, err := json.Marshal(map[string]any{
+			"file_path":   file.OriginalPath,
+			"file_index":  index,
+			"document_id": documentID,
+			"md5":         md5hash,
+		})
+		if err != nil {
+			r.fail(index, types.Task.Type.Consume, file.Name, fmt.Errorf("marshal consume payload: %w", err))
+			continue
+		}
+
+		result, err := r.consume.Handle(ctx, directTask(types.Task.Type.Consume, consumePayload))
+		if err != nil {
+			r.fail(index, types.Task.Type.Consume, file.Name, err)
+			if pauseRequested(err) {
+				return fmt.Errorf("consume aborted: %w", err)
+			}
+			continue
+		}
+		r.done(index, types.Task.Type.Consume, file.Name)
+
+		var consumed struct {
+			StoragePath string `json:"storage_path"`
+		}
+		if err := json.Unmarshal(result, &consumed); err != nil {
+			r.fail(index, types.Task.Type.Consume, file.Name, fmt.Errorf("parse consume result: %w", err))
+			continue
+		}
+
+		r.tasks++
+		enrichPayload, err := json.Marshal(map[string]any{
+			"document_id": documentID,
+			"file_name":   file.Name,
+			"file_index":  index,
+		})
+		if err != nil {
+			r.fail(index, types.Task.Type.Enrich, file.Name, fmt.Errorf("marshal enrich payload: %w", err))
+			continue
+		}
+		if _, err := r.enrich.Handle(ctx, directTask(types.Task.Type.Enrich, enrichPayload)); err != nil {
+			r.fail(index, types.Task.Type.Enrich, file.Name, err)
+			if pauseRequested(err) {
+				return fmt.Errorf("enrich aborted: %w", err)
+			}
+			continue
+		}
+		r.done(index, types.Task.Type.Enrich, file.Name)
+
+		if !r.showThumbs {
+			continue
+		}
+		r.tasks++
+		if consumed.StoragePath == "" {
+			r.fail(index, types.Task.Type.Thumbnail, file.Name, fmt.Errorf("consume returned no storage path"))
+			continue
+		}
+		thumbnailPayload, err := json.Marshal(map[string]any{
+			"document_id":  documentID,
+			"storage_path": consumed.StoragePath,
+			"file_name":    file.Name,
+			"file_index":   index,
+		})
+		if err != nil {
+			r.fail(index, types.Task.Type.Thumbnail, file.Name, fmt.Errorf("marshal thumbnail payload: %w", err))
+			continue
+		}
+		if _, err := r.thumbnail.Handle(ctx, directTask(types.Task.Type.Thumbnail, thumbnailPayload)); err != nil {
+			r.fail(index, types.Task.Type.Thumbnail, file.Name, err)
+			if pauseRequested(err) {
+				return fmt.Errorf("thumbnail aborted: %w", err)
+			}
+			continue
+		}
+		r.done(index, types.Task.Type.Thumbnail, file.Name)
+	}
+
+	r.printSummary()
+	return nil
+}
+
+func (r *directRun) done(index int, taskType types.TaskType, fileName string) {
+	fmt.Printf("  [%d/%d] %-8s %s ... done\n", index, r.files, taskType, fileName)
+}
+
+func (r *directRun) fail(index int, taskType types.TaskType, fileName string, err error) {
+	r.failed++
+	fmt.Printf("  [%d/%d] %-8s %s ... failed: %v\n", index, r.files, taskType, fileName, err)
+}
+
+func (r *directRun) printSummary() {
+	if r.failed > 0 {
+		fmt.Printf("\nSummary: %d files, %d tasks — %d successful, %d failed\n", r.files, r.tasks, r.tasks-r.failed, r.failed)
+		return
+	}
+	fmt.Printf("\nSummary: %d files, %d tasks — all successful\n", r.files, r.tasks)
+}
+
+func directTask(taskType types.TaskType, payload json.RawMessage) task.Task {
+	return task.Task{TaskID: uuid.New().String(), TaskType: taskType, Payload: payload}
+}
+
+// pauseRequested reports whether a handler error asks the execution to pause for a provider credit or
+// balance problem; a direct run has no batch to pause, so it stops instead.
+func pauseRequested(err error) bool {
+	tErr, ok := errors.AsType[*task.Error](err)
+	return ok && tErr.PauseBatch
+}
+
+// parseExecToken parses the execution token the dispatcher or batch run passes with --from-batch. The
+// token is required: the bare selector is no longer a self-claim path.
 func parseExecToken(value string) (uuid.UUID, error) {
 	if value == "" {
-		return uuid.Nil, nil
+		return uuid.Nil, fmt.Errorf("--from-batch requires --exec-token: run 'kushim batch run <id>' to execute a queued batch")
 	}
 	token, err := uuid.Parse(value)
 	if err != nil {
@@ -414,155 +431,16 @@ func parseExecToken(value string) (uuid.UUID, error) {
 	return token, nil
 }
 
-// batchHolds returns the union of the batch's task types' holds and the union of their waits. The child
-// uses the wider union to acquire locks when it self-claims and to drain every waiter its task types
-// declare; the claim path's batchLockSets verifies only the waits of the holding types by design, so the
-// difference between the two rules is deliberate.
-func batchHolds(ctx context.Context, client *database.Client, batchID string) (holds, waits []types.LockName, err error) {
-	taskTypes, err := client.Queries.ListBatchTaskTypes(ctx, sql.NullString{String: batchID, Valid: true})
+func batchHasConsumeTasks(ctx context.Context, client *database.Client, batchID string) (bool, error) {
+	tasks, err := task.ListFiltered(ctx, client.Queries, task.TaskFilter{
+		BatchID:  batchID,
+		TaskType: string(types.Task.Type.Consume),
+		Limit:    1,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("list batch task types: %w", err)
+		return false, err
 	}
-	for _, taskType := range taskTypes {
-		declaration := types.LockDeclarationFor(taskType)
-		holds = task.UnionLockNames(holds, declaration.Holds)
-		waits = task.UnionLockNames(waits, declaration.WaitsFor)
-	}
-	return holds, waits, nil
-}
-
-// acquireBatchHolds takes the locks the batch's task types declare for the whole run, waiting until they
-// are free, and returns the hold function the run defers. It is the self-claim path: a batch claimed with
-// an execution token already holds its locks and uses holdAcquiredBatchLocks instead. A batch whose task
-// types declare no holds needs nothing and releases nothing.
-func acquireBatchHolds(ctx context.Context, c *container.Container, client *database.Client, batchID, ownerID string) (func(), error) {
-	holds, waits, err := batchHolds(ctx, client, batchID)
-	if err != nil {
-		return nil, err
-	}
-	if len(holds) == 0 {
-		return func() {}, nil
-	}
-
-	token, err := uuid.Parse(ownerID)
-	if err != nil {
-		return nil, fmt.Errorf("batch owner token: %w", err)
-	}
-	lockToken := uuid.NullUUID{UUID: token, Valid: true}
-
-	for {
-		err := task.AcquireLocks(ctx, client, holds, waits, lockToken, batchID)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, task.ErrLockBusy) {
-			return nil, fmt.Errorf("acquire batch locks: %w", err)
-		}
-		c.GetLogger().Info("", "consume: batch %s is waiting for its locks", batchID)
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-
-	return holdAcquiredBatchLocks(ctx, c, client, batchID, lockToken)
-}
-
-// holdAcquiredBatchLocks keeps the batch's held locks fresh, drains the in-flight tasks whose waits include
-// them and tells the claim path that the batch locks are already held, so per-task claims only verify their
-// waits. The returned release stops the heartbeat and gives the locks up.
-func holdAcquiredBatchLocks(ctx context.Context, c *container.Container, client *database.Client, batchID string, token uuid.NullUUID) (func(), error) {
-	holds, _, err := batchHolds(ctx, client, batchID)
-	if err != nil {
-		return nil, err
-	}
-	if len(holds) == 0 {
-		return func() {}, nil
-	}
-
-	stopHeartbeat := database.StartLockHeartbeat(ctx, client.Queries, c.GetLogger(), task.LockHeartbeatInterval, holds, token)
-	release := func() {
-		stopHeartbeat()
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := task.ReleaseLocksForToken(releaseCtx, client.Queries, token); err != nil {
-			c.GetLogger().Error("", "consume: release batch %s locks: %v", batchID, err)
-		}
-	}
-
-	if err := database.WaitForTaskDrain(ctx, client.Queries, c.GetLogger(), "batch "+batchID, types.TaskTypesWaitingOn(holds...), nil); err != nil {
-		release()
-		return nil, err
-	}
-
-	if err := c.SetRunnerBatchHoldsAcquired(true); err != nil {
-		release()
-		return nil, err
-	}
-
-	return release, nil
-}
-
-// The post-acquire sequence both halves of Run share.
-func runBatchThroughPools(ctx context.Context, cancel context.CancelFunc, c *container.Container, run batchRun) error {
-	if err := c.SetRunnerOwnerID(run.ownerID); err != nil {
-		return fmt.Errorf("set runner owner: %w", err)
-	}
-
-	exec, err := leasedExecution(run.ownerID, run.batchID)
-	if err != nil {
-		return err
-	}
-
-	watchSignals(ctx, cancel)
-
-	hb := task.NewHeartbeat(run.owner, heartbeatInterval, c.GetLogger())
-	hb.Start(ctx)
-
-	err = pollBatch(ctx, run, c.GetLogger())
-	if err == nil {
-		// waiting children of failed consumes block the settle, and a run that died before its quarantine
-		// must still move the failed files out; the sweep covers both before the terminal write
-		cfg := c.GetConfig()
-		if qErr := consumption.QuarantineFailedFiles(ctx, run.client.Queries, cfg.Storage.StorageDir, c.GetLogger(),
-			run.batchID, int32(cfg.Consumer.Reclaim.MaxRetries), nil); qErr != nil {
-			c.GetLogger().Error("", "quarantine files for batch %s: %v", run.batchID, qErr)
-		}
-		status, settleErr := task.SettleBatch(ctx, run.client, c.GetLogger(), exec)
-		if settleErr != nil {
-			c.GetLogger().Error("", "settle batch %s: %v", run.batchID, settleErr)
-		} else {
-			logEnrichBookend(ctx, run.client.Queries, c.GetLogger(), run.batchID, status)
-		}
-	} else if errors.Is(err, ErrBatchPaused) {
-		err = nil
-	}
-
-	triggerOrphanScan(c)
-
-	hb.Stop()
-
-	// the lease is the execution's own teardown: a settle writes the terminal status and releases the locks,
-	// while the owner row goes away here (and in pause, cancel and the reaper's recovery) so a terminal batch
-	// never keeps one behind
-	relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	if relErr := run.owner.Release(relCtx, run.batchID); relErr != nil {
-		c.GetLogger().Error("", "release batch %s: %v", run.batchID, relErr)
-	}
-	relCancel()
-
-	return err
-}
-
-// leasedExecution builds the guard the child's lifecycle writes carry: the lease owner, scoped to one
-// batch.
-func leasedExecution(ownerID, batchID string) (task.Execution, error) {
-	token, err := uuid.Parse(ownerID)
-	if err != nil {
-		return task.Execution{}, fmt.Errorf("batch owner token: %w", err)
-	}
-	return task.Execution{BatchID: batchID, Guard: token, Leased: true}, nil
+	return len(tasks) > 0, nil
 }
 
 func consumeCancelHandler(c *container.Container, args []string) error {
@@ -611,7 +489,7 @@ type taskDisplay struct {
 	taskType string
 }
 
-func taskDisplayInfo(t database.Task) taskDisplay {
+func taskDisplayInfo(t database.ListBatchTaskProgressRow) taskDisplay {
 	payload := task.ReadPayload(t.Payload)
 	return taskDisplay{
 		index:    payload.FileIndex,
@@ -620,7 +498,7 @@ func taskDisplayInfo(t database.Task) taskDisplay {
 	}
 }
 
-func totalFiles(tasks []database.Task) int {
+func totalFiles(tasks []database.ListBatchTaskProgressRow) int {
 	maxIdx := 0
 	for _, t := range tasks {
 		if t.TaskType == types.Task.Type.Consume {
@@ -643,58 +521,29 @@ func totalFiles(tasks []database.Task) int {
 	return n
 }
 
-func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
-	logger.SetLevel(log.LevelSilent)
-
-	queries := run.client.Queries
-	pools := run.pools.forThumbbackfill(run.thumbbackfill)
-	for _, p := range pools {
-		p.Start(ctx)
-	}
-
-	stopPools := func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for _, p := range pools {
-			p.Stop(stopCtx)
-		}
-	}
-
+// streamBatchProgress prints a batch's task transitions to stdout and one closing summary, then returns
+// once no pending or processing task is left (or the context ends). It only observes: the execution
+// library owns pause, completion and settlement.
+func streamBatchProgress(ctx context.Context, queries *database.Queries, batchID string) {
 	previous := make(map[string]string)
 	previousProgress := make(map[string]string)
 
-	tickInterval := 500 * time.Millisecond
-	if run.thumbbackfill {
-		tickInterval = 2 * time.Second
-	}
-	ticker := time.NewTicker(tickInterval)
+	ticker := time.NewTicker(progressInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
 		case <-ctx.Done():
-			fmt.Println("\nBatch cancelled")
-			stopPools()
-			return ctx.Err()
+			return
+		case <-ticker.C:
 		}
 
-		batch, err := queries.GetBatch(ctx, run.batchID)
-		if err == nil && batch.Status == types.Batch.Status.Paused {
-			fmt.Printf("\nBatch paused: LLM provider credit/balance error detected. Resolve billing and re-queue the batch.\n")
-			stopPools()
-			return ErrBatchPaused
-		}
-
-		tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{
-			BatchID: run.batchID,
-		})
+		tasks, err := queries.ListBatchTaskProgress(ctx, sql.NullString{String: batchID, Valid: true})
 		if err != nil {
 			continue
 		}
 
 		total := totalFiles(tasks)
-
 		remain := 0
 		for _, t := range tasks {
 			switch t.Status {
@@ -709,7 +558,7 @@ func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
 						}
 					}
 				}
-				if previous[t.TaskID] != "processing" && previous[t.TaskID] == "pending" {
+				if previous[t.TaskID] == "pending" {
 					info := taskDisplayInfo(t)
 					status := "processing"
 					if prog != "" {
@@ -743,57 +592,28 @@ func pollBatch(ctx context.Context, run batchRun, logger *log.Logger) error {
 		}
 
 		if remain == 0 {
-			var files, taskCount, failed int64
-			for _, t := range tasks {
-				taskCount++
-				if t.TaskType == types.Task.Type.Consume {
-					files++
-				}
-				if t.Status == types.Task.Status.Failed {
-					failed++
-				}
-			}
-			if failed > 0 {
-				fmt.Printf("\nSummary: %d files, %d tasks — %d successful, %d failed\n", files, taskCount, taskCount-failed, failed)
-			} else {
-				fmt.Printf("\nSummary: %d files, %d tasks — all successful\n", files, taskCount)
-			}
-
-			stopPools()
-			return nil
+			printBatchSummary(tasks)
+			return
 		}
 	}
 }
 
-// logEnrichBookend adds one INFO line with the aggregated per-document enrich counts over the batch's
-// completed enrich tasks, complementing the settle line SettleBatch already logged. A failed listing is
-// logged, not returned: the bookend is observability, not lifecycle.
-func logEnrichBookend(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string, status types.BatchStatus) {
-	tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{BatchID: batchID})
-	if err != nil {
-		logger.Error("", "batch %s enrich bookend: list tasks: %v", batchID, err)
-		return
-	}
-
-	var totals enrichment.DocumentCounts
-	documents := 0
+func printBatchSummary(tasks []database.ListBatchTaskProgressRow) {
+	var files, taskCount, failed int64
 	for _, t := range tasks {
-		if t.TaskType != types.Task.Type.Enrich || t.Status != types.Task.Status.Completed || t.Result == nil {
-			continue
+		taskCount++
+		if t.TaskType == types.Task.Type.Consume {
+			files++
 		}
-		counts, ok := enrichment.CountsFromResult(*t.Result)
-		if !ok {
-			continue
+		if t.Status == types.Task.Status.Failed {
+			failed++
 		}
-		documents++
-		totals.Add(counts)
 	}
-	if documents == 0 {
+	if failed > 0 {
+		fmt.Printf("\nSummary: %d files, %d tasks — %d successful, %d failed\n", files, taskCount, taskCount-failed, failed)
 		return
 	}
-
-	logger.Info("", "batch %s (%s) enrich: %d documents, %d assignments, %d births, %d promotions, %d rejects, %d defers, %d splits, %d keeps, %d drops",
-		batchID, status, documents, totals.Assignments, totals.Births, totals.Promotions, totals.Rejects, totals.Defers, totals.Splits, totals.Keeps, totals.Drops)
+	fmt.Printf("\nSummary: %d files, %d tasks — all successful\n", files, taskCount)
 }
 
 func triggerOrphanScan(c *container.Container) {

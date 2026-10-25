@@ -43,6 +43,7 @@ type Container struct {
 	enqueuer       *task.Enqueuer
 	runner         *task.Runner
 	store          *task.Store
+	registry       *task.Registry
 	services       *service.CrudServices
 	tag            *curation.Tag
 	matcherClient  *matcher.MatcherClient
@@ -58,19 +59,6 @@ type poolSpec struct {
 func singleWorker(*config.Config) int { return 1 }
 
 var poolSpecs = map[types.TaskType]poolSpec{
-	types.Task.Type.Consume: {
-		workers:  func(cfg *config.Config) int { return max(cfg.Consumer.Workers, 1) },
-		interval: 2 * time.Second,
-	},
-	types.Task.Type.Enrich: {
-		workers:  func(cfg *config.Config) int { return max(cfg.Enricher.Workers, 1) },
-		interval: 5 * time.Second,
-	},
-	types.Task.Type.Thumbnail: {
-		workers:  func(cfg *config.Config) int { return max(cfg.Consumer.Thumbnail.Workers, 1) },
-		interval: 2 * time.Second,
-	},
-	types.Task.Type.ThumbBackfill:  {workers: singleWorker, interval: 2 * time.Second},
 	types.Task.Type.Config:         {workers: singleWorker, interval: 5 * time.Second},
 	types.Task.Type.MigrateDB:      {workers: singleWorker, interval: 5 * time.Second},
 	types.Task.Type.MigrateStorage: {workers: singleWorker, interval: 5 * time.Second},
@@ -169,6 +157,7 @@ func (c *Container) InvalidateDB() {
 	c.runner = nil
 	c.engine = nil
 	c.store = nil
+	c.registry = nil
 	c.services = nil
 	c.tag = nil
 	c.matcherClient = nil
@@ -255,7 +244,7 @@ func (c *Container) ensureTaskWiring() error {
 	store := task.NewStore(client)
 	c.store = store
 
-	c.catalog = NewCatalog(client.Queries)
+	c.catalog = NewCatalog(client.Queries, func() *config.Config { return c.cfg.Load() }, c.logger)
 
 	consumer, err := consumption.NewConsumer(c.cfg.Load(), c.logger, client)
 	if err != nil {
@@ -281,6 +270,7 @@ func (c *Container) ensureTaskWiring() error {
 	registry.Register(types.Task.Type.TagAudit, admission.NewTagAuditTaskHandler(client.Queries, c.logger))
 
 	c.enqueuer = task.NewEnqueuer(client, c.catalog)
+	c.registry = registry
 	c.runner = task.NewRunner(store, registry, c.logger)
 
 	return nil
@@ -310,23 +300,31 @@ func (c *Container) GetRunner() (*task.Runner, error) {
 	return c.runner, nil
 }
 
-// SetRunnerOwnerID records the owner identity on the task store for
-// claims and batch ownership rows.
-func (c *Container) SetRunnerOwnerID(id string) error {
-	if _, err := c.GetRunner(); err != nil {
-		return err
+// GetStore returns the task lifecycle store, so a command can assemble the dependencies of a shared
+// batch execution.
+func (c *Container) GetStore() (*task.Store, error) {
+	if err := c.ensureTaskWiring(); err != nil {
+		return nil, err
 	}
-	c.store.SetOwnerID(id)
-	return nil
+	return c.store, nil
 }
 
-// SetRunnerBatchHoldsAcquired applies the batch-holds state to the task store, wiring the runner first.
-func (c *Container) SetRunnerBatchHoldsAcquired(acquired bool) error {
-	if _, err := c.GetRunner(); err != nil {
-		return err
+// GetRegistry returns the handler registry, so a command can assemble the dependencies of a shared batch
+// execution.
+func (c *Container) GetRegistry() (*task.Registry, error) {
+	if err := c.ensureTaskWiring(); err != nil {
+		return nil, err
 	}
-	c.store.SetBatchHoldsAcquired(acquired)
-	return nil
+	return c.registry, nil
+}
+
+// GetHandler returns the registered handler of one task type; direct-mode commands run the same handler
+// the runner dispatches, without persisting task rows.
+func (c *Container) GetHandler(taskType types.TaskType) (task.Handler, error) {
+	if err := c.ensureTaskWiring(); err != nil {
+		return nil, err
+	}
+	return c.registry.Get(taskType)
 }
 
 // GetPool builds (once) the task pool of the given type with the
