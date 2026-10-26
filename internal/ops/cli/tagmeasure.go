@@ -53,12 +53,13 @@ func enqueueTagMeasure(c *container.Container) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
 		types.Task.Type.TagMeasure: task.ConstantDedupKey(tags.TagMeasureDedupKey),
-	})
+	}, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("task catalog: %w", err)
 	}
+	enqueuer := task.NewEnqueuer(client, catalog)
 	spec, err := cliBatchSpec()
 	if err != nil {
 		return err

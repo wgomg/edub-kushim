@@ -43,13 +43,14 @@ func newOrphanedService(c *container.Container) (*service.Orphaned, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
 		types.Task.Type.Consume: consumption.DedupKey,
-	})
+	}, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("task catalog: %w", err)
 	}
-	return service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(), enqueuer), nil
+	return service.NewOrphaned(client.Queries, c.GetConfig(), c.GetLogger(),
+		task.NewEnqueuer(client, catalog)), nil
 }
 
 func thumbnailsHandler(c *container.Container, args []string) error {

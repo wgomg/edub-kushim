@@ -56,16 +56,6 @@ func cliBatchSpec() (task.BatchSpec, error) {
 	return task.NewBatchSpec(types.Batch.Origin.CLI, "")
 }
 
-// newEnqueuer builds an enqueuer whose catalog carries only the dedup hooks of the types this call site
-// enqueues; enqueueing any other pending type fails loudly instead of creating keyless work.
-func newEnqueuer(client *database.Client, hooks map[types.TaskType]task.DedupKeyFunc) (*task.Enqueuer, error) {
-	catalog, err := task.NewCatalog(hooks, nil)
-	if err != nil {
-		return nil, fmt.Errorf("task catalog: %w", err)
-	}
-	return task.NewEnqueuer(client, catalog), nil
-}
-
 func batchHandler(c *container.Container, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Println(batchHelpText)
@@ -109,10 +99,6 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("batch create requires a task name")
 	}
 
-	if handled, err := batchCreateSelection(c, taskName, args[1:]); handled {
-		return err
-	}
-
 	switch taskName {
 	case "consume", "backup", "mirror", "enrich", "thumbnails",
 		"tagreconcile", "tagmeasure", "tagidentity", "tagaudit":
@@ -121,17 +107,43 @@ func batchCreateHandler(c *container.Container, args []string) error {
 			"tagreconcile, tagmeasure, tagidentity, tagaudit", taskName)
 	}
 
+	selection, err := parseCreateSelection(taskName, args[1:])
+	if err != nil {
+		return err
+	}
+
 	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
+	// one catalog for the whole command: the hook map names every type this boundary enqueues, so a pending
+	// task of any other type still fails loudly instead of creating keyless work
+	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
+		types.Task.Type.Consume:       consumption.DedupKey,
+		types.Task.Type.Backup:        backup.BackupDedupKey,
+		types.Task.Type.Mirror:        backup.MirrorDedupKey,
+		types.Task.Type.Enrich:        enrichment.DedupKey,
+		types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
+		types.Task.Type.TagReconcile:  task.ConstantDedupKey(curation.TagReconcileDedupKey),
+		types.Task.Type.TagMeasure:    task.ConstantDedupKey(tags.TagMeasureDedupKey),
+		types.Task.Type.TagIdentity:   task.ConstantDedupKey(curation.TagIdentityDedupKey),
+		types.Task.Type.TagAudit:      task.ConstantDedupKey(curation.TagAuditDedupKey),
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("task catalog: %w", err)
+	}
+	enqueuer := task.NewEnqueuer(client, catalog)
+
+	if selection.run != nil {
+		return selection.run(client, enqueuer)
+	}
+
 	ctx := context.Background()
 	spec, err := cliBatchSpec()
 	if err != nil {
 		return err
 	}
 
-	var enqueuer *task.Enqueuer
 	var tasks []task.TaskSpec
 
 	switch taskName {
@@ -150,12 +162,6 @@ func batchCreateHandler(c *container.Container, args []string) error {
 			return fmt.Errorf("%d paused batch(es) exist due to LLM credit/balance errors: %s\n"+
 				"Resolve the billing issue, then resume or cancel each paused batch before creating new ones.",
 				len(pausedIDs), strings.Join(pausedIDs, ", "))
-		}
-		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-			types.Task.Type.Consume: consumption.DedupKey,
-		})
-		if err != nil {
-			return err
 		}
 		tasks, err = consumption.IngestSpecsFromInbox(c.GetConfig(), c.GetLogger())
 		if err != nil {
@@ -178,12 +184,6 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		if rest := fp.Rest(); len(rest) > 0 {
 			return fmt.Errorf("unknown argument: %s", rest[0])
 		}
-		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-			types.Task.Type.Backup: backup.BackupDedupKey,
-		})
-		if err != nil {
-			return err
-		}
 		tasks, err = backup.BackupSpecs(mode, path, keep, backup.ScheduleTiming{})
 		if err != nil {
 			return err
@@ -197,12 +197,6 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		}
 		if rest := fp.Rest(); len(rest) > 0 {
 			return fmt.Errorf("unknown argument: %s", rest[0])
-		}
-		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-			types.Task.Type.Mirror: backup.MirrorDedupKey,
-		})
-		if err != nil {
-			return err
 		}
 		tasks, err = backup.MirrorSpecs(path, 0, backup.ScheduleTiming{})
 		if err != nil {
@@ -219,12 +213,6 @@ func batchCreateHandler(c *container.Container, args []string) error {
 				return fmt.Errorf("unknown flag: %s", documentID)
 			}
 		}
-		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-			types.Task.Type.Enrich: enrichment.DedupKey,
-		})
-		if err != nil {
-			return err
-		}
 		tasks, err = enrichment.EnrichSpecs(documentIDs)
 		if err != nil {
 			return err
@@ -233,12 +221,6 @@ func batchCreateHandler(c *container.Container, args []string) error {
 	case "thumbnails":
 		if rest := flags.NewFlagParser(args[1:]).Rest(); len(rest) > 0 {
 			return fmt.Errorf("thumbnails takes no arguments, got %s", rest[0])
-		}
-		enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-			types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
-		})
-		if err != nil {
-			return err
 		}
 		tasks, err = service.ThumbnailBackfillSpecs(ctx, client.Queries)
 		if err != nil {
@@ -252,27 +234,12 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		switch taskName {
 		case "tagreconcile":
 			tasks = curation.ReconcileSpecs()
-			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-				types.Task.Type.TagReconcile: task.ConstantDedupKey(curation.TagReconcileDedupKey),
-			})
 		case "tagmeasure":
 			tasks = curation.MeasureSpecs()
-			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-				types.Task.Type.TagMeasure: task.ConstantDedupKey(tags.TagMeasureDedupKey),
-			})
 		case "tagidentity":
 			tasks = curation.IdentitySpecs()
-			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-				types.Task.Type.TagIdentity: task.ConstantDedupKey(curation.TagIdentityDedupKey),
-			})
 		case "tagaudit":
 			tasks = curation.AuditSpecs()
-			enqueuer, err = newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-				types.Task.Type.TagAudit: task.ConstantDedupKey(curation.TagAuditDedupKey),
-			})
-		}
-		if err != nil {
-			return err
 		}
 	}
 
@@ -501,74 +468,76 @@ func batchStatusHandler(c *container.Container, args []string) error {
 	return nil
 }
 
-// batchCreateSelection routes the create verbs whose task set is selected from live data rather than an
-// explicit id list; handled is false when the verb reads its targets from the arguments.
-func batchCreateSelection(c *container.Container, taskName string, args []string) (handled bool, err error) {
+// createSelection carries the enqueue a live-data create verb selected — enrich's document cap or a
+// thumbnails target — deferred until the command's client and enqueuer exist, so the flags parse before
+// any database access. A nil run means the verb reads its targets from the arguments and the id-list
+// path continues.
+type createSelection struct {
+	run func(client *database.Client, enqueuer *task.Enqueuer) error
+}
+
+// parseCreateSelection validates the flags of the create verbs whose task set is selected from live data
+// rather than an explicit id list; it touches no database, so argument errors surface even when the
+// database is unreachable.
+func parseCreateSelection(taskName string, args []string) (createSelection, error) {
 	switch taskName {
 	case "enrich":
 		fp := flags.NewFlagParser(args)
 		var all bool
 		if err := fp.Bool("--all", &all); err != nil {
-			return true, err
+			return createSelection{}, err
 		}
 		limit := 0
 		if err := fp.Int("--limit", &limit, 1, 1_000_000); err != nil {
-			return true, err
+			return createSelection{}, err
 		}
 		if !all && limit == 0 {
-			return false, nil
+			return createSelection{}, nil
 		}
 		if rest := fp.Rest(); len(rest) > 0 {
-			return true, fmt.Errorf("a document ID cannot be combined with --limit or --all")
+			return createSelection{}, fmt.Errorf("a document ID cannot be combined with --limit or --all")
 		}
 		if all && limit > 0 {
-			return true, fmt.Errorf("--limit and --all are mutually exclusive")
+			return createSelection{}, fmt.Errorf("--limit and --all are mutually exclusive")
 		}
-		effectiveLimit := int64(limit)
 		if all {
-			effectiveLimit = 0
+			limit = 0
 		}
-		return true, enqueueEnrichSelection(c, effectiveLimit)
+		return createSelection{run: func(client *database.Client, enqueuer *task.Enqueuer) error {
+			return enqueueEnrichSelection(client, enqueuer, int64(limit))
+		}}, nil
 
 	case "thumbnails":
 		fp := flags.NewFlagParser(args)
 		var fromBatch, documentID string
 		if err := fp.String("--from-batch", &fromBatch); err != nil {
-			return true, err
+			return createSelection{}, err
 		}
 		if err := fp.String("--document", &documentID); err != nil {
-			return true, err
+			return createSelection{}, err
 		}
 		if fromBatch == "" && documentID == "" {
-			return false, nil
+			return createSelection{}, nil
 		}
 		if fromBatch != "" && documentID != "" {
-			return true, fmt.Errorf("--from-batch and --document are mutually exclusive")
+			return createSelection{}, fmt.Errorf("--from-batch and --document are mutually exclusive")
 		}
 		if rest := fp.Rest(); len(rest) > 0 {
-			return true, fmt.Errorf("unknown argument: %s", rest[0])
+			return createSelection{}, fmt.Errorf("unknown argument: %s", rest[0])
 		}
-		if fromBatch != "" {
-			return true, enqueueThumbnailBackfillBatch(c, fromBatch)
-		}
-		return true, enqueueThumbnailBackfillDocument(c, documentID)
+		return createSelection{run: func(client *database.Client, enqueuer *task.Enqueuer) error {
+			if fromBatch != "" {
+				return enqueueThumbnailBackfillBatch(client, enqueuer, fromBatch)
+			}
+			return enqueueThumbnailBackfillDocument(client, enqueuer, documentID)
+		}}, nil
 	}
-	return false, nil
+	return createSelection{}, nil
 }
 
 // enqueueEnrichSelection enqueues enrichment for live documents, oldest first, capped by limit (0 means
 // no cap).
-func enqueueEnrichSelection(c *container.Container, limit int64) error {
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Enrich: enrichment.DedupKey,
-	})
-	if err != nil {
-		return err
-	}
+func enqueueEnrichSelection(client *database.Client, enqueuer *task.Enqueuer, limit int64) error {
 	spec, err := cliBatchSpec()
 	if err != nil {
 		return err
@@ -598,17 +567,7 @@ func enqueueEnrichSelection(c *container.Container, limit int64) error {
 }
 
 // enqueueThumbnailBackfillBatch enqueues thumbnails for the documents of one past batch.
-func enqueueThumbnailBackfillBatch(c *container.Container, sourceBatchID string) error {
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
-	})
-	if err != nil {
-		return err
-	}
+func enqueueThumbnailBackfillBatch(client *database.Client, enqueuer *task.Enqueuer, sourceBatchID string) error {
 	spec, err := cliBatchSpec()
 	if err != nil {
 		return err
@@ -632,17 +591,7 @@ func enqueueThumbnailBackfillBatch(c *container.Container, sourceBatchID string)
 }
 
 // enqueueThumbnailBackfillDocument enqueues one document's thumbnail task.
-func enqueueThumbnailBackfillDocument(c *container.Container, documentID string) error {
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-	enqueuer, err := newEnqueuer(client, map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
-	})
-	if err != nil {
-		return err
-	}
+func enqueueThumbnailBackfillDocument(client *database.Client, enqueuer *task.Enqueuer, documentID string) error {
 	spec, err := cliBatchSpec()
 	if err != nil {
 		return err
