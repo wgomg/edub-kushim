@@ -440,16 +440,17 @@ re-pointed count), skipped ones under the `alias_skip` skip reason.
 
 `internal/tags/reconcile` + the task plumbing. Migration
 `00018_tag_reconcile_vocabulary.sql` adds `tagreconcile` to the `task_type`
-enum; the `internal/types` registry declares it **blocking**
-(acquires the maintenance lock at claim time, drains in-flight tasks, and
-heartbeats the lock during the run), and it joins `NonConsumeTaskTypes` so
-its batches never occupy a consume slot.
+enum; the `internal/types` registry declares the full blocking stack for the
+task type — the batch claim acquires the maintenance lock (verifying the
+waits are free) and the reconciling child keeps it fresh (heartbeat + drain)
+for the whole run — and `tagreconcile` joins `NonConsumeTaskTypes`, the list
+the batch overviews use to classify the maintenance batches.
 
 **Scheduling** — the anchored scheduler (`maybeScheduleAnchored` with `tagReconcileSpec`, `internal/ops/queue/queue.go`)
 runs on the queue daemon's housekeeping ticker (thumbnail-backfill precedent):
-the daemon starts a 1-worker/60s pool for the source unconditionally — the
-enabled flag gates only automatic enqueuing, so a manual `kushim tagreconcile`
-is always claimed; `lastRun` is anchored on
+the daemon enqueues a `tagreconcile` batch whenever the interval is due — the
+enabled flag gates only automatic enqueueing, and a manual
+`kushim batch create tagreconcile` batch is dispatched the same way; `lastRun` is anchored on
 the most recent `tagreconcile` batch's `created_at`; a run is skipped while one
 is queued/processing or the maintenance lock is held. With no prior batch,
 `FirstRunAnchor` (`internal/backup/scheduler.go`) anchors to the *next*
@@ -462,9 +463,11 @@ preferred time re-phases the next run to the closest upcoming occurrence of
 the new timing (in-memory only — a daemon restart between the edit and the
 re-phased run falls back to the steady rule), and a reverted edit before the
 run restores the steady rule. The handler
-(`internal/tags/reconcile/tagreconcile.go`) runs through the shared blocking
-lifecycle (lock, drain, heartbeat, batch bookends) and forks
-`kushim tagreconcile --run <batch-id>`, storing the child's printed `Report`
+(`internal/tags/reconcile/tagreconcile.go`) runs the shared blocking
+lifecycle through the queued batch's own task CLI — a `tagreconcile` batch is
+claimed with the maintenance lock held and its `kushim tagreconcile
+--from-batch` child adopts the only claim lease, running the whole lock-drain-heartbeat
+discipline while the pass does its store work — and the child stores its `Report`
 JSON as the task result; it dedups on the fixed `tagreconcile` key, so any
 active run blocks further enqueues of the type. The report
 carries worklist counts per category (the four pair categories plus `compounds` for the stored-compound
@@ -746,10 +749,10 @@ the reconciler's live counts, and the pair-verdict aggregates all read through
   read-only on the tags page's Overlap tab (`GET /api/v1/tags/siblings`) —
   nothing is acted on at measurement time.
 - **Running it**: `enricher.tag_measure.{enabled, interval, time}` schedules a
-  `tagmeasure` task (disabled by default), and `kushim tagmeasure` enqueues the
-  same queued task — the pool always claims, so the flag gates only the
-  schedule — while `kushim tagmeasure --run <batch-id>` is the queued run's
-  execution mode. The pass holds the lock for its whole transaction, so runs are
+  `tagmeasure` batch (disabled by default), and `kushim batch create tagmeasure`
+  enqueues the same queued task — the flag gates only the
+  schedule, while a bare `kushim tagmeasure` runs the pass under the manual
+  maintenance hold. The child holds the lock for its whole transaction, so runs are
   minutes-scale and serialize with every other maintenance hold.
 
 The pass measures; it never judges. Dispositions — promote, demote, alias, split,

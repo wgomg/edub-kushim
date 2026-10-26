@@ -312,15 +312,6 @@ func (s *Batch) ListPausedBatches(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// CountQueuedConsumeBatches counts queued consume batches.
-func (s *Batch) CountQueuedConsumeBatches(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountQueuedConsumeBatches(ctx, nonConsumeTaskTypeValues)
-	if err != nil {
-		return 0, errs.FromDB(err, "count queued consume batches")
-	}
-	return count, nil
-}
-
 // ListQueuedBatchesByAge returns the queued batches oldest first, with the task types each one contains.
 // The dispatcher filters eligibility, backoff and claimability over these rows.
 func (s *Batch) ListQueuedBatchesByAge(ctx context.Context) ([]database.ListQueuedBatchesByAgeRow, error) {
@@ -329,15 +320,6 @@ func (s *Batch) ListQueuedBatchesByAge(ctx context.Context) ([]database.ListQueu
 		return nil, errs.FromDB(err, "list queued batches by age")
 	}
 	return rows, nil
-}
-
-// CountLiveBatches counts batches in a non-terminal state.
-func (s *Batch) CountLiveBatches(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountLiveBatches(ctx, task.LeaseStaleSeconds)
-	if err != nil {
-		return 0, errs.FromDB(err, "count live batches")
-	}
-	return count, nil
 }
 
 // CountLiveNoHoldsBatches counts one dispatcher's live leases on batches that hold no resource lock. It is
@@ -395,11 +377,6 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 
 	staleAfter := int32(staleAfterSeconds)
 	txQ := s.client.Queries.WithTx(tx)
-
-	// the lock release must precede the resets because its subselect reads status = 'processing'
-	if err := task.ReleaseLocksForStaleHolders(ctx, txQ, types.LockHoldingTaskTypes()); err != nil {
-		return task.ResetResult{}, errs.FromDB(err, "release locks for stale holders")
-	}
 
 	blockingQuarantined, err := txQ.QuarantineStaleBlockingTasks(ctx, database.QuarantineStaleBlockingTasksParams{
 		Attempts:          s.maxRetries,

@@ -20,9 +20,6 @@ func TestTagMeasureBatchAndTaskQueries(t *testing.T) {
 	if _, err := q.GetLastTagMeasureBatchCreatedAt(ctx); err != sql.ErrNoRows {
 		t.Fatalf("initial GetLastTagMeasureBatchCreatedAt: want ErrNoRows, got %v", err)
 	}
-	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeTaskTypeValues()); err != nil || n != 0 {
-		t.Fatalf("initial queued consume batches = %d, %v", n, err)
-	}
 
 	if _, err := q.db.ExecContext(ctx,
 		"INSERT INTO batch (id, origin, status) VALUES ('tm-b1', 'schedule', 'queued')"); err != nil {
@@ -40,9 +37,6 @@ func TestTagMeasureBatchAndTaskQueries(t *testing.T) {
 		t.Errorf("queued batch must not anchor the schedule: want ErrNoRows, got %v", err)
 	}
 
-	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeTaskTypeValues()); err != nil || n != 0 {
-		t.Errorf("tagmeasure batch leaked into the consume slot: %d, %v", n, err)
-	}
 	batches, err := q.ListQueuedBatchesByAge(ctx)
 	if err != nil {
 		t.Fatalf("list queued batches: %v", err)

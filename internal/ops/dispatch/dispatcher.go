@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,10 +20,21 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// Dispatcher claims queued batches eligible for this host and forks each one's task CLI in batch mode.
-// It is the daemon's only queue claimant: status, lease and holds commit together, and a batch whose
-// locks are busy is skipped without blocking the candidates behind it. Its identity travels on every
-// lease it claims, so the slot budget counts only this process's executions.
+// InProcessRegistration names the task types one process executes in this process and the runner it uses
+// for them. It is the setup wizard's execution path: the wizard serves migrations before the queue daemon
+// exists and cannot fork kushim, so it runs their handlers itself. A batch is eligible only when every one
+// of its task types is listed and every one declares this host in its definition; anything else takes the
+// fork path. Run executes the claimed batch to settlement and must recover a run it could not complete:
+// release the claim and requeue the batch. It reports that error; the dispatcher only logs it.
+type InProcessRegistration struct {
+	Types []types.TaskType
+	Run   func(ctx context.Context, client *database.Client, batchID string, token uuid.UUID) error
+}
+
+// Dispatcher claims queued batches eligible for this host and forks each one's task CLI in batch mode. It
+// is the daemon's only queue claimant: status, lease and holds commit together, and a batch whose locks
+// are busy is skipped without blocking the candidates behind it. Its identity travels on every lease it
+// claims, so the slot budget counts only this process's executions.
 type Dispatcher struct {
 	catalog       task.TypeCatalog
 	logger        *log.Logger
@@ -30,12 +43,15 @@ type Dispatcher struct {
 	maxConcurrent int
 	failures      *launchBackoff
 	wake          func()
+	inProcess     *InProcessRegistration
+	runs          sync.WaitGroup
 }
 
-// NewDispatcher wires the dispatcher to the task catalog and logger of the calling boundary, the host
-// it dispatches for, the batch slot budget and the wake channel poked once a backoff window expires.
-// The dispatcher identity is minted here and lasts for the process lifetime.
-func NewDispatcher(catalog task.TypeCatalog, logger *log.Logger, host types.Host, maxConcurrent int, wake func()) *Dispatcher {
+// NewDispatcher wires the dispatcher to the task catalog and logger of the calling boundary, the host it
+// dispatches for, the batch slot budget and the wake channel poked once a backoff window expires. inProcess
+// names the task types this process executes itself; nil makes the dispatcher fork-only. The dispatcher
+// identity is minted here and lasts for the process lifetime.
+func NewDispatcher(catalog task.TypeCatalog, logger *log.Logger, host types.Host, maxConcurrent int, wake func(), inProcess *InProcessRegistration) *Dispatcher {
 	return &Dispatcher{
 		catalog:       catalog,
 		logger:        logger,
@@ -44,6 +60,7 @@ func NewDispatcher(catalog task.TypeCatalog, logger *log.Logger, host types.Host
 		maxConcurrent: maxConcurrent,
 		failures:      newLaunchBackoff(),
 		wake:          wake,
+		inProcess:     inProcess,
 	}
 }
 
@@ -63,8 +80,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, client *database.Client, batc
 	return nil
 }
 
-// sweep tries the candidates oldest first and claims every one the budget admits. A launch failure stops the
-// sweep, so a broken fork does not march through the whole queue in one wake.
+// sweep tries the candidates oldest first and claims every one the budget admits. A batch this process
+// executes in-process is claimed and handed to its runner on a goroutine, so the sweep keeps dispatching.
+// A launch failure stops the sweep, so a broken fork does not march through the whole queue in one wake.
 func (d *Dispatcher) sweep(ctx context.Context, client *database.Client, candidates []database.ListQueuedBatchesByAgeRow, live int64) {
 	now := time.Now()
 	for _, candidate := range candidates {
@@ -75,31 +93,40 @@ func (d *Dispatcher) sweep(ctx context.Context, client *database.Client, candida
 		for i, value := range candidate.TaskTypes {
 			taskTypes[i] = types.TaskType(value)
 		}
+		holds, waits := batchLockSets(taskTypes)
+
+		if inProcessEligible(d.catalog, d.host, d.inProcess, taskTypes) {
+			if len(holds) == 0 && live >= int64(d.maxConcurrent) {
+				continue
+			}
+			token := uuid.New()
+			if !d.claimCandidate(ctx, client, candidate.BatchID, token, holds, waits) {
+				continue
+			}
+			if len(holds) == 0 {
+				live++
+			}
+			d.logger.Info("", "dispatched batch %s in-process on host %s", candidate.BatchID, d.host)
+			d.runs.Add(1)
+			go func(batchID string, execToken uuid.UUID) {
+				defer d.runs.Done()
+				if err := d.inProcess.Run(ctx, client, batchID, execToken); err != nil {
+					d.logger.Error("", "in-process batch %s: %v", batchID, err)
+				}
+			}(candidate.BatchID, token)
+			continue
+		}
+
 		target, err := resolveLaunchTarget(d.catalog, candidate.BatchID, taskTypes, d.host)
 		if err != nil {
 			d.logger.Debug("", "batch %s is not dispatchable here: %v", candidate.BatchID, err)
 			continue
 		}
-		holds, waits := batchLockSets(taskTypes)
 		if len(holds) == 0 && live >= int64(d.maxConcurrent) {
 			continue
 		}
 		token := uuid.New()
-		claim := task.ClaimRequest{
-			BatchID: candidate.BatchID, ExecToken: token, Holds: holds, Waits: waits,
-			DispatcherID: uuid.NullUUID{UUID: d.dispatcherID, Valid: true},
-		}
-		if err := task.ClaimBatch(ctx, client, claim); err != nil {
-			switch {
-			case errors.Is(err, task.ErrBatchLocked):
-				// a queued batch carrying a lease is abnormal because every requeue path releases the lease row
-				// before it can ever fail, so surface the stuck state instead of silently skipping the whole batch
-				// on every dispatch wake
-				d.logger.Error("", "batch %s is queued but still carries a lease — leaving it to the reaper",
-					candidate.BatchID)
-			case !errors.Is(err, task.ErrLockBusy) && !errors.Is(err, task.ErrBatchNotQueued):
-				d.logger.Error("", "claim batch %s: %v", candidate.BatchID, err)
-			}
+		if !d.claimCandidate(ctx, client, candidate.BatchID, token, holds, waits) {
 			continue
 		}
 		cmd, err := launchBatch(target, token, false, func(exitErr error) {
@@ -115,6 +142,65 @@ func (d *Dispatcher) sweep(ctx context.Context, client *database.Client, candida
 		d.logger.Info("", "dispatched batch %s to kushim %s %s (PID %d)",
 			candidate.BatchID, target.cli, target.selector, cmd.Process.Pid)
 	}
+}
+
+// claimCandidate claims one queued candidate under this dispatcher's identity. A lock-busy batch, a batch
+// that is no longer queued and a lease collision are normal skips; any other error is logged. It reports
+// whether the claim landed.
+func (d *Dispatcher) claimCandidate(ctx context.Context, client *database.Client, batchID string, token uuid.UUID, holds, waits []types.LockName) bool {
+	claim := task.ClaimRequest{
+		BatchID: batchID, ExecToken: token, Holds: holds, Waits: waits,
+		DispatcherID: uuid.NullUUID{UUID: d.dispatcherID, Valid: true},
+	}
+	if err := task.ClaimBatch(ctx, client, claim); err != nil {
+		switch {
+		case errors.Is(err, task.ErrBatchLocked):
+			// a queued batch carrying a lease is abnormal because every requeue path releases the lease row before
+			// it can ever fail, so surface the stuck state instead of silently skipping the whole batch on every
+			// dispatch wake
+			d.logger.Error("", "batch %s is queued but still carries a lease — leaving it to the reaper", batchID)
+		case !errors.Is(err, task.ErrLockBusy) && !errors.Is(err, task.ErrBatchNotQueued):
+			d.logger.Error("", "claim batch %s: %v", batchID, err)
+		}
+		return false
+	}
+	return true
+}
+
+// WaitInProcess blocks until every in-process execution this dispatcher started has returned, or ctx
+// expires. Runs outlive their dispatch sweep, so a host that closes shared resources at shutdown drains
+// them first; each run releases its own claim on the way out.
+func (d *Dispatcher) WaitInProcess(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		d.runs.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// inProcessEligible reports whether this process executes the whole batch itself: the registration must
+// cover every task type and every type must name this host. A partially covered batch takes the fork path
+// and fails loudly there, so a mixed batch never runs half of its work in a host without handlers for it.
+func inProcessEligible(catalog task.TypeCatalog, host types.Host, registration *InProcessRegistration, taskTypes []types.TaskType) bool {
+	if registration == nil || len(taskTypes) == 0 {
+		return false
+	}
+	for _, taskType := range taskTypes {
+		if !slices.Contains(registration.Types, taskType) {
+			return false
+		}
+		def, err := catalog.Definition(taskType)
+		if err != nil || !slices.Contains(def.Hosts, host) {
+			return false
+		}
+	}
+	return true
 }
 
 // childExited handles a forked child's exit. A non-zero exit while the lease still carries this token
@@ -133,8 +219,8 @@ func (d *Dispatcher) childExited(client *database.Client, batchID string, token 
 		StaleAfterSeconds: task.LeaseStaleSeconds,
 	})
 	if err != nil || owner.OwnerID != token.String() || owner.Pid != 0 {
-		// the child adopted the lease or the batch was cancelled or reclaimed, so launching itself clearly
-		// works and the failure streak ends here
+		// the child adopted the lease or the batch was cancelled or reclaimed, so launching itself clearly works
+		// and the failure streak ends here
 		d.failures.clear(batchID)
 		return
 	}

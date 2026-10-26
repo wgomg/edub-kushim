@@ -24,17 +24,22 @@ func TestTagCommandsDispatchHelp(t *testing.T) {
 	}
 }
 
-// TestTagCommandsValidateRunID pins the fork mode's contract across the tag
-// verbs: --run takes a batch id and anything else is rejected before a pass is
-// launched.
+// TestTagCommandsValidateRunID pins the batch-mode contract across the tag verbs: --run is the deprecated
+// alias of --from-batch and requires the execution token, and a malformed token is rejected before a pass
+// is launched.
 func TestTagCommandsValidateRunID(t *testing.T) {
 	c, _ := newTestContainer(t)
 	runner := NewCommandRunner(c, "cli")
 
 	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
 		err := runner.ExecuteCommand(name, []string{"--run", "not-a-uuid"})
-		if err == nil || !strings.Contains(err.Error(), "invalid batch id") {
-			t.Errorf("%s --run with a non-uuid: got %v, want an invalid-batch-id error", name, err)
+		if err == nil || !strings.Contains(err.Error(), "--exec-token") {
+			t.Errorf("%s --run without a token: got %v, want the deprecation refusal pointing at --exec-token", name, err)
+		}
+
+		err = runner.ExecuteCommand(name, []string{"--from-batch", "batch-1", "--exec-token", "not-a-uuid"})
+		if err == nil || !strings.Contains(err.Error(), "invalid exec token") {
+			t.Errorf("%s --exec-token with a non-uuid: got %v, want an invalid-token error", name, err)
 		}
 
 		err = runner.ExecuteCommand(name, []string{"--bogus"})
@@ -44,11 +49,10 @@ func TestTagCommandsValidateRunID(t *testing.T) {
 	}
 }
 
-// TestTagCommandsWithoutFlagsEnqueue pins the two-mode contract: with no flags the
-// tag verbs reach the enqueue path instead of demanding --run, and only report the
-// database here — the container points at a dead port, so the enqueue itself is
-// exercised down to the connection.
-func TestTagCommandsWithoutFlagsEnqueue(t *testing.T) {
+// TestTagCommandsWithoutFlagsRunDirect pins the two-mode contract: with no flags the tag verbs run the pass
+// directly instead of demanding --run or enqueueing, and only report the database here — the container
+// points at a dead port, so the direct run is exercised down to the connection.
+func TestTagCommandsWithoutFlagsRunDirect(t *testing.T) {
 	configDir := t.TempDir()
 	yaml := `consumer:
   ocr:
@@ -76,7 +80,7 @@ database:
 			continue
 		}
 		if !strings.Contains(err.Error(), "database") {
-			t.Errorf("%s without flags must reach the enqueue path, got %v", name, err)
+			t.Errorf("%s without flags must reach the direct-run path, got %v", name, err)
 		}
 		if strings.Contains(err.Error(), "--run") {
 			t.Errorf("%s without flags must not demand --run, got %v", name, err)

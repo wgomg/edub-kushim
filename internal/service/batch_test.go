@@ -607,35 +607,43 @@ func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
 	})
 }
 
-func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
+func TestBatch_ResetStaleProcessingTasks_LeaseMismatchRecovery(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
 
-	foreignTaskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
-		TaskID: "rsts-mm-f", TaskType: "backup", Status: "processing",
-	})
-	testutil.AssertNoError(t, err, "create foreign processing backup")
-	foreignToken := uuid.New()
-	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE task SET claim_token = $1, started_at = NOW() WHERE id = $2",
-		foreignToken, foreignTaskID); err != nil {
-		t.Fatalf("set foreign claim token and fresh started_at: %v", err)
+	createBatch := func(id string) {
+		t.Helper()
+		if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: id, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+		}); err != nil {
+			t.Fatalf("create batch %s: %v", id, err)
+		}
 	}
 
+	createBatch("rsts-mm-f")
+	foreignTaskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
+		TaskID: "rsts-mm-ft", TaskType: "backup", Status: "processing",
+		BatchID: sql.NullString{String: "rsts-mm-f", Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create foreign processing backup")
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE task SET started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", foreignTaskID); err != nil {
+		t.Fatalf("stale the foreign task: %v", err)
+	}
+
+	createBatch("rsts-mm-o")
 	ownTaskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "rsts-mm", TaskType: "backup", Status: "processing",
+		BatchID: sql.NullString{String: "rsts-mm-o", Valid: true},
 	})
 	testutil.AssertNoError(t, err, "create orphaned processing backup")
-	ownToken := uuid.New()
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $2",
-		ownToken, ownTaskID); err != nil {
-		t.Fatalf("set orphan claim token and stale started_at: %v", err)
+		"UPDATE task SET started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", ownTaskID); err != nil {
+		t.Fatalf("stale the orphaned task: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
-		foreignToken); err != nil {
-		t.Fatalf("hold lock with foreign token: %v", err)
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'batch_id', 'rsts-mm-f') WHERE name = 'maintenance'"); err != nil {
+		t.Fatalf("hold the lock for the protected batch: %v", err)
 	}
 
 	result, err := svc.ResetStaleProcessingTasks(ctx, 60)
@@ -648,12 +656,12 @@ func TestBatch_ResetStaleProcessingTasks_TokenMismatchRecovery(t *testing.T) {
 
 	foreign, err := client.Queries.GetTask(ctx, foreignTaskID)
 	testutil.AssertNoError(t, err, "get foreign task")
-	testutil.AssertEqual(t, foreign.Status, "processing", "foreign holder untouched")
+	testutil.AssertEqual(t, foreign.Status, "processing", "the batch's fresh lock protects its task")
 
 	held, err := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 	testutil.AssertNoError(t, err, "post-reset lock check")
 	if held != 1 {
-		t.Fatalf("foreign holder's lock was released, want held=%d", held)
+		t.Fatalf("the live holder's lock was released, want held=%d", held)
 	}
 }
 
@@ -661,20 +669,23 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
 
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID: "rsts-we-b", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+	}); err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
 	taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "rsts-we", TaskType: "mirror", Status: "processing",
+		BatchID: sql.NullString{String: "rsts-we-b", Valid: true},
 	})
 	testutil.AssertNoError(t, err, "create processing mirror")
 
-	token := uuid.New()
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '40 minutes' WHERE id = $2",
-		token, taskID); err != nil {
-		t.Fatalf("set claim token and stale started_at: %v", err)
+		"UPDATE task SET started_at = NOW() - INTERVAL '40 minutes' WHERE id = $1", taskID); err != nil {
+		t.Fatalf("stale the task: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW() - INTERVAL '31 minutes'), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
-		token); err != nil {
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW() - INTERVAL '31 minutes'), 'batch_id', 'rsts-we-b') WHERE name = 'maintenance'"); err != nil {
 		t.Fatalf("hold lock with expired started_at: %v", err)
 	}
 
@@ -684,11 +695,11 @@ func TestBatch_ResetStaleProcessingTasks_WindowExpiryRecovery(t *testing.T) {
 
 	row, err := client.Queries.GetTask(ctx, taskID)
 	testutil.AssertNoError(t, err, "get task")
-	testutil.AssertEqual(t, row.Status, "pending", "task reset to pending")
+	testutil.AssertEqual(t, row.Status, "pending", "task reset to pending once the lock's window expired")
 
 	held, err := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 	testutil.AssertNoError(t, err, "post-reset lock check")
-	testutil.AssertEqual(t, held, 0, "lock released after window expiry")
+	testutil.AssertEqual(t, held, 0, "an aged lock is free for takeover, so it no longer protects the task")
 
 	second, err := svc.ResetStaleProcessingTasks(ctx, 60)
 	testutil.AssertNoError(t, err, "second sweep")
@@ -701,13 +712,18 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("ownership-failed quarantine", func(t *testing.T) {
+		if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rsts-qg1-b", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+		}); err != nil {
+			t.Fatalf("create batch: %v", err)
+		}
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rsts-qg1", TaskType: "backup", Status: "processing",
+			BatchID: sql.NullString{String: "rsts-qg1-b", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create processing backup")
 		if _, err := client.DB().ExecContext(ctx,
-			"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes', attempts = 3 WHERE id = $2",
-			uuid.New(), taskID); err != nil {
+			"UPDATE task SET started_at = NOW() - INTERVAL '10 minutes', attempts = 3 WHERE id = $1", taskID); err != nil {
 			t.Fatalf("set stale with max attempts: %v", err)
 		}
 
@@ -722,20 +738,23 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 	})
 
 	t.Run("live holder not quarantined", func(t *testing.T) {
+		if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "rsts-qg2-b", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+		}); err != nil {
+			t.Fatalf("create batch: %v", err)
+		}
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rsts-qg2", TaskType: "tagreconcile", Status: "processing",
+			BatchID: sql.NullString{String: "rsts-qg2-b", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create processing tagreconcile")
-		token := uuid.New()
 		if _, err := client.DB().ExecContext(ctx,
-			"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes', attempts = 3 WHERE id = $2",
-			token, taskID); err != nil {
+			"UPDATE task SET started_at = NOW() - INTERVAL '10 minutes', attempts = 3 WHERE id = $1", taskID); err != nil {
 			t.Fatalf("set stale with max attempts: %v", err)
 		}
 		if _, err := client.DB().ExecContext(ctx,
-			"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
-			token); err != nil {
-			t.Fatalf("hold lock with matching token: %v", err)
+			"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'batch_id', 'rsts-qg2-b') WHERE name = 'maintenance'"); err != nil {
+			t.Fatalf("hold lock for the batch: %v", err)
 		}
 
 		result, err := svc.ResetStaleProcessingTasks(ctx, 60)
@@ -746,16 +765,15 @@ func TestBatch_ResetStaleProcessingTasks_QuarantineOwnershipGate(t *testing.T) {
 		testutil.AssertNoError(t, err, "get task")
 		testutil.AssertEqual(t, row.Status, "processing", "task untouched")
 		testutil.AssertEqual(t, row.Attempts, int32(3), "attempts preserved")
-		testutil.AssertEqual(t, row.ClaimToken.UUID, token, "claim token preserved")
 
-		var owner uuid.NullUUID
+		var batchHeld sql.NullString
 		var running bool
 		if err := client.DB().QueryRowContext(ctx,
-			"SELECT (data->>'owner_token')::uuid, value::boolean FROM system_signal WHERE name = 'maintenance'").Scan(&owner, &running); err != nil {
+			"SELECT data->>'batch_id', value::boolean FROM system_signal WHERE name = 'maintenance'").Scan(&batchHeld, &running); err != nil {
 			t.Fatalf("read lock state: %v", err)
 		}
 		testutil.AssertEqual(t, running, true, "lock still held")
-		testutil.AssertEqual(t, owner.UUID, token, "lock owner token preserved")
+		testutil.AssertEqual(t, batchHeld.String, "rsts-qg2-b", "lock's batch preserved")
 	})
 }
 
@@ -763,21 +781,24 @@ func TestBatch_ResetStaleProcessingTasks_KeepsLiveBlockingHolder(t *testing.T) {
 	svc, client := newTestBatch(t)
 	ctx := context.Background()
 
+	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+		ID: "rsts-bk-b", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+	}); err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
 	taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "rsts-bk", TaskType: "backup", Status: "processing",
+		BatchID: sql.NullString{String: "rsts-bk-b", Valid: true},
 	})
 	testutil.AssertNoError(t, err, "create processing backup")
 
-	token := uuid.New()
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $2",
-		token, taskID); err != nil {
-		t.Fatalf("set claim token and stale started_at: %v", err)
+		"UPDATE task SET started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", taskID); err != nil {
+		t.Fatalf("stale the task: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text) WHERE name = 'maintenance'",
-		token); err != nil {
-		t.Fatalf("hold lock with token: %v", err)
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'batch_id', 'rsts-bk-b') WHERE name = 'maintenance'"); err != nil {
+		t.Fatalf("hold lock for the batch: %v", err)
 	}
 
 	held, err := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
@@ -819,16 +840,15 @@ func TestBatch_ResetStaleProcessingTasks_KeepsLiveChildHeldBatch(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "create processing thumbbackfill")
 
-	// the task token holds no lock: the child holds storage for the whole run under its batch-owner
-	// token and records the batch on the lock row
+	// the task's batch holds storage for the whole run: the lock records the batch, and the sweep protects
+	// the task through that batch rather than a per-task token
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE task SET claim_token = $1, started_at = NOW() - INTERVAL '10 minutes' WHERE id = $2",
-		uuid.New(), taskID); err != nil {
-		t.Fatalf("stale claim token and started_at: %v", err)
+		"UPDATE task SET started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1", taskID); err != nil {
+		t.Fatalf("stale the task: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'owner_token', $1::uuid::text, 'batch_id', $2::text) WHERE name = 'storage'",
-		uuid.New(), batchID); err != nil {
+		"UPDATE system_signal SET value = 'true', data = jsonb_build_object('started_at', to_jsonb(NOW()), 'batch_id', $1::text) WHERE name = 'storage'",
+		batchID); err != nil {
 		t.Fatalf("hold storage for the batch: %v", err)
 	}
 
@@ -935,59 +955,6 @@ func TestBatch_ListStaleBatchOwners(t *testing.T) {
 		for _, owner := range owners {
 			testutil.AssertEqual(t, owner.BatchID != "stale-done", true, "completed batch not in stale list")
 		}
-	})
-}
-
-func TestBatch_CountLiveBatches(t *testing.T) {
-	svc, client := newTestBatch(t)
-	ctx := context.Background()
-
-	t.Run("counts owners with fresh heartbeat", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "live-cnt", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-			BatchID: "live-cnt", OwnerID: "live-cnt-o", Pid: 50,
-		})
-		testutil.AssertNoError(t, err, "insert owner")
-
-		count, err := svc.CountLiveBatches(ctx)
-		testutil.AssertNoError(t, err, "count live")
-		testutil.AssertEqual(t, count >= int64(1), true, "at least one live batch")
-	})
-
-	t.Run("excludes stale owners", func(t *testing.T) {
-		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "stale-cnt", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
-		})
-		testutil.AssertNoError(t, err, "create batch")
-		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-			BatchID: "stale-cnt", OwnerID: "stale-cnt-o", Pid: 60,
-		})
-		testutil.AssertNoError(t, err, "insert owner")
-		staleTime := time.Now().Add(-2 * time.Minute)
-		_, err = client.DB().ExecContext(ctx,
-			"UPDATE batch_owner SET last_heartbeat = $1 WHERE batch_id = $2",
-			staleTime, "stale-cnt",
-		)
-		testutil.AssertNoError(t, err, "backdate heartbeat")
-
-		before, err := svc.CountLiveBatches(ctx)
-		testutil.AssertNoError(t, err, "count before")
-
-		err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID: "live-cnt-2", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
-		})
-		testutil.AssertNoError(t, err, "create live batch")
-		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
-			BatchID: "live-cnt-2", OwnerID: "live-cnt-2-o", Pid: 70,
-		})
-		testutil.AssertNoError(t, err, "insert live owner")
-
-		after, err := svc.CountLiveBatches(ctx)
-		testutil.AssertNoError(t, err, "count after")
-		testutil.AssertEqual(t, after, before+1, "live count increased by 1")
 	})
 }
 

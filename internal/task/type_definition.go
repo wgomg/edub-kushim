@@ -36,8 +36,8 @@ type TypeDefinition struct {
 	DirectLocks *LockPolicy
 
 	// CLI names the command that executes this type's tasks in batch mode, such as "consume"; an empty
-	// value means the type has no batch-mode task CLI yet, so the dispatcher refuses its batches and the
-	// launcher reports the missing command as the reason.
+	// value means the type has no batch-mode task CLI: an in-process registration executes it, and a fork-only
+	// dispatcher refuses its batches.
 	CLI string
 	// BatchSelector is the flag CLI takes the batch id on, such as "--from-batch"; the launcher always
 	// forks CLI BatchSelector <batch-id> --exec-token <token>, so the flag and its value form one contract.
@@ -46,7 +46,7 @@ type TypeDefinition struct {
 	Hosts []types.Host
 
 	// Concurrency is the number of workers the shared execution library runs for this task type inside a
-	// batch execution; a value below 1 means one worker. It replaces the per-type pool worker count.
+	// batch execution; a value below 1 means one worker.
 	Concurrency int
 
 	// DedupKey derives the type's dedup key from a task payload; the owning producer package supplies it

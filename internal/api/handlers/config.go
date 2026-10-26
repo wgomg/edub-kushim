@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -25,10 +28,9 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ConfigHandler is the configuration API: bootstrap, read and update of
-// the whole tree, the status of the environment migration, and the admin
-// user creation of first setup. It is the public path of the setup wizard,
-// then protected once authentication exists.
+// ConfigHandler is the configuration API: bootstrap, read and update of the whole tree, the status of the
+// environment migration and of the direct asset downloads, and the admin user creation of first setup. It
+// is the public path of the setup wizard, then protected once authentication exists.
 type ConfigHandler struct {
 	getConfig   func() *config.Config
 	onConfigSet func(*config.Config)
@@ -38,6 +40,15 @@ type ConfigHandler struct {
 	enqueuer    *task.Enqueuer
 	services    *service.CrudServices
 	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Enqueuer, error)
+
+	downloadMu   sync.Mutex
+	downloadErrs map[string]string
+	downloads    map[string]struct{}
+
+	// the direct-download helpers are dependencies so tests can keep a handler offline; production leaves
+	// the real helpers wired below
+	downloadTessdata func(ctx context.Context, cfg *config.Config, lang string) error
+	downloadHugot    func(ctx context.Context, cfg *config.Config) error
 }
 
 // NewConfigHandler wires the config handler; the services attach after
@@ -61,6 +72,10 @@ func NewConfigHandler(
 	}
 	if client != nil {
 		h.queries = client.Queries
+	}
+	h.downloadTessdata = config.DownloadTessdataLanguage
+	h.downloadHugot = func(ctx context.Context, cfg *config.Config) error {
+		return config.DownloadHugotModel(ctx, cfg, h.logger)
 	}
 	return h
 }
@@ -207,39 +222,28 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		missing := config.MissingExternalToolErrors(cfg)
 
-		if h.enqueuer == nil {
-			resp := map[string]any{
-				"configured":    true,
-				"missing_tools": missing,
-			}
-			if svcPath != "" {
-				resp["service_files_path"] = svcPath
-			}
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
+		downloading := h.startAssetDownloads(cfg)
 
-		enqueued := h.enqueueConfigTasks(ctx, cfg)
-
-		if enqueued > 0 {
+		if downloading > 0 {
 			resp := map[string]any{
-				"pending_tasks": enqueued,
+				"pending_tasks": downloading,
 				"missing_tools": missing,
 			}
 			if svcPath != "" {
 				resp["service_files_path"] = svcPath
 			}
 			writeJSON(w, http.StatusCreated, resp)
-		} else {
-			resp := map[string]any{
-				"configured":    true,
-				"missing_tools": missing,
-			}
-			if svcPath != "" {
-				resp["service_files_path"] = svcPath
-			}
-			writeJSON(w, http.StatusOK, resp)
+			return
 		}
+
+		resp := map[string]any{
+			"configured":    true,
+			"missing_tools": missing,
+		}
+		if svcPath != "" {
+			resp["service_files_path"] = svcPath
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -290,71 +294,138 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		pending++
 	}
 
+	// the immediate keys are already saved; the downloads depend only on those, so read the new set back
+	// from disk instead of waiting for the migration to apply the deferred keys
+	if immediateCfg, loadErr := config.Load(configDir); loadErr != nil {
+		h.logger.Error("", "reload config for asset downloads: %v", loadErr)
+	} else {
+		pending += h.startAssetDownloads(immediateCfg)
+	}
+
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"pending_tasks": pending,
 		"message":       "migration(s) queued — settings apply once the migration completes",
 	})
 }
 
-func (h *ConfigHandler) enqueueConfigTasks(ctx context.Context, cfg *config.Config) int {
-	spec, err := task.NewBatchSpec(itypes.Batch.Origin.Wizard, "")
-	if err != nil {
-		h.logger.Error("", "build config batch spec: %v", err)
-		return 0
-	}
+// hugotAssetKey names the hugot model in the direct-download bookkeeping; tessdata entries use the language
+// code as their key.
+const hugotAssetKey = "hugot"
 
-	var tasks []task.TaskSpec
-
-	for _, lang := range config.MissingTessdataLanguages(cfg) {
-		taskSpec, specErr := configtask.TessdataSpec(cfg.App.ConfigDir, lang)
-		if specErr != nil {
-			h.logger.Error("", "build tessdata task for %s: %v", lang, specErr)
-			continue
-		}
-		if h.configTaskCovered(ctx, taskSpec.Type, taskSpec.Payload) {
-			continue
-		}
-		tasks = append(tasks, taskSpec)
-	}
-
+// missingAssets lists the required assets absent from disk: one tessdata key per configured language plus
+// the hugot model. It is the single source of the required-asset set for the download trigger, the status
+// pending count and the failure listing.
+func missingAssets(cfg *config.Config) []string {
+	missing := config.MissingTessdataLanguages(cfg)
 	if config.MissingHugotModel(cfg) {
-		taskSpec, specErr := configtask.HugotSpec(cfg.App.ConfigDir)
-		if specErr != nil {
-			h.logger.Error("", "build hugot task: %v", specErr)
-		} else if !h.configTaskCovered(ctx, taskSpec.Type, taskSpec.Payload) {
-			tasks = append(tasks, taskSpec)
-		}
+		missing = append(missing, hugotAssetKey)
 	}
-
-	if len(tasks) == 0 {
-		return 0
-	}
-
-	result, err := h.enqueuer.EnqueueBatch(ctx, spec, tasks)
-	if err != nil {
-		h.logger.Error("", "create config batch: %v", err)
-		return 0
-	}
-	return len(result.TaskIDs)
+	return missing
 }
 
-func (h *ConfigHandler) configTaskCovered(ctx context.Context, taskType itypes.TaskType, payload []byte) bool {
-	dedupKey, err := h.enqueuer.DedupKey(taskType, payload)
-	if err != nil {
-		h.logger.Error("", "derive dedup key for %s: %v", taskType, err)
+// startAssetDownloads launches one goroutine per missing asset and returns how many downloads it started.
+// An asset already downloading is skipped, so overlapping saves and retries cannot write the same file
+// concurrently. Downloads are config updates, not tasks: they create no batch, task row, dedup key, lease
+// or queue progress. The request context is detached because a model download outlives the HTTP request; a
+// process exit aborts one, and the live missing-asset check keeps the status honest afterwards. Both
+// helpers skip when the asset is present, so re-triggering is idempotent.
+func (h *ConfigHandler) startAssetDownloads(cfg *config.Config) int {
+	count := 0
+	for _, key := range missingAssets(cfg) {
+		if !h.beginDownload(key) {
+			continue
+		}
+		h.clearAssetFailure(key)
+		assetKey := key
+		go h.downloadAsset(assetKey, func() error {
+			if assetKey == hugotAssetKey {
+				return h.downloadHugot(context.Background(), cfg)
+			}
+			return h.downloadTessdata(context.Background(), cfg, assetKey)
+		})
+		count++
+	}
+	return count
+}
+
+// beginDownload marks an asset as downloading; it reports false when a download for that asset is already
+// in flight.
+func (h *ConfigHandler) beginDownload(key string) bool {
+	h.downloadMu.Lock()
+	defer h.downloadMu.Unlock()
+	if h.downloads == nil {
+		h.downloads = make(map[string]struct{})
+	}
+	if _, running := h.downloads[key]; running {
 		return false
 	}
-	existing, err := h.queries.GetConfigTaskByDedupKey(ctx, database.GetConfigTaskByDedupKeyParams{
-		TaskType: taskType,
-		DedupKey: sql.NullString{String: dedupKey, Valid: dedupKey != ""},
+	h.downloads[key] = struct{}{}
+	return true
+}
+
+// downloadAsset runs one asset download and records or clears its failure entry, releasing its in-flight
+// mark first so the entry is never left set.
+func (h *ConfigHandler) downloadAsset(key string, run func() error) {
+	defer h.endDownload(key)
+	if err := run(); err != nil {
+		h.logger.Error("", "config asset download %s failed: %v", key, err)
+		h.downloadMu.Lock()
+		if h.downloadErrs == nil {
+			h.downloadErrs = make(map[string]string)
+		}
+		h.downloadErrs[key] = err.Error()
+		h.downloadMu.Unlock()
+		return
+	}
+	h.clearAssetFailure(key)
+}
+
+func (h *ConfigHandler) endDownload(key string) {
+	h.downloadMu.Lock()
+	delete(h.downloads, key)
+	h.downloadMu.Unlock()
+}
+
+// clearAssetFailure drops an asset's recorded failure, so a retry in flight is not reported as failed.
+func (h *ConfigHandler) clearAssetFailure(key string) {
+	h.downloadMu.Lock()
+	delete(h.downloadErrs, key)
+	h.downloadMu.Unlock()
+}
+
+// failedAssetTasks lists the recorded download failures for assets still missing, in the same summary shape
+// failed migration tasks use so the wizard renders both without a special case.
+func (h *ConfigHandler) failedAssetTasks(missingKeys []string) []FailedTaskSummary {
+	missing := make(map[string]bool, len(missingKeys))
+	for _, key := range missingKeys {
+		missing[key] = true
+	}
+
+	h.downloadMu.Lock()
+	failures := make(map[string]string, len(h.downloadErrs))
+	maps.Copy(failures, h.downloadErrs)
+	h.downloadMu.Unlock()
+
+	failed := make([]FailedTaskSummary, 0, len(failures))
+	for key, message := range failures {
+		if !missing[key] {
+			continue
+		}
+		summary := FailedTaskSummary{Op: "tessdata", Error: message}
+		if key == hugotAssetKey {
+			summary.Op = hugotAssetKey
+		} else {
+			summary.Lang = key
+		}
+		failed = append(failed, summary)
+	}
+	sort.Slice(failed, func(i, j int) bool {
+		if failed[i].Op != failed[j].Op {
+			return failed[i].Op < failed[j].Op
+		}
+		return failed[i].Lang < failed[j].Lang
 	})
-	if err == nil {
-		return existing.Status == itypes.Task.Status.Pending || existing.Status == itypes.Task.Status.Processing
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		h.logger.Error("", "lookup config task for dedup key %s: %v", dedupKey, err)
-	}
-	return false
+	return failed
 }
 
 func dbParamsFromBody(body map[string]any, current config.DatabaseConfig) (config.DatabaseConfig, error) {
@@ -534,13 +605,12 @@ func (h *ConfigHandler) enqueueDBMigration(ctx context.Context, w http.ResponseW
 func (h *ConfigHandler) enqueueStorageMigration(ctx context.Context, w http.ResponseWriter, body map[string]any) bool {
 	cfg := h.getConfig()
 	newStorageDir := storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir)
-	taskSpec, err := configtask.MigrateStorageSpec(configtask.MigrateStoragePayload{
-		ConfigDir:         cfg.App.ConfigDir,
-		OldStorageDir:     cfg.Storage.StorageDir,
-		NewStorageDir:     newStorageDir,
-		OldConsumptionDir: cfg.Storage.ConsumptionDir,
-		NewConsumptionDir: storageDirFromBody(body, "storage.consumption_dir", cfg.Storage.ConsumptionDir),
-	})
+	newConsumptionDir := storageDirFromBody(body, "storage.consumption_dir", cfg.Storage.ConsumptionDir)
+	payload, changed := configtask.StorageMigrationPayload(cfg, newStorageDir, newConsumptionDir)
+	if !changed {
+		return true
+	}
+	taskSpec, err := configtask.MigrateStorageSpec(payload)
 	if err != nil {
 		h.logger.Error("", "build storage migration task: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to enqueue storage migration"})
@@ -585,16 +655,15 @@ func (h *ConfigHandler) enqueueMigration(ctx context.Context, w http.ResponseWri
 	return true
 }
 
-// configHostedTaskTypes are the task types the config hosts run: asset downloads plus the two migration
-// task types. Status and retry span all three.
+// configHostedTaskTypes are the batch task types a configuration change creates: the two migration types.
+// Asset downloads are direct config updates with no task row, so status and retry cover them separately.
 var configHostedTaskTypes = []itypes.TaskType{
-	itypes.Task.Type.Config,
 	itypes.Task.Type.MigrateDB,
 	itypes.Task.Type.MigrateStorage,
 }
 
-// ConfigStatus serves the migration status: readiness, tool failures and
-// pending or failed tasks.
+// ConfigStatus serves the environment status the setup wizard polls: readiness, tool failures, pending or
+// failed migration tasks and the direct asset downloads.
 func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -611,7 +680,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.queries != nil {
-		// the setup wizard's completion gate polls this count, so scope it to config-hosted tasks only
+		// the setup wizard's completion gate polls this count, so scope it to the migration task types
 		for _, taskType := range configHostedTaskTypes {
 			for _, status := range []itypes.TaskStatus{itypes.Task.Status.Pending, itypes.Task.Status.Processing} {
 				count, err := h.queries.CountTasksByStatusAndType(ctx, database.CountTasksByStatusAndTypeParams{
@@ -634,23 +703,11 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 				TaskType: taskType,
 			})
 			if err != nil {
-				h.logger.Error("", "list failed config tasks: %v", err)
+				h.logger.Error("", "list failed migration tasks: %v", err)
 				continue
 			}
 			for _, t := range failedTasks {
-				summary := FailedTaskSummary{TaskID: t.TaskID}
-				var p struct {
-					Op   string `json:"op"`
-					Lang string `json:"lang"`
-				}
-				if t.Payload != nil {
-					_ = json.Unmarshal(*t.Payload, &p)
-				}
-				summary.Op = p.Op
-				if summary.Op == "" {
-					summary.Op = string(t.TaskType)
-				}
-				summary.Lang = p.Lang
+				summary := FailedTaskSummary{TaskID: t.TaskID, Op: string(t.TaskType)}
 				if t.Error.Valid {
 					summary.Error = t.Error.String
 				}
@@ -661,6 +718,12 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if cfg != nil {
+		// asset downloads have no task rows: pending counts the live missing assets, and the failures come from
+		// the update path's in-memory record
+		missing := missingAssets(cfg)
+		resp.PendingTasks += len(missing)
+		resp.FailedTasks = append(resp.FailedTasks, h.failedAssetTasks(missing)...)
+
 		allTools := config.MissingExternalTools(cfg)
 		resp.Tools = allTools
 		resp.MissingTools = config.FilterToolErrors(allTools)
@@ -669,8 +732,8 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RetryFailedConfig retries the environment's failed tasks by resuming their batches with the failed tasks
-// reset.
+// RetryFailedConfig retries the environment's failed work: it resumes the batches of failed migration tasks
+// and re-triggers asset downloads for missing or failed assets.
 func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -691,7 +754,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 			TaskType: taskType,
 		})
 		if err != nil {
-			h.logger.Error("", "list failed config tasks: %v", err)
+			h.logger.Error("", "list failed migration tasks: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -712,7 +775,9 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 		retried += result.FailedRetried
 	}
 
-	writeJSON(w, http.StatusOK, map[string]int64{"retried": retried})
+	downloads := h.startAssetDownloads(cfg)
+
+	writeJSON(w, http.StatusOK, map[string]int64{"retried": retried, "downloads_started": int64(downloads)})
 }
 
 // CreateAdminUser creates the first admin account during setup.
@@ -778,7 +843,8 @@ func sanitizeConfigStrings(v any) any {
 	return v
 }
 
-// FailedTaskSummary is one environment task that failed.
+// FailedTaskSummary is one failed environment unit: a migration task, or a direct asset download that
+// carries no task id.
 type FailedTaskSummary struct {
 	TaskID string `json:"task_id"`
 	Op     string `json:"op"`

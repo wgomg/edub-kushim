@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/dispatch"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
@@ -38,7 +40,9 @@ const batchHelpText = "Usage: kushim batch <subcommand> [args]\n\n" +
 	"  mirror [--path <dir>]\n" +
 	"  enrich <document-id>... | --all | --limit N\n" +
 	"  thumbnails [--from-batch <id> | --document <id>]\n" +
-	"  tagreconcile | tagmeasure | tagidentity | tagaudit\n\n" +
+	"  tagreconcile | tagmeasure | tagidentity | tagaudit\n" +
+	"  migrate-db --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]\n" +
+	"  migrate-storage --storage-dir <dir> [--consumption-dir <dir>]\n\n" +
 	"  Direct commands (for example 'kushim backup') run immediately and create\n" +
 	"  no queue rows; this command is the queue surface."
 
@@ -48,7 +52,9 @@ const batchCreateHelpText = "Usage: kushim batch create <task> [args]\n\n" +
 	"  mirror [--path <dir>]\n" +
 	"  enrich <document-id>... | --all | --limit N\n" +
 	"  thumbnails [--from-batch <id> | --document <id>]\n" +
-	"  tagreconcile | tagmeasure | tagidentity | tagaudit"
+	"  tagreconcile | tagmeasure | tagidentity | tagaudit\n" +
+	"  migrate-db --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]\n" +
+	"  migrate-storage --storage-dir <dir> [--consumption-dir <dir>]"
 
 // cliBatchSpec returns the spec of a CLI-triggered enqueue; every CLI boundary that creates work uses
 // this same origin.
@@ -101,10 +107,11 @@ func batchCreateHandler(c *container.Container, args []string) error {
 
 	switch taskName {
 	case "consume", "backup", "mirror", "enrich", "thumbnails",
-		"tagreconcile", "tagmeasure", "tagidentity", "tagaudit":
+		"tagreconcile", "tagmeasure", "tagidentity", "tagaudit",
+		"migrate-db", "migrate-storage":
 	default:
 		return fmt.Errorf("unknown task %q; supported: consume, backup, mirror, enrich, thumbnails, "+
-			"tagreconcile, tagmeasure, tagidentity, tagaudit", taskName)
+			"tagreconcile, tagmeasure, tagidentity, tagaudit, migrate-db, migrate-storage", taskName)
 	}
 
 	selection, err := parseCreateSelection(taskName, args[1:])
@@ -119,15 +126,17 @@ func batchCreateHandler(c *container.Container, args []string) error {
 	// one catalog for the whole command: the hook map names every type this boundary enqueues, so a pending
 	// task of any other type still fails loudly instead of creating keyless work
 	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Consume:       consumption.DedupKey,
-		types.Task.Type.Backup:        backup.BackupDedupKey,
-		types.Task.Type.Mirror:        backup.MirrorDedupKey,
-		types.Task.Type.Enrich:        enrichment.DedupKey,
-		types.Task.Type.ThumbBackfill: service.ThumbnailDedupKey,
-		types.Task.Type.TagReconcile:  task.ConstantDedupKey(curation.TagReconcileDedupKey),
-		types.Task.Type.TagMeasure:    task.ConstantDedupKey(tags.TagMeasureDedupKey),
-		types.Task.Type.TagIdentity:   task.ConstantDedupKey(curation.TagIdentityDedupKey),
-		types.Task.Type.TagAudit:      task.ConstantDedupKey(curation.TagAuditDedupKey),
+		types.Task.Type.Consume:        consumption.DedupKey,
+		types.Task.Type.Backup:         backup.BackupDedupKey,
+		types.Task.Type.Mirror:         backup.MirrorDedupKey,
+		types.Task.Type.Enrich:         enrichment.DedupKey,
+		types.Task.Type.ThumbBackfill:  service.ThumbnailDedupKey,
+		types.Task.Type.TagReconcile:   task.ConstantDedupKey(curation.TagReconcileDedupKey),
+		types.Task.Type.TagMeasure:     task.ConstantDedupKey(tags.TagMeasureDedupKey),
+		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
+		types.Task.Type.TagAudit:       task.ConstantDedupKey(curation.TagAuditDedupKey),
+		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
+		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
 	}, nil)
 	if err != nil {
 		return fmt.Errorf("task catalog: %w", err)
@@ -241,6 +250,24 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		case "tagaudit":
 			tasks = curation.AuditSpecs()
 		}
+
+	case "migrate-db":
+		taskSpec, err := migrateDBCreateSpec(c, args[1:])
+		if err != nil {
+			return err
+		}
+		tasks = []task.TaskSpec{taskSpec}
+
+	case "migrate-storage":
+		spec, enqueue, err := migrateStorageCreateSpecs(c, args[1:])
+		if err != nil {
+			return err
+		}
+		if !enqueue {
+			fmt.Println("No migration needed: requested directories already match the current config.")
+			return nil
+		}
+		tasks = []task.TaskSpec{spec}
 	}
 
 	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
@@ -256,11 +283,97 @@ func batchCreateHandler(c *container.Container, args []string) error {
 	return nil
 }
 
+// migrateDBCreateSpec turns the create verb's flags into the migrate-db payload, matching the direct
+// command's required flags and password fallback.
+func migrateDBCreateSpec(c *container.Container, args []string) (task.TaskSpec, error) {
+	fp := flags.NewFlagParser(args)
+	var host, port, user, password, databaseName, sslMode string
+	if err := fp.String("--host", &host); err != nil {
+		return task.TaskSpec{}, err
+	}
+	if err := fp.String("--port", &port); err != nil {
+		return task.TaskSpec{}, err
+	}
+	if err := fp.String("--user", &user); err != nil {
+		return task.TaskSpec{}, err
+	}
+	if err := fp.String("--password", &password); err != nil {
+		return task.TaskSpec{}, err
+	}
+	if err := fp.String("--database", &databaseName); err != nil {
+		return task.TaskSpec{}, err
+	}
+	if err := fp.String("--sslmode", &sslMode); err != nil {
+		return task.TaskSpec{}, err
+	}
+	if rest := fp.Rest(); len(rest) > 0 {
+		return task.TaskSpec{}, fmt.Errorf("unknown argument: %s", rest[0])
+	}
+
+	if password == "" {
+		password = os.Getenv("KUSHIM_DB_PASSWORD")
+	}
+	if host == "" || port == "" || user == "" || databaseName == "" {
+		return task.TaskSpec{}, fmt.Errorf("--host, --port, --user and --database are required " +
+			"(--password may be set via KUSHIM_DB_PASSWORD)")
+	}
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+
+	return configtask.MigrateDBSpec(configtask.MigrateDBPayload{
+		ConfigDir: c.GetConfig().App.ConfigDir,
+		Host:      host,
+		Port:      port,
+		User:      user,
+		Password:  password,
+		Database:  databaseName,
+		SSLMode:   sslMode,
+	})
+}
+
+// migrateStorageCreateSpecs turns the create verb's flags into the migrate-storage payload, applying the
+// direct command's unsafe-path rejection and changed check. enqueue is false when the requested directories
+// already match the configuration.
+func migrateStorageCreateSpecs(c *container.Container, args []string) (task.TaskSpec, bool, error) {
+	fp := flags.NewFlagParser(args)
+	var newStorage, newConsumption string
+	if err := fp.String("--storage-dir", &newStorage); err != nil {
+		return task.TaskSpec{}, false, err
+	}
+	if err := fp.String("--consumption-dir", &newConsumption); err != nil {
+		return task.TaskSpec{}, false, err
+	}
+	if rest := fp.Rest(); len(rest) > 0 {
+		return task.TaskSpec{}, false, fmt.Errorf("unknown argument: %s", rest[0])
+	}
+	if newStorage == "" && newConsumption == "" {
+		return task.TaskSpec{}, false, fmt.Errorf("at least one of --storage-dir or --consumption-dir is required")
+	}
+	if err := rejectUnsafePath(newStorage, "--storage-dir"); err != nil {
+		return task.TaskSpec{}, false, err
+	}
+	if err := rejectUnsafePath(newConsumption, "--consumption-dir"); err != nil {
+		return task.TaskSpec{}, false, err
+	}
+
+	cfg := c.GetConfig()
+	payload, changed := configtask.StorageMigrationPayload(cfg, newStorage, newConsumption)
+	if !changed {
+		return task.TaskSpec{}, false, nil
+	}
+
+	spec, err := configtask.MigrateStorageSpec(payload)
+	if err != nil {
+		return task.TaskSpec{}, false, err
+	}
+	return spec, true, nil
+}
+
 func batchRunHandler(c *container.Container, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Println("Usage: kushim batch run <batch-id>\n\n" +
-			"  Claim a queued batch and run its task CLI in batch mode, waiting for it.\n" +
-			"  Only batches whose task types have a batch-mode CLI can run.")
+			"  Claim a queued batch and run its task CLI in batch mode, waiting for it.")
 		if len(args) == 0 {
 			return fmt.Errorf("run requires a batch id")
 		}

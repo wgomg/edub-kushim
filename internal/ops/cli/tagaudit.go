@@ -4,25 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
-	"github.com/wgomg/edub-kushim/internal/tags/curation"
-	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const tagAuditHelpText = "Usage: kushim tagaudit [--run <batch-id>]\n\n" +
+const tagAuditHelpText = "Usage: kushim tagaudit [--from-batch <id> --exec-token <id>] [--no-wait]\n\n" +
 	"  Audit the documents' coverage against the tag vocabulary: sample and\n" +
 	"  flag the documents, verify the applicable dimensions with the audit\n" +
 	"  judge, fill the confirmed gaps, and record the coverage classes.\n\n" +
-	"  Without flags: enqueue a blocking task and print its batch id; the queue\n" +
-	"  daemon claims it under the maintenance lock.\n" +
-	"  --run <batch-id>: the queued run's execution mode (no lock, no drain)."
+	"  Runs the pass immediately under the maintenance lock, creating no queue rows.\n" +
+	"  --from-batch <id>  execute one claimed batch (dispatcher and 'kushim batch run' contract)\n" +
+	"  --exec-token <id>  execution token passed with --from-batch\n" +
+	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n" +
+	"  --run <id>         deprecated alias of --from-batch\n\n" +
+	"  To enqueue an audit: kushim batch create tagaudit"
 
 func tagAuditHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
@@ -30,63 +30,46 @@ func tagAuditHandler(c *container.Container, args []string) error {
 		return nil
 	}
 
-	var batchID string
-	fp.String("--run", &batchID)
+	var batchID, execTokenParam, runID string
+	if err := fp.String("--from-batch", &batchID); err != nil {
+		return err
+	}
+	if err := fp.String("--exec-token", &execTokenParam); err != nil {
+		return err
+	}
+	if err := fp.String("--run", &runID); err != nil {
+		return err
+	}
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
 
-	if batchID != "" {
-		if _, err := uuid.Parse(batchID); err != nil {
-			return fmt.Errorf("--run: invalid batch id %q", batchID)
-		}
-		return runTagAuditPass(c, batchID)
-	}
-	return enqueueTagAudit(c)
-}
-
-// enqueueTagAudit creates the queued audit batch and its blocking task, or reports that a run is already
-// active; it writes no lock and never waits.
-func enqueueTagAudit(c *container.Container) error {
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.TagAudit: task.ConstantDedupKey(curation.TagAuditDedupKey),
-	}, nil)
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	enqueuer := task.NewEnqueuer(client, catalog)
-	spec, err := cliBatchSpec()
+	batchID, execTokenParam, err := resolveTagPassSelection(batchID, execTokenParam, runID)
 	if err != nil {
 		return err
 	}
-	batchID, alreadyQueued, err := curation.NewTagAudit(client.Queries, enqueuer).Enqueue(context.Background(), spec)
-	if err != nil {
-		return fmt.Errorf("enqueue tag audit: %w", err)
+	if batchID != "" || execTokenParam != "" {
+		if noWait {
+			return fmt.Errorf("--no-wait applies to the direct run only")
+		}
+		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagAudit, func(ctx context.Context) (json.RawMessage, error) {
+			return tagAuditPass(ctx, c)
+		})
 	}
-	if alreadyQueued {
-		fmt.Println("A tag audit run is already queued or processing.")
-		return nil
-	}
-
-	fmt.Printf("Batch %s queued — run 'kushim queue' to process\n", batchID)
-	return nil
+	return runTagPassDirect(c, types.Task.Type.TagAudit, noWait, func(ctx context.Context) (json.RawMessage, error) {
+		return tagAuditPass(ctx, c)
+	})
 }
 
-// runTagAuditPass runs one coverage audit as the queued task's forked child; the claiming parent holds
-// the maintenance lock and already drained. The batch id only labels the run: the run id stays fresh,
-// matching the tagmeasure convention so batch ids never enter the measurement substrate's run keys.
-func runTagAuditPass(c *container.Container, batchID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
-	defer cancel()
-
+// tagAuditPass runs one coverage audit and returns its serialized report, the shared body of the direct
+// and batch modes. The run id stays fresh, matching the tagmeasure convention so batch ids never enter the
+// measurement substrate's run keys.
+func tagAuditPass(ctx context.Context, c *container.Container) (json.RawMessage, error) {
 	client, err := c.GetClient()
 	if err != nil {
-		return fmt.Errorf("database: %w", err)
+		return nil, fmt.Errorf("database: %w", err)
 	}
 
 	runner := admission.NewAuditRunner(
@@ -98,15 +81,15 @@ func runTagAuditPass(c *container.Container, batchID string) error {
 
 	report, err := runner.Run(ctx, uuid.New())
 	if err != nil {
-		return fmt.Errorf("tag audit: %w", err)
+		return nil, fmt.Errorf("tag audit: %w", err)
 	}
 
-	c.GetLogger().Info("", "tag audit batch %s: run %s", batchID, report.RunID)
+	c.GetLogger().Info("", "tag audit run %s: sweep=%d sampled=%d flagged=%d fills=%d flags=%d pending_coverage=%d",
+		report.RunID, report.SweepCount, report.Sampled, report.Flagged, report.Fills, report.Flags, report.PendingCoverage)
 
 	raw, err := json.Marshal(report)
 	if err != nil {
-		return fmt.Errorf("marshal tag audit report: %w", err)
+		return nil, fmt.Errorf("marshal tag audit report: %w", err)
 	}
-	fmt.Printf("%s%s\n", admission.AuditReportPrefix, raw)
-	return nil
+	return raw, nil
 }

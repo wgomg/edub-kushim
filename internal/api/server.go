@@ -1,6 +1,7 @@
 // Package api is the REST server of edub: routing, auth middleware and role gates, the config watcher
-// driving hot rebuilds of the live handler set, the matcher client, the config-host task pools, and the
-// embedded SPA.
+// driving hot rebuilds of the live handler set, the matcher client and the embedded SPA. edub never claims
+// or executes a batch: it enqueues migrations and tag tasks, and the queue daemon and the setup wizard are
+// the dispatchers.
 package api
 
 import (
@@ -47,11 +48,6 @@ type Server struct {
 	configWatcher *config.Watcher
 	db            *sql.DB
 	client        *database.Client
-	pools         struct {
-		config         *task.Pool
-		migrateDB      *task.Pool
-		migrateStorage *task.Pool
-	}
 }
 
 // NewServer assembles the server. An empty session secret is generated
@@ -99,13 +95,10 @@ func (s *Server) rebuild(client *database.Client) {
 	services.DocumentType = service.NewDocumentType(client.Queries)
 	services.User = service.NewUser(client.Queries)
 
-	configStore := task.NewStore(client)
-
 	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
 		types.Task.Type.Consume:        consumption.DedupKey,
 		types.Task.Type.Enrich:         enrichment.DedupKey,
 		types.Task.Type.ThumbBackfill:  service.ThumbnailDedupKey,
-		types.Task.Type.Config:         configtask.ConfigDedupKey,
 		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
 		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
 		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
@@ -126,17 +119,6 @@ func (s *Server) rebuild(client *database.Client) {
 	s.tagIdentity = curation.NewTagIdentity(client.Queries, enqueuer)
 	s.tagAudit = curation.NewTagAudit(client.Queries, enqueuer)
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
-
-	registry := task.NewRegistry()
-	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
-	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, s.logger))
-	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, s.logger))
-
-	configRunner := task.NewRunner(configStore, registry, s.logger)
-
-	s.pools.config = task.NewPool(s.logger, configRunner, 1, 5*time.Second, types.Task.Type.Config)
-	s.pools.migrateDB = task.NewPool(s.logger, configRunner, 1, 5*time.Second, types.Task.Type.MigrateDB)
-	s.pools.migrateStorage = task.NewPool(s.logger, configRunner, 1, 5*time.Second, types.Task.Type.MigrateStorage)
 
 	onConfigSet := func(cfg *config.Config) {
 		if cfg.Srv.SessionSecret == "" {
@@ -185,13 +167,6 @@ func (s *Server) rebuild(client *database.Client) {
 }
 
 func (s *Server) reconnectDB(newDB *sql.DB) {
-	for _, pool := range []*task.Pool{s.pools.config, s.pools.migrateDB, s.pools.migrateStorage} {
-		if pool != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			pool.Stop(ctx)
-			cancel()
-		}
-	}
 	if s.tag != nil {
 		s.tag.Close()
 	}
@@ -202,9 +177,6 @@ func (s *Server) reconnectDB(newDB *sql.DB) {
 	}
 
 	s.rebuild(database.NewClient(newDB))
-	s.pools.config.Start(context.Background())
-	s.pools.migrateDB.Start(context.Background())
-	s.pools.migrateStorage.Start(context.Background())
 }
 
 func registerRoutes(
@@ -404,15 +376,10 @@ func parambagMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Start probes the matcher (tag endpoints will 503 without it), starts the config-host task pools and
-// the config watcher, and serves until Shutdown or an accept error.
+// Start probes the matcher (tag endpoints will 503 without it), starts the config watcher and serves until
+// Shutdown or an accept error. edub dispatches no batches; the queue daemon and the setup wizard do.
 func (s *Server) Start() error {
 	s.probeMatcher()
-
-	s.pools.config.Start(context.Background())
-	s.pools.migrateDB.Start(context.Background())
-	s.pools.migrateStorage.Start(context.Background())
-	s.logger.Info("", "config pools started")
 
 	s.configWatcher = config.NewWatcher(
 		s.cfg.Load().App.ConfigDir,
@@ -467,8 +434,7 @@ func (s *Server) probeMatcher() {
 	s.logger.Info("", "matcher reachable")
 }
 
-// Shutdown stops the watcher, drains the HTTP server and the pools under
-// the caller's deadline.
+// Shutdown stops the watcher and drains the HTTP server under the caller's deadline.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("", "Shutting down HTTP server")
 
@@ -478,12 +444,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err
 	}
-
-	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	s.pools.config.Stop(stopCtx)
-	s.pools.migrateDB.Stop(stopCtx)
-	s.pools.migrateStorage.Stop(stopCtx)
 
 	if s.tag != nil {
 		s.tag.Close()

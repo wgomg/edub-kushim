@@ -159,18 +159,6 @@ func (q *Queries) CountActiveThumbnailBackfillBatches(ctx context.Context) (int6
 	return count, err
 }
 
-const countLiveBatches = `-- name: CountLiveBatches :one
-SELECT COUNT(*) FROM batch_owner
-WHERE last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => $1::int)
-`
-
-func (q *Queries) CountLiveBatches(ctx context.Context, staleAfterSeconds int32) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countLiveBatches, staleAfterSeconds)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countLiveNoHoldsBatches = `-- name: CountLiveNoHoldsBatches :one
 SELECT COUNT(*) FROM batch_owner bo
 WHERE bo.dispatcher_id = $1::uuid
@@ -204,26 +192,6 @@ SELECT COUNT(*) FROM batch WHERE status = 'paused'
 
 func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countPausedBatches)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countQueuedConsumeBatches = `-- name: CountQueuedConsumeBatches :one
-SELECT COUNT(*) FROM batch b
-WHERE b.status = 'queued'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
-  AND NOT EXISTS (
-    SELECT 1 FROM task t
-    WHERE t.batch_id = b.id AND t.task_type::text = ANY($1::text[])
-  )
-`
-
-// The non-consume task types (whose batches own their lifecycle in their handlers and never occupy a
-// consume slot) are owned by the registry and passed in, so this list cannot drift from
-// types.NonConsumeTaskTypes.
-func (q *Queries) CountQueuedConsumeBatches(ctx context.Context, nonConsumeTypes []string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countQueuedConsumeBatches, pq.Array(nonConsumeTypes))
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -915,31 +883,18 @@ const setBatchPaused = `-- name: SetBatchPaused :execrows
 UPDATE batch SET status = 'paused'
 WHERE batch.id = $1
   AND batch.status = 'processing'
-  AND (
-    EXISTS (
-      SELECT 1 FROM batch_owner bo
-      WHERE bo.batch_id = batch.id AND bo.owner_id = $2::text
-    )
-    OR (
-      $2::text IS NULL
-      AND EXISTS (
-        SELECT 1 FROM task t
-        WHERE t.batch_id = batch.id AND t.claim_token = $3::uuid
-      )
-    )
-  )
+  AND batch_leased_by(batch.id, $2::text)
 `
 
 type SetBatchPausedParams struct {
-	ID         string
-	OwnerID    sql.NullString
-	ClaimToken uuid.NullUUID
+	ID      string
+	OwnerID sql.NullString
 }
 
-// pause authorizes like the settle: a leased execution must still own the lease, and a pool execution must
-// still hold a live claim of this batch, so a stale executor cannot pause the new run that replaced it
+// pause authorizes like the settle: the execution must still own the lease, so a stale executor cannot
+// pause the new run that replaced it
 func (q *Queries) SetBatchPaused(ctx context.Context, arg SetBatchPausedParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setBatchPaused, arg.ID, arg.OwnerID, arg.ClaimToken)
+	result, err := q.db.ExecContext(ctx, setBatchPaused, arg.ID, arg.OwnerID)
 	if err != nil {
 		return 0, err
 	}

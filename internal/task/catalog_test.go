@@ -30,7 +30,6 @@ func productionHooks() map[types.TaskType]task.DedupKeyFunc {
 		types.Task.Type.TagMeasure:     task.ConstantDedupKey(tags.TagMeasureDedupKey),
 		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
 		types.Task.Type.TagAudit:       task.ConstantDedupKey(curation.TagAuditDedupKey),
-		types.Task.Type.Config:         configtask.ConfigDedupKey,
 		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
 		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
 	}
@@ -68,9 +67,6 @@ func TestDedupKeys(t *testing.T) {
 		{"tag measure", types.Task.Type.TagMeasure, `{}`, tags.TagMeasureDedupKey},
 		{"tag identity", types.Task.Type.TagIdentity, `{}`, curation.TagIdentityDedupKey},
 		{"tag audit", types.Task.Type.TagAudit, `{}`, curation.TagAuditDedupKey},
-		{"config tessdata", types.Task.Type.Config, `{"op":"tessdata","lang":"eng"}`, "config:tessdata:eng"},
-		{"config hugot", types.Task.Type.Config, `{"op":"hugot"}`, "config:hugot"},
-		{"config unknown op", types.Task.Type.Config, `{}`, ""},
 		{"migrate-db", types.Task.Type.MigrateDB, `{}`, configtask.DedupKeyMigrateDB},
 		{"migrate-storage", types.Task.Type.MigrateStorage, `{}`, configtask.DedupKeyMigrateStorage},
 	}

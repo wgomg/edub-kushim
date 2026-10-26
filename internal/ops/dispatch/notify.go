@@ -1,4 +1,4 @@
-package queue
+package dispatch
 
 import (
 	"context"
@@ -8,7 +8,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
-func listenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<- struct{}, logger *log.Logger) {
+// ListenForBatchNotifications wakes the caller once for every batch_queued and lock_released notification.
+// It keeps one pooled connection and reconnects it after five seconds on any error, so every dispatcher
+// host shares one listener implementation.
+func ListenForBatchNotifications(ctx context.Context, dsn string, notifyCh chan<- struct{}, logger *log.Logger) {
 	poolCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		logger.Error("", "notify: parse DSN: %v", err)

@@ -87,7 +87,7 @@ By default, `kushim setup` launches a **web-based setup wizard** at
 1. **Config directory** — specify where configuration, database, and models are stored
 2. **Consumer settings** — choose OCR engine, add languages, configure worker counts, select supported file types, enable the DOCX/ODT converter
 3. **Enricher settings** — LLM provider/model, tag matcher, text reducer
-4. **Progress** — shows download progress for tessdata and Hugot model
+4. **Progress** — missing tessdata language files and the Hugot model download as direct config updates started by the save; a spinner and pending-work counter cover the downloads and any queued migrations
 5. **Admin user** — optionally create an admin user account (username + password)
 6. **Completion** — ready to run `edub` to start the server
 
@@ -547,6 +547,8 @@ Supported tasks:
 | `enrich` | one or more document ids, or `--all` / `--limit N` (the same oldest-first live-document selection the direct command uses) |
 | `thumbnails` | none — scans every document missing a thumbnail; `--from-batch <id>` selects the documents whose completed `consume` task is in that batch; `--document <id>` selects a single one |
 | `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` | none |
+| `migrate-db` | `--host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]` — the same flags and password fallback as `kushim migrate database`, but enqueueing instead of running |
+| `migrate-storage` | `--storage-dir <dir>`, `--consumption-dir <dir>` (at least one; the same unsafe-path rejection and no-op detection as `kushim migrate storage`, enqueueing instead of running) |
 
 Output:
 
@@ -561,13 +563,13 @@ created and the command prints `Nothing enqueued`.
 
 Claim a queued batch and run its task CLI now, in the foreground: the
 command claims the batch (status, lease and resource locks in one
-transaction), forks the batch's worker with the execution token, waits for
-it, and exits non-zero when the child fails. Only a queued batch whose task
-types have a batch-mode CLI can run — a paused batch points at `batch
-resume`, a processing one at its lease holder (a stale lease is reclaimed by
-the queue daemon), a terminal one refuses, and maintenance/config batches
-have no batch-mode worker yet. A manual run performs no
-`max_concurrent_batches` check: the budget governs automatic dispatch only.
+transaction), forks the batch's task CLI with the execution token, waits for
+it, and exits non-zero when the child fails. Every remaining task type has a
+batch-mode worker — including `migrate`, which the daemon forks the same way.
+A paused batch points at `batch resume`, a processing one at its lease holder
+(a stale lease is reclaimed by the queue daemon), a terminal one refuses. A
+manual run performs no `max_concurrent_batches` check: the budget governs
+automatic dispatch only.
 
 ```
 kushim batch run 550e8400-e29b-41d4-a716-446655440000
@@ -880,19 +882,17 @@ reconstructibility against mechanically derived parts, and part coverage),
 written as versioned evidence records.
 
 ```bash
-kushim tagmeasure                # enqueue a task and print its batch id
-kushim tagmeasure --run <batch-id>  # the queued run's execution mode
+kushim tagmeasure                # run the pass now (manual maintenance lock)
+kushim tagmeasure --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
-Without flags the command enqueues a `tagmeasure` task into a `queued` batch
-(dedup key `tagmeasure`) and prints the batch id with the `kushim queue` hint,
-whether or not the daemon is running; a run already queued or processing is
-reported instead. `--run <batch-id>` is how the queue daemon executes that task
-— the child takes no lock (the claiming task holds it and already drained) and
-prints the report line the handler stores as the task result. The queue pool
-always claims measurement tasks, so a manual enqueue runs even with the schedule
-off; `enricher.tag_measure.enabled` gates only the automatic scheduled
-enqueuing. Each pass mints its own run id, so retries and manual runs coexist as
+With no flags the command runs the pass immediately under the manual
+maintenance lock and prints the report — it creates no queue rows. To enqueue a
+run instead, use `kushim batch create tagmeasure`; the queue daemon claims it
+and forks `kushim tagmeasure --from-batch <id> --exec-token <token>`, which runs
+the pass in its own process and stores the report on the task row.
+`enricher.tag_measure.enabled` gates only the automatic scheduled enqueuing.
+Each pass mints its own run id, so retries and manual runs coexist as
 distinguishable snapshots. Nothing acts on the measurements automatically: they
 are evidence for review.
 
@@ -919,16 +919,15 @@ Every run is bounded by the `enricher.tag_reconcile` caps (`max_rejudge`,
 latest completed run's report.
 
 ```bash
-kushim tagreconcile                # enqueue a task and print its batch id
-kushim tagreconcile --run <batch-id>  # the queued run's execution mode
+kushim tagreconcile                # run the pass now (manual maintenance lock)
+kushim tagreconcile --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
-Without flags the command enqueues a `tagreconcile` task into a `queued` batch
-(dedup key `tagreconcile`) and prints the batch id with the `kushim queue` hint,
-whether or not the daemon is running; a run already queued or processing is
-reported instead. `--run <batch-id>` is how the queue daemon executes that task
-— the child takes no lock (the claiming task holds it and already drained) and
-prints the report line the handler stores as the task result.
+With no flags the command runs the pass immediately under the manual
+maintenance lock — no queue rows. To enqueue a run instead, use
+`kushim batch create tagreconcile`; the queue daemon claims it and forks
+`kushim tagreconcile --from-batch <id> --exec-token <token>`, which runs the
+pass in its own process and stores the report on the task row.
 
 The pass is a no-op when nothing changed and nothing is due: it reads its
 store-changed flag in `system_signal`, and with the flag clear, a completed run
@@ -941,7 +940,7 @@ window has elapsed makes the next run full even with no mutation. Every
 tag-store mutation re-arms the flag, so the next run recomputes, and a failed
 run re-arms it too.
 
-The queue pool claims reconciliation tasks unconditionally, so a manual enqueue
+The queue daemon dispatches reconciliation batches unconditionally, so a manual enqueue
 runs even with the schedule off; `enricher.tag_reconcile.enabled` gates only the
 automatic scheduled enqueuing.
 
@@ -954,16 +953,15 @@ folds rename (or alias) a name, a losing name becomes an alias of its winner,
 and claims without a judge answer stay pending for the next run.
 
 ```bash
-kushim tagidentity                 # enqueue a task and print its batch id
-kushim tagidentity --run <batch-id>  # the queued run's execution mode
+kushim tagidentity                 # run the pass now (manual maintenance lock)
+kushim tagidentity --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
-Without flags the command enqueues a `tagidentity` task into a `queued` batch
-(dedup key `tagidentity`) and prints the batch id with the `kushim queue` hint,
-whether or not the daemon is running; a run already queued or processing is
-reported instead. `--run <batch-id>` is how the queue daemon executes that task
-— the child takes no lock (the claiming task holds it and already drained
-in-flight work) and prints the report line the handler stores.
+With no flags the command runs the pass immediately under the manual
+maintenance lock — no queue rows. To enqueue a run instead, use
+`kushim batch create tagidentity`; the queue daemon claims it and forks
+`kushim tagidentity --from-batch <id> --exec-token <token>`, which runs the
+pass in its own process and stores the report on the task row.
 
 The pass also runs on its own daily schedule — a fixed 03:30 cadence with no
 config keys, anchored on the last completed `tagidentity` run — gated on
@@ -990,22 +988,20 @@ per-dimension coverage counts are recorded in the measurement substrate, and fla
 surface in the **Coverage** tab of the tags page.
 
 ```bash
-kushim tagaudit                # enqueue a task and print its batch id
-kushim tagaudit --run <batch-id>  # the queued run's execution mode
+kushim tagaudit                # run the pass now (manual maintenance lock)
+kushim tagaudit --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
-Without flags the command enqueues a `tagaudit` task into a `queued` batch
-(dedup key `tagaudit`) and prints the batch id with the `kushim queue` hint,
-whether or not the daemon is running; a run already queued or processing is
-reported instead. `--run <batch-id>` is how the queue daemon executes that task —
-it takes no lock (the claiming task holds it and already drained) and the batch
-id only labels the run. The run requires the applicability judge
-(`enricher.tag_adjudicator`); without it, or when the matcher is unavailable, no
-reading is taken and the documents stay eligible for the next run. Scheduling
-(`enricher.tag_audit`) is disabled by default and gates only automatic
-enqueuing; the queue pool always claims audit tasks, so a manual
-`kushim tagaudit` or a `POST /api/v1/tags/audit/reevaluate` run executes even
-with the schedule off.
+With no flags the command runs the pass immediately under the manual
+maintenance lock; the run id only labels the run — the batch id never enters
+the measurement substrate when queued. To enqueue a run instead, use
+`kushim batch create tagaudit`; the queue daemon claims it and forks
+`kushim tagaudit --from-batch <id> --exec-token <token>`, which runs the pass
+in its own process and stores the report on the task row. The run requires the
+applicability judge (`enricher.tag_adjudicator`); without it, or when the
+matcher is unavailable, no reading is taken and the documents stay eligible
+for the next run. Scheduling (`enricher.tag_audit`) is disabled by default and
+gates only automatic enqueuing.
 
 An unchanged vocabulary trims the run's store-wide part: with the audit's
 store-changed flag clear, the pending-coverage derivation is skipped and the
@@ -1056,16 +1052,19 @@ archive and run `psql -f edub.sql` manually on the remote host.
 
 ### `kushim migrate`
 
-Run the database or storage migration logic from the CLI, without going through the config task queue. Both subcommands coordinate through the resource locks — `migrate database` refuses while the `maintenance` lock is held, `migrate storage` acquires the `maintenance` and `storage` locks (waiting by default; `--no-wait` exits non-zero) — wait for in-flight tasks to drain, and persist the new settings to `config.yaml` only after the operation succeeds.
+Run the database or storage migration logic from the CLI, without enqueueing anything. Both subcommands coordinate through the resource locks — `migrate database` refuses while the `maintenance` lock is held, `migrate storage` acquires the `maintenance` and `storage` locks (waiting by default; `--no-wait` exits non-zero) — wait for in-flight tasks to drain, and persist the new settings to `config.yaml` only after the operation succeeds.
+
+The command also has a **batch mode** (`kushim migrate --from-batch <id> --exec-token <token>`, no subcommand): it executes one queued `migrate-db`/`migrate-storage` batch claimed by the dispatcher or `kushim batch run`, registering both migration handlers and running whichever the batch carries. The lease and every settle write stay in the source database — the handler only rewrites `config.yaml` — so the claiming execution's lifecycle is unaffected by the connection switch. The daemon's scheduler enqueues migration batches from the wizard/config UI flows and forks this batch mode; the wizard's setup-time dispatcher runs the same handlers in-process while no daemon exists.
 
 ```
 kushim migrate database --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]
 kushim migrate storage --storage-dir <new> [--consumption-dir <new>] [--no-wait]
+kushim migrate --from-batch <id> --exec-token <token>
 ```
 
 #### `kushim migrate database`
 
-Copies the current database to a new PostgreSQL server and points `config.yaml` at it, running the same steps as the `migrate-db` config task: it refuses while another maintenance run holds the `maintenance` lock, waits for in-flight tasks to drain, then takes the pre-migration safety snapshot (config `backup.path`, retention-capped), SQL dump (schema + data, `goose_db_version` preserved), destination validation (refuses databases with tables but no edub migration history; skips restore when the destination already holds data), and a deferred `config.yaml` update. The destination restore runs `psql` per the current config's `database.runtime` (host binary or exec into the current container, connecting over TCP to the destination); `runtime: remote` refuses before dumping.
+Copies the current database to a new PostgreSQL server and points `config.yaml` at it, running the same steps the queued `migrate-db` task runs (`configtask.MigrateDatabase`): it refuses while another maintenance run holds the `maintenance` lock, waits for in-flight tasks to drain, then takes the pre-migration safety snapshot (config `backup.path`, retention-capped), SQL dump (schema + data, `goose_db_version` preserved), destination validation (refuses databases with tables but no edub migration history; skips restore when the destination already holds data), and a deferred `config.yaml` update. The destination restore runs `psql` per the current config's `database.runtime` (host binary or exec into the current container, connecting over TCP to the destination); `runtime: remote` refuses before dumping.
 
 | Flag         | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
@@ -2777,7 +2776,7 @@ Object with `count` (total active tasks across all task types, uncapped) and `ta
 | `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, or `thumbbackfill`                                                            |
 | `tasks[].file_name` | `string` | File name from the payload, if any                                                                                 |
 | `tasks[].status` | `string` | `pending`, `processing`, or `waiting`                                                                              |
-| `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`, `"Download tessdata (eng)"`) |
+| `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`) |
 | `tasks[].created_at` | `string` | RFC 3339 timestamp                                                                                                |
 | `tasks[].started_at` | `string` | RFC 3339 timestamp, `null` while queued                                                                           |
 
@@ -2884,7 +2883,7 @@ id). `label` is
 `TaskType: file name` for consume/enrich/thumbnail tasks with a payload file
 (e.g. `"Consume: report.pdf"`), the file name alone for other task types,
 otherwise derived from the task type and dedup key (e.g. `"Backup (full)"`,
-`"Database migration"`, `"Download tessdata (eng)"`, `"Download Hugot model"`);
+`"Database migration"`);
 for other task types it falls back to the task type name (`"Consume"`, `"Enrich"`,
 `"Thumbnail"`, `"Thumbnail backfill"`).
 
@@ -2925,10 +2924,11 @@ orphan restore, or the tag actions), `polling` (daemon inbox scan), `schedule`
 `schedule`, the schedule name they ran under (omitted when absent). The
 vocabulary is a closed Postgres enum (`batch_origin`), mirrored by the Go
 registry in `internal/types`. `owner_state` (`"none"`, `"live"`, `"stale"`)
-is included when set. Batches whose tasks are all config-host types (asset
-downloads, database or storage migration, backup, mirror, or the four tag
-passes) never report `orphaned: true` — they have no `batch_owner` row by
-design (their handlers own the lifecycle).
+is included when set. Every processing batch carries a `batch_owner` lease —
+maintenance and tag batches dispatch exactly like ingest batches — so the
+orphan state is simply "live/stale owner exists" for every batch; a
+`processing` batch without an owner row (execution lost) is the orphan case
+for all task types alike.
 
 ---
 
@@ -3174,10 +3174,10 @@ mirror:
 | `enricher.tagmatcher.top_n`    | Suggestions the matcher returns above the injection bar (`min_suggestion_similarity`) that reach the analyzer's prompt (default `15`; validation requires `≥ 3`) |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for the identity gate: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, proposed folds are confirmed against three criteria (base form, fold preservation, conventional written form) and candidate neighbours are classified `same`/`variant`/`related` with a direction for `same`; verdicts are cached per claim in `tag_identity_event`, `same` aliases the losing name onto the winner, and claims a partial reply leaves without a verdict stay pending — their candidates born provisional — for the identity pass (`kushim tagidentity`, on demand or on its own daily schedule). The same adjudicator also runs the language guard: detected non-English emissions are rewritten to their judged English canonical form (a value returned unchanged is already English) and an uncertain translation is held for review with `reason=language_review` |
 | `enricher.tag_quality`         | Optional admission decision for newly emitted tags: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty). When enabled, tags that survive consolidation and are absent from the vocabulary are decided by the pinned rule set over their features: the judge's four rubric answers — `subject_matter`, `not_person`, `atomic`, `not_form_genre`, plus the optional `defer` abstention — together with the `dimension` verdict the parts pass owns (read from the shared parts cache and stamped onto the row), and the emission's deterministic signals (a detail annotated `other`, a best store similarity below the internal no-anchor cut). The decision defers on the judge's abstention, rejects on two or more failing signals, defers on exactly one (the gray band), and admits when nothing fails; verdicts are cached per name in `tag_quality_event` with the recorded outcome, rejections drop the tag for that document — never stored — and are logged as `tagquality[v6]` lines, and a transient judge failure retries once while parse failures, incomplete replies, output-cap hits, credit exhaustion, token-limit, content-too-large and context errors are never retried — a reply that omits verdicts for some candidates salvages the entries it returned (each decided and cached) and defers only the missing candidates with `judge_unavailable`, while every other non-credit failure keeps every novel tag with a defer decision, and a credit-exhaustion failure pauses the batch. Kept tags are **provisional**: attached and searchable from birth, but excluded from the embedding store — and therefore from suggestions, consolidation targets, and the suggestion fallback — until the admission decision admits them and assignments on ≥10 distinct live (non-trashed) documents clear the promotion floor and promote them inline (logged as `tagquality[v6]: promote …`); a verdict-less birth (judge outage) or re-emitted legacy provisional never gets a verdict row — a name in the tag table is not novel, so the judge never sees it again — and stays out of the vocabulary until the scheduled reconciliation sweep re-derives the decision from its stored verdict or re-judges it, or an operator promotes it from the review queue. A fold the gate refuses beside a live store value holds the birth for review — the queue shows the anchor and promotion waits until an operator resolves it. The decision thresholds are internal pinned constants, not config keys — the judge LLM should differ from the generator, and a warning is logged when the resolved judge equals the generator model |
-| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`; also the identity pass's per-run budget), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (disposed through the composition decision when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored verdict the decision re-derives as admit plus ≥10 live documents promotes the name immediately, defer and reject verdicts stay queued for the review surface on the tags page, verdict-less names are re-judged under the `max_rejudge` cap and promoted when admitted (report-only runs list the would-be promotions and verdicts). Requires the tag adjudicator for the judged arms — without it, a run changes nothing beyond the twin arm's mechanical variant aliases (which report-only runs plan instead of applying). `enabled` gates only the automatic scheduled enqueuing: the queue pool runs unconditionally, so `kushim tagreconcile` and any run already queued are always claimed. Pending identity evidence is resolved by the identity pass (`kushim tagidentity`), not by this sweep |
+| `enricher.tag_reconcile`       | Scheduled re-adjudication of stored tag verdicts: `enabled` (default `false`), `report_only` (default `true`; the first run is always report-only regardless), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `02:00`), `max_rejudge` (max pairs re-evaluated per run, default `200`; also the identity pass's per-run budget), `max_retag` (max documents re-pointed per run, default `1000`), `dead_tag_grace_days` (days a tag must stay without documents before the orphan sweep removes it, default `7`; `≤ 0` resets to the default), `provisional_grace_days` (days a provisional tag may stay unreviewed before the provisional sweep re-checks it, default `30`; `≤ 0` resets to the default). The queue daemon enqueues a `tagreconcile` task when due; runs re-evaluate stale/unjudged/drifted/aged pairs against the current policy and store, healing absorbed tags and applying flips, split store tags that join concepts with a conjunction into their components (disposed through the composition decision when the tag adjudicator is enabled, deterministic otherwise) — both under the same per-run caps — delete tags that have had no documents for longer than the grace window, and re-check provisional tags older than `provisional_grace_days`: a stored verdict the decision re-derives as admit plus ≥10 live documents promotes the name immediately, defer and reject verdicts stay queued for the review surface on the tags page, verdict-less names are re-judged under the `max_rejudge` cap and promoted when admitted (report-only runs list the would-be promotions and verdicts). Requires the tag adjudicator for the judged arms — without it, a run changes nothing beyond the twin arm's mechanical variant aliases (which report-only runs plan instead of applying). `enabled` gates only the automatic scheduled enqueueing: the daemon dispatches the pass whenever the batch is queued, so `kushim batch create tagreconcile` and any run already queued are always claimed. Pending identity evidence is resolved by the identity pass (`kushim tagidentity`), not by this sweep |
 
-| `enricher.tag_measure`         | Scheduled tag extension measurement: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `03:00`). The queue daemon enqueues a `tagmeasure` task when due (anchored on the most recent completed run); the pass reads one REPEATABLE READ snapshot and appends versioned evidence records (`tag_measurement`) for per-value mass, pairwise overlap with Jaccard/overlap/containment coefficients, compound reconstructibility against mechanically derived parts, and part coverage, plus the derived composition-review worklists (`≈` twin candidates, compound split proposals, near-contained siblings) as evidence only — nothing is promoted, merged, split, or deleted. `kushim tagmeasure` enqueues a run through the queue (dedup key `tagmeasure`); the pool always claims, so the flag gates only automatic enqueuing |
-| `enricher.tag_audit`           | Scheduled tag coverage audit: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `04:00`), `sample_size` (documents sampled per run, default `150`; `≤ 0` resets to the default). The queue daemon enqueues a `tagaudit` task when due (anchored on the most recent completed run); the pass draws a sample plus the below-floor documents from the sweep register, suggests dimensions the document is about but does not carry (matcher trigger, then lexical narrowing), confirms them with the applicability judge, fills the confirmed gaps, and records the durable coverage classes plus per-dimension coverage counts. A document is audited at most once per sweep. `kushim tagaudit` and `POST /api/v1/tags/audit/reevaluate` enqueue a run through the queue (dedup key `tagaudit`); the pool always claims, so these runs execute regardless of the schedule, which gates only automatic enqueuing. The trigger bar is a pinned constant, not a setting |
+| `enricher.tag_measure`         | Scheduled tag extension measurement: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `03:00`). The queue daemon enqueues a `tagmeasure` task when due (anchored on the most recent completed run); the pass reads one REPEATABLE READ snapshot and appends versioned evidence records (`tag_measurement`) for per-value mass, pairwise overlap with Jaccard/overlap/containment coefficients, compound reconstructibility against mechanically derived parts, and part coverage, plus the derived composition-review worklists (`≈` twin candidates, compound split proposals, near-contained siblings) as evidence only — nothing is promoted, merged, split, or deleted. `kushim tagmeasure` enqueues a run through the queue (dedup key `tagmeasure`), or runs the pass directly with no flags; the dispatcher dispatches whatever is queued, so the flag gates only automatic enqueuing; the batch id never labels the run id |
+| `enricher.tag_audit`           | Scheduled tag coverage audit: `enabled` (default `false`), `interval` (days between runs, default `7`), `time` (HH:MM preferred time, default `04:00`), `sample_size` (documents sampled per run, default `150`; `≤ 0` resets to the default). The queue daemon enqueues a `tagaudit` task when due (anchored on the most recent completed run); the pass draws a sample plus the below-floor documents from the sweep register, suggests dimensions the document is about but does not carry (matcher trigger, then lexical narrowing), confirms them with the applicability judge, fills the confirmed gaps, and records the durable coverage classes plus per-dimension coverage counts. A document is audited at most once per sweep. `kushim tagaudit` and `POST /api/v1/tags/audit/reevaluate` enqueue a run through the queue (dedup key `tagaudit`), or run the pass directly with no flags; these runs execute regardless of the schedule, which gates only automatic enqueuing. The trigger bar is a pinned constant, not a setting |
 
 > **Schedule changes**: changing a scheduled task's interval or preferred time
 > takes effect at the closest upcoming occurrence of the new timing; if that
@@ -3455,8 +3455,9 @@ kushim hugot &
 edub
 ```
 
-The server starts the **config pool** for background downloads (tessdata,
-Hugot model). Logs are written to stdout. Graceful shutdown on SIGINT/SIGTERM.
+The server starts no task machinery for background work: asset downloads (tessdata,
+Hugot model) happen as direct config updates on the config save, and queued batches
+are claimed and forked by the `kushim queue` daemon. Logs are written to stdout. Graceful shutdown on SIGINT/SIGTERM.
 
 When `POST /api/v1/consume` or `POST /api/v1/consume/upload` is called, the
 server enqueues tasks in the database with `status='queued'`; the `kushim queue` daemon picks up the batch and **forks** `kushim consume --from-batch <id> --exec-token <token>`
@@ -3658,9 +3659,9 @@ field and focuses the first invalid input.
   to keep, max age, compress rotated logs toggle
 
 Applying staged changes saves via the `/wizard/config` API (catalog
-operations replay right after) and triggers background downloads for any
-missing tessdata or Hugot model files. A spinner and pending-task counter
-show download progress.
+operations replay right after) and starts direct config-update downloads for any
+missing tessdata or Hugot model files. A spinner and pending-work counter
+show download and migration progress.
 
 **Tool-status warnings** appear inline beneath each engine selector when
 the selected external tool is missing from `PATH`. When the OCR engine is

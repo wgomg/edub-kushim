@@ -527,7 +527,6 @@ type Task struct {
 	Error       sql.NullString
 	Attempts    int32
 	Progress    *json.RawMessage
-	ClaimToken  uuid.NullUUID
 }
 
 type User struct {

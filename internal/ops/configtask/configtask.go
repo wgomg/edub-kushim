@@ -1,6 +1,7 @@
 // Package configtask runs the environment tasks a configuration change triggers: database and storage
-// migration, tessdata and model downloads. Each kind is its own task type with its own dedicated handler
-// and a no-op migration reports ErrNoOp. The handlers follow the domain-handler pattern.
+// migration. Each kind is its own task type with its own dedicated handler and a no-op migration reports
+// ErrNoOp. Environment asset downloads (tessdata, hugot) are not tasks: the config update paths call
+// config.DownloadTessdataLanguage and config.DownloadHugotModel directly.
 package configtask
 
 import (
@@ -36,17 +37,8 @@ func DirChanged(oldDir, newDir string) bool {
 	return filepath.Clean(oldDir) != filepath.Clean(newDir)
 }
 
-// The config payload operations (asset downloads) and the migration dedup keys, so concurrent triggers
-// collapse.
+// The migration dedup keys, so concurrent triggers collapse.
 const (
-	OpTessdata = "tessdata"
-	OpHugot    = "hugot"
-
-	// DedupKeyTessdataPrefix and DedupKeyHugot are the config dedup key vocabulary: the catalog derives
-	// keys with them and the API labels match them, so both packages share one declaration.
-	DedupKeyTessdataPrefix = "config:tessdata:"
-	DedupKeyHugot          = "config:hugot"
-
 	DedupKeyMigrateDB      = "migrate-db"
 	DedupKeyMigrateStorage = "migrate-storage"
 )
@@ -71,33 +63,6 @@ type MigrateStoragePayload struct {
 	NewConsumptionDir string `json:"new_consumption_dir"`
 }
 
-// configPayload is the asset-download task's input; Lang is present only for tessdata downloads.
-type configPayload struct {
-	ConfigDir string `json:"config_dir"`
-	Op        string `json:"op"`
-	Lang      string `json:"lang,omitempty"`
-}
-
-// TessdataSpec returns the config task that downloads one tessdata language, or an error when its payload
-// cannot be marshalled.
-func TessdataSpec(configDir, lang string) (task.TaskSpec, error) {
-	return configSpec(configPayload{ConfigDir: configDir, Op: OpTessdata, Lang: lang})
-}
-
-// HugotSpec returns the config task that downloads the hugot model, or an error when its payload cannot be
-// marshalled.
-func HugotSpec(configDir string) (task.TaskSpec, error) {
-	return configSpec(configPayload{ConfigDir: configDir, Op: OpHugot})
-}
-
-func configSpec(payload configPayload) (task.TaskSpec, error) {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return task.TaskSpec{}, fmt.Errorf("marshal config payload: %w", err)
-	}
-	return task.TaskSpec{Type: types.Task.Type.Config, Payload: raw}, nil
-}
-
 // MigrateDBSpec returns the database migration task for the given target.
 func MigrateDBSpec(payload MigrateDBPayload) (task.TaskSpec, error) {
 	raw, err := json.Marshal(payload)
@@ -116,74 +81,20 @@ func MigrateStorageSpec(payload MigrateStoragePayload) (task.TaskSpec, error) {
 	return task.TaskSpec{Type: types.Task.Type.MigrateStorage, Payload: raw}, nil
 }
 
-// ConfigDedupKey derives a config task's dedup key from its payload's operation and language: each tessdata
-// language and the hugot model collapse onto their own key.
-func ConfigDedupKey(payload json.RawMessage) string {
-	var p struct {
-		Op   string `json:"op"`
-		Lang string `json:"lang"`
+// StorageMigrationPayload builds the storage migration payload from the live configuration and the requested
+// directories: each changed pair carries its old and new path, and an unchanged pair is omitted from it.
+// It reports false when neither directory changes, so every boundary decides a no-op the same way.
+func StorageMigrationPayload(cfg *config.Config, newStorageDir, newConsumptionDir string) (MigrateStoragePayload, bool) {
+	payload := MigrateStoragePayload{ConfigDir: cfg.App.ConfigDir}
+	if DirChanged(cfg.Storage.StorageDir, newStorageDir) {
+		payload.OldStorageDir = cfg.Storage.StorageDir
+		payload.NewStorageDir = newStorageDir
 	}
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return ""
+	if DirChanged(cfg.Storage.ConsumptionDir, newConsumptionDir) {
+		payload.OldConsumptionDir = cfg.Storage.ConsumptionDir
+		payload.NewConsumptionDir = newConsumptionDir
 	}
-	switch p.Op {
-	case OpTessdata:
-		return DedupKeyTessdataPrefix + p.Lang
-	case OpHugot:
-		return DedupKeyHugot
-	default:
-		return ""
-	}
-}
-
-// ConfigTaskHandler runs the environment asset downloads: tessdata languages and the hugot model download,
-// driven by the config API. Migrations are separate task types with their own handlers.
-type ConfigTaskHandler struct {
-	queries *database.Queries
-	logger  *log.Logger
-}
-
-// NewConfigTaskHandler wires the handler to the queries and logger.
-func NewConfigTaskHandler(queries *database.Queries, logger *log.Logger) *ConfigTaskHandler {
-	return &ConfigTaskHandler{queries: queries, logger: logger}
-}
-
-// Handle runs one download operation, tracking progress on the task row.
-func (h *ConfigTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
-	progress := task.NewProgressTracker(h.queries, t.TaskID)
-
-	var p struct {
-		ConfigDir string `json:"config_dir"`
-		Op        string `json:"op"`
-		Lang      string `json:"lang"`
-	}
-	if err := json.Unmarshal(t.Payload, &p); err != nil {
-		return nil, fmt.Errorf("unmarshal config task payload: %w", err)
-	}
-
-	cfg, err := config.Load(p.ConfigDir)
-	if err != nil {
-		return nil, fmt.Errorf("load config from %s: %w", p.ConfigDir, err)
-	}
-
-	switch p.Op {
-	case OpTessdata:
-		progress.Set("download", p.Lang, 0)
-		if err := config.DownloadTessdataLanguage(ctx, cfg, p.Lang); err != nil {
-			return nil, err
-		}
-		return json.Marshal(map[string]string{"lang": p.Lang})
-
-	case OpHugot:
-		progress.Set("download", "hugot model", 0)
-		if err := config.DownloadHugotModel(ctx, cfg, h.logger); err != nil {
-			return nil, err
-		}
-		return json.Marshal(map[string]string{"model": "hugot"})
-
-	default:
-		return nil, fmt.Errorf("unsupported config task operation: %q", p.Op)
-	}
+	return payload, payload.NewStorageDir != "" || payload.NewConsumptionDir != ""
 }
 
 // MigrateDBTaskHandler runs a database migration task.

@@ -20,10 +20,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
-// AuditReportPrefix marks the serialized AuditReport inside the task result, the fork-and-extract
-// convention the other tag tasks share.
-const AuditReportPrefix = "tagaudit-report: "
-
 // auditBatchSize bounds one applicability judge call's candidate list, matching the shared judged batching.
 const auditBatchSize = 40
 

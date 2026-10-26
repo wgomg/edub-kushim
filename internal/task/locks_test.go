@@ -2,7 +2,6 @@ package task
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -103,75 +102,6 @@ func TestReleaseLocksForBatch_ReleasesChildHeldLock(t *testing.T) {
 	}
 	if held := heldLocks(t, client, storage); held != 0 {
 		t.Fatalf("storage held=%d after its batch's release, want 0", held)
-	}
-}
-
-func TestStoreClaimBlocking_VerifiesWaitedStorage(t *testing.T) {
-	store, _, client := setupTaskTestClient(t)
-	ctx := context.Background()
-	createBackupTask(t, store, "bk-waits-storage")
-
-	other := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-	t.Cleanup(func() { _ = ReleaseLocksForToken(context.Background(), client.Queries, other) })
-	if err := AcquireLocks(ctx, client, []types.LockName{types.LockStorage}, nil, other, ""); err != nil {
-		t.Fatalf("hold storage: %v", err)
-	}
-
-	_, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("claim while storage is held: want sql.ErrNoRows (idle deferral), got %v", err)
-	}
-	if lockHeld(t, client) {
-		t.Fatal("a deferred claim must not hold the maintenance lock")
-	}
-
-	if err := ReleaseLocksForToken(ctx, client.Queries, other); err != nil {
-		t.Fatalf("release storage: %v", err)
-	}
-
-	_, token, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
-	testutil.AssertNoError(t, err, "claim after storage freed")
-	if !lockHeld(t, client) {
-		t.Fatal("the claim must acquire maintenance once storage is free")
-	}
-	if err := ReleaseLocksForToken(ctx, client.Queries, uuid.NullUUID{UUID: token, Valid: true}); err != nil {
-		t.Fatalf("release the claim token: %v", err)
-	}
-}
-
-func TestStoreClaimBlocking_BatchHoldsAcquiredSkipsAcquisition(t *testing.T) {
-	store, _, client := setupTaskTestClient(t)
-	ctx := context.Background()
-
-	if err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-		ID: "bf-batch-1", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
-	}); err != nil {
-		t.Fatalf("create batch: %v", err)
-	}
-	if _, err := createTaskRow(ctx, t, store.client.Queries, types.Task.Type.ThumbBackfill, "bf-batch-1",
-		json.RawMessage(`{}`), "bf-1", "", ""); err != nil {
-		t.Fatalf("create thumbbackfill task: %v", err)
-	}
-
-	childToken := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-	if err := AcquireLocks(ctx, client, []types.LockName{types.LockStorage}, nil, childToken, "bf-batch-1"); err != nil {
-		t.Fatalf("child acquires storage: %v", err)
-	}
-
-	store.SetBatchHoldsAcquired(true)
-	_, token, err := store.ClaimNextPending(ctx, types.Task.Type.ThumbBackfill)
-	testutil.AssertNoError(t, err, "claim under the batch hold")
-
-	released, err := client.Queries.ReleaseLocksForToken(ctx, database.ReleaseLocksForTokenParams{
-		LockNames:  types.LockNameValues(),
-		OwnerToken: uuid.NullUUID{UUID: token, Valid: true},
-	})
-	testutil.AssertNoError(t, err, "release by claim token")
-	if len(released) != 0 {
-		t.Fatalf("claim token released %v, want none (the child holds the lock)", released)
-	}
-	if held := heldLocks(t, client, []types.LockName{types.LockStorage}); held != 1 {
-		t.Fatalf("storage held=%d, want the child's lock intact", held)
 	}
 }
 

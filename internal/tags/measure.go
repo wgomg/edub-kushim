@@ -31,10 +31,6 @@ func NewRunner(client *database.Client, aliases AliasResolver) *Runner {
 	}
 }
 
-// ReportPrefix marks the serialized Report inside the task result, the
-// same fork-and-extract convention the tag identity machinery uses.
-const ReportPrefix = "tagmeasure-report: "
-
 // Report is one measurement sweep's serialized summary; a skipped sweep reports ZeroWork.
 type Report struct {
 	RunID          string         `json:"run_id"`

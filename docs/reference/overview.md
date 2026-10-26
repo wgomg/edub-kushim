@@ -181,22 +181,24 @@ internal/
 │   │   ├── mirror.go       # `kushim mirror` command (rsync --delete, waits for the backup lock)
 │   │   ├── search.go       # Search command (CLI)
 │   │   ├── storage.go      # Storage commands: `kushim storage orphans` (list, scan, delete, restore, move-to-inbox)
-│   │   ├── tagaudit.go    # `kushim tagaudit [--run <batch-id>]` coverage-audit child
-│   │   ├── tagidentity.go  # `kushim tagidentity [--run <batch-id>]` enqueue / identity-adjudication child
-│   │   ├── tagmeasure.go   # `kushim tagmeasure [--run <batch-id>]` measurement child
-│   │   ├── tagreconcile.go # `kushim tagreconcile [--run <batch-id>]` enqueue / reconciliation child
+│   │   ├── tagaudit.go    # `kushim tagaudit` (direct run / `--from-batch` batch mode) coverage-audit pass
+│   │   ├── tagidentity.go  # `kushim tagidentity` (direct run / `--from-batch` batch mode) identity adjudication
+│   │   ├── tagmeasure.go   # `kushim tagmeasure` (direct run / `--from-batch` batch mode) measurement pass
+│   │   ├── tagpass.go      # Shared tag-verb plumbing (deprecated --run alias, manual lock holder, batch executor)
+│   │   ├── tagreconcile.go # `kushim tagreconcile` (direct run / `--from-batch` batch mode) reconciliation pass
 │   │   ├── task.go         # Task commands (list, status, retry)
  │   │   ├── thumbnails.go   # `kushim thumbnails` — direct thumbnail runs (--all/--document) plus the --from-batch child
 │   │   └── user.go         # User commands (create)
  │   ├── container/          # Shared-services lazy assembler (config, DB reconnect, tag service, search, matcher client, tag tools)
  │   │   └── container.go    # Config/logger/database accessors and reconnect protocol; builds no task wiring
  │   ├── dispatch/           # Batch dispatcher and launcher (explicit dependencies)
- │   │   ├── dispatcher.go   # Dispatcher: claims queued batches (status, lease, holds in one tx) and forks the task CLI
+ │   │   ├── dispatcher.go   # Dispatcher: claims queued batches (status, lease, holds in one tx) and forks the task CLI; optional in-process registration executes covered types in-process
+ │   │   ├── inprocess.go    # InProcessRun — hosted execution of a claimed batch (pid-0 lease, launch-failure recovery)
+ │   │   ├── notify.go       # Postgres LISTEN/NOTIFY goroutine shared by the daemon and the wizard
  │   │   └── launcher.go     # Shared claim/fork + LaunchQueuedBatch (kushim batch run) + launch-failure backoff
- │   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY)
- │   │   ├── queue.go        # Daemon loop: daemon task catalog, scheduling through the producers, pool lifecycle, config hot-reload
- │   │   ├── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
- │   │   └── notify.go       # Postgres LISTEN/NOTIFY goroutine for the queue daemon
+ │   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY via dispatch)
+ │   │   ├── queue.go        # Daemon loop: daemon task catalog, schedules through the producers, dispatcher wiring, config hot-reload
+ │   │   └── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
 │   ├── consume/            # `kushim consume` child process
  │   │   ├── consume.go      # Direct inbox run + batch mode through the shared library, cancel subcommand
 │   │   └── advisories.go   # Tool-block and ocrmypdf advisories printed before a batch starts
@@ -204,8 +206,8 @@ internal/
 │   │   └── setup.go
 │   ├── flags/              # CLI flag parser (shared by the ops packages)
 │   │   └── flags.go
- │   └── configtask/         # Config task handlers
- │       └── configtask.go   # ConfigTaskHandler (asset downloads) plus MigrateDBTaskHandler/MigrateStorageTaskHandler — separate task types that copy the database or relocate files when connection/storage settings change
+ │   └── configtask/         # Migration task handlers
+ │       └── configtask.go   # MigrateDBTaskHandler/MigrateStorageTaskHandler — separate task types that copy the database or relocate files when connection/storage settings change; asset downloads (tessdata/hugot) are direct config updates, not tasks
 ├── search/                 # Full-text search engine
 │   └── search.go           # Engine, Result (with Language, DocumentTypeID, checksums), Filter (structured search), sanitizeQuery, SearchStructured (returns results + total count)
 ├── service/                # Shared domain service package (people, document types, batches, trash, users)
@@ -226,7 +228,7 @@ internal/
 ├── tags/                   # Tag subsystem (store, measurement, identity, policy, reconciliation)
 │   ├── store.go            # Store wrapper over tag queries (NewStore, LiveMass, CompoundIntersections, PairNames, PairVerdictStats, LatestWorklists, ReconstructibilityBatch, SiblingWorklist)
 │   ├── measure.go          # Measurement pass (NewRunner, Report, WorklistCounts)
-│   ├── tagmeasure.go       # TagMeasureTaskHandler (forks `kushim tagmeasure --run`) + ForkAndExtractReport/ExtractReport
+│   ├── tagmeasure.go       # TagMeasureDedupKey — the measurement dedup key shared by the enqueue path and task definition
 │   ├── evidence.go         # Evidence records and JSON encoding/decoding (RuleSetVersion, Record, EncodeRows, DecodeRows)
 │   ├── identity.go         # Identity rules and planning (IdentityRuleSetVersion, HouseForm, VariantClass, Plan/PlanDeterministic, Disposition, AliasAction, Registration, CompositionRow/CompositionReading)
 │   ├── decision.go         # Pinned decision rule sets (DecideAdmission, DecideComposition, DecidePromotion, DecideMassDemotion, DecisionRuleSetVersion, RecurrenceFloor)
@@ -240,16 +242,16 @@ internal/
 │   │   ├── registration.go # Planned tag registration (Create/CreateAndUnblock, PlanRegistration, CreatePlannedTx)
 │   │   ├── alias.go        # Alias-plan application (ApplyAliasPlan, applyAliasAction) + identity-evidence recording
 │   │   ├── tagidentity.go  # TagIdentity service (NewTagIdentity — enqueues the triggered identity runs)
-│   │   ├── tagreconcile.go # TagReconcile service (NewTagReconcile — enqueues the manual reconciliation runs)
-│   │   ├── tagmeasure.go   # TagMeasure service (NewTagMeasure — enqueues the manual measurement runs)
+│   │   ├── tagreconcile.go # ReconcileSpecs + TagReconcileDedupKey (the enqueue surface's reconciliation task set)
+│   │   ├── tagmeasure.go   # MeasureSpecs (the enqueue surface's measurement task set)
 │   │   └── tagaudit.go     # TagAudit service (NewTagAudit — enqueues the coverage-audit runs, serves the coverage review surface)
 │   ├── admission/          # Tag admission (LLM adjudication seams + identity resolution)
 │   │   ├── adjudicator.go  # Adjudicator (NewAdjudicator — canonical suggestions, compound decomposition incl. JudgeCompounds over the substrate reading, deleted-tag policy, identity planning, tag-quality gating)
 │   │   ├── identity.go     # Canonical-form identity mechanics (house form, key equality, tie-break)
 │   │   ├── identity_resolve.go # Pending identity-evidence resolver (NewIdentityResolver, IdentityReport)
 │   │   ├── audit.go        # AuditRunner (NewAuditRunner — the coverage-verification pass: sweep worklist, trigger/lexical narrowing, judged applicability, dispositions, pending-coverage accounting)
-│   │   ├── tagidentity.go  # TagIdentityTaskHandler (forks `kushim tagidentity --run`)
-│   │   └── tagaudit.go     # TagAuditTaskHandler (forks `kushim tagaudit --run`)
+│   │   ├── tagidentity.go  # TagIdentityTaskHandler (runs the pass and stores its report as the task result)
+│   │   └── tagaudit.go     # TagAuditTaskHandler (same shape over the audit runner)
 │   ├── policy/             # Pure candidate generation (identity + band subjects)
 │   │   └── policy.go       # Evaluate, Decision, Version — no logging, no config, no I/O
 │   └── reconcile/          # Scheduled re-adjudication
@@ -258,11 +260,11 @@ internal/
 │       ├── evidence.go     # Evidence pass (re-rank, band adjudication, hysteresis confirmation)
 │       ├── apply.go        # Apply pass (alias/keep flips, verdict upsert)
 │       ├── sweeps.go       # Twin canonicalization, orphan and provisional sweeps
-│       ├── tagreconcile.go # TagReconcileTaskHandler (forks `kushim tagreconcile --run`, lock-holding lifecycle)
+│       ├── tagreconcile.go # ReconcileTaskHandler — the batch-mode pass handler (lock-holding lifecycle inside the child's RunBatch)
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
- │   ├── batch.go            # Batch ownership (Owner.Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease/token-guarded), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch/ForClaim
+ │   ├── batch.go            # Batch ownership (Owner.Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease-only), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch/ForClaim
  │   ├── crud.go             # Task CRUD (Get, ListFiltered, CountBatchStatuses, ListBatchSummaries)
  │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
  │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; refuses a pending task whose type carries no dedup hook in the boundary's catalog
@@ -270,14 +272,13 @@ internal/
  │   ├── type_definition.go  # TypeDefinition contract + DedupKeyFunc
  │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
  │   ├── handler.go          # Handler interface — pure work functions
-│   ├── execute.go          # Runner — claim under the execution guard, drain/heartbeat, dispatch, guarded complete/fail, settle after every transition; RunBatch — the leased child (adopt, repair, holds, per-type workers, settle)
-│   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
-│   ├── locks.go            # Resource-lock lifecycle: ErrLockBusy, AcquireLocks (all-or-nothing, canonical order), ReleaseLocksForToken/Batch/StaleHolders, UnionLockNames, LockHeartbeatInterval
-│   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
-│   ├── pool.go             # Generic worker pool (Pool, Start/Stop, worker loop; Nexter interface)
-│   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
+ │   ├── execute.go          # Runner — claim under the batch lease, dispatch, guarded complete/fail, settle after every transition; RunBatch — the leased child (adopt, repair, batch holds with heartbeat and drain, per-type workers, InProcess-hosted runs keep a pid-0 lease)
+ │   ├── heartbeat.go        # Heartbeat goroutine — periodic Owner.Heartbeat every 5s
+ │   ├── locks.go            # Resource-lock lifecycle: ErrLockBusy, AcquireLocks (all-or-nothing, canonical order), ReleaseLocksForToken/Batch, UnionLockNames, LockHeartbeatInterval
+ │   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
+ │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
  │   ├── registry.go         # Task type → handler registry (assembled at each command boundary)
- │   ├── store.go            # Task persistence (ClaimNextPending with guard + batch flip + lock gates and claim-time acquisition, CompleteTask/FailTask token-guarded transitions, ActivateChild activation with dedup discard, Discard)
+ │   ├── store.go            # Task persistence (ClaimNextPending — owner-scoped claim + batch flip + wait verification, CompleteTask/FailTask lease-guarded transitions, ActivateChild activation with dedup discard, Discard)
  │   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
 ├── textnorm/               # Tag and DB-key canonicalization
@@ -411,8 +412,8 @@ batches and tasks.
 
 The system uses two linked binaries with **worker forking**:
 
-- **`edub`** (API server, `CGO_ENABLED=0`) — Pure Go binary handling HTTP requests. When consume/upload is called, it enqueues tasks with `status='queued'`; the `kushim queue` daemon picks up the batch and forks a worker. Also runs a config pool for background download tasks.
-- **`kushim`** (CLI, CGo) — Handles all document processing (consumption, enrichment). Also hosts the **matcher RPC server** via `kushim hugot`.
+- **`edub`** (API server, `CGO_ENABLED=0`) — Pure Go binary handling HTTP requests. When consume/upload is called, it enqueues tasks with `status='queued'`; the `kushim queue` daemon picks up the batch and forks the batch's task CLI. It never claims a batch.
+- **`kushim`** (CLI, CGo) — Handles all document processing (consumption, enrichment). Also hosts the **matcher RPC server** via `kushim hugot` and the queue daemon.
 - **Matcher process** — A standalone `kushim hugot` process provides semantic tag matching (Hugot embeddings) over a Unix domain socket (`kushim-hugot.sock`). Both `edub` and `kushim` workers communicate with it via `internal/matcher.MatcherClient`.
 
 ## See Also

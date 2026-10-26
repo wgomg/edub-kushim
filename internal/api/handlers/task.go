@@ -15,7 +15,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
-	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	itypes "github.com/wgomg/edub-kushim/internal/types"
@@ -653,10 +652,6 @@ func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
 		return "Backup (" + mode + ")"
 	case strings.HasPrefix(key, "mirror:"):
 		return "Mirror"
-	case strings.HasPrefix(key, configtask.DedupKeyTessdataPrefix):
-		return "Download tessdata (" + strings.TrimPrefix(key, configtask.DedupKeyTessdataPrefix) + ")"
-	case key == configtask.DedupKeyHugot:
-		return "Download Hugot model"
 	}
 	switch taskType {
 	case itypes.Task.Type.Consume:

@@ -248,4 +248,4 @@ Tag and DB-key canonicalization, shared by the tag service, the enricher, the ma
 - [CLI](cli.md) — Uses ConfigDir, Logger, FlagParser, config setup functions
 - [Pipeline](pipeline.md) — Uses Config structs for Consumer/Enricher settings
 - [Tools](tools.md) — Uses Config for tool adapter selection, capability registry (`internal/llm/`)
-- [Task System](task-system.md) — ConfigTaskHandler processes config-related async tasks
+- [Task System](task-system.md) — Migration task handlers over the migration payloads; direct asset downloads (`DownloadTessdataLanguage`/`DownloadHugotModel`) used by the config update paths

@@ -45,19 +45,6 @@ WHERE name = ANY(@lock_names::text[])
   AND data->>'batch_id' = @batch_id::text
 RETURNING name;
 
--- name: ReleaseLocksForStaleHolders :many
-UPDATE system_signal
-SET value = 'false', data = NULL, modified_at = CURRENT_TIMESTAMP
-WHERE name = ANY(@lock_names::text[])
-  AND value = 'true'
-  AND (data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes'
-  AND (data->>'owner_token') IN (
-    SELECT claim_token::text FROM task
-    WHERE status = 'processing'
-      AND task_type = ANY(@types::task_type[])
-  )
-RETURNING name;
-
 -- name: TouchLocksForToken :execrows
 UPDATE system_signal
 SET data = jsonb_set(data, '{started_at}', to_jsonb(NOW())),
@@ -84,8 +71,7 @@ WHERE task.status = 'processing'
     WHERE s.name = ANY(@lock_names::text[])
       AND s.value = 'true'
       AND (s.data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
-      AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
-           OR s.data->>'batch_id' = task.batch_id)
+      AND s.data->>'batch_id' = task.batch_id
   )
 RETURNING task_id, task_type;
 
@@ -103,6 +89,5 @@ WHERE task.status = 'processing'
     WHERE s.name = ANY(@lock_names::text[])
       AND s.value = 'true'
       AND (s.data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
-      AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
-           OR s.data->>'batch_id' = task.batch_id)
+      AND s.data->>'batch_id' = task.batch_id
   );

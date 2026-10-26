@@ -129,13 +129,13 @@ func TestResolveLaunchTarget(t *testing.T) {
 		types.Task.Type.Backup:        {Type: types.Task.Type.Backup},
 		types.Task.Type.TagAudit: {
 			CLI: "kushim-tag-audit-not-on-this-host", BatchSelector: "--from-batch",
-			Hosts: []types.Host{types.HostEdub},
+			Hosts: []types.Host{types.HostWizard},
 		},
 		types.Task.Type.TagMeasure: {
-			CLI: "tagmeasure", BatchSelector: "--run", Hosts: []types.Host{types.HostQueue},
+			CLI: "tagmeasure", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
 		},
 		types.Task.Type.TagIdentity: {
-			CLI: "tagidentity", BatchSelector: "--run", Hosts: []types.Host{types.HostQueue},
+			CLI: "tagidentity", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
 		},
 	}
 
@@ -340,7 +340,6 @@ func TestLaunchQueuedBatchRefusals(t *testing.T) {
 	seedClaimedBatch(t, client, "run-live", uuid.New().String(), int64(os.Getpid()), types.Task.Type.Consume)
 	seedClaimedBatch(t, client, "run-dead", uuid.New().String(), 999999999, types.Task.Type.Consume)
 	seedClaimedBatch(t, client, "run-preadopt", uuid.New().String(), 0, types.Task.Type.Consume)
-	seedBatch(t, client, "run-backup", types.Task.Type.Backup)
 	seedClaimedBatch(t, client, "run-stale", uuid.New().String(), 77, types.Task.Type.Consume)
 	if _, err := client.DB().ExecContext(ctx,
 		"UPDATE batch_owner SET last_heartbeat = NOW() - INTERVAL '5 minutes' WHERE batch_id = $1",
@@ -351,9 +350,9 @@ func TestLaunchQueuedBatchRefusals(t *testing.T) {
 	if _, err := client.Queries.MarkBatchClaimed(ctx, "run-orphan"); err != nil {
 		t.Fatalf("leave a processing batch without a lease: %v", err)
 	}
-	seedBatch(t, client, "run-pool", types.Task.Type.Backup)
-	if _, err := client.Queries.MarkBatchClaimed(ctx, "run-pool"); err != nil {
-		t.Fatalf("leave a pool batch processing: %v", err)
+	seedBatch(t, client, "run-lost", types.Task.Type.Backup)
+	if _, err := client.Queries.MarkBatchClaimed(ctx, "run-lost"); err != nil {
+		t.Fatalf("leave a lost-execution batch processing: %v", err)
 	}
 
 	cases := []struct {
@@ -368,8 +367,7 @@ func TestLaunchQueuedBatchRefusals(t *testing.T) {
 		{batchID: "run-preadopt", want: "child has not adopted it yet"},
 		{batchID: "run-stale", want: "processing under a stale lease"},
 		{batchID: "run-orphan", want: "processing without a lease"},
-		{batchID: "run-pool", want: "processing without a lease"},
-		{batchID: "run-backup", want: "no batch-mode CLI"},
+		{batchID: "run-lost", want: "processing without a lease"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.batchID, func(t *testing.T) {
@@ -380,9 +378,9 @@ func TestLaunchQueuedBatchRefusals(t *testing.T) {
 		})
 	}
 
-	batch, err := client.Queries.GetBatch(ctx, "run-backup")
-	testutil.AssertNoError(t, err, "read backup batch")
-	testutil.AssertEqual(t, batch.Status, types.Batch.Status.Queued, "a refused run must not claim the batch")
+	batch, err := client.Queries.GetBatch(ctx, "run-lost")
+	testutil.AssertNoError(t, err, "read lost batch")
+	testutil.AssertEqual(t, batch.Status, types.Batch.Status.Processing, "a refused run must not claim the batch")
 }
 
 // TestLaunchQueuedBatchClaimsAndForks pins the manual launcher's happy path: it claims the queued

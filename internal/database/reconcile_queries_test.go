@@ -326,7 +326,7 @@ func TestReconcileDocumentQueries(t *testing.T) {
 	}
 }
 
-func TestReconcileConsumeSlotExclusion(t *testing.T) {
+func TestReconcileQueuedBatchListing(t *testing.T) {
 	q, db := NewTestQueries(t)
 	defer db.Close()
 	resetDB(t, q)
@@ -338,9 +338,6 @@ func TestReconcileConsumeSlotExclusion(t *testing.T) {
 	if _, err := q.db.ExecContext(ctx,
 		"INSERT INTO task (task_id, task_type, status, batch_id, dedup_key) VALUES ('rc-b-task', 'tagreconcile', 'pending', 'rc-b', 'tagreconcile')"); err != nil {
 		t.Fatalf("insert tagreconcile task: %v", err)
-	}
-	if n, err := q.CountQueuedConsumeBatches(ctx, types.NonConsumeTaskTypeValues()); err != nil || n != 0 {
-		t.Fatalf("tagreconcile batch counted as consume: n=%d %v", n, err)
 	}
 	batches, err := q.ListQueuedBatchesByAge(ctx)
 	if err != nil {

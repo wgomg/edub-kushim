@@ -17,11 +17,10 @@ import (
 )
 
 // Runner drives the claim-run-settle loop for the task types it is registered for. Next claims the next
-// pending task under its execution guard, drains the in-flight tasks that conflict with the locks the
-// claim holds, dispatches to the registered handler, recovers handler panics into task failures, and
-// settles the batch after every transition through SettleBatch. Handlers are pure work functions: the
-// runner owns the locks, the drain, the transitions and the lifecycle. Safe to call from several pool
-// workers.
+// pending task of the batch an execution owns, verifies the waits its type declares, dispatches to the
+// registered handler, recovers handler panics into task failures, and settles the batch after every
+// transition through SettleBatch. The batch's locks, drain and heartbeat belong to RunBatch. Handlers are
+// pure work functions: the runner owns the transitions and the lifecycle. Safe to call from several workers.
 type Runner struct {
 	store    *Store
 	registry *Registry
@@ -38,12 +37,12 @@ func NewRunner(store *Store, registry *Registry, logger *log.Logger) *Runner {
 }
 
 // Next claims and runs at most one task of the given type. It returns nil when there was nothing to
-// claim, when the batch left its claimable states, or when a lock the claim needs was busy, so a polling
-// loop treats each of them as an idle round.
+// claim, when the batch left its claimable states, or when the task's waits are held (the claim selection
+// defers it), so a polling loop treats each of them as an idle round.
 func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) {
 	task, guard, err := r.store.ClaimNextPending(ctx, taskType)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrLockBusy) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
 		return fmt.Errorf("claim next pending task: %w", err)
@@ -77,13 +76,6 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 		_ = r.failAndSettle(ctx, task, exec, err.Error())
 		return nil
 	}
-
-	stop, err := r.holdLocks(ctx, taskType, task, guard)
-	if err != nil {
-		_ = r.failAndSettle(ctx, task, exec, err.Error())
-		return nil
-	}
-	defer stop()
 
 	result, err := h.Handle(ctx, Task{
 		ID:       task.ID,
@@ -142,32 +134,11 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 	return nil
 }
 
-// holdLocks keeps the locks the claim acquired fresh for the run and waits for the in-flight tasks that
-// conflict with them to drain. It is a no-op for a type that holds no locks and for an execution whose
-// batch already holds them. The returned stop function ends the heartbeat.
-func (r *Runner) holdLocks(ctx context.Context, taskType types.TaskType, task database.Task, guard uuid.UUID) (func(), error) {
-	holds := types.LockDeclarationFor(taskType).Holds
-	if len(holds) == 0 || r.store.batchHoldsAcquired {
-		return func() {}, nil
-	}
-	stop := database.StartLockHeartbeat(ctx, r.store.queries, r.logger, LockHeartbeatInterval, holds,
-		uuid.NullUUID{UUID: guard, Valid: true})
-	progress := NewProgressTracker(r.store.queries, task.TaskID)
-	err := database.WaitForTaskDrain(ctx, r.store.queries, r.logger, string(taskType), types.TaskTypesWaitingOn(holds...), func(count int64) {
-		progress.Set("drain-wait", fmt.Sprintf("%d in-flight", count), 0)
-	})
-	if err != nil {
-		stop()
-		return nil, err
-	}
-	return stop, nil
-}
-
 // failTask fails the claimed task under its guard; a fail that lands zero rows means the claim was already
 // taken. It deliberately does not settle, so a caller that requests a pause can pause before any terminal
 // write.
 func (r *Runner) failTask(ctx context.Context, task database.Task, exec Execution, msg string) error {
-	_, err := r.store.FailTask(ctx, task.TaskType, task.ID, msg, exec.Guard)
+	_, err := r.store.FailTask(ctx, task.ID, msg, exec.Guard)
 	return err
 }
 
@@ -184,7 +155,7 @@ func (r *Runner) failAndSettle(ctx context.Context, task database.Task, exec Exe
 
 // settle writes the batch's terminal status once the run's work is over. It is best effort: a failed write is
 // logged, and the guards inside SettleBatch make the call safe for an executor whose claim was already taken.
-// For a pool batch the settle is the only terminal writer, so it runs after every task.
+// It is the only terminal writer, and it runs after every task.
 func (r *Runner) settle(ctx context.Context, task database.Task, exec Execution) {
 	if exec.BatchID == "" {
 		return
@@ -201,7 +172,7 @@ func (r *Runner) completeTaskWithRetry(ctx context.Context, task database.Task, 
 	backoff := 50 * time.Millisecond
 
 	for attempt := 1; ; attempt++ {
-		rows, err := r.store.CompleteTask(ctx, task.TaskType, task.ID, result, exec.Guard)
+		rows, err := r.store.CompleteTask(ctx, task.ID, result, exec.Guard)
 		if err == nil {
 			return rows, nil
 		}
@@ -232,6 +203,9 @@ const (
 // through, the retry budget entry repair applies, and the host-provided file quarantine hook. The hook
 // keeps this package free of the documents package: the command layer supplies the consume-side cleanup.
 // Client, Logger, Catalog, Store and Registry are required; a nil Quarantine disables file quarantine.
+// InProcess marks a run the hosting process executes itself (the setup wizard): the lease keeps pid 0, so
+// cancel and the reaper never signal the host process, and interruption arrives through the batch-status
+// monitor. A forked CLI child and `kushim batch run` leave it unset and keep a signalable pid.
 type BatchRunDeps struct {
 	Client     *database.Client
 	Logger     *log.Logger
@@ -240,6 +214,7 @@ type BatchRunDeps struct {
 	Registry   *Registry
 	MaxRetries int32
 	Quarantine func(ctx context.Context, taskIDs []string) error
+	InProcess  bool
 }
 
 // BatchRunResult reports how a leased batch execution ended: the batch status the settle wrote or found,
@@ -247,6 +222,16 @@ type BatchRunDeps struct {
 type BatchRunResult struct {
 	Status types.BatchStatus
 	Paused bool
+}
+
+// adoptPID is the pid the execution records on its lease: its own for a CLI child or a foreground `kushim
+// batch run`, and 0 for a run the hosting process executes itself, so cancel and the reaper never signal
+// the API server, the wizard or the daemon.
+func adoptPID(deps BatchRunDeps) int {
+	if deps.InProcess {
+		return 0
+	}
+	return os.Getpid()
 }
 
 // RunBatch is the leased task-CLI child. It adopts the execution lease the launcher claimed under token and
@@ -298,7 +283,7 @@ func RunBatch(ctx context.Context, deps BatchRunDeps, batchID string, token uuid
 	lockToken := uuid.NullUUID{UUID: token, Valid: true}
 	heldNames := lockNameStrings(held)
 
-	owner := NewOwner(deps.Client, token.String(), os.Getpid())
+	owner := NewOwner(deps.Client, token.String(), adoptPID(deps))
 	if err := owner.Adopt(ctx, batchID); err != nil {
 		return BatchRunResult{}, err
 	}
@@ -361,7 +346,6 @@ func RunBatch(ctx context.Context, deps BatchRunDeps, batchID string, token uuid
 		}
 	}
 
-	deps.Store.SetBatchHoldsAcquired(holdsHeld)
 	deps.Store.SetOwnerID(token.String())
 
 	runCtx, stopWorkers := context.WithCancel(ctx)

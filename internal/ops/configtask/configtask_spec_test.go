@@ -8,38 +8,6 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// TestConfigSpecsDeriveTheKeysTheHandlerLooksUp pins the config payload and dedup key contract.
-func TestConfigSpecsDeriveTheKeysTheHandlerLooksUp(t *testing.T) {
-	tessdata, err := TessdataSpec("/cfg", "eng")
-	testutil.AssertNoError(t, err, "tessdata spec")
-	testutil.AssertEqual(t, tessdata.Type, types.Task.Type.Config, "tessdata task type")
-
-	var payload configPayload
-	if err := json.Unmarshal(tessdata.Payload, &payload); err != nil {
-		t.Fatalf("decode tessdata payload: %v", err)
-	}
-	testutil.AssertEqual(t, payload.ConfigDir, "/cfg", "config dir")
-	testutil.AssertEqual(t, payload.Op, OpTessdata, "operation")
-	testutil.AssertEqual(t, payload.Lang, "eng", "language")
-	if got := ConfigDedupKey(tessdata.Payload); got != DedupKeyTessdataPrefix+"eng" {
-		t.Fatalf("tessdata key = %q, want %q", got, DedupKeyTessdataPrefix+"eng")
-	}
-
-	hugot, err := HugotSpec("/cfg")
-	testutil.AssertNoError(t, err, "hugot spec")
-	testutil.AssertEqual(t, hugot.Type, types.Task.Type.Config, "hugot task type")
-
-	payload = configPayload{}
-	if err := json.Unmarshal(hugot.Payload, &payload); err != nil {
-		t.Fatalf("decode hugot payload: %v", err)
-	}
-	testutil.AssertEqual(t, payload.Op, OpHugot, "operation")
-	testutil.AssertEqual(t, payload.Lang, "", "no language for the model download")
-	if got := ConfigDedupKey(hugot.Payload); got != DedupKeyHugot {
-		t.Fatalf("hugot key = %q, want %q", got, DedupKeyHugot)
-	}
-}
-
 // TestMigrationSpecsPreserveTheirPayload pins that no migration field drops out of the task payload.
 func TestMigrationSpecsPreserveTheirPayload(t *testing.T) {
 	dbIn := MigrateDBPayload{

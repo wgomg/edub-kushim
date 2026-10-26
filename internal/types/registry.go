@@ -18,14 +18,13 @@ type BatchOrigin string
 // LockName names one of the closed set of resource locks an execution holds or waits for.
 type LockName string
 
-// Host names a process allowed to execute a batch: the kushim queue or its child, edub, or the wizard.
+// Host names a process allowed to execute a batch: the kushim queue or its child, or the setup wizard.
 type Host string
 
 // The declared batch execution hosts. A task type definition lists the hosts eligible to dispatch its
 // batches.
 const (
 	HostQueue  Host = "queue"
-	HostEdub   Host = "edub"
 	HostWizard Host = "wizard"
 )
 
@@ -139,7 +138,6 @@ var Task = struct {
 		Thumbnail      TaskType
 		Backup         TaskType
 		Mirror         TaskType
-		Config         TaskType
 		MigrateDB      TaskType
 		MigrateStorage TaskType
 		TagReconcile   TaskType
@@ -164,7 +162,6 @@ var Task = struct {
 		Thumbnail      TaskType
 		Backup         TaskType
 		Mirror         TaskType
-		Config         TaskType
 		MigrateDB      TaskType
 		MigrateStorage TaskType
 		TagReconcile   TaskType
@@ -178,7 +175,6 @@ var Task = struct {
 		Thumbnail:      "thumbnail",
 		Backup:         "backup",
 		Mirror:         "mirror",
-		Config:         "config",
 		MigrateDB:      "migrate-db",
 		MigrateStorage: "migrate-storage",
 		TagReconcile:   "tagreconcile",
@@ -292,8 +288,7 @@ func AllTaskTypes() []TaskType { return slices.Clone(allTaskTypes) }
 func AllTaskStatuses() []TaskStatus { return slices.Clone(allTaskStatuses) }
 
 // LockDeclarationFor returns the queued lock declaration of a task type; a type without a declaration
-// (config) declares neither locks nor waits. The returned slices are cloned, so callers cannot mutate
-// the table.
+// declares neither locks nor waits. The returned slices are cloned, so callers cannot mutate the table.
 func LockDeclarationFor(t TaskType) LockDeclaration {
 	declaration := lockDeclarations[t]
 	return LockDeclaration{
@@ -302,8 +297,8 @@ func LockDeclarationFor(t TaskType) LockDeclaration {
 	}
 }
 
-// HoldsLocks reports whether an execution of the type acquires locks: its claims carry a claim token
-// and transact the lock release with the task transition.
+// HoldsLocks reports whether an execution of the type holds locks for its whole batch run; the batch
+// claim acquires them and the settle, pause, cancel or reclamation releases them.
 func (t TaskType) HoldsLocks() bool {
 	return len(lockDeclarations[t].Holds) > 0
 }
@@ -323,7 +318,7 @@ func TaskTypesWaitingOn(locks ...LockName) []TaskType {
 	return waiting
 }
 
-// LockHoldingTaskTypes lists the task types that acquire locks, the set whose claims carry tokens.
+// LockHoldingTaskTypes lists the task types that hold locks for their whole batch run.
 func LockHoldingTaskTypes() []TaskType {
 	holding := make([]TaskType, 0, len(allTaskTypes))
 	for _, taskType := range allTaskTypes {
@@ -347,12 +342,12 @@ func LockNameValues() []string {
 	return values
 }
 
-// NonConsumeTaskTypes are the task types whose batches own their lifecycle in their handlers and never
-// occupy a consume slot.
+// NonConsumeTaskTypes are the task types whose batches are maintenance work rather than consume work:
+// the batch overviews use the list to classify them outside the consume slot.
 func NonConsumeTaskTypes() []TaskType { return slices.Clone(nonConsumeTaskTypes) }
 
-// NonConsumeTaskTypeValues is NonConsumeTaskTypes in plain string form, for the queued-batch exclusion
-// queries: the same registry list backs both, so the exclusion cannot drift from the task types.
+// NonConsumeTaskTypeValues is NonConsumeTaskTypes in plain string form for the query parameters that
+// classify batches, so the SQL predicates cannot drift from the Go list.
 func NonConsumeTaskTypeValues() []string {
 	values := make([]string, len(nonConsumeTaskTypes))
 	for i, taskType := range nonConsumeTaskTypes {
@@ -362,7 +357,6 @@ func NonConsumeTaskTypeValues() []string {
 }
 
 var nonConsumeTaskTypes = []TaskType{
-	Task.Type.Config,
 	Task.Type.MigrateDB,
 	Task.Type.MigrateStorage,
 	Task.Type.Backup,
@@ -397,7 +391,6 @@ var allTaskTypes = []TaskType{
 	Task.Type.Thumbnail,
 	Task.Type.Backup,
 	Task.Type.Mirror,
-	Task.Type.Config,
 	Task.Type.MigrateDB,
 	Task.Type.MigrateStorage,
 	Task.Type.TagReconcile,

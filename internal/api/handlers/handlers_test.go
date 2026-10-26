@@ -105,7 +105,6 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 	}
 
 	registry := task.NewRegistry()
-	registry.Register("config", configtask.NewConfigTaskHandler(client.Queries, logger))
 
 	return &handlerTestEnv{
 		client:        client,
@@ -168,21 +167,6 @@ func newHandlerTestEnqueuer(client *database.Client) *task.Enqueuer {
 		}
 		return ""
 	}
-	configKey := func(payload json.RawMessage) string {
-		var p struct {
-			Op   string `json:"op"`
-			Lang string `json:"lang"`
-		}
-		_ = json.Unmarshal(payload, &p)
-		switch p.Op {
-		case configtask.OpTessdata:
-			return "config:tessdata:" + p.Lang
-		case configtask.OpHugot:
-			return "config:hugot"
-		default:
-			return ""
-		}
-	}
 	constant := func(key string) func(json.RawMessage) string {
 		return func(json.RawMessage) string { return key }
 	}
@@ -191,7 +175,6 @@ func newHandlerTestEnqueuer(client *database.Client) *task.Enqueuer {
 		itypes.Task.Type.Consume:        {Type: itypes.Task.Type.Consume, DedupKey: md5Key},
 		itypes.Task.Type.Enrich:         {Type: itypes.Task.Type.Enrich, DedupKey: enrichKey},
 		itypes.Task.Type.Thumbnail:      {Type: itypes.Task.Type.Thumbnail, DedupKey: thumbnailKey},
-		itypes.Task.Type.Config:         {Type: itypes.Task.Type.Config, DedupKey: configKey},
 		itypes.Task.Type.MigrateDB:      {Type: itypes.Task.Type.MigrateDB, DedupKey: constant(configtask.DedupKeyMigrateDB)},
 		itypes.Task.Type.MigrateStorage: {Type: itypes.Task.Type.MigrateStorage, DedupKey: constant(configtask.DedupKeyMigrateStorage)},
 		itypes.Task.Type.TagIdentity:    {Type: itypes.Task.Type.TagIdentity, DedupKey: constant(curation.TagIdentityDedupKey)},
@@ -908,7 +891,7 @@ func TestGetDashboardRunningTasks(t *testing.T) {
 		Payload: &activePayload,
 	})
 	testutil.AssertNoError(t, err, "create task 1")
-	_, ctErr := env.client.ClaimTask(ctx, database.ClaimTaskParams{ID: task1ID})
+	_, ctErr := env.client.ClaimTask(ctx, task1ID)
 	testutil.AssertNoError(t, ctErr, "claim task 1")
 
 	pendingPayload := json.RawMessage(`{"file_path":"/tmp/uploads/invoice.pdf","document_id":"some-doc-uuid"}`)
@@ -1077,16 +1060,21 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "create batch 2")
 
+	if _, leaseErr := env.client.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+		BatchID: "ph-batch-1", OwnerID: "ph-owner", Pid: 1,
+	}); leaseErr != nil {
+		t.Fatalf("insert lease: %v", leaseErr)
+	}
+
 	task1ID, err := env.client.CreateTask(ctx, database.CreateTaskParams{
 		TaskID: "ph-completed", TaskType: "consume", Status: "pending",
 		BatchID: sql.NullString{String: "ph-batch-1", Valid: true},
 	})
 	testutil.AssertNoError(t, err, "create completed task")
-	token1 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-	_, ctErr := env.client.ClaimTask(ctx, database.ClaimTaskParams{ID: task1ID, ClaimToken: token1})
+	_, ctErr := env.client.ClaimTask(ctx, task1ID)
 	testutil.AssertNoError(t, ctErr, "claim")
 	_, ctErr = env.client.CompleteBlockingTask(ctx, database.CompleteBlockingTaskParams{
-		ID: task1ID, Result: nil, ClaimToken: token1,
+		ID: task1ID, Result: nil, OwnerID: "ph-owner",
 	})
 	testutil.AssertNoError(t, ctErr, "complete")
 
@@ -1095,11 +1083,10 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 		BatchID: sql.NullString{String: "ph-batch-1", Valid: true},
 	})
 	testutil.AssertNoError(t, err, "create failed task")
-	token2 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-	_, ctErr = env.client.ClaimTask(ctx, database.ClaimTaskParams{ID: task2ID, ClaimToken: token2})
+	_, ctErr = env.client.ClaimTask(ctx, task2ID)
 	testutil.AssertNoError(t, ctErr, "claim failed task")
 	_, ctErr = env.client.FailBlockingTask(ctx, database.FailBlockingTaskParams{
-		ID: task2ID, Error: sql.NullString{String: "err", Valid: true}, ClaimToken: token2,
+		ID: task2ID, Error: sql.NullString{String: "err", Valid: true}, OwnerID: "ph-owner",
 	})
 	testutil.AssertNoError(t, ctErr, "fail")
 
@@ -2403,6 +2390,14 @@ func TestDocumentReEnrich(t *testing.T) {
 	})
 }
 
+// disableAssetDownloads keeps a handler test offline: the real helpers would download multi-GB models into
+// the test's temp config directory.
+func disableAssetDownloads(h *ConfigHandler) *ConfigHandler {
+	h.downloadTessdata = func(context.Context, *config.Config, string) error { return nil }
+	h.downloadHugot = func(context.Context, *config.Config) error { return nil }
+	return h
+}
+
 func TestPutConfig(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
@@ -2437,7 +2432,7 @@ func TestPutConfig(t *testing.T) {
 		}
 		var setCfg atomic.Value
 		setCfg.Store(cfg)
-		return NewConfigHandler(
+		return disableAssetDownloads(NewConfigHandler(
 			func() *config.Config {
 				cfg, ok := setCfg.Load().(*config.Config)
 				if !ok {
@@ -2450,7 +2445,7 @@ func TestPutConfig(t *testing.T) {
 			env.logger,
 			env.enqueuer,
 			env.services,
-		), configDir
+		)), configDir
 	}
 
 	countTasks := func(t *testing.T, taskType itypes.TaskType, dedupKey string) int64 {
@@ -2482,8 +2477,9 @@ func TestPutConfig(t *testing.T) {
 		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
-		if got, want := resp["pending_tasks"], float64(1); got != want {
-			t.Errorf("pending_tasks = %v, want %v", got, want)
+		// pending counts the queued migration plus any asset downloads the save started
+		if got, ok := resp["pending_tasks"].(float64); !ok || got < 1 {
+			t.Errorf("pending_tasks = %v, want at least the queued migration", resp["pending_tasks"])
 		}
 
 		if got := countTasks(t, itypes.Task.Type.MigrateStorage, configtask.DedupKeyMigrateStorage); got != 1 {
@@ -2585,15 +2581,11 @@ func TestPutConfig(t *testing.T) {
 	})
 }
 
-// TestEnqueueConfigTasks guards the central zombie-batch fix: saving a config
-// must not create a zero-task `config` batch (which would block the polling
-// gate forever), and a previously-completed/failed config task for the same
-// dedup key must yield a fresh pending task under a new batch — never a retry
-// of the old task (the old behavior reset the old batch's task and stranded
-// the new batch with nothing to do).
-func TestEnqueueConfigTasks(t *testing.T) {
+// TestConfigUpdateAssetStatus pins the direct-download contract's status surface: required assets are no
+// longer tasks, so ConfigStatus reports a missing asset as pending work while no config task or batch row
+// exists, and a satisfied environment reports nothing pending.
+func TestConfigUpdateAssetStatus(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	ctx := context.Background()
 
 	buildHandler := func(t *testing.T, satisfied bool) (*ConfigHandler, string) {
 		t.Helper()
@@ -2642,7 +2634,7 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		}
 		var setCfg atomic.Value
 		setCfg.Store(cfg)
-		return NewConfigHandler(
+		return disableAssetDownloads(NewConfigHandler(
 			func() *config.Config {
 				cfg, ok := setCfg.Load().(*config.Config)
 				if !ok {
@@ -2655,31 +2647,10 @@ func TestEnqueueConfigTasks(t *testing.T) {
 			env.logger,
 			env.enqueuer,
 			env.services,
-		), configDir
+		)), configDir
 	}
 
-	countBatches := func(t *testing.T) (int64, []string) {
-		t.Helper()
-		rows, err := env.client.DB().QueryContext(ctx,
-			`SELECT b.id FROM batch b WHERE EXISTS (
-				SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'config'
-			)`)
-		if err != nil {
-			t.Fatalf("list config batches: %v", err)
-		}
-		defer rows.Close()
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				t.Fatalf("scan batch id: %v", err)
-			}
-			ids = append(ids, id)
-		}
-		return int64(len(ids)), ids
-	}
-
-	t.Run("nothing missing creates no config batch", func(t *testing.T) {
+	t.Run("nothing missing reports no pending work and creates no rows", func(t *testing.T) {
 		fullResetDB(t, env.client.DB())
 		// Tessdata file + hugot model dir both present: MissingTessdataLanguages
 		// and MissingHugotModel both return nothing-to-do.
@@ -2694,104 +2665,54 @@ func TestEnqueueConfigTasks(t *testing.T) {
 		if w.Code < 200 || w.Code >= 300 {
 			t.Fatalf("status = %d, want 2xx", w.Code)
 		}
-		n, ids := countBatches(t)
-		if n != 0 {
-			t.Errorf("saved config created %d config batch(es) with no work to do: %v", n, ids)
+		status := rec()
+		h.ConfigStatus(status, req(t, "GET", "/api/v1/config/status", nil))
+		var resp ConfigStatusResponse
+		if err := json.Unmarshal(status.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode status: %v", err)
 		}
+		testutil.AssertEqual(t, resp.PendingTasks, 0, "nothing pending when every asset is present")
+		testutil.AssertEqual(t, countTaskRows(t, env), int64(0), "no config task rows")
 	})
 
-	t.Run("completed task gets a fresh row under a new batch, not a retry", func(t *testing.T) {
+	t.Run("a missing asset counts as pending with no task or batch row", func(t *testing.T) {
 		fullResetDB(t, env.client.DB())
-		// No tessdata file: MissingTessdataLanguages returns ["eng"], so the
-		// path under test is actually exercised.
+		// No tessdata file and no hugot model: the status must report both as pending work.
 		h, _ := buildHandler(t, false)
 
-		// Seed a completed config task for config:tessdata:eng under an old batch.
-		oldBatchID := "00000000-0000-0000-0000-000000000001"
-		if err := env.client.Queries.CreateBatch(ctx, database.CreateBatchParams{
-			ID:     oldBatchID,
-			Origin: itypes.Batch.Origin.Wizard,
-			Status: itypes.Batch.Status.Completed,
-		}); err != nil {
-			t.Fatalf("seed old batch: %v", err)
+		status := rec()
+		h.ConfigStatus(status, req(t, "GET", "/api/v1/config/status", nil))
+		var resp ConfigStatusResponse
+		if err := json.Unmarshal(status.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode status: %v", err)
 		}
-		oldPayload, _ := json.Marshal(map[string]string{
-			"config_dir": "irrelevant",
-			"op":         "tessdata",
-			"lang":       "eng",
-		})
-		raw := json.RawMessage(oldPayload)
-		if _, err := env.client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   "seeded-completed-task-id",
-			TaskType: itypes.Task.Type.Config,
-			Status:   "completed",
-			BatchID:  sql.NullString{String: oldBatchID, Valid: true},
-			Payload:  &raw,
-			DedupKey: sql.NullString{String: "config:tessdata:eng", Valid: true},
-		}); err != nil {
-			t.Fatalf("seed completed task: %v", err)
-		}
-
-		// Save the config (non-migration change) → enqueueConfigTasks runs.
-		body, _ := json.Marshal(map[string]any{
-			"app.log_level": "info",
-		})
-		w := rec()
-		h.PutConfig(w, req(t, "PUT", "/api/v1/config", body))
-
-		if w.Code != http.StatusCreated {
-			t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
-		}
-
-		// A new pending task must exist for the same dedup key, with a different
-		// task_id and a different (newly created) batch_id than the seeded one.
-		var newTaskID string
-		var newBatchID string
-		var status string
-		var attempts int32
-		err := env.client.DB().QueryRowContext(ctx,
-			`SELECT task_id, batch_id, status, attempts FROM task
-			 WHERE task_type = 'config' AND dedup_key = 'config:tessdata:eng'
-			 ORDER BY created_at DESC LIMIT 1`,
-		).Scan(&newTaskID, &newBatchID, &status, &attempts)
-		if err != nil {
-			t.Fatalf("query new task: %v", err)
-		}
-		if newTaskID == "seeded-completed-task-id" {
-			t.Errorf("expected a fresh task_id for the retry, got the seeded completed one — RetryTask behavior leaked through")
-		}
-		if status != "pending" {
-			t.Errorf("new task status = %q, want pending", status)
-		}
-		if attempts != 0 {
-			t.Errorf("new task attempts = %d, want 0 (a fresh row, not a retry)", attempts)
-		}
-		if newBatchID == oldBatchID {
-			t.Errorf("new task was placed in the old batch %s; it must belong to a new batch created by enqueueConfigTasks", newBatchID)
-		}
-
-		// The new batch must be source='config' and queued/active (handler will finalize it).
-		var newBatchStatus string
-		if err := env.client.DB().QueryRowContext(ctx,
-			`SELECT status FROM batch WHERE id = $1`, newBatchID,
-		).Scan(&newBatchStatus); err != nil {
-			t.Fatalf("read new batch: %v", err)
-		}
-		if newBatchStatus == "failed" {
-			t.Errorf("new batch was marked failed; expected queued (handler will run and finalize it)")
-		}
-
-		// The seeded completed task must be untouched.
-		var oldStatus string
-		if err := env.client.DB().QueryRowContext(ctx,
-			`SELECT status FROM task WHERE task_id = 'seeded-completed-task-id'`,
-		).Scan(&oldStatus); err != nil {
-			t.Fatalf("read old task: %v", err)
-		}
-		if oldStatus != "completed" {
-			t.Errorf("old completed task was mutated: status = %q, want completed", oldStatus)
-		}
+		testutil.AssertEqual(t, resp.PendingTasks, 2, "one tessdata language plus the hugot model")
+		testutil.AssertEqual(t, resp.Configured, true, "configured environment")
+		testutil.AssertEqual(t, countTaskRows(t, env), int64(0), "critically, not a task row")
+		testutil.AssertEqual(t, countBatchRows(t, env), int64(0), "not a batch either")
 	})
+}
+
+// countTaskRows counts every task row; the direct asset downloads must never create one.
+func countTaskRows(t *testing.T, env *handlerTestEnv) int64 {
+	t.Helper()
+	var count int64
+	if err := env.client.DB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM task`).Scan(&count); err != nil {
+		t.Fatalf("count task rows: %v", err)
+	}
+	return count
+}
+
+// countBatchRows counts every batch row.
+func countBatchRows(t *testing.T, env *handlerTestEnv) int64 {
+	t.Helper()
+	var count int64
+	if err := env.client.DB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM batch`).Scan(&count); err != nil {
+		t.Fatalf("count batch rows: %v", err)
+	}
+	return count
 }
 
 // TestSearchDocuments_OffsetBounds pins the GET-tier offset validation:

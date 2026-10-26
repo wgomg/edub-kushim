@@ -36,9 +36,8 @@ func batchIsQueuedWithoutLease(t *testing.T, client *database.Client, batchID st
 	return !hasLeaseRow(context.Background(), t, client, batchID)
 }
 
-// TestDispatchHonorsBudgetAndSkipsUnknownTypes pins the two dispatch gates: a batch whose task
-// types have no batch-mode CLI is never claimed, and a full slot budget stops the sweep before any
-// claim.
+// TestDispatchHonorsBudgetAndSkipsUnknownTypes pins the two dispatch gates: a batch whose task types are
+// not dispatchable on this host is never claimed, and a full slot budget stops the sweep before any claim.
 func TestDispatchHonorsBudgetAndSkipsUnknownTypes(t *testing.T) {
 	client, cfg := setupLauncherTest(t)
 	ctx := context.Background()
@@ -46,17 +45,18 @@ func TestDispatchHonorsBudgetAndSkipsUnknownTypes(t *testing.T) {
 	catalog := dispatchCatalog(t)
 	logger := testutil.NewTestLogger()
 
-	t.Run("a type without a batch-mode CLI stays queued", func(t *testing.T) {
-		seedBatch(t, client, "dispatch-backup", types.Task.Type.Backup)
-		d := NewDispatcher(catalog, logger, types.HostQueue, 4, func() {})
-		testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch over a backup-only queue")
-		if !batchIsQueuedWithoutLease(t, client, "dispatch-backup") {
-			t.Fatal("a backup batch must never be claimed by the dispatcher")
+	t.Run("a type the catalog does not define stays queued", func(t *testing.T) {
+		// the vocabulary dropped `config`; a leftover batch of it must never be claimed by any dispatcher
+		seedBatch(t, client, "dispatch-unknown", types.TaskType("config"))
+		d := NewDispatcher(catalog, logger, types.HostQueue, 4, func() {}, nil)
+		testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch over an unknown-type batch")
+		if !batchIsQueuedWithoutLease(t, client, "dispatch-unknown") {
+			t.Fatal("a batch of an undefined task type must never be claimed")
 		}
 	})
 
 	t.Run("a full budget stops the sweep before any no-holds claim", func(t *testing.T) {
-		d := NewDispatcher(catalog, logger, types.HostQueue, 1, func() {})
+		d := NewDispatcher(catalog, logger, types.HostQueue, 1, func() {}, nil)
 		seedBatch(t, client, "dispatch-running", types.Task.Type.Consume)
 		if _, err := client.Queries.MarkBatchClaimed(ctx, "dispatch-running"); err != nil {
 			t.Fatalf("mark the filler claimed: %v", err)
@@ -89,7 +89,7 @@ func TestDispatchClaimsHoldingBatchOutsideTheBudget(t *testing.T) {
 	catalog := dispatchCatalog(t)
 	t.Setenv(testChildExitEnv, "7")
 
-	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {})
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {}, nil)
 	seedBatch(t, client, "bypass-filler", types.Task.Type.Consume)
 	if _, err := client.Queries.MarkBatchClaimed(ctx, "bypass-filler"); err != nil {
 		t.Fatalf("mark the filler claimed: %v", err)
@@ -131,9 +131,10 @@ func TestDispatchBoundsLaunchFailures(t *testing.T) {
 
 	const batchID = "dispatch-failing"
 	seedBatch(t, client, batchID, types.Task.Type.Consume)
-	seedBatch(t, client, "dispatch-untouchable", types.Task.Type.Backup)
+	// a task type the catalog no longer defines: the dispatcher must skip it instead of claiming it
+	seedBatch(t, client, "dispatch-untouchable", types.TaskType("config"))
 
-	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {})
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {}, nil)
 	waitRequeued := func(what string) {
 		waitFor(t, what, func() bool { return batchIsQueuedWithoutLease(t, client, batchID) })
 	}
@@ -164,7 +165,7 @@ func TestDispatchBoundsLaunchFailures(t *testing.T) {
 		t.Fatal("the failed batch must not keep a lease")
 	}
 	if !batchIsQueuedWithoutLease(t, client, "dispatch-untouchable") {
-		t.Fatal("an undispatchable batch must stay queued through every wake")
+		t.Fatal("an unknown task type must stay queued through every wake")
 	}
 }
 
@@ -175,7 +176,7 @@ func TestChildExitedClassification(t *testing.T) {
 	client, _ := setupLauncherTest(t)
 	ctx := context.Background()
 	catalog := dispatchCatalog(t)
-	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 4, func() {})
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 4, func() {}, nil)
 	exitErr := errors.New("exit status 7")
 
 	t.Run("an adopted lease keeps its batch running", func(t *testing.T) {

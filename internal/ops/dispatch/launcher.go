@@ -32,7 +32,7 @@ const maxLaunchFailures = 3
 
 // batchExecutorPrecedence orders the task types whose batches may mix: an ingest batch carries consume
 // tasks and their enrich and thumbnail children, so the command that owns the batch's root work executes
-// it. Later stages extend the list as more types gain batch-mode CLIs.
+// it. Only the types that legitimately share a batch appear here; every other type runs its own command.
 var batchExecutorPrecedence = []types.TaskType{
 	types.Task.Type.Consume,
 	types.Task.Type.Enrich,
@@ -103,9 +103,10 @@ func launchBatch(target launchTarget, token uuid.UUID, attachStdio bool, onExit 
 	return cmd, nil
 }
 
-// requeueAfterLaunchFailure releases a batch whose child never started — its lease and locks — and hands it
-// back to the dispatcher. A failed release rolls back: the batch stays processing with its lease, and the
-// reaper recovers it once the lease goes stale.
+// requeueAfterLaunchFailure releases a batch whose execution never adopted the lease — its lease and locks —
+// and hands it back to the dispatcher. It covers a child that failed to fork and an in-process run that
+// refused to start. A failed release rolls back: the batch stays processing with its lease, and the reaper
+// recovers it once the lease goes stale.
 func requeueAfterLaunchFailure(ctx context.Context, client *database.Client, logger *log.Logger, batchID string, token uuid.UUID) {
 	tx, err := client.BeginTx(ctx, nil)
 	if err != nil {
@@ -146,9 +147,10 @@ func requeueAfterLaunchFailure(ctx context.Context, client *database.Client, log
 
 // LaunchQueuedBatch is the manual launcher behind `kushim batch run`: it claims the queued batch, forks
 // its task CLI in batch mode with the execution token and waits for the child, propagating a non-zero exit.
-// Only a queued batch with no lease is claimable; a paused batch points at resume, a processing one at its
-// holder (a stale lease is the reaper's), and a terminal one refuses. It performs no slot check, because
-// the dispatcher budget governs automatic dispatch only.
+// Every remaining task type has a batch-mode CLI on the queue host, including the migrations, so the
+// launcher only forks. Only a queued batch with no lease is claimable; a paused batch points at resume, a
+// processing one at its holder (a stale lease is the reaper's), and a terminal one refuses. It performs no
+// slot check, because the dispatcher budget governs automatic dispatch only.
 func LaunchQueuedBatch(ctx context.Context, client *database.Client, logger *log.Logger, catalog task.TypeCatalog, batchID string) error {
 	batch, err := client.Queries.GetBatch(ctx, batchID)
 	if err != nil {
@@ -170,14 +172,15 @@ func LaunchQueuedBatch(ctx context.Context, client *database.Client, logger *log
 	if err != nil {
 		return fmt.Errorf("list task types for batch %s: %w", batchID, err)
 	}
-	target, err := resolveLaunchTarget(catalog, batchID, taskTypes, types.HostQueue)
-	if err != nil {
-		return err
-	}
 
 	holds, waits := batchLockSets(taskTypes)
 	token := uuid.New()
 	claim := task.ClaimRequest{BatchID: batchID, ExecToken: token, Holds: holds, Waits: waits}
+
+	target, err := resolveLaunchTarget(catalog, batchID, taskTypes, types.HostQueue)
+	if err != nil {
+		return err
+	}
 	if err := task.ClaimBatch(ctx, client, claim); err != nil {
 		return err
 	}
@@ -194,16 +197,15 @@ func LaunchQueuedBatch(ctx context.Context, client *database.Client, logger *log
 }
 
 // processingRunRefusal explains why a processing batch cannot be started and what recovers it. A leased
-// batch is reclaimed by the reaper once its lease is stale; a lease-free batch is either running through
-// the queue pools, which never take a lease, or has lost its execution, and lease recovery cannot see it.
+// batch is reclaimed by the reaper once its lease is stale; a lease-free batch has lost its execution, and
+// lease recovery cannot see it.
 func processingRunRefusal(ctx context.Context, client *database.Client, batchID string) error {
 	owner, err := client.Queries.GetBatchOwner(ctx, database.GetBatchOwnerParams{
 		BatchID:           batchID,
 		StaleAfterSeconds: task.LeaseStaleSeconds,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("batch %s is processing without a lease: queue-pool batches run lease-free by design, "+
-			"and otherwise no execution owns it, so lease recovery cannot reclaim it", batchID)
+		return fmt.Errorf("batch %s is processing without a lease: no execution owns it, so lease recovery cannot reclaim it", batchID)
 	}
 	if err != nil {
 		return fmt.Errorf("get batch owner for %s: %w", batchID, err)

@@ -175,19 +175,39 @@ func MissingHugotModel(cfg *Config) bool {
 	return err != nil
 }
 
-// DownloadTessdataLanguage fetches one OCR language pack from the
-// tessdata_fast repository, skipping when present and removing the
-// download on failure.
+// DownloadTessdataLanguage fetches one OCR language pack from the tessdata_fast repository, skipping when
+// present. It downloads into a temp file in the data directory and renames it into place, so the final
+// path only ever holds a complete file, and a failed or concurrent download cannot disturb an existing
+// one.
 func DownloadTessdataLanguage(ctx context.Context, cfg *Config, lang string) error {
 	dest := filepath.Join(cfg.Consumer.OCR.DataDir, lang+".traineddata")
 	if _, err := os.Stat(dest); err == nil {
 		return nil
 	}
+	if err := os.MkdirAll(cfg.Consumer.OCR.DataDir, 0o755); err != nil {
+		return fmt.Errorf("create tessdata dir: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(cfg.Consumer.OCR.DataDir, "."+lang+".traineddata-*")
+	if err != nil {
+		return fmt.Errorf("create %s download temp file: %w", lang, err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close %s download temp file: %w", lang, err)
+	}
+	defer os.Remove(tmpPath)
 
 	url := fmt.Sprintf("https://github.com/tesseract-ocr/tessdata_fast/raw/main/%s.traineddata", lang)
-	if err := downloadFile(url, dest); err != nil {
-		_ = os.Remove(dest)
+	if err := downloadFile(url, tmpPath); err != nil {
 		return fmt.Errorf("download %s: %w", lang, err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return fmt.Errorf("set %s.traineddata mode: %w", lang, err)
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return fmt.Errorf("install %s.traineddata: %w", lang, err)
 	}
 	return nil
 }

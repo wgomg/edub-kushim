@@ -11,18 +11,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/curation"
-	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const tagMeasureHelpText = "Usage: kushim tagmeasure [--run <batch-id>]\n\n" +
+const tagMeasureHelpText = "Usage: kushim tagmeasure [--from-batch <id> --exec-token <id>] [--no-wait]\n\n" +
 	"  Measure the tag store's extension algebra: per-value mass, pairwise\n" +
 	"  overlap, compound reconstructibility, and part coverage, written as\n" +
 	"  versioned evidence records.\n\n" +
-	"  Without flags: enqueue a blocking task and print its batch id; the queue\n" +
-	"  daemon claims it under the maintenance lock.\n" +
-	"  --run <batch-id>: the queued run's execution mode (no lock, no drain)."
+	"  Runs the pass immediately under the maintenance lock, creating no queue rows.\n" +
+	"  --from-batch <id>  execute one claimed batch (dispatcher and 'kushim batch run' contract)\n" +
+	"  --exec-token <id>  execution token passed with --from-batch\n" +
+	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n" +
+	"  --run <id>         deprecated alias of --from-batch\n\n" +
+	"  To enqueue a measurement: kushim batch create tagmeasure"
 
 func tagMeasureHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
@@ -30,75 +31,58 @@ func tagMeasureHandler(c *container.Container, args []string) error {
 		return nil
 	}
 
-	var batchID string
-	fp.String("--run", &batchID)
+	var batchID, execTokenParam, runID string
+	if err := fp.String("--from-batch", &batchID); err != nil {
+		return err
+	}
+	if err := fp.String("--exec-token", &execTokenParam); err != nil {
+		return err
+	}
+	if err := fp.String("--run", &runID); err != nil {
+		return err
+	}
+	noWait := false
+	fp.Bool("--no-wait", &noWait)
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
 
-	if batchID != "" {
-		if _, err := uuid.Parse(batchID); err != nil {
-			return fmt.Errorf("--run: invalid batch id %q", batchID)
-		}
-		return runTagMeasurePass(c, batchID)
-	}
-	return enqueueTagMeasure(c)
-}
-
-// enqueueTagMeasure creates the queued batch and its blocking task, or reports that a run is already
-// active; it writes no lock and never waits.
-func enqueueTagMeasure(c *container.Container) error {
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.TagMeasure: task.ConstantDedupKey(tags.TagMeasureDedupKey),
-	}, nil)
-	if err != nil {
-		return fmt.Errorf("task catalog: %w", err)
-	}
-	enqueuer := task.NewEnqueuer(client, catalog)
-	spec, err := cliBatchSpec()
+	batchID, execTokenParam, err := resolveTagPassSelection(batchID, execTokenParam, runID)
 	if err != nil {
 		return err
 	}
-	batchID, alreadyQueued, err := curation.NewTagMeasure(client.Queries, enqueuer).Enqueue(context.Background(), spec)
-	if err != nil {
-		return fmt.Errorf("enqueue tag measure: %w", err)
+	if batchID != "" || execTokenParam != "" {
+		if noWait {
+			return fmt.Errorf("--no-wait applies to the direct run only")
+		}
+		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagMeasure, func(ctx context.Context) (json.RawMessage, error) {
+			return tagMeasurePass(ctx, c)
+		})
 	}
-	if alreadyQueued {
-		fmt.Println("A tag measure run is already queued or processing.")
-		return nil
-	}
-
-	fmt.Printf("Batch %s queued — run 'kushim queue' to process\n", batchID)
-	return nil
+	return runTagPassDirect(c, types.Task.Type.TagMeasure, noWait, func(ctx context.Context) (json.RawMessage, error) {
+		return tagMeasurePass(ctx, c)
+	})
 }
 
-// runTagMeasurePass runs one measurement pass as the queued task's forked child; the claiming parent
-// holds the maintenance lock and already drained.
-func runTagMeasurePass(c *container.Container, batchID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
-	defer cancel()
-
+// tagMeasurePass runs one measurement pass and returns its serialized report, the shared body of the
+// direct and batch modes. The batch id never enters the measurement's run keys: the run id stays fresh.
+func tagMeasurePass(ctx context.Context, c *container.Container) (json.RawMessage, error) {
 	client, err := c.GetClient()
 	if err != nil {
-		return fmt.Errorf("database: %w", err)
+		return nil, fmt.Errorf("database: %w", err)
 	}
 	if err := logTagMeasureStart(ctx, c, client); err != nil {
-		return err
+		return nil, err
 	}
 	report, err := tags.NewRunner(client, nil).Run(ctx, uuid.New())
 	if err != nil {
-		return fmt.Errorf("tag measure: %w", err)
+		return nil, fmt.Errorf("tag measure: %w", err)
 	}
-	return printTagMeasureReport(c, report, batchID)
+	return marshalTagMeasureReport(c, report)
 }
 
-// logTagMeasureStart records the sweep's opening line: how many tags the
-// store holds before the snapshot is read.
+// logTagMeasureStart records the sweep's opening line: how many tags the store holds before the snapshot
+// is read.
 func logTagMeasureStart(ctx context.Context, c *container.Container, client *database.Client) error {
 	count, err := client.Queries.CountTags(ctx)
 	if err != nil {
@@ -108,16 +92,14 @@ func logTagMeasureStart(ctx context.Context, c *container.Container, client *dat
 	return nil
 }
 
-func printTagMeasureReport(c *container.Container, report *tags.Report, batchID string) error {
+func marshalTagMeasureReport(c *container.Container, report *tags.Report) (json.RawMessage, error) {
 	raw, err := json.Marshal(report)
 	if err != nil {
-		return fmt.Errorf("marshal tag measure report: %w", err)
+		return nil, fmt.Errorf("marshal tag measure report: %w", err)
 	}
 
-	c.GetLogger().Info("", "tag measure run %s (batch %s): snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
-		report.RunID, batchID, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
+	c.GetLogger().Info("", "tag measure run %s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
+		report.RunID, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
 		report.Operators, report.States, report.Skipped, report.Worklists)
-
-	fmt.Printf("%s%s\n", tags.ReportPrefix, raw)
-	return nil
+	return raw, nil
 }

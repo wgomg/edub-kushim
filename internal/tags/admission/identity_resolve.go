@@ -55,11 +55,6 @@ type IdentityReport struct {
 	Failed   int `json:"failed"`
 }
 
-// IdentityReportPrefix marks the serialized IdentityReport inside the
-// tagidentity command's output; the task handler extracts the JSON that
-// follows it.
-const IdentityReportPrefix = "tagidentity-report: "
-
 type pendingCandidate struct {
 	name string
 	rows map[string]database.TagIdentityEvent

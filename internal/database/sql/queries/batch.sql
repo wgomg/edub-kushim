@@ -65,18 +65,6 @@ ORDER BY t.created_at LIMIT 1;
 -- name: GetBatch :one
 SELECT * FROM batch WHERE id = $1;
 
--- name: CountQueuedConsumeBatches :one
--- The non-consume task types (whose batches own their lifecycle in their handlers and never occupy a
--- consume slot) are owned by the registry and passed in, so this list cannot drift from
--- types.NonConsumeTaskTypes.
-SELECT COUNT(*) FROM batch b
-WHERE b.status = 'queued'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id)
-  AND NOT EXISTS (
-    SELECT 1 FROM task t
-    WHERE t.batch_id = b.id AND t.task_type::text = ANY(@non_consume_types::text[])
-  );
-
 -- name: ListQueuedBatchesByAge :many
 -- the dispatcher filters eligibility, backoff and claimability in Go over the oldest-first rows; the task
 -- type set is the batch's composition, so the catalog stays the single source of dispatch policy
@@ -120,25 +108,13 @@ WHERE batch.id = @id
   )
 RETURNING status;
 
--- pause authorizes like the settle: a leased execution must still own the lease, and a pool execution must
--- still hold a live claim of this batch, so a stale executor cannot pause the new run that replaced it
+-- pause authorizes like the settle: the execution must still own the lease, so a stale executor cannot
+-- pause the new run that replaced it
 -- name: SetBatchPaused :execrows
 UPDATE batch SET status = 'paused'
 WHERE batch.id = @id
   AND batch.status = 'processing'
-  AND (
-    EXISTS (
-      SELECT 1 FROM batch_owner bo
-      WHERE bo.batch_id = batch.id AND bo.owner_id = sqlc.narg(owner_id)::text
-    )
-    OR (
-      sqlc.narg(owner_id)::text IS NULL
-      AND EXISTS (
-        SELECT 1 FROM task t
-        WHERE t.batch_id = batch.id AND t.claim_token = sqlc.narg(claim_token)::uuid
-      )
-    )
-  );
+  AND batch_leased_by(batch.id, sqlc.narg(owner_id)::text);
 
 -- name: SetBatchCancelled :execrows
 UPDATE batch SET status = 'cancelled'
@@ -167,10 +143,6 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled,
     COUNT(*) FILTER (WHERE status = 'discarded')::bigint AS discarded
 FROM task WHERE batch_id = $1;
-
--- name: CountLiveBatches :one
-SELECT COUNT(*) FROM batch_owner
-WHERE last_heartbeat > CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int);
 
 -- name: CountLiveNoHoldsBatches :one
 -- the dispatcher's slot budget only charges batches that acquire no locks; a lock-holding batch is never

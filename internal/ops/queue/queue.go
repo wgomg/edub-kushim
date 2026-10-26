@@ -1,8 +1,6 @@
 // Package queue is the queue daemon: it LISTENs for batch and lock notifications, polls as a safety net,
-// claims queued batches through the dispatcher and forks each batch's task CLI in batch mode, runs the
-// blocking-task pools (backup, mirror, tag measure, tag audit, tag reconcile, tag identity) for the
-// workloads that do not go through the dispatcher yet, schedules the recurring runs and requeues stale
-// work through the reaper.
+// claims queued batches through the dispatcher — forking each batch's task CLI in batch mode — schedules
+// the recurring runs and requeues stale work through the reaper.
 package queue
 
 import (
@@ -29,9 +27,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/tags"
-	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
-	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -41,18 +37,10 @@ type daemon struct {
 	catalog  *task.Catalog
 	client   atomic.Pointer[database.Client]
 	batchSvc *service.Batch
-	pools    map[types.TaskType]*task.Pool
 
 	notifyCancel context.CancelFunc
 	notifyCh     chan struct{}
 	dispatcher   *dispatch.Dispatcher
-
-	backupPool       poolState
-	mirrorPool       poolState
-	tagReconcilePool poolState
-	tagMeasurePool   poolState
-	tagIdentityPool  poolState
-	tagAuditPool     poolState
 
 	thumbnailBackfill scheduleState
 	tagReconcile      scheduleState
@@ -63,13 +51,8 @@ type daemon struct {
 	lastStaleTaskClaim time.Time
 }
 
-type poolState struct {
-	pool    *task.Pool
-	started bool
-}
-
-// Run is the kushim queue verb: it runs the daemon loop until signalled,
-// claiming batches and tasks and forking the blocking-task children.
+// Run is the kushim queue verb: it runs the daemon loop until signalled, dispatching queued batches,
+// scheduling the recurring runs, forking each batch's task-CLI child and reaping stale work.
 func Run(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
 	if fp.Help("Usage: kushim queue [--bg]") {
@@ -161,11 +144,10 @@ func Run(c *container.Container, args []string) error {
 		c:        c,
 		catalog:  catalog,
 		batchSvc: service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries),
-		pools:    make(map[types.TaskType]*task.Pool),
 	}
 	d.client.Store(client)
 
-	go d.runPollingLoop(ctx, maxConcurrent)
+	go d.runPollingLoop(ctx)
 
 	d.startNotify(ctx)
 	defer d.stopNotify()
@@ -176,7 +158,7 @@ func Run(c *container.Container, args []string) error {
 		default:
 		}
 	}
-	d.dispatcher = dispatch.NewDispatcher(catalog, c.GetLogger(), types.HostQueue, maxConcurrent, wake)
+	d.dispatcher = dispatch.NewDispatcher(catalog, c.GetLogger(), types.HostQueue, maxConcurrent, wake, nil)
 
 	safetyInterval := 30 * time.Second
 	safetyTimer := time.NewTimer(safetyInterval)
@@ -210,7 +192,6 @@ func Run(c *container.Container, args []string) error {
 
 		case <-ctx.Done():
 			c.GetLogger().Info("", "queue daemon stopped")
-			d.stopPools()
 			return nil
 		}
 	}
@@ -220,70 +201,13 @@ func (d *daemon) startNotify(ctx context.Context) {
 	notifyCtx, cancel := context.WithCancel(ctx)
 	d.notifyCancel = cancel
 	d.notifyCh = make(chan struct{}, 4)
-	go listenForBatchNotifications(notifyCtx, config.BuildPostgresDSN(d.c.GetConfig().Db), d.notifyCh, d.c.GetLogger())
+	go dispatch.ListenForBatchNotifications(notifyCtx, config.BuildPostgresDSN(d.c.GetConfig().Db), d.notifyCh, d.c.GetLogger())
 }
 
 func (d *daemon) stopNotify() {
 	if d.notifyCancel != nil {
 		d.notifyCancel()
 	}
-}
-
-// pool lazily builds the pool of one maintenance type: the caller supplies the type's handler constructor,
-// because only that call site knows what the handler needs. The pool caches until a reconnect drops the
-// client it wraps.
-func (d *daemon) pool(taskType types.TaskType, interval time.Duration, newHandler func(*database.Client) (task.Handler, error)) (*task.Pool, error) {
-	if pool := d.pools[taskType]; pool != nil {
-		return pool, nil
-	}
-
-	client := d.client.Load()
-	handler, err := newHandler(client)
-	if err != nil {
-		return nil, err
-	}
-	registry := task.NewRegistry()
-	registry.Register(taskType, handler)
-	runner := task.NewRunner(task.NewStore(client), registry, d.c.GetLogger())
-
-	pool := task.NewPool(d.c.GetLogger(), runner, 1, interval, taskType)
-	d.pools[taskType] = pool
-	return pool, nil
-}
-
-func (d *daemon) startPool(ctx context.Context, taskType types.TaskType, state *poolState, interval time.Duration, newHandler func(*database.Client) (task.Handler, error)) error {
-	if state.started {
-		return nil
-	}
-	pool, err := d.pool(taskType, interval, newHandler)
-	if err != nil {
-		return err
-	}
-	pool.Start(ctx)
-	state.pool = pool
-	state.started = true
-	d.c.GetLogger().Info("", "%s pool started (delayed)", taskType)
-	return nil
-}
-
-func stopPool(state *poolState) {
-	if !state.started || state.pool == nil {
-		return
-	}
-	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	state.pool.Stop(stopCtx)
-	state.pool = nil
-	state.started = false
-}
-
-func (d *daemon) stopPools() {
-	stopPool(&d.backupPool)
-	stopPool(&d.mirrorPool)
-	stopPool(&d.tagReconcilePool)
-	stopPool(&d.tagMeasurePool)
-	stopPool(&d.tagIdentityPool)
-	stopPool(&d.tagAuditPool)
 }
 
 func (d *daemon) tick(ctx context.Context) {
@@ -329,8 +253,6 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 		return
 	}
 
-	d.stopPools()
-	clear(d.pools)
 	d.client.Store(newClient)
 	d.batchSvc = service.NewBatch(newClient, d.c.GetConfig().Consumer.Reclaim.MaxRetries)
 
@@ -339,57 +261,34 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 }
 
 func (d *daemon) ensureBackup(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
-	if cfg.Backup.Enabled {
-		if err := d.startPool(ctx, types.Task.Type.Backup, &d.backupPool, time.Minute, func(client *database.Client) (task.Handler, error) {
-			db, err := d.c.GetDB()
-			if err != nil {
-				return nil, fmt.Errorf("database: %w", err)
-			}
-			return backup.NewBackupTaskHandler(db, client.Queries, d.c.GetConfig, d.c.GetLogger()), nil
-		}); err != nil {
-			d.c.GetLogger().Error("", "backup pool: %v", err)
+	if !cfg.Backup.Enabled {
+		return
+	}
+	locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
+	if lockErr != nil {
+		d.c.GetLogger().Error("", "backup lock check: %v", lockErr)
+	} else if locked == 0 {
+		if err := maybeScheduleBackup(ctx, d.c, client, enqueuer, cfg); err != nil {
+			d.c.GetLogger().Error("", "backup scheduling: %v", err)
 		}
-		locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
-		if lockErr != nil {
-			d.c.GetLogger().Error("", "backup lock check: %v", lockErr)
-		} else if locked == 0 {
-			if err := maybeScheduleBackup(ctx, d.c, client, enqueuer, cfg); err != nil {
-				d.c.GetLogger().Error("", "backup scheduling: %v", err)
-			}
-		}
-	} else if d.backupPool.started {
-		stopPool(&d.backupPool)
-		d.c.GetLogger().Info("", "backup pool stopped (backup disabled)")
 	}
 }
 
 func (d *daemon) ensureMirror(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
-	if cfg.Mirror.Enabled {
-		if err := d.startPool(ctx, types.Task.Type.Mirror, &d.mirrorPool, time.Minute, func(client *database.Client) (task.Handler, error) {
-			return backup.NewMirrorTaskHandler(client.Queries, d.c.GetConfig, d.c.GetLogger()), nil
-		}); err != nil {
-			d.c.GetLogger().Error("", "mirror pool: %v", err)
+	if !cfg.Mirror.Enabled {
+		return
+	}
+	locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
+	if lockErr != nil {
+		d.c.GetLogger().Error("", "mirror lock check: %v", lockErr)
+	} else if locked == 0 {
+		if err := maybeScheduleMirror(ctx, d.c, client, enqueuer, cfg); err != nil {
+			d.c.GetLogger().Error("", "mirror scheduling: %v", err)
 		}
-		locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
-		if lockErr != nil {
-			d.c.GetLogger().Error("", "mirror lock check: %v", lockErr)
-		} else if locked == 0 {
-			if err := maybeScheduleMirror(ctx, d.c, client, enqueuer, cfg); err != nil {
-				d.c.GetLogger().Error("", "mirror scheduling: %v", err)
-			}
-		}
-	} else if d.mirrorPool.started {
-		stopPool(&d.mirrorPool)
-		d.c.GetLogger().Info("", "mirror pool stopped (mirror disabled)")
 	}
 }
 
 func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
-	if err := d.startPool(ctx, types.Task.Type.TagReconcile, &d.tagReconcilePool, time.Minute, func(client *database.Client) (task.Handler, error) {
-		return reconcile.NewTagReconcileTaskHandler(client.Queries, d.c.GetLogger()), nil
-	}); err != nil {
-		d.c.GetLogger().Error("", "tag reconcile pool: %v", err)
-	}
 	if cfg.Enricher.TagReconcile.Enabled {
 		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagReconcile, tagReconcileSpec); err != nil {
 			d.c.GetLogger().Error("", "tag reconcile scheduling: %v", err)
@@ -398,11 +297,6 @@ func (d *daemon) ensureTagReconcile(ctx context.Context, cfg *config.Config, cli
 }
 
 func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
-	if err := d.startPool(ctx, types.Task.Type.TagMeasure, &d.tagMeasurePool, 5*time.Second, func(client *database.Client) (task.Handler, error) {
-		return tags.NewTagMeasureTaskHandler(client.Queries, d.c.GetLogger()), nil
-	}); err != nil {
-		d.c.GetLogger().Error("", "tag measure pool: %v", err)
-	}
 	if cfg.Enricher.TagMeasure.Enabled {
 		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagMeasure, tagMeasureSpec); err != nil {
 			d.c.GetLogger().Error("", "tag measure scheduling: %v", err)
@@ -411,11 +305,6 @@ func (d *daemon) ensureTagMeasure(ctx context.Context, cfg *config.Config, clien
 }
 
 func (d *daemon) ensureTagIdentity(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
-	if err := d.startPool(ctx, types.Task.Type.TagIdentity, &d.tagIdentityPool, 5*time.Second, func(client *database.Client) (task.Handler, error) {
-		return admission.NewTagIdentityTaskHandler(client.Queries, d.c.GetLogger()), nil
-	}); err != nil {
-		d.c.GetLogger().Error("", "tag identity pool: %v", err)
-	}
 	if cfg.Enricher.TagAdjudicator.Enabled {
 		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagIdentity, tagIdentitySpec); err != nil {
 			d.c.GetLogger().Error("", "tag identity scheduling: %v", err)
@@ -424,11 +313,6 @@ func (d *daemon) ensureTagIdentity(ctx context.Context, cfg *config.Config, clie
 }
 
 func (d *daemon) ensureTagAudit(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer) {
-	if err := d.startPool(ctx, types.Task.Type.TagAudit, &d.tagAuditPool, 5*time.Second, func(client *database.Client) (task.Handler, error) {
-		return admission.NewTagAuditTaskHandler(client.Queries, d.c.GetLogger()), nil
-	}); err != nil {
-		d.c.GetLogger().Error("", "tag audit pool: %v", err)
-	}
 	if cfg.Enricher.TagAudit.Enabled {
 		if err := maybeScheduleAnchored(ctx, d.c, client, enqueuer, cfg, &d.tagAudit, tagAuditSpec); err != nil {
 			d.c.GetLogger().Error("", "tag audit scheduling: %v", err)
@@ -436,7 +320,7 @@ func (d *daemon) ensureTagAudit(ctx context.Context, cfg *config.Config, client 
 	}
 }
 
-func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
+func (d *daemon) runPollingLoop(ctx context.Context) {
 	c := d.c
 	var missingTools []config.ExternalTool
 	var lastCfg *config.Config
@@ -452,7 +336,6 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 		interval := max(time.Duration(pollingCfg.Interval)*time.Minute, time.Minute)
 
 		client := d.client.Load()
-		batchSvc := service.NewBatch(client, cfgPtr.Consumer.Reclaim.MaxRetries)
 		if pollingCfg.Enabled && config.IsWithinActiveWindows(pollingCfg.Windows) {
 			locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
 			if lockErr != nil {
@@ -460,7 +343,7 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 			} else if locked > 0 {
 				c.GetLogger().Debug("", "polling: skipped — backup in progress")
 			} else {
-				pollingTick(ctx, c, client, batchSvc, task.NewEnqueuer(client, d.catalog), maxConcurrent, missingTools)
+				pollingTick(ctx, c, client, task.NewEnqueuer(client, d.catalog), missingTools)
 			}
 		} else if pollingCfg.Enabled {
 			c.GetLogger().Debug("", "polling: disabled — outside active windows")
@@ -476,24 +359,7 @@ func (d *daemon) runPollingLoop(ctx context.Context, maxConcurrent int) {
 	}
 }
 
-func pollingTick(ctx context.Context, c *container.Container, client *database.Client, batchSvc *service.Batch, enqueuer *task.Enqueuer, maxConcurrent int, missingTools []config.ExternalTool) {
-	// only count batches that occupy a consume slot; maintenance and config batches own their lifecycle
-	// outside the dispatcher until they move onto the task CLI
-	queuedCount, err := batchSvc.CountQueuedConsumeBatches(ctx)
-	if err != nil {
-		c.GetLogger().Error("", "polling: count queued batches: %v", err)
-		return
-	}
-	liveCount, err := batchSvc.CountLiveBatches(ctx)
-	if err != nil {
-		c.GetLogger().Error("", "polling: count live batches: %v", err)
-		return
-	}
-	if queuedCount+liveCount >= int64(maxConcurrent) {
-		c.GetLogger().Debug("", "polling: skipped — %d live, %d queued (max %d)", liveCount, queuedCount, maxConcurrent)
-		return
-	}
-
+func pollingTick(ctx context.Context, c *container.Container, client *database.Client, enqueuer *task.Enqueuer, missingTools []config.ExternalTool) {
 	if len(missingTools) > 0 {
 		names := make([]string, len(missingTools))
 		for i, t := range missingTools {

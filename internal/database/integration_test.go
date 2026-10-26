@@ -133,17 +133,17 @@ func TestDocumentTags(t *testing.T) {
 func TestTaskLifecycle(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	id := insertTask(t, q, "tc-1", types.Task.Status.Pending)
+	seedLease(t, q, "tc-batch", "tc-owner")
+	id := insertBatchTask(t, q, "tc-1", "tc-batch", types.Task.Status.Pending)
 	task, _ := q.GetTask(ctx, id)
 	assertEqual(t, string(task.Status), "pending", "pending")
-	token := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-	rows, _ := q.ClaimTask(ctx, ClaimTaskParams{ID: id, ClaimToken: token})
+	rows, _ := q.ClaimTask(ctx, id)
 	assertEqual(t, rows, int64(1), "claimed")
 	task, _ = q.GetTask(ctx, id)
 	assertEqual(t, string(task.Status), "processing", "processing")
 	result := json.RawMessage(`{"ok":true}`)
 	_, err := q.CompleteBlockingTask(ctx, CompleteBlockingTaskParams{
-		ID: id, Result: &result, ClaimToken: token,
+		ID: id, Result: &result, OwnerID: "tc-owner",
 	})
 	assertNoError(t, err, "complete")
 	task, _ = q.GetTask(ctx, id)
@@ -260,6 +260,7 @@ func TestGetPermanentlyFailedConsumeTaskPayloads(t *testing.T) {
 
 	err := q.CreateBatch(ctx, CreateBatchParams{ID: "gq-batch", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing})
 	assertNoError(t, err, "create batch")
+	seedLease(t, q, "gq-batch", "gq-owner")
 
 	gqPayload := json.RawMessage(`{"file_path":"/tmp/test.pdf","on_completed":"enrich-1"}`)
 	id, err := q.CreateTask(ctx, CreateTaskParams{
@@ -271,11 +272,10 @@ func TestGetPermanentlyFailedConsumeTaskPayloads(t *testing.T) {
 	})
 	assertNoError(t, err, "create task")
 
-	token := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-	_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id, ClaimToken: token})
+	_, err = q.ClaimTask(ctx, id)
 	assertNoError(t, err, "claim failed task")
 	_, err = q.FailBlockingTask(ctx, FailBlockingTaskParams{
-		ID: id, Error: sql.NullString{String: "Max retries exceeded (3)", Valid: true}, ClaimToken: token,
+		ID: id, Error: sql.NullString{String: "Max retries exceeded (3)", Valid: true}, OwnerID: "gq-owner",
 	})
 	assertNoError(t, err, "fail task")
 	if _, err := db.ExecContext(ctx, "UPDATE task SET attempts = 3 WHERE id = $1", id); err != nil {
@@ -292,11 +292,10 @@ func TestGetPermanentlyFailedConsumeTaskPayloads(t *testing.T) {
 	})
 	assertNoError(t, err, "create other task")
 
-	token2 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-	_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id2, ClaimToken: token2})
+	_, err = q.ClaimTask(ctx, id2)
 	assertNoError(t, err, "claim other task")
 	_, err = q.FailBlockingTask(ctx, FailBlockingTaskParams{
-		ID: id2, Error: sql.NullString{String: "some other error", Valid: true}, ClaimToken: token2,
+		ID: id2, Error: sql.NullString{String: "some other error", Valid: true}, OwnerID: "gq-owner",
 	})
 	assertNoError(t, err, "fail other task")
 
@@ -1091,28 +1090,29 @@ func TestTaskHealthQueries(t *testing.T) {
 	})
 
 	t.Run("with mixed tasks", func(t *testing.T) {
+		seedLease(t, q, "th-batch-0", "th-owner-0")
 		id1, err := q.CreateTask(ctx, CreateTaskParams{
 			TaskID: "th-completed", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
+			BatchID: sql.NullString{String: "th-batch-0", Valid: true},
 		})
 		assertNoError(t, err, "create completed task")
-		token1 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-		_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id1, ClaimToken: token1})
+		_, err = q.ClaimTask(ctx, id1)
 		assertNoError(t, err, "claim")
 		_, err = q.CompleteBlockingTask(ctx, CompleteBlockingTaskParams{
-			ID: id1, Result: nil, ClaimToken: token1,
+			ID: id1, Result: nil, OwnerID: "th-owner-0",
 		})
 		assertNoError(t, err, "complete")
 
+		seedLease(t, q, "th-batch-1", "th-owner-1")
 		id2, err := q.CreateTask(ctx, CreateTaskParams{
 			TaskID: "th-failed", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
 			BatchID: sql.NullString{String: "th-batch-1", Valid: true},
 		})
 		assertNoError(t, err, "create failed task")
-		token2 := uuid.NullUUID{UUID: uuid.New(), Valid: true}
-		_, err = q.ClaimTask(ctx, ClaimTaskParams{ID: id2, ClaimToken: token2})
+		_, err = q.ClaimTask(ctx, id2)
 		assertNoError(t, err, "claim failed task")
 		_, err = q.FailBlockingTask(ctx, FailBlockingTaskParams{
-			ID: id2, Error: sql.NullString{String: "x", Valid: true}, ClaimToken: token2,
+			ID: id2, Error: sql.NullString{String: "x", Valid: true}, OwnerID: "th-owner-1",
 		})
 		assertNoError(t, err, "fail")
 
@@ -1127,7 +1127,7 @@ func TestTaskHealthQueries(t *testing.T) {
 			BatchID: sql.NullString{String: "th-batch-2", Valid: true},
 		})
 		assertNoError(t, err, "create processing task")
-		rows, err := q.ClaimTask(ctx, ClaimTaskParams{ID: id4})
+		rows, err := q.ClaimTask(ctx, id4)
 		assertNoError(t, err, "claim processing task")
 		assertEqual(t, rows, int64(1), "claimed")
 
@@ -1232,14 +1232,14 @@ func TestCountProcessingTasks(t *testing.T) {
 
 	t.Run("counts only consume and enrich", func(t *testing.T) {
 		id1, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-1", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, ClaimTaskParams{ID: id1})
+		q.ClaimTask(ctx, id1)
 
 		id2, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-2", TaskType: types.Task.Type.Enrich, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, ClaimTaskParams{ID: id2})
+		q.ClaimTask(ctx, id2)
 
-		// config task in processing should NOT be counted
-		id3, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-3", TaskType: types.Task.Type.Config, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, ClaimTaskParams{ID: id3})
+		// a maintenance-holding task in processing should NOT be counted
+		id3, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-3", TaskType: types.Task.Type.TagMeasure, Status: types.Task.Status.Pending})
+		q.ClaimTask(ctx, id3)
 
 		count, err := q.CountProcessingTasks(ctx, types.TaskTypesWaitingOn(types.LockMaintenance))
 		assertNoError(t, err, "count with tasks")
@@ -1251,13 +1251,13 @@ func TestCountProcessingTasks(t *testing.T) {
 		// blocking task in processing is invisible to WaitForTaskDrain.
 		resetDB(t, q)
 		idBk, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-bk", TaskType: types.Task.Type.Backup, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, ClaimTaskParams{ID: idBk})
+		q.ClaimTask(ctx, idBk)
 
 		idMr, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-mr", TaskType: types.Task.Type.Mirror, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, ClaimTaskParams{ID: idMr})
+		q.ClaimTask(ctx, idMr)
 
 		idCn, _ := q.CreateTask(ctx, CreateTaskParams{TaskID: "cpt-cn", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending})
-		q.ClaimTask(ctx, ClaimTaskParams{ID: idCn})
+		q.ClaimTask(ctx, idCn)
 
 		count, err := q.CountProcessingTasks(ctx, types.TaskTypesWaitingOn(types.LockMaintenance))
 		assertNoError(t, err, "count")
@@ -1276,22 +1276,31 @@ func TestWaitedQueriesBlockDuringMaintenance(t *testing.T) {
 	maintenance := []string{string(types.LockMaintenance)}
 	defer q.ReleaseLocksForToken(ctx, ReleaseLocksForTokenParams{LockNames: types.LockNameValues(), OwnerToken: uuid.NullUUID{}})
 
-	// Create a pending consume task
+	// Create a leased batch with a pending consume task
+	const batchID, owner = "gate-batch", "gate-owner"
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{
+		ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
+	}), "create batch")
+	seedLease(t, q, batchID, owner)
 	payload := json.RawMessage(`{"file":"test.pdf"}`)
-	id, err := q.CreateTask(ctx, CreateTaskParams{
+	_, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID: "gate-1", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending, Payload: &payload,
+		BatchID: sql.NullString{String: batchID, Valid: true},
 	})
 	assertNoError(t, err, "create task")
-	_ = id
 
 	t.Run("no waits returns task when unlocked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume})
+		taskID, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
+			TaskType: types.Task.Type.Consume, OwnerID: owner,
+		})
 		assertNoError(t, err, "ungated claim")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
 
 	t.Run("waiting on maintenance returns task when unlocked", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, WaitLocks: maintenance})
+		taskID, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
+			TaskType: types.Task.Type.Consume, OwnerID: owner, WaitLocks: maintenance,
+		})
 		assertNoError(t, err, "gated claim unlocked")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
@@ -1302,30 +1311,25 @@ func TestWaitedQueriesBlockDuringMaintenance(t *testing.T) {
 	assertEqual(t, rows, int64(1), "acquire lock")
 
 	t.Run("waiting on maintenance returns ErrNoRows when held", func(t *testing.T) {
-		_, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume, WaitLocks: maintenance})
+		_, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
+			TaskType: types.Task.Type.Consume, OwnerID: owner, WaitLocks: maintenance,
+		})
 		assertEqual(t, err, sql.ErrNoRows, "gated claim blocked during maintenance")
 	})
 
 	t.Run("no waits still returns task when held", func(t *testing.T) {
-		taskID, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{TaskType: types.Task.Type.Consume})
+		taskID, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
+			TaskType: types.Task.Type.Consume, OwnerID: owner,
+		})
 		assertNoError(t, err, "ungated claim still works")
 		assertEqual(t, taskID > 0, true, "got a task id")
 	})
 
-	t.Run("waiting with owner also blocked when held", func(t *testing.T) {
-		batchID := "gate-batch"
-		q.CreateBatch(ctx, CreateBatchParams{ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued})
-		q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: batchID, OwnerID: "gate-owner", Pid: 999})
-
-		q.CreateTask(ctx, CreateTaskParams{
-			TaskID: "gate-owner-task", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
-			BatchID: sql.NullString{String: batchID, Valid: true},
-		})
-
+	t.Run("another owner's lease does not see the task", func(t *testing.T) {
 		_, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
-			TaskType: types.Task.Type.Consume, OwnerID: "gate-owner", WaitLocks: maintenance,
+			TaskType: types.Task.Type.Consume, OwnerID: "other-owner", WaitLocks: maintenance,
 		})
-		assertEqual(t, err, sql.ErrNoRows, "gated owner claim blocked during maintenance")
+		assertEqual(t, err, sql.ErrNoRows, "an execution only claims tasks of the batches it owns")
 	})
 }
 
@@ -1347,13 +1351,19 @@ func TestThumbnailClaimWaitsForStorage(t *testing.T) {
 	})
 
 	payload := json.RawMessage(`{"file":"t.pdf"}`)
+	const batchID, owner = "thumb-gate-batch", "thumb-gate-owner"
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{
+		ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
+	}), "create batch")
+	seedLease(t, q, batchID, owner)
 	_, err := q.CreateTask(ctx, CreateTaskParams{
 		TaskID: "thumb-gate", TaskType: types.Task.Type.Thumbnail, Status: types.Task.Status.Pending, Payload: &payload,
+		BatchID: sql.NullString{String: batchID, Valid: true},
 	})
 	assertNoError(t, err, "create thumbnail task")
 
-	id, err := q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{
-		TaskType: types.Task.Type.Thumbnail, WaitLocks: waits,
+	id, err := q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
+		TaskType: types.Task.Type.Thumbnail, OwnerID: owner, WaitLocks: waits,
 	})
 	assertNoError(t, err, "claim while storage is free")
 	assertEqual(t, id > 0, true, "got a task id")
@@ -1364,8 +1374,8 @@ func TestThumbnailClaimWaitsForStorage(t *testing.T) {
 	assertNoError(t, err, "hold storage")
 	assertEqual(t, rows, int64(1), "hold storage")
 
-	_, err = q.GetNextPendingTaskOfType(ctx, GetNextPendingTaskOfTypeParams{
-		TaskType: types.Task.Type.Thumbnail, WaitLocks: waits,
+	_, err = q.GetNextPendingTaskOfTypeForOwner(ctx, GetNextPendingTaskOfTypeForOwnerParams{
+		TaskType: types.Task.Type.Thumbnail, OwnerID: owner, WaitLocks: waits,
 	})
 	assertEqual(t, err, sql.ErrNoRows, "thumbnail claim deferred while storage is held")
 }
@@ -1574,6 +1584,31 @@ func insertTask(t *testing.T, q *Queries, taskID string, status types.TaskStatus
 	})
 	assertNoError(t, err, "insert "+taskID)
 	return id
+}
+
+// insertBatchTask creates a consume task attached to batchID; the transition guard reads the batch's lease,
+// so callers seed one with seedLease.
+func insertBatchTask(t *testing.T, q *Queries, taskID, batchID string, status types.TaskStatus) int64 {
+	t.Helper()
+	p := json.RawMessage(`{}`)
+	id, err := q.CreateTask(context.Background(), CreateTaskParams{
+		TaskID: taskID, TaskType: types.Task.Type.Consume, Status: status, Payload: &p,
+		BatchID: sql.NullString{String: batchID, Valid: true},
+	})
+	assertNoError(t, err, "insert "+taskID)
+	return id
+}
+
+// seedLease creates a queued batch and its execution lease, the guard every task transition checks.
+func seedLease(t *testing.T, q *Queries, batchID, owner string) {
+	t.Helper()
+	ctx := context.Background()
+	assertNoError(t, q.CreateBatch(ctx, CreateBatchParams{
+		ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
+	}), "create lease batch "+batchID)
+	rows, err := q.TryInsertBatchOwner(ctx, TryInsertBatchOwnerParams{BatchID: batchID, OwnerID: owner, Pid: 1})
+	assertNoError(t, err, "insert lease "+batchID)
+	assertEqual(t, rows, int64(1), "lease inserted")
 }
 
 func getResID(t *testing.T, res sql.Result) int64 {

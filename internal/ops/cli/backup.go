@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
+	"github.com/wgomg/edub-kushim/internal/ops/consume"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -55,14 +56,23 @@ func checkRestorePreconditions(c *container.Container) (*database.Client, error)
 
 func backupHandler(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
-	if fp.Help("Usage: kushim backup [--path <dir>] [--mode <full|database|documents>] [--no-wait]\n" +
-		"  Run a backup immediately.\n\n" +
+	if fp.Help("Usage: kushim backup [--from-batch <id> --exec-token <id>] [--path <dir>] [--mode <full|database|documents>] [--no-wait]\n" +
+		"  Run a backup immediately, or execute one claimed backup batch\n" +
+		"  (--from-batch, dispatcher and 'kushim batch run' contract).\n\n" +
 		"  --path     Override output directory (default: config backup.path)\n" +
 		"  --mode     What to include: full (DB + documents), database, documents (default: full)\n" +
-		"  --no-wait  Exit non-zero instead of waiting for a lock or in-flight work") {
+		"  --no-wait  Exit non-zero instead of waiting for a lock or in-flight work\n\n" +
+		"  To enqueue a backup: kushim batch create backup [--mode <m>] [--path <dir>]") {
 		return nil
 	}
 
+	var batchID, execTokenParam string
+	if err := fp.String("--from-batch", &batchID); err != nil {
+		return err
+	}
+	if err := fp.String("--exec-token", &execTokenParam); err != nil {
+		return err
+	}
 	var overridePath string
 	var mode string
 	fp.String("--path", &overridePath)
@@ -71,6 +81,16 @@ func backupHandler(c *container.Container, args []string) error {
 	fp.Bool("--no-wait", &noWait)
 	if rest := fp.Rest(); len(rest) > 0 {
 		return fmt.Errorf("unknown arguments: %v", rest)
+	}
+
+	if batchID != "" || execTokenParam != "" {
+		if batchID == "" {
+			return fmt.Errorf("--exec-token requires --from-batch <id>")
+		}
+		if overridePath != "" || mode != "" || noWait {
+			return fmt.Errorf("--from-batch cannot be combined with the direct-mode flags")
+		}
+		return runBackupBatch(c, batchID, execTokenParam)
 	}
 
 	backupMode := backup.BackupMode(mode)
@@ -129,6 +149,27 @@ func backupHandler(c *container.Container, args []string) error {
 	}
 
 	return nil
+}
+
+// runBackupBatch executes one claimed backup batch in this child. The dispatcher claim owns the maintenance
+// hold; the handler runs over the same client the command claimed with and writes its result to the task row.
+func runBackupBatch(c *container.Container, batchID, execTokenParam string) error {
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	db, err := c.GetDB()
+	if err != nil {
+		return err
+	}
+
+	store := task.NewStore(client)
+	registry := task.NewRegistry()
+	registry.Register(types.Task.Type.Backup,
+		backup.NewBackupTaskHandler(db, client.Queries, c.GetConfig, c.GetLogger()))
+
+	_, err = consume.RunClaimedBatch(c, batchID, execTokenParam, store, registry, nil)
+	return err
 }
 
 func restoreHandler(c *container.Container, args []string) error {

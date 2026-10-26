@@ -74,13 +74,13 @@ internal/
   matcher/                  tag matcher: Hugot engine, socket client, embedding cache
   ops/                      process layer: cli/ (kushim verbs), queue/ (daemon + LISTEN/NOTIFY),
                             consume/ (per-batch child), setup/, container/ (DI), flags/,
-                            configtask/ (config task handler)
+                            configtask/ (migration task handlers)
   search/                   full-text + structured search
   service/                  business logic over database queries (Batch, Tag, People, ...)
   service/crud.go           shared aggregate struct (CrudServices)
   static/                   embedded SvelteKit build
   tags/                     tag store, measurement, coverage audit, policy, reconciliation + the tagmeasure/tagidentity/tagaudit handlers
-  task/                     task engine: registry, transactional enqueue, runner (claim → execute → settle), worker pool
+  task/                     task engine: registry, transactional enqueue, runner (claim → guarded complete/fail → settle), batch runner with per-type worker sets
   testutil/                 shared test helpers and mocks
   tools/                    the tool adapter layer + composition root (Runner)
   tools/textreducer/        TextRank-based text reduction adapter
@@ -105,7 +105,7 @@ Project stances to know before reading further:
   lumberjack) and the project's idioms are hand-rolled and consistent.
 - **Pointer receivers everywhere** — structs carrying `sync.Mutex`/`atomic`
   fields must never be copied (§3).
-- **The worker pool polls the database; it is not a job queue** (§8).
+- **The batch workers poll the database; it is not a job queue** (§8).
 - **No `errgroup`, no testify** — WaitGroup + channels + `sync.Once`, and
   hand-rolled mocks (§10, §20).
 
@@ -116,16 +116,16 @@ Project stances to know before reading further:
 Constructors and services return `(value, error)`; the interesting part is how
 `defer` is used. Three shapes recur:
 
-**Panic → error** (`internal/task/pool.go:91`) — a named return lets the
-deferred closure convert a worker panic into an error so the pool's restart
-loop can recover:
+**Panic → error** (`internal/task/execute.go:237`, `Runner.Next`) — a named
+return lets the deferred closure convert a worker panic into an error so the
+loop logs and continues instead of dying:
 
 ```go
-func (p *Pool) runWorker(id int, logPrefix string) (rerr error) {
+func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) {
 	defer func() {
-		if r := recover(); r != nil {
-			p.logger.Error("", "%s panic recovered: %v", logPrefix, r)
-			rerr = fmt.Errorf("worker panic: %v", r)
+		if rec := recover(); rec != nil {
+			r.logger.Error("", "handler panic recovered: %v", rec)
+			err = fmt.Errorf("handler panic: %v", rec)
 		}
 	}()
 	// ...
@@ -167,9 +167,9 @@ HTTP layer never touches config internals directly.
 ## 3. Structs, methods, and receivers
 
 **Every method in this codebase uses a pointer receiver** (`*Tag`, `*Runner`,
-`*Queries`, `*Pool`), for two reasons: methods may mutate state, and structs
+`*Queries`), for two reasons: methods may mutate state, and structs
 containing `sync.Mutex`/`sync.RWMutex`/`atomic` fields must never be copied —
-`matcher.TagEmbeddingStore`, `task.Pool`, and `log.Logger` are always used through `*T`.
+`matcher.TagEmbeddingStore` and `log.Logger` are always used through `*T`.
 
 Struct tags do triple duty in the config layer — YAML for the file,
 `mapstructure` for the API's dot-key PATCH path, JSON for responses
@@ -339,17 +339,16 @@ gets embeddings: it uses the client implementation.
 
 ### Small dependency interfaces
 
-The worker pool polls the *minimum* interface it needs:
+The batch workers drive the *minimum* interface they need:
 
 ```go
-// internal/task/pool.go:16 — what the pool's workers poll
-type Nexter interface {
-	Next(ctx context.Context, taskType types.TaskType) error
-}
+// internal/task/execute.go:355 — what the worker sets poll
+runner := NewRunner(deps.Store, deps.Registry, deps.Logger)
 ```
+with `Runner.Next(ctx, taskType)` the single method the loop calls.
 
-Satisfied by `*task.Runner`. This is the "accept interfaces, return structs"
-rule in practice.
+This is the "accept interfaces, return structs" rule in practice: consumers
+name the two or three methods they actually need.
 
 ---
 
@@ -554,54 +553,40 @@ The project's goroutines always follow two rules: **listen for an explicit
 stop channel AND `ctx.Done()`**, and **never share memory except through
 channels or guarded fields**.
 
-### The worker pool: `internal/task`
+### The batch runner: `internal/task`
 
-`task.Pool` is a generic bounded worker pool — but note the design: workers
-*poll* the database on a timer rather than receiving jobs from a channel. The
-DB (`ClaimNextPending`) is the queue; the pool just bounds concurrency
-(`internal/task/pool.go:71`):
+`task.RunBatch` spins up **worker sets** — one goroutine per task type,
+sized by that type's declared concurrency — and each worker *polls* the
+database on a ticker rather than receiving jobs from a channel. The DB
+(`ClaimNextPending`) is the queue; the worker count just bounds concurrency
+(`internal/task/execute.go:354`):
 
 ```go
-func (p *Pool) workerLoop(id int) {
-	defer p.wg.Done()
-	for {
-		err := p.runWorker(id, logPrefix)
-		if err == nil {
-			return
+for range workersForType {
+	workers.Go(func() {
+		for {
+			select {
+			case <-runCtx.Done():            // explicit stop + parent cancel
+				return
+			case <-time.After(batchClaimCadence):
+			}
+			if err := runner.Next(runCtx, taskType); err != nil {
+				deps.Logger.Error("", "%s worker: %v", taskType, err)
+			}
 		}
-		p.logger.Error("", "%s restarting after error: %v", logPrefix, err)
-		select {
-		case <-p.stopCh:        // explicit stop
-			return
-		case <-p.ctx.Done():    // parent cancelled
-			return
-		case <-time.After(p.interval):
-		}
-	}
+	})
 }
 ```
 
-The inner loop shows the canonical multi-case `select` — stop channel, context,
-a housekeeping ticker, and the work tick:
+The loop is the canonical bounded-poll shape: an explicit stop
+(`runCtx` cancellation, courtesy of `context.WithCancel` and the deferred
+`stopWorkers()`), and the work tick. The handler is a pure function —
+claiming, completing, failing and settling guard themselves against a racing
+reaper (§4)
 
-```go
-for {
-	select {
-	case <-p.stopCh:
-		return nil
-	case <-p.ctx.Done():
-		return nil
-	case <-memTicker.C:
-		// periodic memory logging
-	case <-time.After(p.interval):
-		if err := p.runner.Next(p.ctx, p.taskType); err != nil { ... }
-	}
-}
-```
-
-Workers crash-restart: a panic is converted to an error (§2), which makes the
-worker loop log and retry instead of dying. `Stop` is idempotent (`sync.Once`)
-and bounded by a timeout (§10).
+Workers crash-restart: a panic is converted to an error (§2), which makes
+`Next` log and continue instead of dying (the handler panic recovery lives in
+§4).
 
 ---
 
@@ -627,7 +612,7 @@ func WalkStorageDir(storageDir string) (<-chan OrphanedFileInfo, <-chan error) {
 }
 ```
 
-**Non-blocking send (notification coalescing)** (`internal/ops/queue/notify.go:68-71`)
+**Non-blocking send (notification coalescing)** (`internal/ops/dispatch/notify.go:59-63`)
 — Postgres NOTIFYs become wake-up hints; if the channel is full the
 notification is *dropped* — the 30-second safety timer is the source of truth,
 so dropping is safe:
@@ -673,33 +658,35 @@ func (e *EmbeddingStore) Entries() map[string][]float32 {
 }
 ```
 
-**Bounded shutdown**: `Stop` wraps `wg.Wait()` in a goroutine and races it
-against the context (`internal/task/pool.go:57`):
+**Bounded shutdown**: `RunBatch`'s `stopAndWait` races `workers.Wait()`
+against a deadline context (`internal/task/execute.go:378`):
 
 ```go
-done := make(chan struct{})
-go func() {
-	p.wg.Wait()
-	close(done)
-}()
-
-select {
-case <-done:
-	// all workers stopped
-case <-ctx.Done():
-	// shutdown timed out
+stopAndWait := func(op string) {
+	stopWorkers()
+	done := make(chan struct{})
+	go func() { workers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(batchShutdownTimeout):
+		deps.Logger.Info("", "batch %s: %s worker shutdown timed out", batchID, op)
+	}
 }
 ```
 
+The drain order is layered: the worker context is cancelled first
+(`stopWorkers`), then the wait is bounded, so a stuck handler still loses the
+shutdown race rather than hanging the child
+
 **`sync.Once` for idempotent cleanup** — `Stop` can be called twice safely
-(`internal/task/pool.go:50`); also the heartbeat stop (`task/heartbeat.go:15`)
+(`internal/ops/queue/queue.go`, `stopNotify`); also the heartbeat stop (`task/heartbeat.go:15`)
 and the tessdata download guard (`ocr/tessdata.go:15`):
 
 ```go
-p.stopOnce.Do(func() {
-	close(p.stopCh)
-	if p.cancel != nil {
-		p.cancel()
+notifyOnce.Do(func() {
+	close(stopCh)
+	if cancel != nil {
+		cancel()
 	}
 })
 ```
@@ -1359,10 +1346,12 @@ sticks to `any`.
 
 | I want to see... | Go to |
 |---|---|
-| A goroutine + select loop | `internal/task/pool.go` (worker), `internal/ops/queue/queue.go` (daemon), `internal/task/heartbeat.go` |
+| A goroutine + select loop | `internal/task/execute.go` (batch worker sets), `internal/ops/queue/queue.go` (daemon), `internal/task/heartbeat.go` |
 | Channels (producer/consumer, fan-out) | `internal/documents/ocr/standalone.go`, `internal/documents/storage/orphaned.go` |
-| Non-blocking send | `internal/ops/queue/notify.go:68-71` |
-| `sync.Once` idempotent stop | `internal/task/pool.go:50`, `internal/task/heartbeat.go:15` |
+| `sync.Once` idempotent stop | `internal/ops/queue/queue.go` (`stopNotify`), `internal/task/heartbeat.go:15` |
+| Non-blocking send | `internal/ops/dispatch/notify.go:59-63` |
+| Non-blocking send | `internal/ops/dispatch/notify.go:59-63` |
+| `sync.Once` idempotent stop | `internal/ops/queue/queue.go`/`wizard/server.go` (`stopNotify`), `internal/task/heartbeat.go:15` |
 | `atomic.Pointer` hot reload | `internal/ops/container/container.go:29`, `internal/api/server.go:33`, `internal/config/watcher.go` |
 | Timer drain/reset | `internal/ops/queue/queue.go:156-162` |
 | Signals → cancellation | `internal/ops/consume/consume.go:35` (`watchSignals`), `cmd/edub/main.go:82` |
@@ -1403,7 +1392,7 @@ sticks to `any`.
 - **Translate at the boundary.** Services end with `errs.FromDB(err, op)`;
   handlers map kinds with `writeServiceError`.
 - **Accept interfaces, return structs.** Declare the smallest interface you need
-  (`internal/task/pool.go:16`, the `Nexter` the pool polls) and add a `var _`
+  (the tag-tools runner, the matching client) and add a `var _`
   compile-time assertion where it matters.
 - **Pass `ctx` first** and select on `ctx.Done()` in every long-running
   goroutine.
@@ -1440,8 +1429,8 @@ sticks to `any`.
 - **Build tags need a blank line** after the `//go:build` line.
 - **`go:embed` paths are relative to the file** and can't use `..` or absolute
   paths; embed a directory and `fs.Sub` when needed.
-- **The worker pool polls; it is not a job queue.** Concurrency is bounded by
-  worker count, work is claimed from the DB. Adding work to a channel would
+- **The batch workers poll; it is not a job queue.** Concurrency is bounded by
+  worker set size, work is claimed from the DB. Adding work to a channel would
   break the design.
 
 ---

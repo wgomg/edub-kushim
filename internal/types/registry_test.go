@@ -11,13 +11,13 @@ func TestAllCounts(t *testing.T) {
 	if got, want := len(AllBatchStatuses()), 6; got != want {
 		t.Errorf("AllBatchStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskTypes()), 13; got != want {
+	if got, want := len(AllTaskTypes()), 12; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
 	if got, want := len(AllTaskStatuses()), 7; got != want {
 		t.Errorf("AllTaskStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(NonConsumeTaskTypes()), 9; got != want {
+	if got, want := len(NonConsumeTaskTypes()), 8; got != want {
 		t.Errorf("NonConsumeTaskTypes len = %d, want %d", got, want)
 	}
 }
@@ -77,7 +77,6 @@ func TestAllReturnsClone(t *testing.T) {
 
 func TestNonConsumeTaskTypes(t *testing.T) {
 	want := map[TaskType]bool{
-		Task.Type.Config:         true,
 		Task.Type.MigrateDB:      true,
 		Task.Type.MigrateStorage: true,
 		Task.Type.Backup:         true,
@@ -115,7 +114,6 @@ func TestHoldsLocks(t *testing.T) {
 		Task.Type.Consume:        false,
 		Task.Type.Enrich:         false,
 		Task.Type.Thumbnail:      false,
-		Task.Type.Config:         false,
 	}
 	for typ, want := range cases {
 		if got := typ.HoldsLocks(); got != want {
@@ -148,8 +146,8 @@ func TestLockDeclarations(t *testing.T) {
 		t.Error("LockHoldingTaskTypes misses a declared holder")
 	}
 
-	if declaration := LockDeclarationFor(Task.Type.Config); len(declaration.Holds)+len(declaration.WaitsFor) != 0 {
-		t.Errorf("config declares locks: %+v", declaration)
+	if declaration := LockDeclarationFor(TaskType("no-such-type")); len(declaration.Holds)+len(declaration.WaitsFor) != 0 {
+		t.Errorf("an undeclared type reports locks: %+v", declaration)
 	}
 	if got := len(AllLockNames()); got != 2 {
 		t.Errorf("AllLockNames len = %d, want 2", got)

@@ -56,10 +56,10 @@ func (s OwnerState) String() string {
 	}
 }
 
-// Execution authorizes the lifecycle writes of one run: the lease owner for a leased execution and the
-// task claim token for a pool execution. Settle, pause and the task transitions refuse a write whose
-// batch is no longer in the state the guard expects, so a stale executor cannot overwrite the run that
-// replaced it.
+// Execution authorizes the lifecycle writes of one run through the batch lease: the guard is the lease
+// owner. Settle, pause and the task transitions refuse a write whose batch is no longer in the state the
+// guard expects, so a stale executor cannot overwrite the run that replaced it. The reaper's settle passes
+// no guard after releasing the lease, which the queries accept when no owner row exists.
 type Execution struct {
 	BatchID string
 	Guard   uuid.UUID
@@ -322,12 +322,11 @@ func SettleBatch(ctx context.Context, client *database.Client, logger *log.Logge
 	return status, nil
 }
 
-// PauseBatch moves a processing batch to paused and releases its locks and lease. It authorizes like the
-// settle: a leased execution must still own the lease and a pool execution must still hold a claim of the
-// batch, so a stale executor cannot pause the run that replaced it. A refused pause (another owner, a
-// terminal batch or a batch that is no longer processing) leaves everything untouched and reports nil. The
-// leased child's poll loop stops on the paused status, and with the lease gone its owner-scoped claims find
-// nothing. logger must be non-nil.
+// PauseBatch moves a processing batch to paused and releases its locks and lease. It authorizes through the
+// lease: the execution must still own it, so a stale executor cannot pause the run that replaced it. A
+// refused pause (another owner, a terminal batch or a batch that is no longer processing) leaves everything
+// untouched and reports nil. The leased child's poll loop stops on the paused status, and with the lease
+// gone its owner-scoped claims find nothing. logger must be non-nil.
 func PauseBatch(ctx context.Context, client *database.Client, logger *log.Logger, exec Execution) error {
 	tx, err := client.BeginTx(ctx, nil)
 	if err != nil {
@@ -337,9 +336,8 @@ func PauseBatch(ctx context.Context, client *database.Client, logger *log.Logger
 
 	txQ := client.Queries.WithTx(tx)
 	rows, err := txQ.SetBatchPaused(ctx, database.SetBatchPausedParams{
-		ID:         exec.BatchID,
-		OwnerID:    executionOwner(exec),
-		ClaimToken: pauseClaimToken(exec),
+		ID:      exec.BatchID,
+		OwnerID: executionOwner(exec),
 	})
 	if err != nil {
 		return fmt.Errorf("pause batch %s: %w", exec.BatchID, err)
@@ -362,9 +360,9 @@ func PauseBatch(ctx context.Context, client *database.Client, logger *log.Logger
 
 // CancelBatch is the single cancel operation: it signals a live leased execution, cancels the batch's
 // pending, waiting and processing tasks, releases its locks and lease, and writes cancelled. A missing
-// batch reports ErrBatchNotFound and a terminal one ErrBatchTerminal. A pool-claimed batch has no lease to
-// signal; its executors observe the cancellation through their guarded transitions landing zero rows.
-// logger must be non-nil.
+// batch reports ErrBatchNotFound and a terminal one ErrBatchTerminal. A host-run lease carries pid 0, so
+// nothing is signalled; that executor observes the cancellation through its batch-status monitor and its
+// guarded transitions landing zero rows. logger must be non-nil.
 func CancelBatch(ctx context.Context, client *database.Client, logger *log.Logger, batchID string) (CancelResult, error) {
 	batch, err := client.Queries.GetBatch(ctx, batchID)
 	if err != nil {
@@ -597,15 +595,6 @@ func executionOwner(exec Execution) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: exec.Guard.String(), Valid: true}
-}
-
-// pauseClaimToken is the pool execution's claim token for the pause guard; a leased execution authorizes
-// through its owner row instead.
-func pauseClaimToken(exec Execution) uuid.NullUUID {
-	if exec.Leased {
-		return uuid.NullUUID{}
-	}
-	return uuid.NullUUID{UUID: exec.Guard, Valid: true}
 }
 
 func releaseOwnerRow(ctx context.Context, queries *database.Queries, exec Execution) error {

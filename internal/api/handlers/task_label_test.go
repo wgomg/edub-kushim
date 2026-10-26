@@ -22,8 +22,6 @@ func TestTaskLabel(t *testing.T) {
 		{"backup database from dedup key", "backup", snull("backup:database:2026-08-25"), "Backup (database)"},
 		{"database migration from task type", "migrate-db", snull("migrate-db"), "Database migration"},
 		{"storage migration from task type", "migrate-storage", snull("migrate-storage"), "Storage migration"},
-		{"config tessdata with language", "config", snull("config:tessdata:eng"), "Download tessdata (eng)"},
-		{"config hugot model", "config", snull("config:hugot"), "Download Hugot model"},
 		{"enrich without dedup key", "enrich", sql.NullString{}, "Enrich"},
 		{"thumbnail without dedup key", "thumbnail", snull(""), "Thumbnail"},
 		{"consume without dedup key", "consume", sql.NullString{}, "Consume"},

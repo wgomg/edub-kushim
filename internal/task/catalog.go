@@ -26,9 +26,9 @@ type staticDefinition struct {
 	hosts         []types.Host
 }
 
-// staticDefinitions is the closed task policy table. The queue daemon is the only process that can run
-// the ingest types in batch mode, so only those types declare a CLI and a host until Stage 6 extends
-// dispatch eligibility.
+// staticDefinitions is the closed task policy table. Kushim-hosted workloads run their own CLI in batch
+// mode on the queue host; the migrations also declare the setup wizard, which executes their handlers
+// in-process while no queue daemon exists. Every other type is queue-only.
 var staticDefinitions = map[types.TaskType]staticDefinition{
 	types.Task.Type.Consume: {
 		locks:         lockPolicy(types.Task.Type.Consume),
@@ -60,15 +60,54 @@ var staticDefinitions = map[types.TaskType]staticDefinition{
 		batchSelector: "--from-batch",
 		hosts:         []types.Host{types.HostQueue},
 	},
-	types.Task.Type.Backup:         {locks: lockPolicy(types.Task.Type.Backup)},
-	types.Task.Type.Mirror:         {locks: lockPolicy(types.Task.Type.Mirror)},
-	types.Task.Type.TagReconcile:   {locks: lockPolicy(types.Task.Type.TagReconcile)},
-	types.Task.Type.TagMeasure:     {locks: lockPolicy(types.Task.Type.TagMeasure)},
-	types.Task.Type.TagIdentity:    {locks: lockPolicy(types.Task.Type.TagIdentity)},
-	types.Task.Type.TagAudit:       {locks: lockPolicy(types.Task.Type.TagAudit)},
-	types.Task.Type.MigrateDB:      {locks: lockPolicy(types.Task.Type.MigrateDB)},
-	types.Task.Type.MigrateStorage: {locks: lockPolicy(types.Task.Type.MigrateStorage)},
-	types.Task.Type.Config:         {},
+	types.Task.Type.Backup: {
+		locks:         lockPolicy(types.Task.Type.Backup),
+		cli:           "backup",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue},
+	},
+	types.Task.Type.Mirror: {
+		locks:         lockPolicy(types.Task.Type.Mirror),
+		cli:           "mirror",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue},
+	},
+	types.Task.Type.TagReconcile: {
+		locks:         lockPolicy(types.Task.Type.TagReconcile),
+		cli:           "tagreconcile",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue},
+	},
+	types.Task.Type.TagMeasure: {
+		locks:         lockPolicy(types.Task.Type.TagMeasure),
+		cli:           "tagmeasure",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue},
+	},
+	types.Task.Type.TagIdentity: {
+		locks:         lockPolicy(types.Task.Type.TagIdentity),
+		cli:           "tagidentity",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue},
+	},
+	types.Task.Type.TagAudit: {
+		locks:         lockPolicy(types.Task.Type.TagAudit),
+		cli:           "tagaudit",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue},
+	},
+	types.Task.Type.MigrateDB: {
+		locks:         lockPolicy(types.Task.Type.MigrateDB),
+		cli:           "migrate",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue, types.HostWizard},
+	},
+	types.Task.Type.MigrateStorage: {
+		locks:         lockPolicy(types.Task.Type.MigrateStorage),
+		cli:           "migrate",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue, types.HostWizard},
+	},
 }
 
 // NewCatalog builds the task type table of one process boundary. dedupHooks and concurrency may be nil

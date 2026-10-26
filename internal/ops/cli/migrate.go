@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
+	"github.com/wgomg/edub-kushim/internal/ops/consume"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -22,11 +23,12 @@ import (
 
 func migrateHandler(c *container.Container, args []string) error {
 	if len(args) == 0 {
-		fmt.Println("Usage: kushim migrate <database|storage>\n" +
-			"  Migrate the database or the storage directories to new locations.\n\n" +
-			"  kushim migrate database    Copy the database to a new PostgreSQL server\n" +
-			"  kushim migrate storage     Relocate storage and consumption directories")
+		fmt.Println(migrateUsage)
 		return nil
+	}
+
+	if strings.HasPrefix(args[0], "-") {
+		return migrateBatchHandler(c, args)
 	}
 
 	switch args[0] {
@@ -37,6 +39,49 @@ func migrateHandler(c *container.Container, args []string) error {
 	default:
 		return fmt.Errorf("unknown migrate subcommand: %s (use 'database' or 'storage')", args[0])
 	}
+}
+
+const migrateUsage = "Usage: kushim migrate <database|storage> [flags]\n" +
+	"       kushim migrate --from-batch <id> --exec-token <id>\n" +
+	"  Migrate the database or the storage directories to new locations.\n\n" +
+	"  kushim migrate database    Copy the database to a new PostgreSQL server\n" +
+	"  kushim migrate storage     Relocate storage and consumption directories\n\n" +
+	"  --from-batch <id>  execute one claimed migration batch (dispatcher and 'kushim batch run' contract);\n" +
+	"                     both migration task types run through this one mode\n" +
+	"  --exec-token <id>  execution token passed with --from-batch"
+
+// migrateBatchHandler executes one claimed migration batch: the batch carries migrate-db or migrate-storage
+// tasks, and the child registers both handlers. The lease and every settle write stay in the source
+// database: the migrate-db handler only rewrites config.yaml, so the command's client is never switched
+// mid-run.
+func migrateBatchHandler(c *container.Container, args []string) error {
+	fp := flags.NewFlagParser(args)
+	var batchID, execTokenParam string
+	if err := fp.String("--from-batch", &batchID); err != nil {
+		return err
+	}
+	if err := fp.String("--exec-token", &execTokenParam); err != nil {
+		return err
+	}
+	if rest := fp.Rest(); len(rest) > 0 {
+		return fmt.Errorf("unknown argument: %s", rest[0])
+	}
+	if batchID == "" {
+		return fmt.Errorf("--from-batch <id> is required: run 'kushim batch run <id>' to execute a queued migration")
+	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+
+	store := task.NewStore(client)
+	registry := task.NewRegistry()
+	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, c.GetLogger()))
+	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, c.GetLogger()))
+
+	_, err = consume.RunClaimedBatch(c, batchID, execTokenParam, store, registry, nil)
+	return err
 }
 
 const migrateDatabaseUsage = "Usage: kushim migrate database --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]\n" +
@@ -176,18 +221,7 @@ func migrateStorageHandler(c *container.Container, args []string) error {
 	}
 
 	cfg := c.GetConfig()
-	payload := configtask.MigrateStoragePayload{ConfigDir: cfg.App.ConfigDir}
-	changed := false
-	if configtask.DirChanged(cfg.Storage.StorageDir, newStorage) {
-		payload.OldStorageDir = cfg.Storage.StorageDir
-		payload.NewStorageDir = newStorage
-		changed = true
-	}
-	if configtask.DirChanged(cfg.Storage.ConsumptionDir, newConsumption) {
-		payload.OldConsumptionDir = cfg.Storage.ConsumptionDir
-		payload.NewConsumptionDir = newConsumption
-		changed = true
-	}
+	payload, changed := configtask.StorageMigrationPayload(cfg, newStorage, newConsumption)
 	if !changed {
 		fmt.Println("No migration needed: requested directories already match the current config.")
 		return nil

@@ -110,19 +110,6 @@ func ReleaseLocksForBatch(ctx context.Context, queries *database.Queries, batchI
 	return notifyLocksReleased(ctx, queries, released)
 }
 
-// ReleaseLocksForStaleHolders releases the aged locks of processing tasks of the given holding types
-// and notifies the waiters.
-func ReleaseLocksForStaleHolders(ctx context.Context, queries *database.Queries, holdingTypes []types.TaskType) error {
-	released, err := queries.ReleaseLocksForStaleHolders(ctx, database.ReleaseLocksForStaleHoldersParams{
-		LockNames: types.LockNameValues(),
-		Types:     holdingTypes,
-	})
-	if err != nil {
-		return fmt.Errorf("release locks for stale holders: %w", err)
-	}
-	return notifyLocksReleased(ctx, queries, released)
-}
-
 func notifyLocksReleased(ctx context.Context, queries *database.Queries, released []string) error {
 	if len(released) == 0 {
 		return nil

@@ -13,17 +13,13 @@ import (
 )
 
 // Store is the persistence of the task lifecycle: claiming pending tasks under their execution guard,
-// completing, failing and activating them, plus the lock-holding variants that coordinate through the
-// declared resource locks. All methods are safe for concurrent use.
+// completing, failing and activating them. The guard is always the owning batch execution's lease owner;
+// the batch claim acquired the batch's locks, so task claims only verify their waits. All methods are safe
+// for concurrent use.
 type Store struct {
 	client  *database.Client
 	queries *database.Queries
 	ownerID string
-
-	// batchHoldsAcquired tells claims that the execution already holds the batch locks, so a claim verifies
-	// its waits and takes the guard without acquiring. The shared batch execution sets it after its batch-level
-	// acquisition.
-	batchHoldsAcquired bool
 }
 
 // NewStore builds the task store over the shared database client.
@@ -34,11 +30,6 @@ func NewStore(client *database.Client) *Store {
 // SetOwnerID records the owner identity written on claims and batch ownership rows.
 func (s *Store) SetOwnerID(id string) {
 	s.ownerID = id
-}
-
-// SetBatchHoldsAcquired must run after the batch-level acquisition and before the claims it affects.
-func (s *Store) SetBatchHoldsAcquired(acquired bool) {
-	s.batchHoldsAcquired = acquired
 }
 
 // Activation reports what activating a waiting child did: it became pending, or it was discarded because
@@ -52,17 +43,19 @@ const (
 	DiscardedDuplicate
 )
 
-// ClaimNextPending claims one pending task of the type under the execution guard and returns the task and
-// its guard. A leased execution claims under its owner id; a pool execution claims under a fresh token. The
-// selection only considers tasks whose batch is queued or processing, so a task left behind in any other
-// batch can neither be claimed nor block the type queue. The claim is one transaction: the task row, the
-// batch row lock and the queued-to-processing flip and, for a type that holds locks, the all-or-nothing
-// acquisition. ErrLockBusy surfaces whenever a lock the claim needs is held, and sql.ErrNoRows whenever there
-// is no claimable task.
+// ClaimNextPending claims one pending task of the type under the batch's execution guard and returns the
+// task and its guard, which is the lease owner. The selection only considers tasks whose batch this
+// execution owns and that is queued or processing, so a task left behind in any other batch can neither be
+// claimed nor block the type queue. A type that waits for a held lock is skipped (its waits are verified by
+// the selection; the batch claim owns the holds). sql.ErrNoRows reports that no task is claimable, and a
+// store without an execution owner cannot claim: every claim is owner-scoped.
 func (s *Store) ClaimNextPending(ctx context.Context, taskType types.TaskType) (database.Task, uuid.UUID, error) {
-	token, err := s.claimToken()
+	if s.ownerID == "" {
+		return database.Task{}, uuid.Nil, fmt.Errorf("claim %s: the store carries no execution owner", taskType)
+	}
+	token, err := uuid.Parse(s.ownerID)
 	if err != nil {
-		return database.Task{}, uuid.Nil, err
+		return database.Task{}, uuid.Nil, fmt.Errorf("owner id %q is not a uuid: %w", s.ownerID, err)
 	}
 
 	declaration := types.LockDeclarationFor(taskType)
@@ -76,27 +69,16 @@ func (s *Store) ClaimNextPending(ctx context.Context, taskType types.TaskType) (
 
 	txQ := s.client.Queries.WithTx(tx)
 
-	var id int64
-	if s.ownerID != "" {
-		id, err = txQ.GetNextPendingTaskOfTypeForOwner(ctx, database.GetNextPendingTaskOfTypeForOwnerParams{
-			TaskType:  taskType,
-			OwnerID:   s.ownerID,
-			WaitLocks: waitLocks,
-		})
-	} else {
-		id, err = txQ.GetNextPendingTaskOfType(ctx, database.GetNextPendingTaskOfTypeParams{
-			TaskType:  taskType,
-			WaitLocks: waitLocks,
-		})
-	}
+	id, err := txQ.GetNextPendingTaskOfTypeForOwner(ctx, database.GetNextPendingTaskOfTypeForOwnerParams{
+		TaskType:  taskType,
+		OwnerID:   s.ownerID,
+		WaitLocks: waitLocks,
+	})
 	if err != nil {
 		return database.Task{}, uuid.Nil, err
 	}
 
-	rows, err := txQ.ClaimTask(ctx, database.ClaimTaskParams{
-		ID:         id,
-		ClaimToken: uuid.NullUUID{UUID: token, Valid: true},
-	})
+	rows, err := txQ.ClaimTask(ctx, id)
 	if err != nil {
 		return database.Task{}, uuid.Nil, fmt.Errorf("claim task %d: %w", id, err)
 	}
@@ -132,13 +114,6 @@ func (s *Store) ClaimNextPending(ctx context.Context, taskType types.TaskType) (
 		}
 	}
 
-	if taskType.HoldsLocks() && !s.batchHoldsAcquired {
-		if err := acquireLocks(ctx, txQ, declaration.Holds, declaration.WaitsFor,
-			uuid.NullUUID{UUID: token, Valid: true}, task.BatchID.String); err != nil {
-			return database.Task{}, uuid.Nil, err
-		}
-	}
-
 	if err := tx.Commit(); err != nil {
 		return database.Task{}, uuid.Nil, fmt.Errorf("commit claim transaction: %w", err)
 	}
@@ -156,25 +131,25 @@ func (s *Store) GetTaskByTaskID(ctx context.Context, taskID string) (database.Ta
 }
 
 // CompleteTask marks a claimed task completed, writing only while the task is still processing under the
-// guard; the return is the rows updated. A task whose claim holds its own task-scoped locks releases them
-// in the same transaction.
-func (s *Store) CompleteTask(ctx context.Context, taskType types.TaskType, id int64, result json.RawMessage, token uuid.UUID) (int64, error) {
-	return s.withTransition(ctx, "complete", taskType, id, token, func(txQ *database.Queries) (int64, error) {
+// owning execution's lease; the return is the rows updated.
+func (s *Store) CompleteTask(ctx context.Context, id int64, result json.RawMessage, token uuid.UUID) (int64, error) {
+	return s.withTransition(ctx, "complete", id, token, func(txQ *database.Queries) (int64, error) {
 		return txQ.CompleteBlockingTask(ctx, database.CompleteBlockingTaskParams{
-			Result:     &result,
-			ID:         id,
-			ClaimToken: uuid.NullUUID{UUID: token, Valid: true},
+			Result:  &result,
+			ID:      id,
+			OwnerID: token.String(),
 		})
 	})
 }
 
-// FailTask marks a claimed task failed under the guard, with the same lock-release rule as CompleteTask.
-func (s *Store) FailTask(ctx context.Context, taskType types.TaskType, id int64, errMsg string, token uuid.UUID) (int64, error) {
-	return s.withTransition(ctx, "fail", taskType, id, token, func(txQ *database.Queries) (int64, error) {
+// FailTask marks a claimed task failed under the owning execution's lease, with the same guard rule as
+// CompleteTask.
+func (s *Store) FailTask(ctx context.Context, id int64, errMsg string, token uuid.UUID) (int64, error) {
+	return s.withTransition(ctx, "fail", id, token, func(txQ *database.Queries) (int64, error) {
 		return txQ.FailBlockingTask(ctx, database.FailBlockingTaskParams{
-			Error:      sql.NullString{String: errMsg, Valid: true},
-			ID:         id,
-			ClaimToken: uuid.NullUUID{UUID: token, Valid: true},
+			Error:   sql.NullString{String: errMsg, Valid: true},
+			ID:      id,
+			OwnerID: token.String(),
 		})
 	})
 }
@@ -243,25 +218,9 @@ func (s *Store) Discard(ctx context.Context, id int64, errMsg string) (int64, er
 	})
 }
 
-// claimToken returns the guard a claim records: the lease owner for a leased execution, a fresh token
-// for every task of a pool execution. An owner id that is not a UUID is a programming error and fails
-// loudly instead of writing an unusable guard.
-func (s *Store) claimToken() (uuid.UUID, error) {
-	if s.ownerID == "" {
-		return uuid.New(), nil
-	}
-	token, err := uuid.Parse(s.ownerID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("owner id %q is not a uuid: %w", s.ownerID, err)
-	}
-	return token, nil
-}
-
-// withTransition runs one guarded task transition and releases the task-scoped locks the claim acquired,
-// in the same transaction so a crash between the transition and the release cannot leave the lock held
-// with no task to clear it. A batch-level hold belongs to the run and is released by the settle instead,
-// which is why batch-holds mode and non-holding types skip the release.
-func (s *Store) withTransition(ctx context.Context, op string, taskType types.TaskType, id int64, token uuid.UUID, transition func(*database.Queries) (int64, error)) (int64, error) {
+// withTransition runs one guarded task transition. The batch's locks belong to the run and are released by
+// the settle, pause, cancel or reclamation, never by an individual task.
+func (s *Store) withTransition(ctx context.Context, op string, id int64, token uuid.UUID, transition func(*database.Queries) (int64, error)) (int64, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin %s transaction: %w", op, err)
@@ -273,11 +232,6 @@ func (s *Store) withTransition(ctx context.Context, op string, taskType types.Ta
 	rows, err := transition(txQ)
 	if err != nil {
 		return 0, fmt.Errorf("%s task %d: %w", op, id, err)
-	}
-	if rows > 0 && taskType.HoldsLocks() && !s.batchHoldsAcquired {
-		if err := ReleaseLocksForToken(ctx, txQ, uuid.NullUUID{UUID: token, Valid: true}); err != nil {
-			return 0, fmt.Errorf("release locks for task %d: %w", id, err)
-		}
 	}
 
 	if err := tx.Commit(); err != nil {

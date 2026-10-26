@@ -1,7 +1,7 @@
-// Package wizard is the setup wizard server: the same config handler the
-// API exposes, served on its own port before a configuration exists, with
-// the embedded wizard SPA. Bootstrap happens here first; the main server
-// then serves the configured instance.
+// Package wizard is the setup wizard server: the same config handler the API exposes, served on its own
+// port before a configuration exists, with the embedded wizard SPA. Bootstrap happens here first; the main
+// server then serves the configured instance. Once bootstrapped, the wizard is the setup-time dispatcher
+// for migrations, executing their handlers in-process while no queue daemon exists yet.
 package wizard
 
 import (
@@ -17,9 +17,18 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
+	"github.com/wgomg/edub-kushim/internal/ops/dispatch"
+	"github.com/wgomg/edub-kushim/internal/service"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+// dispatchSafetyInterval is the fallback dispatch wake when a notification is missed.
+const dispatchSafetyInterval = 30 * time.Second
+
+// inProcessDrainTimeout bounds the shutdown wait for in-process executions, mirroring the pool drain the
+// setup wizard used before the dispatcher.
+const inProcessDrainTimeout = 30 * time.Second
 
 // Server is the setup wizard's HTTP server; Start serves the SPA and the
 // config endpoints until the process is stopped.
@@ -27,8 +36,14 @@ type Server struct {
 	httpServer *http.Server
 	logger     *log.Logger
 	addr       string
-	pools      []*task.Pool
 	db         *sql.DB
+
+	client         *database.Client
+	batchSvc       *service.Batch
+	dispatcher     *dispatch.Dispatcher
+	dispatchNotify chan struct{}
+	dispatchCancel context.CancelFunc
+	dispatchDone   chan struct{}
 }
 
 // NewServer prepares the wizard server on addr.
@@ -103,14 +118,11 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	}
 
 	client := database.NewClient(db)
-	store := task.NewStore(client)
 	registry := task.NewRegistry()
-	registry.Register(types.Task.Type.Config, configtask.NewConfigTaskHandler(client.Queries, s.logger))
 	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, s.logger))
 	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, s.logger))
 
 	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Config:         configtask.ConfigDedupKey,
 		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
 		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
 	}, nil)
@@ -118,35 +130,118 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 		return nil, nil, nil, fmt.Errorf("task catalog: %w", err)
 	}
 	enqueuer := task.NewEnqueuer(client, catalog)
-	runner := task.NewRunner(store, registry, s.logger)
-	s.pools = []*task.Pool{
-		task.NewPool(s.logger, runner, 1, 5*time.Second, types.Task.Type.Config),
-		task.NewPool(s.logger, runner, 1, 5*time.Second, types.Task.Type.MigrateDB),
-		task.NewPool(s.logger, runner, 1, 5*time.Second, types.Task.Type.MigrateStorage),
+
+	maxConcurrent := cfg.Srv.MaxConcurrentBatches
+	if maxConcurrent < 1 {
+		maxConcurrent = 2
 	}
-	for _, pool := range s.pools {
-		pool.Start(context.Background())
-	}
+	s.client = client
+	s.batchSvc = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
+	s.dispatchNotify = make(chan struct{}, 4)
+	s.dispatcher = dispatch.NewDispatcher(catalog, s.logger, types.HostWizard, maxConcurrent, s.wakeDispatcher,
+		&dispatch.InProcessRegistration{
+			Types: []types.TaskType{types.Task.Type.MigrateDB, types.Task.Type.MigrateStorage},
+			Run: dispatch.InProcessRun(task.BatchRunDeps{
+				Logger:     s.logger,
+				Catalog:    catalog,
+				Registry:   registry,
+				MaxRetries: int32(cfg.Consumer.Reclaim.MaxRetries),
+			}),
+		})
+	s.startDispatch(cfg)
 
 	return cfg, client, enqueuer, nil
 }
 
-// Shutdown drains the HTTP server, stops the config-host pools and closes the database. Safe before
-// Start.
-func (s *Server) Shutdown(ctx context.Context) error {
-	if s.httpServer == nil {
-		return nil
+// wakeDispatcher pokes the dispatch loop once; it is the dispatcher's backoff-expiry callback.
+func (s *Server) wakeDispatcher() {
+	select {
+	case s.dispatchNotify <- struct{}{}:
+	default:
 	}
+}
 
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		return err
+// startDispatch runs the setup-only dispatcher loop over the bootstrapped client: one listener for batch
+// and lock notifications plus a safety poll. The wizard cannot fork kushim, so its registration covers the
+// migration types in-process; the queue daemon takes over once it runs.
+func (s *Server) startDispatch(cfg *config.Config) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	s.dispatchCancel = cancel
+	s.dispatchDone = done
+
+	go dispatch.ListenForBatchNotifications(ctx, config.BuildPostgresDSN(cfg.Db), s.dispatchNotify, s.logger)
+
+	go func() {
+		defer close(done)
+		safetyTimer := time.NewTimer(dispatchSafetyInterval)
+		defer safetyTimer.Stop()
+
+		dispatchOnce := func() {
+			if err := s.dispatcher.Dispatch(ctx, s.client, s.batchSvc); err != nil {
+				s.logger.Error("", "wizard dispatch: %v", err)
+			}
+		}
+		dispatchOnce()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.dispatchNotify:
+				dispatchOnce()
+				if !safetyTimer.Stop() {
+					select {
+					case <-safetyTimer.C:
+					default:
+					}
+				}
+				safetyTimer.Reset(dispatchSafetyInterval)
+			case <-safetyTimer.C:
+				dispatchOnce()
+				safetyTimer.Reset(dispatchSafetyInterval)
+			}
+		}
+	}()
+}
+
+// stopDispatch stops the loop and waits for it.
+func (s *Server) stopDispatch() {
+	if s.dispatchCancel == nil {
+		return
 	}
+	s.dispatchCancel()
+	<-s.dispatchDone
+	s.dispatchCancel = nil
+	s.dispatchDone = nil
+}
 
-	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// drainInProcess waits, bounded, for the setup-time executions the dispatcher started to release their
+// claims before the database closes under them.
+func (s *Server) drainInProcess() {
+	if s.dispatcher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), inProcessDrainTimeout)
 	defer cancel()
-	for _, pool := range s.pools {
-		pool.Stop(stopCtx)
+	if err := s.dispatcher.WaitInProcess(ctx); err != nil {
+		s.logger.Warn("", "in-process executions did not settle before shutdown: %v", err)
 	}
+}
+
+// Shutdown drains the HTTP server, stops the setup-time dispatcher, waits for its executions and closes the
+// database. Safe before Start.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.stopDispatch()
+
+	if s.httpServer != nil {
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			return err
+		}
+	}
+
+	s.drainInProcess()
+
 	if s.db != nil {
 		_ = s.db.Close()
 	}

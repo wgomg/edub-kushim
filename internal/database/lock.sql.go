@@ -124,8 +124,7 @@ WHERE task.status = 'processing'
     WHERE s.name = ANY($4::text[])
       AND s.value = 'true'
       AND (s.data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
-      AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
-           OR s.data->>'batch_id' = task.batch_id)
+      AND s.data->>'batch_id' = task.batch_id
   )
 RETURNING task_id, task_type
 `
@@ -207,48 +206,6 @@ func (q *Queries) ReleaseLocksForBatch(ctx context.Context, arg ReleaseLocksForB
 	return items, nil
 }
 
-const releaseLocksForStaleHolders = `-- name: ReleaseLocksForStaleHolders :many
-UPDATE system_signal
-SET value = 'false', data = NULL, modified_at = CURRENT_TIMESTAMP
-WHERE name = ANY($1::text[])
-  AND value = 'true'
-  AND (data->>'started_at')::timestamptz <= NOW() - INTERVAL '30 minutes'
-  AND (data->>'owner_token') IN (
-    SELECT claim_token::text FROM task
-    WHERE status = 'processing'
-      AND task_type = ANY($2::task_type[])
-  )
-RETURNING name
-`
-
-type ReleaseLocksForStaleHoldersParams struct {
-	LockNames []string
-	Types     []types.TaskType
-}
-
-func (q *Queries) ReleaseLocksForStaleHolders(ctx context.Context, arg ReleaseLocksForStaleHoldersParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, releaseLocksForStaleHolders, pq.Array(arg.LockNames), pq.Array(arg.Types))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		items = append(items, name)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const releaseLocksForToken = `-- name: ReleaseLocksForToken :many
 UPDATE system_signal
 SET value = 'false', data = NULL, modified_at = CURRENT_TIMESTAMP
@@ -300,8 +257,7 @@ WHERE task.status = 'processing'
     WHERE s.name = ANY($4::text[])
       AND s.value = 'true'
       AND (s.data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
-      AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
-           OR s.data->>'batch_id' = task.batch_id)
+      AND s.data->>'batch_id' = task.batch_id
   )
 `
 

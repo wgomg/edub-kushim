@@ -38,10 +38,9 @@ job queue, no Redis, no message broker. Tasks are rows in the `task` table;
 workers *claim* rows with guarded UPDATEs; a `batch_owner` table holds
 per-batch leases; a daemon (`kushim queue`) watches for queued batches, claims
 each one in a guarded transaction, forks the batch's owning task CLI as
-`<cli> --from-batch <id> --exec-token <token>` (`consume`, `enrich` or
-`thumbnails` today; the ingest family's children hang from their batch, so a
-mixed batch resolves to `consume`), and reclaims
-anything that dies.
+`<cli> --from-batch <id> --exec-token <token>` (every remaining task type has
+a batch-mode CLI; the ingest family's children hang from their batch, so a
+mixed batch resolves to `consume`), and reclaims anything that dies.
 
 The cast of characters:
 
@@ -51,18 +50,17 @@ The cast of characters:
 | `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue and dispatch contract: queued and direct locks, dedup hook, preconditions, batch-mode CLI surface and hosts |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
 | `Handler` | `internal/task/handler.go` | pure work function: does the job, returns the JSON result or an error; performs no batch-status write, lock or settle |
-| `Runner` | `internal/task/execute.go` | claims under the execution guard, drains and holds locks for holding types, dispatches, completes/fails, and settles |
-| `Pool` | `internal/task/pool.go` | N worker goroutines calling `Nexter.Next` |
+| `Runner` | `internal/task/execute.go` | claims under the batch lease, dispatches, completes/fails and settles; the batch's locks, drain and heartbeat belong to `RunBatch` |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
-| batch dispatcher / launcher | `internal/ops/dispatch/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the batch's owning task CLI in batch mode |
+| batch dispatcher / launcher | `internal/ops/dispatch/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the batch's owning task CLI in batch mode; the wizard's setup-time dispatcher runs the migration handlers in-process instead |
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
-| task CLIs | `internal/ops/consume/consume.go`, `internal/ops/cli/enrich.go`, `internal/ops/cli/thumbnails.go` | batch mode: one claimed batch through the shared execution library; direct mode: the action now, no queue rows |
+| task CLIs | `internal/ops/consume/consume.go`, `internal/ops/cli/` (enrich, thumbnails, backup, mirror, migrate and the four tag verbs) | batch mode: one claimed batch through the shared execution library; direct mode: the action now, no queue rows |
 
-The thirteen task types (declared in `internal/types`, registered in the
-registry each command boundary assembles — the ingest-family executor, the
-queue daemon's pool registries, the edub and wizard config registries):
+The twelve task types (declared in `internal/types`; the task CLI that runs a
+type assembles the registry for it — the queue daemon and `kushim batch run`
+fork the type's CLI instead of registering anything):
 `consume`, `enrich`, `thumbnail`,
-`config`, `migrate-db`, `migrate-storage`, `backup`, `mirror`,
+`migrate-db`, `migrate-storage`, `backup`, `mirror`,
 `tagreconcile`, `thumbbackfill`, `tagmeasure`, `tagidentity`, `tagaudit`.
 
 ---
@@ -124,7 +122,7 @@ consume (`duplicate-check`, `convert`, `extract-text`, `ocr`, `optimize`,
 `place`, `commit`, `activate-children`), enrich (`reduce`, `tag-match`,
 `analyze`, `consolidate`, `persist`), thumbnail (`render`, `save`), backup
 (`drain-wait`, `snapshot`, `retention`), mirror (`drain-wait`, `sync`),
-config (`download`, `migrate-db`, `migrate-storage`).
+migrations (progress reported by the two migration handlers).
 
 The lifecycle:
 
@@ -158,8 +156,7 @@ Workers claim tasks with a **compare-and-swap UPDATE**, not a lock
 UPDATE task SET
     status = 'processing',
     started_at = CURRENT_TIMESTAMP,
-    progress = NULL,
-    claim_token = $2
+    progress = NULL
 WHERE id = $1 AND status = 'pending';
 ```
 
@@ -168,24 +165,31 @@ workers, exactly one flips the row and affects 1 row; the rest affect 0. The
 Go side checks `RowsAffected` (that's what sqlc's `:execrows` annotation
 means) and treats 0 as "someone else got it" (`internal/task/store.go`).
 
-**Every claim records a guard and claims its batch in the same transaction.**
-The guard (`task.claim_token`) is the lease owner's id for a leased execution
-(the batch's child, via the store's owner id) and a fresh UUID per task under
-every other claim path; the same token later authorizes the guarded
-transitions and settle (§4). The claim transaction also locks the batch row
+**Every task claim runs under a leased execution and claims its batch in the
+same transaction.** The selection is owner-scoped — it only sees tasks of
+batches whose `batch_owner` row carries the execution's lease owner (§5) — and
+that same owner id is the task's execution guard; it authorizes the guarded
+transitions and the settle (§4). The claim transaction also locks the batch row
 (`LockBatchForClaim`) — the selected task's batch must be `queued` or
 `processing`, it flips `queued → processing` on the first claim
 (`MarkBatchClaimed`, with the row locked for the transaction), and zero rows
 rolls the whole claim back. A batch in any other state (`paused`, terminal,
 or missing) can neither be claimed from nor stall the queue: the selection
-queries only consider pending tasks whose batch is claimable (or that carry
-no batch at all), so a legacy pending row in a terminated batch is skipped
-rather than blocking its task type under `ORDER BY created_at LIMIT 1`.
+queries only consider pending tasks whose batch is claimable, and a task
+whose batch is no longer leased to this execution is invisible to it.
 
-For holding types the claim transaction acquires the locks (§12) after the
-task row is written, still all-or-nothing. Any refusal surfaces as
-`sql.ErrNoRows` (nothing claimable) or `ErrLockBusy` (a waited lock is
-taken) — the runner maps both to a quiet idle round.
+The claim acquires nothing: the batch claim (§5) took the batch's declared
+holds outside the task queue, and the selection verifies the task's waits —
+a deferred wait simply yields no row.
+
+This is the project-wide pattern: **every concurrency-sensitive transition is
+a guarded UPDATE with rows-affected acknowledgment** — `ClaimTask`,
+`CompleteBlockingTask`, `FailBlockingTask`, the batch lifecycle writes
+(`SettleBatch`, `SetBatchPaused`, `SetBatchCancelled`, `MarkBatchClaimed`,
+`ResumeBatch`, `RequeueProcessingBatch`), `TryInsertBatchOwner`,
+`HeartbeatBatchOwner`, `ReleaseBatchOwner`,
+`AcquireLocks`. Nothing is ever "SELECT then UPDATE"; the guard and the write
+are one statement.
 
 This is the project-wide pattern: **every concurrency-sensitive transition is
 a guarded UPDATE with rows-affected acknowledgment** — `ClaimTask`,
@@ -205,39 +209,36 @@ leaves a `processing` row that the stale sweep (§10) finds.
 
 ## 4. The runner loop
 
-`Runner.Next` (`internal/task/execute.go`) is called by every pool worker
-tick. The flow:
+`Runner.Next` (`internal/task/execute.go`) is called by the run's worker sets
+on their fixed claim cadence. The flow:
 
 1. **Claim with guard** — `store.ClaimNextPending(ctx, taskType)` returns the
-   task row and its guard token; the claim transaction owns the claim write,
-   the guarded batch flip and (for holding types) the all-or-nothing
-   acquisition (§3). `sql.ErrNoRows` and `ErrLockBusy` both mean idle — the
-   runner returns nil quietly.
-2. **Hold the locks** (`holdLocks`) — for a type that declares holds while the
-   execution has not already acquired them at batch level
-   (`Store.SetBatchHoldsAcquired`), the runner starts
-   `database.StartLockHeartbeat` over the guard token and drains
-   `types.TaskTypesWaitingOn(holds...)` to zero (`WaitForTaskDrain`,
-   `drain-wait` progress) before the handler runs.
-3. **Validate** — nil payload → guarded fail.
-4. **Run** — `h.Handle(ctx, task)`; handlers are pure: no batch write, no
+   task row and its guard token; the claim transaction owns the claim write
+   and the guarded batch flip (§3), and the selection is owner-scoped (§5).
+   `sql.ErrNoRows` means idle — the runner returns nil quietly; a store
+   without an execution owner fails the claim loudly.
+2. **Validate** — nil payload → guarded fail.
+3. **Run** — `h.Handle(ctx, task)`; handlers are pure: no batch write, no
    lock, no settle.
-5. **Complete** — `completeTaskWithRetry`: the token-guarded
+4. **Complete** — `completeTaskWithRetry`: the lease-guarded
    `CompleteBlockingTask` with **3 attempts and exponential backoff
    (50ms → 100ms → 200ms)** for transient DB contention. Zero rows is *success*
    — the claim was taken (cancelled, swept, reclaimed) and the executor's
    guard no longer matches; the settle afterward is refused by the same
    guards, so the write attempt is safe in every case.
-6. **Settle** — the runner settles after **every** transition through
+5. **Settle** — the runner settles after **every** transition through
    `SettleBatch` (§5): for a multi-task batch the active-task guard leaves it
-   to the last task, for a single-task pool batch it closes immediately. A
+   to the last task, for a single-task batch it closes immediately. A
    settle write that fails is logged; `SettleBatch`'s guards are the recovery
    path, not the caller's responsibility.
-7. **Complete-failure fallback** — if completion fails after retries, the
+6. **Complete-failure fallback** — if completion fails after retries, the
    oriented task is marked **failed** under the guard with
    `"complete task failed after retries: ..."` (visible, retryable) and a
    fail-write that itself errors is logged; the sweeper covers the process
    anyway via `FailTask`.
+
+The batch's locks, drain and heartbeat belong to `RunBatch` (§7); a worker
+set runs claims that verify waits and skip acquisition.
 
 Handler errors unwrap to `*task.Error` (`internal/task/errors.go`):
 
@@ -280,7 +281,12 @@ signal a process. The forked child then **adopts** it (`Owner.Adopt`:
 same owner token and is still unadopted — one time; an already-adopted,
 released or re-owned lease refuses, so a cancelled, requeued or reclaimed
 batch cannot be resurrected). There is no self-claim path: a batch-mode child
-only ever runs with the execution token a launcher claimed for it.
+only ever runs with the execution token a launcher claimed for it. An
+execution the hosting process runs itself — the wizard's setup-time migration
+runner — keeps the claim's pid-0 lease for its whole run, heartbeats it and
+never adopts a pid, so cancel and the reaper can never signal the hosting
+process; interruption arrives through the batch-status monitor and the
+guarded transitions landing zero rows.
 
 ```sql
 -- name: TryInsertBatchOwner :execrows
@@ -321,10 +327,10 @@ someone took the lease away; the worker keeps running but its claims
 
 ### The lease gates claiming
 
-`Store.ClaimNextPending` claims tasks from batches **this process owns** when
-it carries an owner id (`GetNextPendingTaskOfTypeForOwner`) and from any
-claimable batch otherwise (`GetNextPendingTaskOfType`, the pool path — see
-§3 for the claimability filter both selection queries share):
+`Store.ClaimNextPending` claims tasks only from batches **this process owns**
+(`GetNextPendingTaskOfTypeForOwner`; see §3 for the claimability filter), and
+a store without an owner id cannot claim at all — the claim fails loudly
+instead of selecting owner-less work:
 
 ```sql
 -- name: GetNextPendingTaskOfTypeForOwner :one
@@ -342,11 +348,9 @@ ORDER BY t.created_at LIMIT 1;
 ```
 
 The `ownerID` is the execution token the launcher claimed with, set on the
-store by the shared batch execution (`task.RunBatch`). Batches without an
-owner row are invisible to a leased
-runner — the lease table partitions the leased work; pool executions (the
-daemon's maintenance pools, the edub/wizard config pools) claim globally
-under their fresh per-task guard.
+store by the shared batch execution (`task.RunBatch`). A batch without an
+owner row is invisible to every runner — the lease table partitions the
+leased work, and there is no owner-less claim path left.
 
 ### Release and cleanup
 
@@ -370,10 +374,10 @@ Three mechanisms keep it responsive without busy-polling
 (`queue.go:145-186`):
 
 ```go
-go d.runPollingLoop(ctx, maxConcurrent)
+go d.runPollingLoop(ctx)
 
 notifyCh := make(chan struct{}, 4)
-go listenForBatchNotifications(ctx, config.BuildPostgresDSN(c.GetConfig().Db), notifyCh, c.GetLogger())
+go dispatch.ListenForBatchNotifications(ctx, config.BuildPostgresDSN(c.GetConfig().Db), notifyCh, c.GetLogger())
 
 safetyInterval := 30 * time.Second
 safetyTimer := time.NewTimer(safetyInterval)
@@ -406,9 +410,9 @@ for {
    timer guarantees a poll at least every 30s, and it's **reset on every
    notify** so a busy batch flow doesn't double-poll.
 3. **The 5s housekeeping ticker**: config reload
-   (`c.cfg.Store(newCfg)`), backup pool start/stop, backup scheduling, and
-   stale-task reclamation (throttled to `StaleTaskAfter/10` seconds, min 60s
-   — `queue.go:182-193`).
+   (`c.cfg.Store(newCfg)`), backup and mirror scheduling, the anchored tag
+   schedules, and stale-task reclamation (throttled to `StaleTaskAfter/10`
+   seconds, min 60s).
 
 ### The dispatcher and the launcher
 
@@ -418,8 +422,10 @@ batch slot budget and the daemon's wake callback at construction; per wake it
 lists the queued batches oldest-first with their
 task types and sweeps them in order; each candidate's dispatchability comes
 from its type definitions — the `CLI`, `BatchSelector` and `Hosts` fields —
-so a type without a batch-mode CLI on this host is skipped and the batches
-carrying it stay with the queue pools (§7). The slot budget limits only
+so a batch whose types are not dispatchable on this host is skipped. The
+queue daemon is fork-only; the wizard's setup-time dispatcher is the one
+in-process exception, covering the two migration types before a daemon
+exists (§7). The slot budget limits only
 batches that acquire no locks: `CountLiveNoHoldsBatches` counts the leases
 carrying **this dispatcher's identity** (`dispatcher_id` on the lease), a
 lock-holding batch is claimed regardless of the budget (its locks serialize
@@ -434,7 +440,9 @@ declared holds (verifying only the waits of the holding types; a batch that
 holds nothing claims freely and its tasks gate per claim) — then forks
 `kushim consume --from-batch <id> --exec-token <token>` (or the batch's owning
 CLI — `enrich` for re-enrichment batches, `thumbnails` for the
-thumbnail family). A batch whose locks are
+thumbnail family, `kushim migrate` for a migration batch, and each
+maintenance type's own verb for backup, mirror and the four tag passes). A
+batch whose locks are
 busy is refused (`ErrLockBusy`) and the sweep moves on.
 
 Launch failures — the fork's `Start` error, or a child that exits before
@@ -479,14 +487,18 @@ waiting for the batch's next run.
 
 ## 7. The task CLIs and the shared execution library
 
-`kushim consume`, `kushim enrich` and `kushim thumbnails` are the ingest
-family's task CLIs (`internal/ops/consume/consume.go`, `internal/ops/cli/enrich.go`,
-`internal/ops/cli/thumbnails.go`). Each has a **batch mode** (`--from-batch <id>
---exec-token <token>` — the dispatcher and `kushim batch run` fork them) and a
-**direct mode** (no flags: the action runs now, creating no batch or task
-rows). One execution settles the whole batch, so a mixed ingest batch (consume
+Every task CLI has a **batch mode** (`--from-batch <id> --exec-token <token>`
+— the dispatcher and `kushim batch run` fork it) and a **direct mode** (no
+flags: the action runs now, creating no batch or task rows): the ingest
+family (`internal/ops/consume/consume.go`, `internal/ops/cli/enrich.go`,
+`internal/ops/cli/thumbnails.go`), `kushim backup`, `kushim mirror`,
+`kushim migrate` and the four tag passes (`internal/ops/cli/tag*.go`). One
+execution settles the whole batch, so a mixed ingest batch (consume
 tasks with enrich/thumbnail children) forks `consume` and runs every type in
-its batch through the shared library.
+its batch through the shared library; a migration batch forks `kushim migrate
+--from-batch`, which registers both migration handlers and runs whichever the
+batch carries — its lease and every settle write stay in the source database,
+because the handler only rewrites `config.yaml`.
 
 ### Batch mode: the shared claimed-batch executor
 
@@ -578,25 +590,24 @@ live `progress.step`/`detail` updates while a task is `processing` (e.g.
 `ocr page 3/12`), and the summary when no pending or processing task is left.
 The library owns pause, completion and settlement; the reporter only observes.
 
-### Non-consume batches: backup, mirror, config
+### Non-consume batches: backup, mirror, migrations
 
 Backup and mirror tasks get real batch rows (origin `schedule`, status
 `queued`) so they flow through the batches UI instead of being invisible
-orphans (`maybeScheduleTask`, `queue.go`); config batches already did this.
-The queue daemon never forks these batches' task CLIs — they have none yet:
-the dispatcher's eligibility comes from the type definitions — the batch-mode
-CLI surface these types have not declared yet — and the slot budget excludes
-lock-holding batches anyway, so no watchdog holds a
-`max_concurrent_batches` slot for the duration of a long backup.
+orphans (`maybeScheduleTask`, `queue.go`). The queue daemon dispatches them
+like any other batch — the claim acquires the type's holds under the
+execution token and forks `kushim backup --from-batch` or
+`kushim mirror --from-batch`, which adopt the claim's lease with the child's
+pid; migrate-db and migrate-storage batches dispatch the same way through
+`kushim migrate --from-batch`. Only the wizard's setup-time dispatcher runs
+migrations in-process (a pid-0 lease the hosted run heartbeats), so the
+UI sees a true owner either way.
 
 These batches run through the same runner as consume work: the handler is a
-pure work function and the runner claims under a fresh per-task guard, flips
-the batch `queued → processing` in the claim transaction, and settles through
-`SettleBatch` at the end — the status is accurate even when no queue daemon
-is watching. Because there is no `batch_owner` row on that path, the service
-layer forces `Orphaned = false` for batches with a non-consume task —
-otherwise the UI would show a bogus orphan state and a Resume button that
-forks a task CLI.
+pure work function and the runner claims under the execution's lease owner,
+flips the batch `queued → processing` in the claim transaction, and settles
+through `SettleBatch` at the end — the status is accurate even when no queue
+daemon is watching.
 
 Manual ingest needs no daemon: direct `kushim consume` runs the inbox now
 under the maintenance lock (no queue rows, `--no-wait` for unattended runs),
@@ -732,7 +743,6 @@ Key formats in use:
 | backup | `backup:<mode>:<UTC date>` (mode defaults to `full`) |
 | mirror | `mirror:<UTC date>` |
 | tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` |
-| config | `config:tessdata:<lang>` / `config:hugot` |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
 Activation is the only path that puts a key on a waiting child, and a
@@ -791,17 +801,15 @@ ticker; the per-batch variant runs at consume entry, batch resume and batch
 reclamation.
 
 **Lock-holding recovery is gated on lock ownership.** A lock-holding task is
-swept only when no fresh resource-lock row belongs to its execution: the
-sweep's exemption matches a lock whose `owner_token` equals the task's
-`claim_token` (a claim-held lock) or whose `batch_id` equals the task's batch
-(a batch-held lock — the dispatcher's claim for a `thumbbackfill` batch holds
+swept only when no fresh resource-lock row belongs to its batch: the sweep's
+exemption matches a lock whose `batch_id` equals the task's batch (a
+batch-held lock — the dispatcher's claim for a `thumbbackfill` batch holds
 `storage` for the whole run under its execution token), with the row's
 `started_at` key inside the 30-minute freshness window. A live holder
 (5-minute heartbeat refreshing) keeps both the task row and the lock; a
-crashed holder is recovered exactly once. The sweep transaction releases
-stale holders' locks first (`ReleaseLocksForStaleHolders` — locks past the
-window whose `owner_token` belongs to a `processing` lock-holding claim, so
-the release must precede the resets), then applies the transitions:
+crashed holder is recovered exactly once. The sweep transaction then applies
+the transitions without touching locks — lock release belongs to the settle,
+pause, cancel and reclamation paths, never to an individual task's reset:
 
 ```sql
 -- the NOT EXISTS exemption both sweeps carry
@@ -810,8 +818,7 @@ NOT EXISTS (
     WHERE s.name = ANY(@lock_names::text[])
       AND s.value = 'true'
       AND (s.data->>'started_at')::timestamptz > NOW() - INTERVAL '30 minutes'
-      AND ((s.data->>'owner_token') IS NOT DISTINCT FROM task.claim_token::text
-           OR s.data->>'batch_id' = task.batch_id)
+      AND s.data->>'batch_id' = task.batch_id
 );
 ```
 
@@ -820,7 +827,7 @@ NOT EXISTS (
 acquire queries use to steal, so "the sweep says stale" and "an acquire would
 succeed" never disagree. Per-batch resets release the batch's locks by id in
 the same transaction, which also covers a crashed child's run-held lock.
-Manual NULL-token locks match neither disjunct — the window is the manual
+Manual NULL-token locks match neither arm — the window is the manual
 holder's only recovery path.)
 
 `attempts` increments **only** on reclamation resets — a normal handler
@@ -889,8 +896,8 @@ tasks re-run:
 - **`POST /api/v1/batches/{id}/resume`** — `includeFailed: false`; answers
   `{"resumed": true}` when the batch went back to `queued` and
   `{"resumed": false}` when nothing can become active.
-- **`POST /wizard/config/retry`** — resumptions per distinct batch over its
-  failed config-hosted tasks.
+- **`POST /wizard/config/retry`** — resume of the wizard's failed migration
+  batches, plus a re-trigger of the failed or missing direct asset downloads.
 
 `ResumeBatch` is the single guarded recovery: it re-runs from
 `failed`/`completed`/`cancelled`/`paused` to `queued`, refuses a batch with a
@@ -937,26 +944,24 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
 
 - The task claim gates every type on its declared waits: the selection query
   refuses a task whose waits are not all free (`NOT EXISTS … lock_is_held`).
-- Every claim carries an execution guard (§3), and types with declared holds
-  acquire through the token protocol: the claim, its acquisition and the
-  release are one transaction (`Store.ClaimNextPending`,
-  `internal/task/store.go`). Acquisition
-  is all-or-nothing (`task.AcquireLocks`, backed by `AcquireLocks` in
+- Every batch claim carries an execution guard (§5), and the types with
+  declared holds acquire through the token protocol **at the batch claim**:
+  `task.ClaimBatch` locks the batch row and acquires the batch's holds in one
+  transaction (`task.AcquireLocks`, backed by
+  `AcquireLocks` in
   `sql/queries/lock.sql`): `LockRowsForUpdate` row-locks the
   `holds ∪ waits` rows in canonical name order, the waits must all be free,
-  and each hold row is overwritten only if free or past the window. A
-  conflict rolls the claim back — the task stays `pending` — and
-  `ErrLockBusy` surfaces, mapped by the runner to a quiet `nil` so the pool's
-  next tick retries instead of failing the task. No execution ever holds one
+  and each hold row is overwritten only if free or past the window. A conflict
+  refuses the batch claim (`ErrLockBusy`) and the dispatcher or launcher moves
+  on — the task queue simply stays deferred on the held lock. No execution
+  ever holds one
   lock while waiting for another, so no deadlock is possible; two same-day
   maintenance runs serialize with both eventually completing.
-- The release is the task's leave-`processing` moment: the runner's guarded
-  `CompleteTask` / `FailTask` (`CompleteBlockingTask` / `FailBlockingTask`
-  under the guard) release the locks their claim acquired by claim token in
-  the same tx as the transition (`ReleaseLocksForToken`); the settle, a
-  batch reset, cancel and resume release by batch id (`ReleaseLocksForBatch`).
-  The release is skipped only for the batch-level hold itself — that
-  belongs to the run and is released by the settle.
+- The release is the run's leave-the-lifecycle moment: the settle, a batch
+  reset, pause and cancel release the batch's locks by id (`ReleaseLocksForBatch`,
+  transactional with the batch write), and the execution's teardown releases
+  its own lease. An individual task transition releases nothing — the holds
+  belong to the run and are released when it ends.
 - The drain set is derived, not listed: `types.TaskTypesWaitingOn(holds...)`
   is the in-flight work a holder must let finish — a `maintenance` holder
   drains `consume`/`enrich`/`thumbnail`/`thumbbackfill`, a `storage` holder
@@ -964,13 +969,14 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
   5s ticker before the body runs. `database.StartLockHeartbeat` (`TouchLocksForToken`) keeps every
   held lock fresh for the run; a holder that stops heartbeating becomes
   takeable after the 30-minute window, the last-resort recovery when no reaper
-  is running (the daemon's sweeps recover task- and batch-held locks promptly;
+  is running (the daemon's sweeps recover batch-held locks promptly;
   the window is the manual holder's only mechanism).
-- The runner owns the lock-holding lifecycle: it starts the heartbeat and the
-  drain for a claim whose type declares holds (§4) and dispatches a pure
-  handler. The backup handler and the four tag passes are work functions
+- `task.RunBatch` owns the lock-holding lifecycle: it starts the heartbeat and
+  the drain for a batch whose types declare holds (§7) and dispatches pure
+  handlers from its worker sets. The backup handler and the four tag passes
+  are work functions
   under it; the `migrate-db` and `migrate-storage` handlers drain nothing
-  themselves (the runner has drained), and the work happens after claim and
+  themselves (the run has drained), and the work happens after claim and
   before settle.
 
 Locks live as long as the *execution*, not one task. A batch whose task types
@@ -978,14 +984,14 @@ declare holds gets them acquired **at the dispatcher's claim**, for the whole
 run: the claim transaction takes `storage` under the execution token
 (verifying the waits the holding types declare, so a thumbbackfill batch is
 refused while `maintenance` is held), and the child keeps the holds fresh —
-lock heartbeat, drain of the declared waiters, `SetBatchHoldsAcquired` —
+lock heartbeat, drain of the declared waiters —
 while its worker set runs claims that verify waits but skip acquisition.
 There is no self-claim path: the child only runs with the execution token a
 launcher claimed for it. New `thumbnail` claims from ingest
 batches defer until the backfill settles — per-document thumbnails never
 write while the storage tree is being bulk-walked. The release happens when
 the run ends; reclamation releases by batch id, and the stale sweep's
-exemption covers both the claim token and the batch id (§10).
+exemption covers the batch id (§10).
 
 Direct CLI commands run under the manual holder path (`task.RunDirect`,
 `internal/task/direct.go`): acquire the policy's locks —
@@ -1021,7 +1027,7 @@ same gate: it is claimed with the locks held, drains in-flight work, and runs
 `rsync -a --delete` over the storage tree (see `internal/backup/`). Because a
 large rsync can exceed the 30-minute staleness window, the handler runs a
 heartbeat that refreshes the lock row's heartbeat timestamp every 5 minutes
-(`TouchLocksForToken`, guarded by the claim token) for the rsync
+(`TouchLocksForToken`, guarded by the execution token) for the rsync
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
 runner *before*
 `WaitForTaskDrain` returns, so the drain-wait itself is covered too; the
@@ -1038,54 +1044,51 @@ destination. Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
 with the same payload-derived re-phase on schedule edits).
 
 The **tagmeasure** task (`internal/tags/tagmeasure.go`) is a
-lock-holding task too: claimed with the maintenance lock held, drained via
-`WaitForTaskDrain`, heartbeat across the whole run — and it additionally forks
-`kushim tagmeasure --run <batch-id>` and waits, so the pass's long
-repeatable-read transaction runs in its own process while the parent keeps the
-lock fresh; the child's printed report line becomes the task result and its
-exit code decides completion/failure. The pass opens by checking the
+lock-holding task: a `tagmeasure` batch is claimed with the maintenance lock
+held, and its `kushim tagmeasure --from-batch` child adopts the claim's lease,
+keeps the lock fresh across the whole run, and runs the pass's long
+repeatable-read transaction — the pass's report is the task result stored on
+the task row. The pass opens by checking the
 `tag_measure_changed` flag: with the flag clear and a completed run under the
 current rule set it short-circuits to a zero-work report, writing nothing;
 otherwise its opening transaction clears the flag and the sweep runs, re-arming
-the flag if the sweep fails. A manual `kushim tagmeasure` enqueues the same
-queued task through `curation.TagMeasure` (dedup key `tagmeasure`), and the pool
-always claims — `enricher.tag_measure.enabled` gates only the schedule
+the flag if the sweep fails. A bare `kushim tagmeasure` runs the pass now
+under the manual holder path, and `kushim batch create tagmeasure` enqueues
+the same queued task (dedup key `tagmeasure`);
+`enricher.tag_measure.enabled` gates only the schedule
 that enqueues runs automatically.
 
-The **tagidentity** task (`internal/tags/admission/tagidentity.go`) follows the
-same fork-and-wait shape: claimed with the lock held, drained via
-`WaitForTaskDrain`, heartbeat across the run, then forks
-`kushim tagidentity --run <batch-id>`; the child resolves pending identity
-evidence through `admission.IdentityResolver` and prints the
-`tagidentity-report: <json>` line (pending/resolved/folded/aliased/deferred/
-failed) that becomes the task result. The review surface's reevaluate action, a
-manual `kushim tagidentity` (which enqueues), and the pass's own anchored
-schedule all create the same queued task. Its pool runs
-unconditionally, and the schedule — a fixed daily 03:30 pass with no config
+The **tagidentity** task (`internal/tags/admission/tagidentity.go`) follows
+the same shape: a `tagidentity` batch is claimed with the lock held, and the
+`kushim tagidentity --from-batch` child adopts the lease and resolves pending
+identity evidence through `admission.IdentityResolver`, whose report (pending/
+resolved/folded/aliased/deferred/failed) becomes the task result stored on the
+task row. The review surface's reevaluate action, `kushim batch create
+tagidentity`, and the pass's own anchored
+schedule all create the same queued task. The queue dispatches it always, and
+the schedule — a fixed daily 03:30 pass with no config
 keys — fires only while `enricher.tag_adjudicator.enabled` is set, so pending
 claims wait for the next run when the judge is off.
 
 The **tagaudit** task (`internal/tags/admission/tagaudit.go`) follows the same
-drain + heartbeat + fork shape as `tagmeasure`: claimed with the lock held,
-drained via `WaitForTaskDrain`, heartbeat across the run, then forks
-`kushim tagaudit --run <batch-id>`; the child runs the coverage-verification
-pass (`admission.AuditRunner`) and prints the `tagaudit-report: <json>` line
-(sweep, sampled/flagged counts, coverage tallies by class, fills/flags/
-proposals, judge call counts, pending coverage) that becomes the task result.
-Runs come from the anchored schedule (disabled by default), a manual
-`kushim tagaudit` (which enqueues), and the reevaluate endpoint; the pool always
-claims — `enricher.tag_audit.enabled` gates only automatic enqueuing.
+shape as `tagmeasure`: a `tagaudit` batch is claimed with the lock held, and
+the `kushim tagaudit --from-batch` child runs the coverage-verification pass
+(`admission.AuditRunner`), whose report (sweep, sampled/flagged counts,
+coverage tallies by class, fills/flags/proposals, judge call counts, pending
+coverage) becomes the task result stored on the task row.
+Runs come from the anchored schedule (disabled by default), `kushim batch
+create tagaudit`, and the reevaluate endpoint;
+`enricher.tag_audit.enabled` gates only automatic enqueuing.
 
 The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) is a
-lock-holding task too: claimed with the maintenance lock held, drained via
-`WaitForTaskDrain` under the same 5-minute heartbeat, then forks
-`kushim tagreconcile --run <batch-id>`; the child builds the reconciler and runs
-one pass, printing the `tagreconcile-report: <json>` line that becomes the task
-result (the exit code decides completion/failure). It dedups on the fixed key
-`tagreconcile`, so an active run blocks the next trigger, and the daemon's pool
-runs unconditionally — `enricher.tag_reconcile.enabled` gates only the schedule
-that enqueues runs automatically, while a manual `kushim tagreconcile` enqueues
-through the queue the same way.
+lock-holding task too: a `tagreconcile` batch is claimed with the maintenance
+lock held, and the `kushim tagreconcile --from-batch` child adopts the claim's
+lease, builds the reconciler and runs one pass, storing its report as the task
+result. It dedups on the fixed key
+`tagreconcile`, so an active run blocks the next trigger, and the queue
+dispatches it always — `enricher.tag_reconcile.enabled` gates only the schedule
+that enqueues runs automatically, while `kushim batch create tagreconcile`
+enqueues through the queue the same way.
 
 The three tag passes with a store-changed flag open through `tags.OpenStoreSignal`
 (`internal/tags/store_signal.go`): one committed transaction reads the pass's
@@ -1098,7 +1101,7 @@ needs the signal plus a work-probe set (`reconcile/gate.go`): aged pairs, grace
 windows and capped remainders are work a quiet store still owes, so the signal
 alone cannot rule work out; a clear flag with every probe empty reports
 `zero_work` and skips the store-wide reads. The audit gates only its store-wide
-pending-coverage derivation on the flag — the sweep itself stays pool-driven (a
+pending-coverage derivation on the flag — the sweep itself stays batch-driven (a
 document is audited at most once per sweep), and an unchanged vocabulary reuses
 the durable pending-coverage rows already written. The identity pass reads no
 flag: its work set is the pending-event count, already its first read, and a
@@ -1119,8 +1122,9 @@ skip acquisition (§12, batch-held locks). `ThumbnailBackfill`
 (dedup key `thumbnail:doc:<uuid>`) in `thumbbackfill` batches.
 
 Direct CLI holders (`kushim backup`, `kushim restore`, `kushim mirror`,
-`kushim migrate`) are NULL-token lock rows: their release is scoped to the
-locks their own policy acquired, so a concurrent manual run holding a
+`kushim migrate`, and the four tag passes' bare commands) are NULL-token lock
+rows: their release is scoped to
+the locks their own policy acquired, so a concurrent manual run holding a
 different lock keeps it, and a loaded task- or child-held lock (a non-NULL
 token) can never be dropped.
 
@@ -1135,8 +1139,8 @@ mid-run.
 
 | Key (config) | Default | Meaning |
 |---|---|---|
-| `consumer.workers` | — | consume pool size (per-batch process) |
-| `enricher.workers` | `1` | enrich pool size |
+| `consumer.workers` | `1` | worker count for `consume` tasks inside an ingest batch run |
+| `enricher.workers` | `1` | worker count for `enrich` tasks inside a batch run |
 | `srv.max_concurrent_batches` | `4` | the dispatcher's per-process budget for batches that acquire no locks (the lease carries the dispatcher identity; manual runs and other hosts never charge it) |
 | `consumer.reclaim.enabled` | `true` | stale sweeps on/off |
 | `consumer.reclaim.max_retries` | `3` | the attempts budget |
@@ -1156,9 +1160,9 @@ mid-run.
   cancel, requeue) make a refusal *observable* while keeping the state
   truthful. Only treat 0 rows as an error where the contract says so
   (e.g. the guarded lock acquire).
-- **Task transitions are token-guarded** — `CompleteTask`/`FailTask` (over
+- **Task transitions are lease-guarded** — `CompleteTask`/`FailTask` (over
   `CompleteBlockingTask`/`FailBlockingTask`) write only while the task is
-  still `processing` under the guard that claimed it, so a stale executor
+  still `processing` under the execution gang of the batch that claimed it, so a stale executor
   can never rewrite a task the sweep reset. Keep the runner's ordering
   (complete first on success, fail otherwise) intact.
 - **Ownership of the batch's terminal writes belongs to `SettleBatch`** —
@@ -1203,10 +1207,11 @@ mid-run.
   children still `discarded`.
 - **Paused batches refuse to run** and pause is sticky
   — resume is an explicit API/CLI action after the billing issue is fixed.
-- **`CountLiveBatches` counts heartbeats, not processes** — a batch whose
-  worker is mid-task but heartbeating normally counts as live; only 15s of
-  silence frees the slot.
+- **The dispatcher's slot budget counts only no-holds batches** —
+  `CountLiveNoHoldsBatches` charges leases on batches holding no lock; a
+  maintenance batch without a free slot is claimed anyway, because its locks
+  serialize it.
 
 ---
 
-*Last verified against the tree: 2026-10-25. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-26. If code and doc disagree, code wins.*

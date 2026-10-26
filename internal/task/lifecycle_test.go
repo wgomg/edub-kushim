@@ -15,10 +15,22 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// testStoreOwner is the execution identity the task-package test stores claim under; batches must carry its
+// lease for their tasks to be claimable.
+const testStoreOwner = "00000000-0000-0000-0000-000000000001"
+
 func createBatchRow(ctx context.Context, t *testing.T, q *database.Queries, id string, status types.BatchStatus) {
 	t.Helper()
 	err := q.CreateBatch(ctx, database.CreateBatchParams{ID: id, Origin: types.Batch.Origin.CLI, Status: status})
 	testutil.AssertNoError(t, err, "create batch "+id)
+}
+
+// leasedBatch creates a batch and its lease under the store's owner: the state every claim requires now that
+// the batch claim owns the locks and the task claim only runs under an owned batch.
+func leasedBatch(ctx context.Context, t *testing.T, q *database.Queries, id string, status types.BatchStatus) {
+	t.Helper()
+	createBatchRow(ctx, t, q, id, status)
+	insertLease(ctx, t, q, id, testStoreOwner)
 }
 
 func batchStatus(ctx context.Context, t *testing.T, q *database.Queries, id string) types.BatchStatus {
@@ -131,6 +143,7 @@ func TestRunnerPauseRequestPausesInsteadOfSettling(t *testing.T) {
 		registry.Register(types.Task.Type.Consume, handler)
 
 		createBatchRow(ctx, t, q, "runner-fail-batch", types.Batch.Status.Queued)
+		insertLease(ctx, t, q, "runner-fail-batch", testStoreOwner)
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "runner-fail-batch", json.RawMessage(`{}`), "", "", "")
 
 		testutil.AssertNoError(t, runner.Next(ctx, types.Task.Type.Consume), "run")
@@ -142,6 +155,7 @@ func TestRunnerPauseRequestPausesInsteadOfSettling(t *testing.T) {
 		registry.Register(types.Task.Type.Enrich, handler)
 
 		createBatchRow(ctx, t, q, "runner-pause-batch", types.Batch.Status.Queued)
+		insertLease(ctx, t, q, "runner-pause-batch", testStoreOwner)
 		taskID, err := createTaskRow(ctx, t, q, types.Task.Type.Enrich, "runner-pause-batch", json.RawMessage(`{}`), "", "", "")
 		testutil.AssertNoError(t, err, "create enrich task")
 
@@ -155,42 +169,12 @@ func TestRunnerPauseRequestPausesInsteadOfSettling(t *testing.T) {
 	})
 }
 
-// TestPauseBatchAuthorization pins the pause guard: lease identity for a
-// leased execution, live claim token for a pool execution.
+// TestPauseBatchAuthorization pins the pause guard: only the execution that still owns the lease may pause.
 func TestPauseBatchAuthorization(t *testing.T) {
-	store, _, client := setupTaskTestClient(t)
+	_, _, client := setupTaskTestClient(t)
 	ctx := context.Background()
 	logger := testutil.NewTestLogger()
 	q := client.Queries
-
-	t.Run("pool execution pauses while its claim is live", func(t *testing.T) {
-		createBatchRow(ctx, t, q, "pause-pool", types.Batch.Status.Queued)
-		createTaskRow(ctx, t, q, types.Task.Type.Backup, "pause-pool", json.RawMessage(`{}`), "", "", "")
-
-		claimed, token, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
-		testutil.AssertNoError(t, err, "claim backup task")
-		testutil.AssertEqual(t, claimed.BatchID.String, "pause-pool", "claimed batch")
-
-		testutil.AssertNoError(t, PauseBatch(ctx, client, logger, Execution{BatchID: "pause-pool", Guard: token}), "pause")
-		testutil.AssertEqual(t, batchStatus(ctx, t, q, "pause-pool"), types.Batch.Status.Paused, "batch paused")
-		if lockHeld(t, client) {
-			t.Fatal("pause must release the batch's locks")
-		}
-	})
-
-	t.Run("pool execution pauses nothing without its own claim", func(t *testing.T) {
-		createBatchRow(ctx, t, q, "pause-pool-foreign", types.Batch.Status.Queued)
-		createTaskRow(ctx, t, q, types.Task.Type.Backup, "pause-pool-foreign", json.RawMessage(`{}`), "", "", "")
-
-		_, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
-		testutil.AssertNoError(t, err, "claim backup task")
-
-		testutil.AssertNoError(t, PauseBatch(ctx, client, logger, Execution{BatchID: "pause-pool-foreign", Guard: uuid.New()}), "refusal is not an error")
-		testutil.AssertEqual(t, batchStatus(ctx, t, q, "pause-pool-foreign"), types.Batch.Status.Processing, "batch untouched")
-		if !lockHeld(t, client) {
-			t.Fatal("a refused pause must not release the live holder's locks")
-		}
-	})
 
 	t.Run("lease holder pauses and releases its lease", func(t *testing.T) {
 		createBatchRow(ctx, t, q, "pause-lease", types.Batch.Status.Processing)
@@ -217,15 +201,16 @@ func TestPauseBatchAuthorization(t *testing.T) {
 }
 
 // TestClaimNextPendingSkipsUnclaimableBatch guards against head-of-line
-// stalls: a pending task whose batch is terminal must neither be claimed nor
-// block the next claimable task of the same type.
+// stalls: a pending task whose batch is not owned by this execution (a terminal
+// batch carries no lease) must neither be claimed nor block the next claimable
+// task of the same type.
 func TestClaimNextPendingSkipsUnclaimableBatch(t *testing.T) {
 	store, _, client := setupTaskTestClient(t)
 	ctx := context.Background()
 	q := client.Queries
 
 	createBatchRow(ctx, t, q, "claim-old-failed", types.Batch.Status.Failed)
-	createBatchRow(ctx, t, q, "claim-new-queued", types.Batch.Status.Queued)
+	leasedBatch(ctx, t, q, "claim-new-queued", types.Batch.Status.Queued)
 
 	olderID, err := createTaskRow(ctx, t, q, types.Task.Type.Consume, "claim-old-failed", json.RawMessage(`{}`), "", "", "")
 	testutil.AssertNoError(t, err, "create older task")
