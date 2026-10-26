@@ -123,21 +123,24 @@ func batchCreateHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	// one catalog for the whole command: the hook map names every type this boundary enqueues, so a pending
-	// task of any other type still fails loudly instead of creating keyless work
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Consume:        consumption.DedupKey,
-		types.Task.Type.Backup:         backup.BackupDedupKey,
-		types.Task.Type.Mirror:         backup.MirrorDedupKey,
-		types.Task.Type.Enrich:         enrichment.DedupKey,
-		types.Task.Type.ThumbBackfill:  service.ThumbnailDedupKey,
-		types.Task.Type.TagReconcile:   task.ConstantDedupKey(curation.TagReconcileDedupKey),
-		types.Task.Type.TagMeasure:     task.ConstantDedupKey(tags.TagMeasureDedupKey),
-		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
-		types.Task.Type.TagAudit:       task.ConstantDedupKey(curation.TagAuditDedupKey),
-		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
-		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
-	}, nil)
+	// one catalog for the whole command: the wiring map names every type this boundary enqueues, so a
+	// pending task of any other type still fails loudly instead of creating keyless work
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Consume:       {DedupKey: consumption.DedupKey},
+		types.Task.Type.Backup:        {DedupKey: backup.BackupDedupKey},
+		types.Task.Type.Enrich:        {DedupKey: enrichment.DedupKey},
+		types.Task.Type.ThumbBackfill: {DedupKey: service.ThumbnailDedupKey},
+		types.Task.Type.Mirror: {
+			DedupKey:      backup.MirrorDedupKey,
+			Preconditions: []task.Precondition{backup.MirrorPrecondition},
+		},
+		types.Task.Type.TagReconcile:   {DedupKey: task.ConstantDedupKey(curation.TagReconcileDedupKey)},
+		types.Task.Type.TagMeasure:     {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
+		types.Task.Type.TagIdentity:    {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
+		types.Task.Type.TagAudit:       {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
+		types.Task.Type.MigrateDB:      {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateDB)},
+		types.Task.Type.MigrateStorage: {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage)},
+	})
 	if err != nil {
 		return fmt.Errorf("task catalog: %w", err)
 	}
@@ -383,7 +386,7 @@ func batchRunHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	catalog, err := task.NewCatalog(nil, nil)
+	catalog, err := task.NewCatalog(nil)
 	if err != nil {
 		return fmt.Errorf("task catalog: %w", err)
 	}

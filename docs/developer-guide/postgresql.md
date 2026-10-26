@@ -492,18 +492,16 @@ The daemon-side semantics (wake-up loop, timer reset, housekeeping) are in
 ## 13. Time arithmetic and dynamic intervals
 
 **Parameterized intervals** — when the interval duration comes from config,
-the codebase builds it with a cast of a concatenated string (`task.sql:233`):
+the codebase builds it with a cast of a concatenated string (`document.sql:165`):
 
 ```sql
--- name: CountRecentBackupTasks :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'backup' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL;
+DELETE FROM document
+WHERE deleted_at < CURRENT_TIMESTAMP - ($1::text || ' days')::INTERVAL;
 ```
 
-`($1 || ' minutes')::INTERVAL` turns the bound parameter `'30'` into
-`INTERVAL '30 minutes'`. The trash purge does the same with an explicit text
-cast first: `($1::text || ' days')::INTERVAL` (`document.sql:149`). The
-parameter stays a parameter — no string interpolation into SQL.
+`($1::text || ' days')::INTERVAL` turns the bound parameter `'30'` into
+`INTERVAL '30 days'`. The parameter stays a parameter — no string
+interpolation into SQL.
 
 **Duration math** — average task duration in milliseconds
 (`dashboard.go:274-276`):

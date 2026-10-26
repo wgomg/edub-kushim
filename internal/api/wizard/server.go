@@ -122,10 +122,10 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	registry.Register(types.Task.Type.MigrateDB, configtask.NewMigrateDBTaskHandler(client.Queries, s.logger))
 	registry.Register(types.Task.Type.MigrateStorage, configtask.NewMigrateStorageTaskHandler(client.Queries, s.logger))
 
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
-		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
-	}, nil)
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.MigrateDB:      {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateDB)},
+		types.Task.Type.MigrateStorage: {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage)},
+	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("task catalog: %w", err)
 	}

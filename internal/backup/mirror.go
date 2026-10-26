@@ -47,6 +47,16 @@ func Available() bool {
 	return err == nil
 }
 
+// MirrorPrecondition is the mirror task type's enqueue precondition: the environment must carry the
+// rsync binary the run shells out to, so a scheduled or batch-create mirror creates nothing when it
+// cannot run. The context is accepted for the task.Precondition shape; the lookup takes no I/O.
+func MirrorPrecondition(context.Context) error {
+	if Available() {
+		return nil
+	}
+	return fmt.Errorf("rsync is not installed — install it (e.g. 'sudo apt install rsync') to use the mirror feature")
+}
+
 // IsRemoteTarget reports whether the destination is remote
 // (host:path form).
 func IsRemoteTarget(dest string) bool {

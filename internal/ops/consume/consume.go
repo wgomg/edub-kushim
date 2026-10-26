@@ -169,10 +169,10 @@ func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, sto
 		return task.BatchRunResult{}, fmt.Errorf("failed to get database: %w", err)
 	}
 	cfg := c.GetConfig()
-	catalog, err := task.NewCatalog(nil, map[types.TaskType]int{
-		types.Task.Type.Consume:   cfg.Consumer.Workers,
-		types.Task.Type.Enrich:    cfg.Enricher.Workers,
-		types.Task.Type.Thumbnail: cfg.Consumer.Thumbnail.Workers,
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Consume:   {Concurrency: cfg.Consumer.Workers},
+		types.Task.Type.Enrich:    {Concurrency: cfg.Enricher.Workers},
+		types.Task.Type.Thumbnail: {Concurrency: cfg.Consumer.Thumbnail.Workers},
 	})
 	if err != nil {
 		return task.BatchRunResult{}, fmt.Errorf("task catalog: %w", err)
@@ -280,10 +280,10 @@ func newConsumeHandler(c *container.Container, store *task.Store, client *databa
 	if err != nil {
 		return nil, err
 	}
-	childCatalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Enrich:    enrichment.DedupKey,
-		types.Task.Type.Thumbnail: service.ThumbnailDedupKey,
-	}, nil)
+	childCatalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Enrich:    {DedupKey: enrichment.DedupKey},
+		types.Task.Type.Thumbnail: {DedupKey: service.ThumbnailDedupKey},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("task catalog: %w", err)
 	}
@@ -671,9 +671,9 @@ func triggerOrphanScan(c *container.Container) {
 		c.GetLogger().Error("", "orphan scan: get client: %v", err)
 		return
 	}
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Consume: consumption.DedupKey,
-	}, nil)
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Consume: {DedupKey: consumption.DedupKey},
+	})
 	if err != nil {
 		c.GetLogger().Error("", "orphan scan: task catalog: %v", err)
 		return

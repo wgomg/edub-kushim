@@ -8,16 +8,26 @@ import (
 )
 
 // Catalog is the concrete task type table of one process boundary: the static policy declared in this
-// package plus the dedup hooks and worker counts that boundary supplies at construction. Enqueue, dispatch
-// and the execution library read definitions through it. Its only dependency is internal/types; the values
-// that vary between processes arrive as constructor arguments.
+// package plus the per-type wiring that boundary supplies at construction. Enqueue, dispatch and the
+// execution library read definitions through it. Its only dependency is internal/types; the values that
+// vary between processes arrive as constructor arguments.
 type Catalog struct {
 	definitions map[types.TaskType]TypeDefinition
 }
 
+// TypeWiring is what one process boundary supplies for one task type when it constructs its catalog: the
+// producer-owned dedup hook, the worker count its batch executions size, and the environment checks its
+// enqueue paths enforce. The zero value keeps the definition's fallbacks: a nil hook is refused by the
+// enqueue surface at use, and a Concurrency below one means one worker.
+type TypeWiring struct {
+	DedupKey      DedupKeyFunc
+	Concurrency   int
+	Preconditions []Precondition
+}
+
 // staticDefinition is the boundary-independent policy of one task type: identity, the queued and direct
-// lock policy, the batch-mode CLI surface and the dispatch host eligibility. Dedup hooks, concurrency and
-// preconditions come from the boundary that constructs the catalog.
+// lock policy, the batch-mode CLI surface and the dispatch host eligibility. The per-type wiring comes from
+// the boundary that constructs the catalog.
 type staticDefinition struct {
 	locks         LockPolicy
 	directLocks   *LockPolicy
@@ -110,25 +120,20 @@ var staticDefinitions = map[types.TaskType]staticDefinition{
 	},
 }
 
-// NewCatalog builds the task type table of one process boundary. dedupHooks and concurrency may be nil
-// or partial: they name the types this process enqueues and the worker counts it sizes, so a process
-// that never enqueues a type does not import its producer. A pending task of a type without a hook is
-// refused by the enqueue surface; a key that is not a declared task type is a wiring error and fails
-// here.
-func NewCatalog(dedupHooks map[types.TaskType]DedupKeyFunc, concurrency map[types.TaskType]int) (*Catalog, error) {
-	for taskType := range dedupHooks {
+// NewCatalog builds the task type table of one process boundary from its per-type wiring. The map may be
+// nil or partial: it names the types this process enqueues, sizes and gates, so a process that never
+// enqueues a type does not import its producer. A pending task of a type without a hook is refused by the
+// enqueue surface; a key that is not a declared task type is a wiring error and fails here.
+func NewCatalog(wiring map[types.TaskType]TypeWiring) (*Catalog, error) {
+	for taskType := range wiring {
 		if !taskType.Valid() {
-			return nil, fmt.Errorf("dedup hook for undeclared task type %q", taskType)
-		}
-	}
-	for taskType := range concurrency {
-		if !taskType.Valid() {
-			return nil, fmt.Errorf("concurrency for undeclared task type %q", taskType)
+			return nil, fmt.Errorf("wiring for undeclared task type %q", taskType)
 		}
 	}
 
 	definitions := make(map[types.TaskType]TypeDefinition, len(staticDefinitions))
 	for taskType, static := range staticDefinitions {
+		w := wiring[taskType]
 		definitions[taskType] = TypeDefinition{
 			Type:          taskType,
 			Locks:         static.locks,
@@ -136,8 +141,9 @@ func NewCatalog(dedupHooks map[types.TaskType]DedupKeyFunc, concurrency map[type
 			CLI:           static.cli,
 			BatchSelector: static.batchSelector,
 			Hosts:         static.hosts,
-			Concurrency:   concurrency[taskType],
-			DedupKey:      dedupHooks[taskType],
+			Concurrency:   w.Concurrency,
+			DedupKey:      w.DedupKey,
+			Preconditions: w.Preconditions,
 		}
 	}
 	return &Catalog{definitions: definitions}, nil

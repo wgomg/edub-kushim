@@ -1,6 +1,7 @@
 package task_test
 
 import (
+	"context"
 	"encoding/json"
 	"regexp"
 	"testing"
@@ -16,28 +17,28 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// productionHooks wires every type's producer-owned dedup derivation, the way a process boundary that
+// productionWiring wires every type's producer-owned dedup derivation, the way a process boundary that
 // enqueues the whole task vocabulary builds its catalog.
-func productionHooks() map[types.TaskType]task.DedupKeyFunc {
-	return map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Consume:        consumption.DedupKey,
-		types.Task.Type.Enrich:         enrichment.DedupKey,
-		types.Task.Type.Thumbnail:      service.ThumbnailDedupKey,
-		types.Task.Type.ThumbBackfill:  service.ThumbnailDedupKey,
-		types.Task.Type.Backup:         backup.BackupDedupKey,
-		types.Task.Type.Mirror:         backup.MirrorDedupKey,
-		types.Task.Type.TagReconcile:   task.ConstantDedupKey(curation.TagReconcileDedupKey),
-		types.Task.Type.TagMeasure:     task.ConstantDedupKey(tags.TagMeasureDedupKey),
-		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
-		types.Task.Type.TagAudit:       task.ConstantDedupKey(curation.TagAuditDedupKey),
-		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
-		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
+func productionWiring() map[types.TaskType]task.TypeWiring {
+	return map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Consume:        {DedupKey: consumption.DedupKey},
+		types.Task.Type.Enrich:         {DedupKey: enrichment.DedupKey},
+		types.Task.Type.Thumbnail:      {DedupKey: service.ThumbnailDedupKey},
+		types.Task.Type.ThumbBackfill:  {DedupKey: service.ThumbnailDedupKey},
+		types.Task.Type.Backup:         {DedupKey: backup.BackupDedupKey},
+		types.Task.Type.Mirror:         {DedupKey: backup.MirrorDedupKey},
+		types.Task.Type.TagReconcile:   {DedupKey: task.ConstantDedupKey(curation.TagReconcileDedupKey)},
+		types.Task.Type.TagMeasure:     {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
+		types.Task.Type.TagIdentity:    {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
+		types.Task.Type.TagAudit:       {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
+		types.Task.Type.MigrateDB:      {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateDB)},
+		types.Task.Type.MigrateStorage: {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage)},
 	}
 }
 
 func testCatalog(t *testing.T) *task.Catalog {
 	t.Helper()
-	catalog, err := task.NewCatalog(productionHooks(), nil)
+	catalog, err := task.NewCatalog(productionWiring())
 	if err != nil {
 		t.Fatalf("build task catalog: %v", err)
 	}
@@ -195,24 +196,21 @@ func TestDailyDedupKeys(t *testing.T) {
 
 // TestNewCatalogRejectsUndeclaredWiringKeys pins that a wiring typo fails at construction.
 func TestNewCatalogRejectsUndeclaredWiringKeys(t *testing.T) {
-	if _, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.TaskType("bogus"): nil,
-	}, nil); err == nil {
-		t.Fatal("an undeclared dedup-hook key must be refused at construction")
-	}
-	if _, err := task.NewCatalog(nil, map[types.TaskType]int{
-		types.TaskType("bogus"): 4,
+	if _, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.TaskType("bogus"): {},
 	}); err == nil {
-		t.Fatal("an undeclared concurrency key must be refused at construction")
+		t.Fatal("an undeclared task type must be refused at construction")
 	}
 }
 
-// TestNewCatalogPartialWiring pins the per-boundary contract: an unwired type still resolves its static
-// policy, with a nil hook the enqueue surface refuses at use rather than a missing definition.
+// TestNewCatalogPartialWiring pins the per-boundary contract of one wiring map: the supplied fields
+// (hook, worker count, preconditions) land on their entry, an unwired type still resolves its static
+// policy with zero values the enqueue surface refuses at use rather than a missing definition.
 func TestNewCatalogPartialWiring(t *testing.T) {
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Consume: func(json.RawMessage) string { return "consume-key" },
-	}, nil)
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Consume: {DedupKey: func(json.RawMessage) string { return "consume-key" }},
+		types.Task.Type.Mirror:  {Concurrency: 3, Preconditions: []task.Precondition{func(context.Context) error { return nil }}},
+	})
 	if err != nil {
 		t.Fatalf("build task catalog: %v", err)
 	}
@@ -228,12 +226,29 @@ func TestNewCatalogPartialWiring(t *testing.T) {
 		t.Fatalf("consume CLI = %q, want consume", consumeDef.CLI)
 	}
 
+	mirrorDef, err := catalog.Definition(types.Task.Type.Mirror)
+	if err != nil {
+		t.Fatalf("mirror definition: %v", err)
+	}
+	if mirrorDef.Concurrency != 3 {
+		t.Errorf("mirror concurrency = %d, want 3 from the wiring map", mirrorDef.Concurrency)
+	}
+	if len(mirrorDef.Preconditions) != 1 {
+		t.Errorf("mirror preconditions = %d, want 1 from the wiring map", len(mirrorDef.Preconditions))
+	}
+	if mirrorDef.DedupKey != nil {
+		t.Error("a field the map did not supply stays zero")
+	}
+
 	backupDef, err := catalog.Definition(types.Task.Type.Backup)
 	if err != nil {
 		t.Fatalf("unwired type must still resolve: %v", err)
 	}
 	if backupDef.DedupKey != nil {
 		t.Fatal("an unwired type carries no hook; the enqueue refuses its pending tasks")
+	}
+	if backupDef.Concurrency != 0 || backupDef.Preconditions != nil {
+		t.Fatalf("unwired type wiring = concurrency %d, %d preconditions, want zeros", backupDef.Concurrency, len(backupDef.Preconditions))
 	}
 	if backupDef.Type != types.Task.Type.Backup {
 		t.Fatalf("backup type = %q, want the declared type", backupDef.Type)

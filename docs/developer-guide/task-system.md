@@ -410,9 +410,9 @@ for {
    timer guarantees a poll at least every 30s, and it's **reset on every
    notify** so a busy batch flow doesn't double-poll.
 3. **The 5s housekeeping ticker**: config reload
-   (`c.cfg.Store(newCfg)`), backup and mirror scheduling, the anchored tag
-   schedules, and stale-task reclamation (throttled to `StaleTaskAfter/10`
-   seconds, min 60s).
+   (`c.cfg.Store(newCfg)`), the declarative scheduler
+   (`internal/ops/queue/scheduler.go`), and stale-task reclamation (throttled
+   to `StaleTaskAfter/10` seconds, min 60s).
 
 ### The dispatcher and the launcher
 
@@ -594,7 +594,7 @@ The library owns pause, completion and settlement; the reporter only observes.
 
 Backup and mirror tasks get real batch rows (origin `schedule`, status
 `queued`) so they flow through the batches UI instead of being invisible
-orphans (`maybeScheduleTask`, `queue.go`). The queue daemon dispatches them
+orphans. The queue daemon dispatches them
 like any other batch — the claim acquires the type's holds under the
 execution token and forks `kushim backup --from-batch` or
 `kushim mirror --from-batch`, which adopt the claim's lease with the child's
@@ -1009,18 +1009,33 @@ the maintenance lock is held or gated tasks are processing (plus polling and
 daemon PID checks for restore), try-acquire with a NULL token, and never wait
 or drain.
 
-Scheduling: the daemon's backup/mirror scheduling, the anchored scheduler and
-the polling scan skip while `IsLockHeld(maintenance)`; a `storage`-only
-holder does not pause scheduling or polling. Released locks notify
+Scheduling: only the polling scan still skips while `IsLockHeld(maintenance)`; a
+`storage`-only holder does not pause it. Released locks notify
 `lock_released`, which wakes the daemon's dispatch tick alongside
-`batch_queued`. The queue daemon enqueues a `backup` task when `IsBackupDue`
-and the lock is free; the `backup:<mode>:<date>` dedup key prevents
-same-day duplicates per mode. The enqueue payload records the schedule
-(`schedule: {interval, time}`) that produced the task; `IsBackupDue` parses
-it from the last completed task and, when it differs from the current config
-timing, re-phases the next run to the closest upcoming occurrence of the new
-timing instead of waiting a full interval (tasks completed before this
-change carry no recorded schedule and keep the steady rule).
+`batch_queued`. Every recurring schedule lives in one declarative table
+(`internal/ops/queue/scheduler.go`): a definition per schedule — name, task
+type, enabled predicate, timing, and the producer that builds the run's task
+set — evaluated every tick against the freshly reloaded config. Backup
+contributes one schedule per configured mode (names `backup:<mode>`, after
+the dedup-key vocabulary); mirror, thumbnail-backfill and the four tag passes
+keep their earlier names, so scheduled batches already in the table keep
+anchoring their cadence. Per schedule the loop runs the enabled predicate, the
+active check (`CountActiveBatchesForSchedule` — any queued or processing
+batch of that schedule name), the due check
+(`GetLastTerminalBatchCreatedAtForSchedule` — the last terminal batch,
+`completed`, `failed` or `cancelled`, anchors `NextBackupTime` over its
+`created_at`, so a failed occurrence waits for the next occurrence instead of
+retrying every tick), calls the producer, and enqueues through `EnqueueBatch`
+with origin `schedule`. A zero-enqueued result creates nothing and leaves the
+schedule due; overlap beyond the name-keyed active check remains the dedup
+key's responsibility. Unmet preconditions — the mirror's rsync check — skip
+the occurrence with a log line, a failure in one schedule never stops the
+others, and no production enqueues by forking a CLI. A schedule with no
+terminal batch yet waits for the next preferred time-of-day, anchored in the
+scheduler's `firstDue` map once per daemon lifetime; the entry becomes
+irrelevant once the first batch lands. The scheduler never checks resource
+locks: enqueueing while `maintenance` is held just queues the batch, which
+the dispatcher claims when the locks free.
 
 The **mirror** task (`internal/backup/mirror_task.go`) participates in the
 same gate: it is claimed with the locks held, drains in-flight work, and runs
@@ -1039,9 +1054,11 @@ runs under
 the manual holder path instead — waiting for the lock and draining by
 default, `--no-wait` to fail fast — and writes
 the `.edub-mirror.json` diagnostics file into the
-destination. Scheduling mirrors `IsBackupDue` as `IsMirrorDue` (same
-`NextBackupTime` anchoring, keyed on the last completed `mirror:<date>` task,
-with the same payload-derived re-phase on schedule edits).
+destination. The mirror schedule is one entry of the declarative table —
+gated by `mirror.enabled`, due-ness anchored the same way as every other
+schedule — and its enqueue carries the `backup.MirrorPrecondition` rsync
+check, evaluated through the enqueue path for the scheduler and for
+`kushim batch create mirror` alike.
 
 The **tagmeasure** task (`internal/tags/tagmeasure.go`) is a
 lock-holding task: a `tagmeasure` batch is claimed with the maintenance lock
@@ -1064,8 +1081,7 @@ the same shape: a `tagidentity` batch is claimed with the lock held, and the
 identity evidence through `admission.IdentityResolver`, whose report (pending/
 resolved/folded/aliased/deferred/failed) becomes the task result stored on the
 task row. The review surface's reevaluate action, `kushim batch create
-tagidentity`, and the pass's own anchored
-schedule all create the same queued task. The queue dispatches it always, and
+tagidentity`, and the pass's scheduled run all create the same queued task. The queue dispatches it always, and
 the schedule — a fixed daily 03:30 pass with no config
 keys — fires only while `enricher.tag_adjudicator.enabled` is set, so pending
 claims wait for the next run when the judge is off.
@@ -1076,7 +1092,7 @@ the `kushim tagaudit --from-batch` child runs the coverage-verification pass
 (`admission.AuditRunner`), whose report (sweep, sampled/flagged counts,
 coverage tallies by class, fills/flags/proposals, judge call counts, pending
 coverage) becomes the task result stored on the task row.
-Runs come from the anchored schedule (disabled by default), `kushim batch
+Runs come from the schedule (disabled by default), `kushim batch
 create tagaudit`, and the reevaluate endpoint;
 `enricher.tag_audit.enabled` gates only automatic enqueuing.
 

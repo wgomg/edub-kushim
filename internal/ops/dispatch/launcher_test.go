@@ -55,7 +55,7 @@ func setupLauncherTest(t *testing.T) (*database.Client, *config.Config) {
 // reads no dedup hook and no worker count, so the catalog carries neither.
 func dispatchCatalog(t *testing.T) *task.Catalog {
 	t.Helper()
-	catalog, err := task.NewCatalog(nil, nil)
+	catalog, err := task.NewCatalog(nil)
 	if err != nil {
 		t.Fatalf("build task catalog: %v", err)
 	}

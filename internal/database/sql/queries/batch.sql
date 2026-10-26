@@ -230,60 +230,25 @@ SELECT COUNT(*) FROM batch WHERE status = 'paused';
 -- name: ListPausedBatches :many
 SELECT id FROM batch WHERE status = 'paused' ORDER BY created_at;
 
--- name: CountActiveThumbnailBackfillBatches :one
-SELECT COUNT(*) FROM batch b
-WHERE b.status IN ('queued', 'processing')
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill');
-
--- name: GetLastThumbnailBackfillBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill')
-ORDER BY b.created_at DESC
-LIMIT 1;
-
--- name: CountActiveTagReconcileBatches :one
-SELECT COUNT(*) FROM batch b
-WHERE b.status IN ('queued', 'processing')
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile');
-
--- name: GetLastTagReconcileBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile')
-ORDER BY b.created_at DESC
-LIMIT 1;
-
--- name: CountActiveTagMeasureBatches :one
-SELECT COUNT(*) FROM batch b
-WHERE b.status IN ('queued', 'processing')
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure');
-
--- name: GetLastTagMeasureBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE b.status = 'completed'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure')
-ORDER BY b.created_at DESC
-LIMIT 1;
-
 -- name: CountActiveTagAuditBatches :one
 SELECT COUNT(*) FROM batch b
 WHERE b.status IN ('queued', 'processing')
   AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagaudit');
-
--- name: GetLastTagAuditBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE b.status = 'completed'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagaudit')
-ORDER BY b.created_at DESC
-LIMIT 1;
 
 -- name: CountActiveTagIdentityBatches :one
 SELECT COUNT(*) FROM batch b
 WHERE b.status IN ('queued', 'processing')
   AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagidentity');
 
--- name: GetLastTagIdentityBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE b.status = 'completed'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagidentity')
-ORDER BY b.created_at DESC
+-- the scheduler derives due-ness and active state centrally from the batch table: it filters by the
+-- schedule name instead of testing each run's task composition; the cast makes the name a plain text
+-- argument rather than mirroring the column's nullability
+-- name: CountActiveBatchesForSchedule :one
+SELECT COUNT(*) FROM batch
+WHERE schedule = @schedule::text AND status IN ('queued', 'processing');
+
+-- name: GetLastTerminalBatchCreatedAtForSchedule :one
+SELECT created_at FROM batch
+WHERE schedule = @schedule::text AND status IN ('completed', 'failed', 'cancelled')
+ORDER BY created_at DESC
 LIMIT 1;

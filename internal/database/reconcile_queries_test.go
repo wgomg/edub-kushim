@@ -50,12 +50,6 @@ func TestReconcileBatchAndTaskQueries(t *testing.T) {
 	resetDB(t, q)
 	ctx := context.Background()
 
-	if n, err := q.CountActiveTagReconcileBatches(ctx); err != nil || n != 0 {
-		t.Fatalf("initial active batches = %d, %v", n, err)
-	}
-	if _, err := q.GetLastTagReconcileBatchCreatedAt(ctx); err != sql.ErrNoRows {
-		t.Fatalf("initial GetLastTagReconcileBatchCreatedAt: want ErrNoRows, got %v", err)
-	}
 	if _, err := q.GetLastCompletedTagReconcileTask(ctx); err != sql.ErrNoRows {
 		t.Fatalf("initial GetLastCompletedTagReconcileTask: want ErrNoRows, got %v", err)
 	}
@@ -66,12 +60,6 @@ func TestReconcileBatchAndTaskQueries(t *testing.T) {
 	if _, err := q.db.ExecContext(ctx,
 		"INSERT INTO task (task_id, task_type, status, batch_id, dedup_key, completed_at) VALUES ('rc-t1', 'tagreconcile', 'completed', 'rc-b1', 'tagreconcile:2026-09-12', now())"); err != nil {
 		t.Fatalf("insert task: %v", err)
-	}
-	if n, err := q.CountActiveTagReconcileBatches(ctx); err != nil || n != 1 {
-		t.Fatalf("active batches = %d, %v", n, err)
-	}
-	if ts, err := q.GetLastTagReconcileBatchCreatedAt(ctx); err != nil || !ts.Valid {
-		t.Fatalf("GetLastTagReconcileBatchCreatedAt = %v, %v", ts, err)
 	}
 	if ts, err := q.GetLastCompletedTagReconcileTask(ctx); err != nil || !ts.Valid {
 		t.Fatalf("GetLastCompletedTagReconcileTask = %v, %v", ts, err)

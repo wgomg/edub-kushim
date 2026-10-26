@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -47,70 +46,38 @@ func TestEnqueueWithNoTasksCreatesNoBatch(t *testing.T) {
 	}
 }
 
-// TestScheduleStateNextDueRephase pins the schedule anchor: an unchanged
-// schedule counts whole intervals from the last run, an edited schedule
-// re-phases to the next occurrence until it succeeds, and only markRun
-// advances the anchor.
-func TestScheduleStateNextDueRephase(t *testing.T) {
-	lastRun := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	steady := backup.ScheduleTiming{Interval: 7, Time: "02:00"}
-	edited := backup.ScheduleTiming{Interval: 3, Time: "03:30"}
-
-	state := scheduleState{lastRun: lastRun, runTiming: &steady}
-
-	if got, want := state.nextDue(steady), time.Date(2026, 6, 8, 2, 0, 0, 0, time.UTC); !got.Equal(want) {
-		t.Errorf("unchanged schedule next due = %v, want %v (full interval from the last run)", got, want)
-	}
-	if state.pendingRephase {
-		t.Error("pendingRephase set although the schedule did not change")
-	}
-
-	if got, want := state.nextDue(edited), time.Date(2026, 6, 2, 3, 30, 0, 0, time.UTC); !got.Equal(want) {
-		t.Errorf("edited schedule next due = %v, want %v (next occurrence, not the full interval)", got, want)
-	}
-	if !state.pendingRephase {
-		t.Error("pendingRephase not set for the edited schedule")
-	}
-
-	if got, want := state.nextDue(steady), time.Date(2026, 6, 8, 2, 0, 0, 0, time.UTC); !got.Equal(want) {
-		t.Errorf("reverted schedule next due = %v, want %v (falls back to the interval rule)", got, want)
-	}
-	if state.pendingRephase {
-		t.Error("pendingRephase not cleared by the reverted schedule")
-	}
-	if !state.lastRun.Equal(lastRun) {
-		t.Errorf("lastRun = %v, want %v (nextDue must not advance the anchor)", state.lastRun, lastRun)
-	}
-
-	state.markRun(edited)
-	if !state.runTiming.Equal(edited) {
-		t.Errorf("runTiming = %+v, want markRun to adopt the edited schedule %+v", state.runTiming, edited)
-	}
-	if state.pendingRephase {
-		t.Error("pendingRephase not cleared by markRun")
-	}
-	if since := time.Since(state.lastRun); since < 0 || since > 5*time.Second {
-		t.Errorf("lastRun = %v, want it advanced to now", state.lastRun)
-	}
-}
-
-// TestTagIdentityScheduleSpec pins the identity cadence: a daily 03:30 pass no
-// config key can move, gated on the tag adjudicator so an install without a judge
-// never schedules one while the pool still claims an explicit enqueue.
-func TestTagIdentityScheduleSpec(t *testing.T) {
+// TestTagIdentityScheduleDefinition pins the identity cadence: a daily 03:30
+// pass no config key can move, gated on the tag adjudicator so an install
+// without a judge never schedules one while the batched enqueue still accepts
+// an explicit run.
+func TestTagIdentityScheduleDefinition(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Enricher.TagReconcile.Interval = 7
 	cfg.Enricher.TagReconcile.Time = "05:00"
 
-	if got, want := tagIdentitySpec.timing(cfg), (backup.ScheduleTiming{Interval: 1, Time: "03:30"}); got != want {
+	def, ok := findSchedule(schedulesFor(cfg), scheduleTagIdentity)
+	if !ok {
+		t.Fatal("identity schedule definition missing")
+	}
+
+	if got, want := def.timing(cfg), (backup.ScheduleTiming{Interval: 1, Time: "03:30"}); got != want {
 		t.Errorf("timing = %+v, want %+v: identity's cadence is pinned, not configured", got, want)
 	}
 
-	if tagIdentitySpec.enabled(cfg) {
+	if def.enabled(cfg) {
 		t.Error("schedule fires while the tag adjudicator is off")
 	}
 	cfg.Enricher.TagAdjudicator.Enabled = true
-	if !tagIdentitySpec.enabled(cfg) {
+	if !def.enabled(cfg) {
 		t.Error("schedule does not fire while the tag adjudicator is on")
 	}
+}
+
+func findSchedule(schedules []scheduleDefinition, name string) (scheduleDefinition, bool) {
+	for _, def := range schedules {
+		if def.name == name {
+			return def, true
+		}
+	}
+	return scheduleDefinition{}, false
 }

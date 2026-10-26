@@ -298,38 +298,6 @@ WHERE status = 'processing' AND attempts < @attempts
   AND started_at < NOW() - make_interval(secs => @stale_after_seconds::int)
   AND task_type <> ALL(@types::task_type[]);
 
--- name: CountRecentBackupTasksByMode :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'backup' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
-  AND dedup_key LIKE 'backup:' || $2 || ':%';
-
--- name: CountActiveBackupTasks :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'backup' AND status IN ('pending', 'processing');
-
--- name: GetLastCompletedBackupByMode :one
-SELECT completed_at, payload FROM task
-WHERE task_type = 'backup' AND status = 'completed'
-  AND dedup_key LIKE 'backup:' || $1 || ':%'
-ORDER BY completed_at DESC
-LIMIT 1;
-
--- name: CountRecentMirrorTasks :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'mirror' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
-  AND dedup_key LIKE 'mirror:%';
-
--- name: CountActiveMirrorTasks :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'mirror' AND status IN ('pending', 'processing');
-
--- name: GetLastCompletedMirror :one
-SELECT completed_at, payload FROM task
-WHERE task_type = 'mirror' AND status = 'completed'
-  AND dedup_key LIKE 'mirror:%'
-ORDER BY completed_at DESC
-LIMIT 1;
-
 -- name: GetLastCompletedTagReconcileTask :one
 SELECT completed_at FROM task
 WHERE task_type = 'tagreconcile' AND status = 'completed'

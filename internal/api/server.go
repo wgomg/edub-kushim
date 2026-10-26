@@ -95,15 +95,15 @@ func (s *Server) rebuild(client *database.Client) {
 	services.DocumentType = service.NewDocumentType(client.Queries)
 	services.User = service.NewUser(client.Queries)
 
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Consume:        consumption.DedupKey,
-		types.Task.Type.Enrich:         enrichment.DedupKey,
-		types.Task.Type.ThumbBackfill:  service.ThumbnailDedupKey,
-		types.Task.Type.MigrateDB:      task.ConstantDedupKey(configtask.DedupKeyMigrateDB),
-		types.Task.Type.MigrateStorage: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage),
-		types.Task.Type.TagIdentity:    task.ConstantDedupKey(curation.TagIdentityDedupKey),
-		types.Task.Type.TagAudit:       task.ConstantDedupKey(curation.TagAuditDedupKey),
-	}, nil)
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Consume:        {DedupKey: consumption.DedupKey},
+		types.Task.Type.Enrich:         {DedupKey: enrichment.DedupKey},
+		types.Task.Type.ThumbBackfill:  {DedupKey: service.ThumbnailDedupKey},
+		types.Task.Type.MigrateDB:      {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateDB)},
+		types.Task.Type.MigrateStorage: {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage)},
+		types.Task.Type.TagIdentity:    {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
+		types.Task.Type.TagAudit:       {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
+	})
 	if err != nil {
 		s.logger.Fatal("build task catalog: ", err)
 	}

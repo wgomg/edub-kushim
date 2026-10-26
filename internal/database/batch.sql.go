@@ -94,6 +94,21 @@ func (q *Queries) BatchTaskStatusCounts(ctx context.Context, batchID sql.NullStr
 	return i, err
 }
 
+const countActiveBatchesForSchedule = `-- name: CountActiveBatchesForSchedule :one
+SELECT COUNT(*) FROM batch
+WHERE schedule = $1::text AND status IN ('queued', 'processing')
+`
+
+// the scheduler derives due-ness and active state centrally from the batch table: it filters by the
+// schedule name instead of testing each run's task composition; the cast makes the name a plain text
+// argument rather than mirroring the column's nullability
+func (q *Queries) CountActiveBatchesForSchedule(ctx context.Context, schedule string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveBatchesForSchedule, schedule)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countActiveTagAuditBatches = `-- name: CountActiveTagAuditBatches :one
 SELECT COUNT(*) FROM batch b
 WHERE b.status IN ('queued', 'processing')
@@ -115,45 +130,6 @@ WHERE b.status IN ('queued', 'processing')
 
 func (q *Queries) CountActiveTagIdentityBatches(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countActiveTagIdentityBatches)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countActiveTagMeasureBatches = `-- name: CountActiveTagMeasureBatches :one
-SELECT COUNT(*) FROM batch b
-WHERE b.status IN ('queued', 'processing')
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure')
-`
-
-func (q *Queries) CountActiveTagMeasureBatches(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveTagMeasureBatches)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countActiveTagReconcileBatches = `-- name: CountActiveTagReconcileBatches :one
-SELECT COUNT(*) FROM batch b
-WHERE b.status IN ('queued', 'processing')
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile')
-`
-
-func (q *Queries) CountActiveTagReconcileBatches(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveTagReconcileBatches)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countActiveThumbnailBackfillBatches = `-- name: CountActiveThumbnailBackfillBatches :one
-SELECT COUNT(*) FROM batch b
-WHERE b.status IN ('queued', 'processing')
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill')
-`
-
-func (q *Queries) CountActiveThumbnailBackfillBatches(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveThumbnailBackfillBatches)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -316,74 +292,15 @@ func (q *Queries) GetConsumeTaskPayloadsByIDs(ctx context.Context, taskIds []str
 	return items, nil
 }
 
-const getLastTagAuditBatchCreatedAt = `-- name: GetLastTagAuditBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE b.status = 'completed'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagaudit')
-ORDER BY b.created_at DESC
+const getLastTerminalBatchCreatedAtForSchedule = `-- name: GetLastTerminalBatchCreatedAtForSchedule :one
+SELECT created_at FROM batch
+WHERE schedule = $1::text AND status IN ('completed', 'failed', 'cancelled')
+ORDER BY created_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLastTagAuditBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
-	row := q.db.QueryRowContext(ctx, getLastTagAuditBatchCreatedAt)
-	var created_at sql.NullTime
-	err := row.Scan(&created_at)
-	return created_at, err
-}
-
-const getLastTagIdentityBatchCreatedAt = `-- name: GetLastTagIdentityBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE b.status = 'completed'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagidentity')
-ORDER BY b.created_at DESC
-LIMIT 1
-`
-
-func (q *Queries) GetLastTagIdentityBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
-	row := q.db.QueryRowContext(ctx, getLastTagIdentityBatchCreatedAt)
-	var created_at sql.NullTime
-	err := row.Scan(&created_at)
-	return created_at, err
-}
-
-const getLastTagMeasureBatchCreatedAt = `-- name: GetLastTagMeasureBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE b.status = 'completed'
-  AND EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagmeasure')
-ORDER BY b.created_at DESC
-LIMIT 1
-`
-
-func (q *Queries) GetLastTagMeasureBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
-	row := q.db.QueryRowContext(ctx, getLastTagMeasureBatchCreatedAt)
-	var created_at sql.NullTime
-	err := row.Scan(&created_at)
-	return created_at, err
-}
-
-const getLastTagReconcileBatchCreatedAt = `-- name: GetLastTagReconcileBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'tagreconcile')
-ORDER BY b.created_at DESC
-LIMIT 1
-`
-
-func (q *Queries) GetLastTagReconcileBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
-	row := q.db.QueryRowContext(ctx, getLastTagReconcileBatchCreatedAt)
-	var created_at sql.NullTime
-	err := row.Scan(&created_at)
-	return created_at, err
-}
-
-const getLastThumbnailBackfillBatchCreatedAt = `-- name: GetLastThumbnailBackfillBatchCreatedAt :one
-SELECT b.created_at FROM batch b
-WHERE EXISTS (SELECT 1 FROM task t WHERE t.batch_id = b.id AND t.task_type = 'thumbbackfill')
-ORDER BY b.created_at DESC
-LIMIT 1
-`
-
-func (q *Queries) GetLastThumbnailBackfillBatchCreatedAt(ctx context.Context) (sql.NullTime, error) {
-	row := q.db.QueryRowContext(ctx, getLastThumbnailBackfillBatchCreatedAt)
+func (q *Queries) GetLastTerminalBatchCreatedAtForSchedule(ctx context.Context, schedule string) (sql.NullTime, error) {
+	row := q.db.QueryRowContext(ctx, getLastTerminalBatchCreatedAtForSchedule, schedule)
 	var created_at sql.NullTime
 	err := row.Scan(&created_at)
 	return created_at, err

@@ -97,7 +97,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 - `Catalog` — one process boundary's task type table: the package-level static policy (per type: identity, queued and direct locks, batch-mode `CLI`/`BatchSelector`, `Hosts`) merged with the boundary's values
   - **Methods**:
-    - `NewCatalog(dedupHooks map[types.TaskType]DedupKeyFunc, concurrency map[types.TaskType]int) (*Catalog, error)` — applies the two per-type maps over the static table; either map may be nil or partial (it names the types this process enqueues), and a key that is not a declared task type fails at construction
+    - `NewCatalog(wiring map[types.TaskType]TypeWiring) (*Catalog, error)` — applies the per-type wiring over the static table; each `TypeWiring` carries the type's dedup hook, worker count and preconditions (`DedupKey`, `Concurrency`, `Preconditions`), the map may be nil or partial (it names the types this process enqueues), and a key that is not a declared task type fails at construction
     - `Definition(taskType) (TypeDefinition, error)` — the entry for a task type; an unknown type is an error
 
 ### Package functions
@@ -219,7 +219,8 @@ Dedup derivation lives with each type's producer package (the migration types ca
 ## Task wiring at the process boundaries
 
 There is no shared task-wiring point: each process boundary constructs its own
-task catalog (dedup hooks naming the types it enqueues), its enqueuers and,
+task catalog (a per-type `TypeWiring` of dedup hooks, worker counts and
+preconditions naming the types it enqueues), its enqueuers and,
 per batch-mode task type, the store and handler registry the type's CLI
 registers when it runs a claimed batch. The task package
 contains none of this; producers own their task-set construction.
@@ -263,9 +264,10 @@ task sets through the owning producer:
 
 ### Queue daemon (`kushim queue`)
 
-`queue.Run` builds the daemon catalog once — the enqueue hooks of the types
+`queue.Run` builds the daemon catalog once — the wiring map of the types
 the daemon creates (polling's `consume`, the schedules' `backup`, `mirror`,
-`thumbbackfill` and the four tag passes) — and hands it to
+`thumbbackfill` and the four tag passes), carrying the mirror type's rsync
+enqueue precondition — and hands it to
 `dispatch.NewDispatcher` (fork-only: the dispatcher resolves each batch's
 launch target and forks its task CLI); the scheduler and the polling tick construct
 `task.NewEnqueuer(client, catalog)` over the current connection at each use,
@@ -286,7 +288,7 @@ both migration handlers over the bootstrap client and executes a claimed
 migration batch itself while no daemon exists:
 
 ```go
-catalog, _ := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{ ... }, nil)
+catalog, _ := task.NewCatalog(map[types.TaskType]task.TypeWiring{ ... })
 enqueuer := task.NewEnqueuer(client, catalog)
 dispatcher := dispatch.NewDispatcher(catalog, logger, types.HostWizard, budget, wake,
     &dispatch.InProcessRegistration{ ... Run: dispatch.InProcessRun(deps) })

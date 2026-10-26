@@ -39,7 +39,7 @@ internal/
 │   ├── backup.go           # Create backup (SQL dump, tar.gz, manifest, retention)
 │   ├── backup_task.go      # BackupTaskHandler (drain-wait → snapshot → retention, batch lifecycle)
 │   ├── restore.go          # Validate, extract, and replace files from backup archive
-│   ├── scheduler.go        # Backup scheduling (NextBackupTime, NextScheduledTime, ScheduleTiming, FirstRunAnchor, IsBackupDue, IsMirrorDue, dueFromHistory, scheduleTimingFromPayload)
+│   ├── scheduler.go        # Scheduling timing helpers: ScheduleTiming, NextBackupTime, NextOccurrence (the first-occurrence slot)
 │   ├── mirror.go           # Run (rsync -a --delete, stats parsing), WriteState (.edub-mirror.json), RunMirrorAndRecord (the queued handler's action; the runner owns the lock heartbeat and drain)
 │   └── mirror_task.go      # MirrorTaskHandler (pure work function → RunMirrorAndRecord)
 ├── cgo/                    # MuPDF CGo glue
@@ -196,9 +196,10 @@ internal/
  │   │   ├── inprocess.go    # InProcessRun — hosted execution of a claimed batch (pid-0 lease, launch-failure recovery)
  │   │   ├── notify.go       # Postgres LISTEN/NOTIFY goroutine shared by the daemon and the wizard
  │   │   └── launcher.go     # Shared claim/fork + LaunchQueuedBatch (kushim batch run) + launch-failure backoff
- │   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY via dispatch)
- │   │   ├── queue.go        # Daemon loop: daemon task catalog, schedules through the producers, dispatcher wiring, config hot-reload
- │   │   └── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
+│   ├── queue/              # Queue daemon for background batch consumption (Postgres LISTEN/NOTIFY via dispatch)
+│   │   ├── queue.go        # Daemon loop: daemon task catalog, dispatcher wiring, config hot-reload
+│   │   ├── scheduler.go    # Declarative scheduler: schedule definitions (name, task type, enabled predicate, timing, producer), central due/active checks, first-run anchor
+│   │   └── reaper.go       # Stale batch/task reclamation (fenced release, then signal, reset, settle/requeue)
 │   ├── consume/            # `kushim consume` child process
  │   │   ├── consume.go      # Direct inbox run + batch mode through the shared library, cancel subcommand
 │   │   └── advisories.go   # Tool-block and ocrmypdf advisories printed before a batch starts
@@ -268,7 +269,7 @@ internal/
  │   ├── crud.go             # Task CRUD (Get, ListFiltered, CountBatchStatuses, ListBatchSummaries)
  │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
  │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; refuses a pending task whose type carries no dedup hook in the boundary's catalog
- │   ├── catalog.go          # Catalog — one boundary's task type table: static policy (locks, direct locks, CLI surface, hosts) merged with boundary-supplied dedup hooks and worker counts
+ │   ├── catalog.go          # Catalog — one boundary's task type table: static policy (locks, direct locks, CLI surface, hosts) merged with boundary-supplied wiring (TypeWiring: dedup hooks, worker counts, preconditions)
  │   ├── type_definition.go  # TypeDefinition contract + DedupKeyFunc
  │   ├── errors.go           # Error wrapper carrying ReqID for log correlation
  │   ├── handler.go          # Handler interface — pure work functions

@@ -82,30 +82,6 @@ func (q *Queries) CompleteBlockingTask(ctx context.Context, arg CompleteBlocking
 	return result.RowsAffected()
 }
 
-const countActiveBackupTasks = `-- name: CountActiveBackupTasks :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'backup' AND status IN ('pending', 'processing')
-`
-
-func (q *Queries) CountActiveBackupTasks(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveBackupTasks)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countActiveMirrorTasks = `-- name: CountActiveMirrorTasks :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'mirror' AND status IN ('pending', 'processing')
-`
-
-func (q *Queries) CountActiveMirrorTasks(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveMirrorTasks)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countAllTasks = `-- name: CountAllTasks :one
 SELECT COUNT(*) FROM task
 `
@@ -136,37 +112,6 @@ WHERE status = 'processing'
 
 func (q *Queries) CountProcessingTasks(ctx context.Context, argTypes []types.TaskType) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countProcessingTasks, pq.Array(argTypes))
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countRecentBackupTasksByMode = `-- name: CountRecentBackupTasksByMode :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'backup' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
-  AND dedup_key LIKE 'backup:' || $2 || ':%'
-`
-
-type CountRecentBackupTasksByModeParams struct {
-	Column1 sql.NullString
-	Column2 sql.NullString
-}
-
-func (q *Queries) CountRecentBackupTasksByMode(ctx context.Context, arg CountRecentBackupTasksByModeParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countRecentBackupTasksByMode, arg.Column1, arg.Column2)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countRecentMirrorTasks = `-- name: CountRecentMirrorTasks :one
-SELECT COUNT(*) FROM task
-WHERE task_type = 'mirror' AND created_at > NOW() - ($1 || ' minutes')::INTERVAL
-  AND dedup_key LIKE 'mirror:%'
-`
-
-func (q *Queries) CountRecentMirrorTasks(ctx context.Context, dollar_1 sql.NullString) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countRecentMirrorTasks, dollar_1)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -430,46 +375,6 @@ func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, arg GetConfigTask
 		&i.Attempts,
 		&i.Progress,
 	)
-	return i, err
-}
-
-const getLastCompletedBackupByMode = `-- name: GetLastCompletedBackupByMode :one
-SELECT completed_at, payload FROM task
-WHERE task_type = 'backup' AND status = 'completed'
-  AND dedup_key LIKE 'backup:' || $1 || ':%'
-ORDER BY completed_at DESC
-LIMIT 1
-`
-
-type GetLastCompletedBackupByModeRow struct {
-	CompletedAt sql.NullTime
-	Payload     *json.RawMessage
-}
-
-func (q *Queries) GetLastCompletedBackupByMode(ctx context.Context, dollar_1 sql.NullString) (GetLastCompletedBackupByModeRow, error) {
-	row := q.db.QueryRowContext(ctx, getLastCompletedBackupByMode, dollar_1)
-	var i GetLastCompletedBackupByModeRow
-	err := row.Scan(&i.CompletedAt, &i.Payload)
-	return i, err
-}
-
-const getLastCompletedMirror = `-- name: GetLastCompletedMirror :one
-SELECT completed_at, payload FROM task
-WHERE task_type = 'mirror' AND status = 'completed'
-  AND dedup_key LIKE 'mirror:%'
-ORDER BY completed_at DESC
-LIMIT 1
-`
-
-type GetLastCompletedMirrorRow struct {
-	CompletedAt sql.NullTime
-	Payload     *json.RawMessage
-}
-
-func (q *Queries) GetLastCompletedMirror(ctx context.Context) (GetLastCompletedMirrorRow, error) {
-	row := q.db.QueryRowContext(ctx, getLastCompletedMirror)
-	var i GetLastCompletedMirrorRow
-	err := row.Scan(&i.CompletedAt, &i.Payload)
 	return i, err
 }
 

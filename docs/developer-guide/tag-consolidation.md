@@ -446,23 +446,21 @@ waits are free) and the reconciling child keeps it fresh (heartbeat + drain)
 for the whole run — and `tagreconcile` joins `NonConsumeTaskTypes`, the list
 the batch overviews use to classify the maintenance batches.
 
-**Scheduling** — the anchored scheduler (`maybeScheduleAnchored` with `tagReconcileSpec`, `internal/ops/queue/queue.go`)
-runs on the queue daemon's housekeeping ticker (thumbnail-backfill precedent):
-the daemon enqueues a `tagreconcile` batch whenever the interval is due — the
-enabled flag gates only automatic enqueueing, and a manual
-`kushim batch create tagreconcile` batch is dispatched the same way; `lastRun` is anchored on
-the most recent `tagreconcile` batch's `created_at`; a run is skipped while one
-is queued/processing or the maintenance lock is held. With no prior batch,
-`FirstRunAnchor` (`internal/backup/scheduler.go`) anchors to the *next*
-occurrence of the preferred time minus the interval, so a freshly-enabled
-schedule lands its first run at the next preferred time (not a full interval
-out); later runs count the interval from the previous run. The daemon keeps
-per-schedulable in-memory state (`scheduleState` in `internal/ops/queue/queue.go`)
-recording the timing the last run anchored under: an edited interval or
-preferred time re-phases the next run to the closest upcoming occurrence of
-the new timing (in-memory only — a daemon restart between the edit and the
-re-phased run falls back to the steady rule), and a reverted edit before the
-run restores the steady rule. The handler
+**Scheduling** — one declarative schedule (`tagreconcile`,
+`internal/ops/queue/scheduler.go`) runs on the queue daemon's housekeeping
+ticker: the daemon enqueues a `tagreconcile` batch whenever the interval is
+due — the enabled flag gates only automatic enqueueing, and a manual
+`kushim batch create tagreconcile` batch is dispatched the same way. Due-ness
+comes from the last terminal batch of the schedule name (a `completed`,
+`failed` or `cancelled` run anchors `NextBackupTime` over its `created_at`,
+so a failed run waits for the next occurrence), and a run is skipped while
+one is queued or processing; the fixed `tagreconcile` dedup key blocks any
+overlap the active check misses, and later runs count the interval from the
+previous run. With no terminal batch yet, the first run waits for the next
+occurrence of the preferred time-of-day. The scheduling side does not consult
+resource locks: a `tagreconcile` batch enqueued while a maintenance run holds
+`maintenance` simply queues, and the dispatcher claims it when the lock frees.
+The handler
 (`internal/tags/reconcile/tagreconcile.go`) runs the shared blocking
 lifecycle through the queued batch's own task CLI — a `tagreconcile` batch is
 claimed with the maintenance lock held and its `kushim tagreconcile

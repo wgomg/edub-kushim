@@ -51,8 +51,8 @@ func mirrorHandler(c *container.Container, args []string) error {
 		return runMirrorBatch(c, batchID, execTokenParam)
 	}
 
-	if !backup.Available() {
-		return fmt.Errorf("rsync is not installed — install it (e.g. 'sudo apt install rsync') to use the mirror feature")
+	if err := backup.MirrorPrecondition(context.Background()); err != nil {
+		return err
 	}
 
 	client, err := c.GetClient()

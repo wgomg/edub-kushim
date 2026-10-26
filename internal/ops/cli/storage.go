@@ -43,9 +43,9 @@ func newOrphanedService(c *container.Container) (*service.Orphaned, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	catalog, err := task.NewCatalog(map[types.TaskType]task.DedupKeyFunc{
-		types.Task.Type.Consume: consumption.DedupKey,
-	}, nil)
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Consume: {DedupKey: consumption.DedupKey},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("task catalog: %w", err)
 	}
