@@ -172,17 +172,18 @@ func (q *Queries) CountTasksByStatusAndType(ctx context.Context, arg CountTasksB
 
 const createTask = `-- name: CreateTask :one
 INSERT INTO task (
-    task_id, task_type, status, batch_id, payload, dedup_key
-) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+    task_id, task_type, status, batch_id, payload, dedup_key, parent_task_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
 `
 
 type CreateTaskParams struct {
-	TaskID   string
-	TaskType types.TaskType
-	Status   types.TaskStatus
-	BatchID  sql.NullString
-	Payload  *json.RawMessage
-	DedupKey sql.NullString
+	TaskID       string
+	TaskType     types.TaskType
+	Status       types.TaskStatus
+	BatchID      sql.NullString
+	Payload      *json.RawMessage
+	DedupKey     sql.NullString
+	ParentTaskID sql.NullString
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, error) {
@@ -193,6 +194,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, 
 		arg.BatchID,
 		arg.Payload,
 		arg.DedupKey,
+		arg.ParentTaskID,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -227,83 +229,115 @@ func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 	return err
 }
 
-const discardEnrichTask = `-- name: DiscardEnrichTask :execrows
+const discardOrphanedWaitingSuccessors = `-- name: DiscardOrphanedWaitingSuccessors :execrows
+WITH RECURSIVE dead(task_id, id, reason) AS (
+    SELECT c.task_id, c.id, COALESCE(p.error, 'parent task did not complete')
+    FROM task c
+    JOIN task p ON c.parent_task_id = p.task_id
+    WHERE c.status = 'waiting'
+      AND p.status IN ('completed', 'failed', 'cancelled', 'discarded')
+      AND p.batch_id = $1::text
+    UNION ALL
+    SELECT c.task_id, c.id, d.reason
+    FROM task c
+    JOIN dead d ON c.parent_task_id = d.task_id
+    WHERE c.status = 'waiting'
+)
+UPDATE task
+SET status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = dead.reason
+FROM dead
+WHERE task.id = dead.id AND task.status = 'waiting'
+`
+
+// the repair net: a waiting successor whose parent ended without activating it can never run. completed is
+// residue (activation commits with the completion); failed is normally cascaded in the same transaction, but
+// the quarantine paths fail a task in place without discarding its branch, so the recursion follows the link
+// and one pass clears a whole dead branch instead of leaving its tail blocking the settle
+func (q *Queries) DiscardOrphanedWaitingSuccessors(ctx context.Context, batchID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardOrphanedWaitingSuccessors, batchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const discardOrphanedWaitingSuccessorsGlobal = `-- name: DiscardOrphanedWaitingSuccessorsGlobal :execrows
+WITH RECURSIVE dead(task_id, id, reason) AS (
+    SELECT c.task_id, c.id, COALESCE(p.error, 'parent task did not complete')
+    FROM task c
+    JOIN task p ON c.parent_task_id = p.task_id
+    WHERE c.status = 'waiting'
+      AND p.status IN ('completed', 'failed', 'cancelled', 'discarded')
+    UNION ALL
+    SELECT c.task_id, c.id, d.reason
+    FROM task c
+    JOIN dead d ON c.parent_task_id = d.task_id
+    WHERE c.status = 'waiting'
+)
+UPDATE task
+SET status = 'discarded',
+    completed_at = CURRENT_TIMESTAMP,
+    error = dead.reason
+FROM dead
+WHERE task.id = dead.id AND task.status = 'waiting'
+`
+
+func (q *Queries) DiscardOrphanedWaitingSuccessorsGlobal(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardOrphanedWaitingSuccessorsGlobal)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const discardWaitingSuccessor = `-- name: DiscardWaitingSuccessor :execrows
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = $1
-WHERE id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail')
+    error = $1::text
+WHERE id = $2 AND status = 'waiting'
 `
 
-type DiscardEnrichTaskParams struct {
-	Error sql.NullString
+type DiscardWaitingSuccessorParams struct {
+	Error string
 	ID    int64
 }
 
-func (q *Queries) DiscardEnrichTask(ctx context.Context, arg DiscardEnrichTaskParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, discardEnrichTask, arg.Error, arg.ID)
+func (q *Queries) DiscardWaitingSuccessor(ctx context.Context, arg DiscardWaitingSuccessorParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardWaitingSuccessor, arg.Error, arg.ID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const discardEnrichTaskByTaskID = `-- name: DiscardEnrichTaskByTaskID :execrows
+const discardWaitingSuccessorBranch = `-- name: DiscardWaitingSuccessorBranch :execrows
+WITH RECURSIVE branch(task_id, id) AS (
+    SELECT task_id, id FROM task
+    WHERE parent_task_id = $2::text AND status = 'waiting'
+    UNION ALL
+    SELECT t.task_id, t.id FROM task t
+    JOIN branch b ON t.parent_task_id = b.task_id
+    WHERE t.status = 'waiting'
+)
 UPDATE task SET
     status = 'discarded',
     completed_at = CURRENT_TIMESTAMP,
-    error = $1
-WHERE task_id = $2 AND status = 'waiting' AND task_type IN ('enrich', 'thumbnail')
+    error = $1::text
+WHERE id IN (SELECT id FROM branch) AND status = 'waiting'
 `
 
-type DiscardEnrichTaskByTaskIDParams struct {
-	Error  sql.NullString
-	TaskID string
+type DiscardWaitingSuccessorBranchParams struct {
+	Error        string
+	ParentTaskID string
 }
 
-func (q *Queries) DiscardEnrichTaskByTaskID(ctx context.Context, arg DiscardEnrichTaskByTaskIDParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, discardEnrichTaskByTaskID, arg.Error, arg.TaskID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const discardOrphanedWaitingEnriches = `-- name: DiscardOrphanedWaitingEnriches :execrows
-UPDATE task AS e
-SET status = 'discarded',
-    completed_at = CURRENT_TIMESTAMP,
-    error = COALESCE(c.error, 'parent consume task did not complete')
-FROM task AS c
-WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
-  AND c.task_type = 'consume' AND c.status NOT IN ('pending', 'processing')
-  AND c.batch_id = $1
-  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
-`
-
-// a waiting child whose parent consume is no longer pending or processing can never be activated: the parent
-// completed without activating it, failed, or was cancelled, so the waiting row would strand the settle
-func (q *Queries) DiscardOrphanedWaitingEnriches(ctx context.Context, batchID sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, discardOrphanedWaitingEnriches, batchID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const discardOrphanedWaitingEnrichesGlobal = `-- name: DiscardOrphanedWaitingEnrichesGlobal :execrows
-UPDATE task AS e
-SET status = 'discarded',
-    completed_at = CURRENT_TIMESTAMP,
-    error = COALESCE(c.error, 'parent consume task did not complete')
-FROM task AS c
-WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'waiting'
-  AND c.task_type = 'consume' AND c.status NOT IN ('pending', 'processing')
-  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
-`
-
-func (q *Queries) DiscardOrphanedWaitingEnrichesGlobal(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, discardOrphanedWaitingEnrichesGlobal)
+// a successor that will never run cannot activate its own successors: discarding one waiting successor
+// discards its awaiting branch transitively, following the link down the chain
+func (q *Queries) DiscardWaitingSuccessorBranch(ctx context.Context, arg DiscardWaitingSuccessorBranchParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, discardWaitingSuccessorBranch, arg.Error, arg.ParentTaskID)
 	if err != nil {
 		return 0, err
 	}
@@ -335,7 +369,7 @@ func (q *Queries) FailBlockingTask(ctx context.Context, arg FailBlockingTaskPara
 
 const getConfigTaskByDedupKey = `-- name: GetConfigTaskByDedupKey :one
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE task_type = $1 AND dedup_key = $2
 ORDER BY created_at DESC LIMIT 1
 `
@@ -363,6 +397,7 @@ func (q *Queries) GetConfigTaskByDedupKey(ctx context.Context, arg GetConfigTask
 		&i.Error,
 		&i.Attempts,
 		&i.Progress,
+		&i.ParentTaskID,
 	)
 	return i, err
 }
@@ -413,7 +448,7 @@ func (q *Queries) GetNextPendingTask(ctx context.Context) (int64, error) {
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress FROM task WHERE id = $1
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress, parent_task_id FROM task WHERE id = $1
 `
 
 func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
@@ -434,12 +469,13 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 		&i.Error,
 		&i.Attempts,
 		&i.Progress,
+		&i.ParentTaskID,
 	)
 	return i, err
 }
 
 const getTaskByBatchID = `-- name: GetTaskByBatchID :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress FROM task WHERE batch_id = $1 ORDER BY created_at
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress, parent_task_id FROM task WHERE batch_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) ([]Task, error) {
@@ -466,6 +502,7 @@ func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) 
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -481,7 +518,7 @@ func (q *Queries) GetTaskByBatchID(ctx context.Context, batchID sql.NullString) 
 }
 
 const getTaskByTaskID = `-- name: GetTaskByTaskID :one
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress FROM task WHERE task_id = $1
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key, created_at, started_at, completed_at, error, attempts, progress, parent_task_id FROM task WHERE task_id = $1
 `
 
 func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, error) {
@@ -502,13 +539,14 @@ func (q *Queries) GetTaskByTaskID(ctx context.Context, taskID string) (Task, err
 		&i.Error,
 		&i.Attempts,
 		&i.Progress,
+		&i.ParentTaskID,
 	)
 	return i, err
 }
 
 const listActiveTasks = `-- name: ListActiveTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task
 WHERE status IN ('pending', 'processing', 'waiting')
 ORDER BY
@@ -547,6 +585,7 @@ func (q *Queries) ListActiveTasks(ctx context.Context, arg ListActiveTasksParams
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -563,7 +602,7 @@ func (q *Queries) ListActiveTasks(ctx context.Context, arg ListActiveTasksParams
 
 const listAllTasksByBatch = `-- name: ListAllTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC
 `
 
@@ -593,6 +632,7 @@ func (q *Queries) ListAllTasksByBatch(ctx context.Context, batchID sql.NullStrin
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -609,7 +649,7 @@ func (q *Queries) ListAllTasksByBatch(ctx context.Context, batchID sql.NullStrin
 
 const listAllTasksByStatusAndType = `-- name: ListAllTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC
 `
 
@@ -642,6 +682,7 @@ func (q *Queries) ListAllTasksByStatusAndType(ctx context.Context, arg ListAllTa
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -729,7 +770,7 @@ func (q *Queries) ListBatchTaskTypes(ctx context.Context, batchID sql.NullString
 
 const listTasks = `-- name: ListTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
@@ -762,6 +803,7 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -778,7 +820,7 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 
 const listTasksByBatch = `-- name: ListTasksByBatch :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
@@ -812,6 +854,7 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, arg ListTasksByBatchPara
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -828,7 +871,7 @@ func (q *Queries) ListTasksByBatch(ctx context.Context, arg ListTasksByBatchPara
 
 const listTasksByBatchAndStatus = `-- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
@@ -868,6 +911,7 @@ func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksBy
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -884,7 +928,7 @@ func (q *Queries) ListTasksByBatchAndStatus(ctx context.Context, arg ListTasksBy
 
 const listTasksByBatchAndStatusAndType = `-- name: ListTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC LIMIT $4 OFFSET $5
 `
 
@@ -926,6 +970,7 @@ func (q *Queries) ListTasksByBatchAndStatusAndType(ctx context.Context, arg List
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -942,7 +987,7 @@ func (q *Queries) ListTasksByBatchAndStatusAndType(ctx context.Context, arg List
 
 const listTasksByBatchAndType = `-- name: ListTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
@@ -982,6 +1027,7 @@ func (q *Queries) ListTasksByBatchAndType(ctx context.Context, arg ListTasksByBa
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -998,7 +1044,7 @@ func (q *Queries) ListTasksByBatchAndType(ctx context.Context, arg ListTasksByBa
 
 const listTasksByStatus = `-- name: ListTasksByStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
@@ -1032,6 +1078,7 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -1048,7 +1095,7 @@ func (q *Queries) ListTasksByStatus(ctx context.Context, arg ListTasksByStatusPa
 
 const listTasksByStatusAndType = `-- name: ListTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4
 `
 
@@ -1088,6 +1135,7 @@ func (q *Queries) ListTasksByStatusAndType(ctx context.Context, arg ListTasksByS
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -1104,7 +1152,7 @@ func (q *Queries) ListTasksByStatusAndType(ctx context.Context, arg ListTasksByS
 
 const listTasksByType = `-- name: ListTasksByType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
+       created_at, started_at, completed_at, error, attempts, progress, parent_task_id
 FROM task WHERE task_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
@@ -1138,6 +1186,95 @@ func (q *Queries) ListTasksByType(ctx context.Context, arg ListTasksByTypeParams
 			&i.Error,
 			&i.Attempts,
 			&i.Progress,
+			&i.ParentTaskID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWaitingSuccessorsByParent = `-- name: ListWaitingSuccessorsByParent :many
+SELECT id, task_id, task_type, payload
+FROM task
+WHERE parent_task_id = $1::text AND status = 'waiting'
+ORDER BY created_at, id
+`
+
+type ListWaitingSuccessorsByParentRow struct {
+	ID       int64
+	TaskID   string
+	TaskType types.TaskType
+	Payload  *json.RawMessage
+}
+
+// one parent's waiting successors in enqueue order: activation is deterministic, and two same-key successors
+// resolve first-wins with the second discarded as a duplicate of the first
+func (q *Queries) ListWaitingSuccessorsByParent(ctx context.Context, parentTaskID string) ([]ListWaitingSuccessorsByParentRow, error) {
+	rows, err := q.db.QueryContext(ctx, listWaitingSuccessorsByParent, parentTaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWaitingSuccessorsByParentRow
+	for rows.Next() {
+		var i ListWaitingSuccessorsByParentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskType,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWaitingSuccessorsWithParentStatus = `-- name: ListWaitingSuccessorsWithParentStatus :many
+SELECT c.task_id, c.task_type, p.task_id AS parent_task_id, p.status AS parent_status
+FROM task c
+JOIN task p ON c.parent_task_id = p.task_id
+WHERE c.batch_id = $1::text AND c.status = 'waiting'
+ORDER BY c.created_at, c.id
+`
+
+type ListWaitingSuccessorsWithParentStatusRow struct {
+	TaskID       string
+	TaskType     types.TaskType
+	ParentTaskID string
+	ParentStatus types.TaskStatus
+}
+
+// the settle-refusal diagnostic: which waiting rows remain and in what state their parents are
+func (q *Queries) ListWaitingSuccessorsWithParentStatus(ctx context.Context, batchID string) ([]ListWaitingSuccessorsWithParentStatusRow, error) {
+	rows, err := q.db.QueryContext(ctx, listWaitingSuccessorsWithParentStatus, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWaitingSuccessorsWithParentStatusRow
+	for rows.Next() {
+		var i ListWaitingSuccessorsWithParentStatusRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.TaskType,
+			&i.ParentTaskID,
+			&i.ParentStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -1221,35 +1358,54 @@ func (q *Queries) ResetStaleProcessingTasks(ctx context.Context, arg ResetStaleP
 	return result.RowsAffected()
 }
 
-const restoreDiscardedEnrichTasks = `-- name: RestoreDiscardedEnrichTasks :execrows
-UPDATE task AS e
-SET status = 'waiting', error = NULL, completed_at = NULL
-FROM task AS c
-WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'discarded'
-  AND c.task_type = 'consume' AND c.status = 'pending'
-  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
+const restoreDiscardedSuccessors = `-- name: RestoreDiscardedSuccessors :execrows
+WITH RECURSIVE restored(task_id, id) AS (
+    SELECT c.task_id, c.id FROM task c
+    JOIN task p ON c.parent_task_id = p.task_id
+    WHERE c.status = 'discarded' AND p.status IN ('pending', 'waiting')
+    UNION ALL
+    SELECT c.task_id, c.id FROM task c
+    JOIN restored r ON c.parent_task_id = r.task_id
+    WHERE c.status = 'discarded'
+)
+UPDATE task SET
+    status = 'waiting',
+    error = NULL,
+    completed_at = NULL
+WHERE id IN (SELECT id FROM restored) AND status = 'discarded'
 `
 
-func (q *Queries) RestoreDiscardedEnrichTasks(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreDiscardedEnrichTasks)
+// a discarded successor of a live parent returns to waiting: pending means the parent was retried, waiting
+// means the chain has not reached it yet; the recursion re-arms the tail, and the dedup index re-decides at
+// activation
+func (q *Queries) RestoreDiscardedSuccessors(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreDiscardedSuccessors)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const restoreDiscardedEnrichTasksByBatch = `-- name: RestoreDiscardedEnrichTasksByBatch :execrows
-UPDATE task AS e
-SET status = 'waiting', error = NULL, completed_at = NULL
-FROM task AS c
-WHERE e.task_type IN ('enrich', 'thumbnail') AND e.status = 'discarded'
-  AND c.task_type = 'consume' AND c.status = 'pending'
-  AND c.batch_id = $1
-  AND (e.task_id = c.payload->>'on_completed' OR e.task_id = c.payload->>'on_completed_thumbnail')
+const restoreDiscardedSuccessorsByBatch = `-- name: RestoreDiscardedSuccessorsByBatch :execrows
+WITH RECURSIVE restored(task_id, id) AS (
+    SELECT c.task_id, c.id FROM task c
+    JOIN task p ON c.parent_task_id = p.task_id
+    WHERE c.status = 'discarded' AND p.status IN ('pending', 'waiting')
+      AND p.batch_id = $1::text
+    UNION ALL
+    SELECT c.task_id, c.id FROM task c
+    JOIN restored r ON c.parent_task_id = r.task_id
+    WHERE c.status = 'discarded'
+)
+UPDATE task SET
+    status = 'waiting',
+    error = NULL,
+    completed_at = NULL
+WHERE id IN (SELECT id FROM restored) AND status = 'discarded'
 `
 
-func (q *Queries) RestoreDiscardedEnrichTasksByBatch(ctx context.Context, batchID sql.NullString) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreDiscardedEnrichTasksByBatch, batchID)
+func (q *Queries) RestoreDiscardedSuccessorsByBatch(ctx context.Context, batchID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreDiscardedSuccessorsByBatch, batchID)
 	if err != nil {
 		return 0, err
 	}
@@ -1275,37 +1431,26 @@ func (q *Queries) RetryFailedTasksByBatch(ctx context.Context, batchID sql.NullS
 	return result.RowsAffected()
 }
 
-const setEnrichTaskPending = `-- name: SetEnrichTaskPending :exec
+const setWaitingSuccessorPending = `-- name: SetWaitingSuccessorPending :execrows
 UPDATE task SET
     status = 'pending',
     payload = $1,
-    dedup_key = $2,
+    dedup_key = $2::text,
     error = NULL,
     completed_at = NULL
-WHERE id = $3 AND status IN ('waiting', 'discarded') AND task_type IN ('enrich', 'thumbnail')
+WHERE id = $3 AND status = 'waiting'
 `
 
-type SetEnrichTaskPendingParams struct {
+type SetWaitingSuccessorPendingParams struct {
 	Payload  *json.RawMessage
-	DedupKey sql.NullString
+	DedupKey string
 	ID       int64
 }
 
-func (q *Queries) SetEnrichTaskPending(ctx context.Context, arg SetEnrichTaskPendingParams) error {
-	_, err := q.db.ExecContext(ctx, setEnrichTaskPending, arg.Payload, arg.DedupKey, arg.ID)
-	return err
-}
-
-const setEnrichTaskWaiting = `-- name: SetEnrichTaskWaiting :execrows
-UPDATE task SET
-    status = 'waiting',
-    error = NULL,
-    completed_at = NULL
-WHERE task_id = $1 AND status = 'discarded' AND task_type IN ('enrich', 'thumbnail')
-`
-
-func (q *Queries) SetEnrichTaskWaiting(ctx context.Context, taskID string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setEnrichTaskWaiting, taskID)
+// the activation flip carries the merged payload and the key derived from it; the waiting guard turns a
+// concurrently transitioned successor into a no-op instead of an overwrite
+func (q *Queries) SetWaitingSuccessorPending(ctx context.Context, arg SetWaitingSuccessorPendingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setWaitingSuccessorPending, arg.Payload, arg.DedupKey, arg.ID)
 	if err != nil {
 		return 0, err
 	}

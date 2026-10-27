@@ -525,10 +525,10 @@ func ResumeBatch(ctx context.Context, client *database.Client, logger *log.Logge
 		if err != nil {
 			return ResumeResult{}, fmt.Errorf("retry failed tasks for batch %s: %w", batchID, err)
 		}
-		// the retried consumes are pending now, so their discarded children are restored in this same transaction
-		// before the requeue: it must never expose a consume whose children still look dead
-		if _, err := txQ.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
-			return ResumeResult{}, fmt.Errorf("restore children of retried consumes for batch %s: %w", batchID, err)
+		// the retried tasks are pending now, so their discarded successors are restored in this same transaction
+		// before the requeue: it must never expose a successor whose waiting branch still looks dead
+		if _, err := txQ.RestoreDiscardedSuccessorsByBatch(ctx, batchID); err != nil {
+			return ResumeResult{}, fmt.Errorf("restore successors of retried tasks for batch %s: %w", batchID, err)
 		}
 	}
 
@@ -615,8 +615,8 @@ func resetProcessingTx(ctx context.Context, queries *database.Queries, batchID s
 		return ResetResult{}, fmt.Errorf("reset processing tasks by batch: %w", err)
 	}
 
-	if _, err := queries.RestoreDiscardedEnrichTasksByBatch(ctx, bid); err != nil {
-		return ResetResult{}, fmt.Errorf("restore discarded enrich tasks by batch: %w", err)
+	if _, err := queries.RestoreDiscardedSuccessorsByBatch(ctx, batchID); err != nil {
+		return ResetResult{}, fmt.Errorf("restore discarded successors by batch: %w", err)
 	}
 
 	result := ResetResult{Reset: reset}

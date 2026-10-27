@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -30,18 +31,17 @@ func TestIngestTaskSpecsWithoutThumbnails(t *testing.T) {
 		t.Errorf("first spec = %s/%s, want a pending consume task", consume.Type, consume.Status)
 	}
 	if consume.TaskID == "" {
-		t.Error("consume spec must carry an explicit id so the children can link to it")
+		t.Error("consume spec must carry an explicit id so the successors can link to it")
 	}
 
 	consumePayload := payloadMap(t, consume.Payload)
 	if consumePayload["file_path"] != file.Path || consumePayload["md5"] != file.MD5 || consumePayload["document_id"] != file.DocumentID {
 		t.Errorf("consume payload = %v, want the file identity fields", consumePayload)
 	}
-	if consumePayload["on_completed"] != enrich.TaskID {
-		t.Errorf("on_completed = %v, want the enrich task id %q", consumePayload["on_completed"], enrich.TaskID)
-	}
-	if _, ok := consumePayload["on_completed_thumbnail"]; ok {
-		t.Errorf("on_completed_thumbnail present without thumbnails: %v", consumePayload)
+	for _, key := range []string{"on_completed", "on_completed_thumbnail"} {
+		if _, present := consumePayload[key]; present {
+			t.Errorf("consume payload still carries the retired %q key", key)
+		}
 	}
 
 	if enrich.Type != types.Task.Type.Enrich || enrich.Status != types.Task.Status.Waiting {
@@ -51,14 +51,17 @@ func TestIngestTaskSpecsWithoutThumbnails(t *testing.T) {
 		t.Errorf("enrich parent = %q, want %q", enrich.ParentTaskID, consume.TaskID)
 	}
 	enrichPayload := payloadMap(t, enrich.Payload)
-	if enrichPayload["waiting_for"] != consume.TaskID {
-		t.Errorf("waiting_for = %v, want the consume task id", enrichPayload["waiting_for"])
-	}
 	if enrichPayload["document_id"] != file.DocumentID {
 		t.Errorf("enrich document_id = %v, want %q", enrichPayload["document_id"], file.DocumentID)
 	}
 	if enrichPayload["file_name"] != "report.pdf" {
 		t.Errorf("enrich file_name = %v, want the path's base name", enrichPayload["file_name"])
+	}
+	if _, present := enrichPayload["waiting_for"]; present {
+		t.Errorf("enrich payload still carries the retired waiting_for key")
+	}
+	if _, present := enrichPayload[task.InheritPayloadKey]; present {
+		t.Errorf("enrich declares no inheritance: %v", enrichPayload)
 	}
 }
 
@@ -72,8 +75,8 @@ func TestIngestTaskSpecsWithThumbnails(t *testing.T) {
 
 	consume, thumbnail := specs[0], specs[2]
 	consumePayload := payloadMap(t, consume.Payload)
-	if consumePayload["on_completed_thumbnail"] != thumbnail.TaskID {
-		t.Errorf("on_completed_thumbnail = %v, want the thumbnail task id %q", consumePayload["on_completed_thumbnail"], thumbnail.TaskID)
+	if _, present := consumePayload["on_completed_thumbnail"]; present {
+		t.Errorf("consume payload still carries the retired on_completed_thumbnail key")
 	}
 	if thumbnail.Type != types.Task.Type.Thumbnail || thumbnail.Status != types.Task.Status.Waiting {
 		t.Errorf("third spec = %s/%s, want a waiting thumbnail task", thumbnail.Type, thumbnail.Status)
@@ -82,7 +85,11 @@ func TestIngestTaskSpecsWithThumbnails(t *testing.T) {
 		t.Errorf("thumbnail parent = %q, want %q", thumbnail.ParentTaskID, consume.TaskID)
 	}
 	thumbnailPayload := payloadMap(t, thumbnail.Payload)
-	if thumbnailPayload["waiting_for"] != consume.TaskID {
-		t.Errorf("waiting_for = %v, want the consume task id", thumbnailPayload["waiting_for"])
+	if thumbnailPayload["document_id"] != file.DocumentID {
+		t.Errorf("thumbnail document_id = %v, want the enqueue-time value %q", thumbnailPayload["document_id"], file.DocumentID)
+	}
+	inherited, ok := thumbnailPayload[task.InheritPayloadKey].([]any)
+	if !ok || len(inherited) != 1 || inherited[0] != "storage_path" {
+		t.Errorf("thumbnail inherit = %v, want [storage_path]", thumbnailPayload[task.InheritPayloadKey])
 	}
 }

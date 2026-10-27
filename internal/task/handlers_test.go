@@ -2,7 +2,6 @@ package task_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/log"
@@ -19,40 +17,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// createTaskRow inserts a task directly for handler tests that only need a
-// claimed task row; enqueue coverage lives in the enqueue tests.
-func createTaskRow(
-	ctx context.Context, t *testing.T, queries *database.Queries,
-	taskType types.TaskType, batchID string, payload json.RawMessage,
-	taskID string, status types.TaskStatus, dedupKey string,
-) (string, error) {
-	t.Helper()
-	if taskID == "" {
-		taskID = uuid.New().String()
-	}
-	if status == "" {
-		status = types.Task.Status.Pending
-	}
-	var dedup sql.NullString
-	if dedupKey != "" {
-		dedup = sql.NullString{String: dedupKey, Valid: true}
-	}
-	body := payload
-	_, err := queries.CreateTask(ctx, database.CreateTaskParams{
-		TaskID:   taskID,
-		TaskType: taskType,
-		Status:   status,
-		BatchID:  sql.NullString{String: batchID, Valid: batchID != ""},
-		Payload:  &body,
-		DedupKey: dedup,
-	})
-	return taskID, err
-}
-
 // newTestConsumeHandler builds a handler wired to a fresh test database.
-// Lives here as an external test package: the consume handler's discard paths
-// need a DB-backed store, and internal/task is already in the test-db matrix.
-func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *task.Store, *database.Client) {
+// Lives here as an external test package: the consumer needs a DB-backed
+// config, and internal/task is already in the test-db matrix.
+func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *database.Client) {
 	t.Helper()
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -70,138 +38,39 @@ func newTestConsumeHandler(t *testing.T) (*consumption.ConsumeTaskHandler, *task
 	consumer, err := consumption.NewConsumer(cfg, logger, client)
 	testutil.AssertNoError(t, err, "create consumer")
 
-	store := task.NewStore(client)
-	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, logger, testTypeCatalog{}), store, client
+	return consumption.NewConsumeTaskHandler(consumer, client.Queries, logger), client
 }
 
-// testTypeCatalog derives the enrich and thumbnail dedup keys the production catalog declares, so the
-// activation path under test writes the same keys the enqueue would.
-type testTypeCatalog struct{}
-
-func (testTypeCatalog) Definition(taskType types.TaskType) (task.TypeDefinition, error) {
-	switch taskType {
-	case types.Task.Type.Enrich:
-		return task.TypeDefinition{Type: taskType, DedupKey: documentDedupKey("enrich:doc:")}, nil
-	case types.Task.Type.Thumbnail:
-		return task.TypeDefinition{Type: taskType, DedupKey: documentDedupKey("thumbnail:doc:")}, nil
-	default:
-		return task.TypeDefinition{}, fmt.Errorf("unknown task type: %q", taskType)
-	}
+// consumeTask builds the claimed task shape a handler call receives.
+func consumeTask(payload json.RawMessage) task.Task {
+	return task.Task{TaskID: "consume-task", TaskType: types.Task.Type.Consume, Payload: payload}
 }
 
-func documentDedupKey(prefix string) func(json.RawMessage) string {
-	return func(payload json.RawMessage) string {
-		var p struct {
-			DocumentID string `json:"document_id"`
-		}
-		if err := json.Unmarshal(payload, &p); err != nil || p.DocumentID == "" {
-			return ""
-		}
-		return prefix + p.DocumentID
-	}
-}
-
-// insertConsumeEnrichPair creates a waiting enrich linked to a pending consume
-// via the consume payload's on_completed field.
-func insertConsumeEnrichPair(t *testing.T, client *database.Client, filePath, waitingFor string) (consumeTaskID, enrichTaskID string) {
-	t.Helper()
-	ctx := context.Background()
-	consumeTaskID = uuid.New().String()
-	enrichTaskID = uuid.New().String()
-	if waitingFor == "" {
-		waitingFor = consumeTaskID
-	}
-
-	enrichPayload, _ := json.Marshal(map[string]any{"waiting_for": waitingFor})
-	_, err := createTaskRow(ctx, t, client.Queries, "enrich", "", enrichPayload, enrichTaskID, "waiting", "")
-	testutil.AssertNoError(t, err, "create enrich task")
-
-	consumePayload, _ := json.Marshal(map[string]any{"file_path": filePath, "on_completed": enrichTaskID})
-	_, err = createTaskRow(ctx, t, client.Queries, "consume", "", consumePayload, consumeTaskID, "pending", "")
-	testutil.AssertNoError(t, err, "create consume task")
-	return consumeTaskID, enrichTaskID
-}
-
-func consumeTaskFor(t *testing.T, store *task.Store, consumeTaskID string, payload json.RawMessage) task.Task {
-	t.Helper()
-	row, err := store.GetTaskByTaskID(context.Background(), consumeTaskID)
-	testutil.AssertNoError(t, err, "get consume task")
-	if payload == nil {
-		payload = *row.Payload
-	}
-	return task.Task{ID: row.ID, TaskID: row.TaskID, TaskType: row.TaskType, Payload: payload}
-}
-
-func TestConsumeHandlerDiscardsEnrichOnFailure(t *testing.T) {
-	handler, store, client := newTestConsumeHandler(t)
+// TestConsumeHandlerReportsFailures pins the handler's failure surface: the runner fails the task on these
+// errors and discards its waiting branch, so the handler itself touches no successor rows.
+func TestConsumeHandlerReportsFailures(t *testing.T) {
+	handler, _ := newTestConsumeHandler(t)
 	ctx := context.Background()
 
-	t.Run("payload unmarshal failure recovers on_completed and discards", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "")
-		// strict unmarshal fails: file_path is an object, not a string
-		payload := json.RawMessage(fmt.Sprintf(`{"file_path": {"bad": true}, "on_completed": %q}`, enrichID))
-
-		_, err := handler.Handle(ctx, consumeTaskFor(t, store, consumeID, payload))
+	t.Run("payload unmarshal failure", func(t *testing.T) {
+		_, err := handler.Handle(ctx, consumeTask(json.RawMessage(`{"file_path": {"bad": true}}`)))
 		if err == nil || !strings.Contains(err.Error(), "unmarshal payload") {
 			t.Fatalf("expected unmarshal error, got %v", err)
 		}
-		enrich, err := store.GetTaskByTaskID(ctx, enrichID)
-		testutil.AssertNoError(t, err, "get enrich task")
-		testutil.AssertEqual(t, enrich.Status, "discarded", "enrich discarded")
 	})
 
-	t.Run("missing file_path discards", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "")
-
-		_, err := handler.Handle(ctx, consumeTaskFor(t, store, consumeID, nil))
+	t.Run("missing file_path", func(t *testing.T) {
+		_, err := handler.Handle(ctx, consumeTask(json.RawMessage(`{"document_id":"doc-1"}`)))
 		if err == nil || !strings.Contains(err.Error(), "no file_path") {
 			t.Fatalf("expected file_path error, got %v", err)
 		}
-		enrich, _ := store.GetTaskByTaskID(ctx, enrichID)
-		testutil.AssertEqual(t, enrich.Status, "discarded", "enrich discarded")
 	})
 
-	t.Run("missing inbox file discards", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, client, filepath.Join(t.TempDir(), "gone.pdf"), "")
-
-		_, err := handler.Handle(ctx, consumeTaskFor(t, store, consumeID, nil))
+	t.Run("missing inbox file", func(t *testing.T) {
+		payload := fmt.Sprintf(`{"file_path": %q}`, filepath.Join(t.TempDir(), "gone.pdf"))
+		_, err := handler.Handle(ctx, consumeTask(json.RawMessage(payload)))
 		if err == nil || !strings.Contains(err.Error(), "build file from path") {
 			t.Fatalf("expected file build error, got %v", err)
 		}
-		enrich, _ := store.GetTaskByTaskID(ctx, enrichID)
-		testutil.AssertEqual(t, enrich.Status, "discarded", "enrich discarded")
-	})
-
-	t.Run("discard failure is surfaced in the task error", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "unrelated-consume")
-
-		_, err := handler.Handle(ctx, consumeTaskFor(t, store, consumeID, nil))
-		if err == nil || !strings.Contains(err.Error(), "additionally failed to discard enrich task") {
-			t.Fatalf("expected discard failure in error, got %v", err)
-		}
-		enrich, _ := store.GetTaskByTaskID(ctx, enrichID)
-		testutil.AssertEqual(t, enrich.Status, "waiting", "waiting_for mismatch blocks the discard")
-	})
-
-	t.Run("thumbnail sibling is discarded on unmarshal failure", func(t *testing.T) {
-		consumeID, enrichID := insertConsumeEnrichPair(t, client, "", "")
-		thumbnailID := uuid.New().String()
-		thumbnailPayload, _ := json.Marshal(map[string]any{"waiting_for": consumeID})
-		_, err := createTaskRow(ctx, t, client.Queries, "thumbnail", "", thumbnailPayload, thumbnailID, "waiting", "")
-		testutil.AssertNoError(t, err, "create thumbnail task")
-
-		// strict unmarshal fails: file_path is an object, not a string
-		payload := json.RawMessage(fmt.Sprintf(
-			`{"file_path":{"bad":true},"on_completed":%q,"on_completed_thumbnail":%q}`,
-			enrichID, thumbnailID,
-		))
-		_, err = handler.Handle(ctx, consumeTaskFor(t, store, consumeID, payload))
-		if err == nil {
-			t.Fatalf("expected unmarshal error, got nil")
-		}
-
-		thumbnail, err := store.GetTaskByTaskID(ctx, thumbnailID)
-		testutil.AssertNoError(t, err, "get thumbnail task")
-		testutil.AssertEqual(t, thumbnail.Status, "discarded", "thumbnail discarded")
 	})
 }

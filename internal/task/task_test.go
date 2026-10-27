@@ -145,7 +145,7 @@ func TestStoreClaimAndComplete(t *testing.T) {
 	testutil.AssertNoError(t, err, "claim")
 	testutil.AssertEqual(t, string(claimed.Status), "processing", "after claim")
 
-	_, err = store.CompleteTask(ctx, claimed.ID, json.RawMessage(`{"ok":true}`), token)
+	_, _, err = store.CompleteTask(ctx, claimed.ID, json.RawMessage(`{"ok":true}`), token, nil)
 	testutil.AssertNoError(t, err, "complete")
 
 	task, _ := store.GetTask(ctx, claimed.ID)
@@ -166,7 +166,7 @@ func TestStoreClaimAndFail(t *testing.T) {
 	claimed, token, err := store.ClaimNextPending(ctx, "consume")
 	testutil.AssertNoError(t, err, "claim")
 
-	if _, err := store.FailTask(ctx, claimed.ID, "something went wrong", token); err != nil {
+	if _, _, err := store.FailTask(ctx, claimed.ID, claimed.TaskID, "something went wrong", token); err != nil {
 		testutil.AssertNoError(t, err, "fail")
 	}
 
@@ -326,7 +326,7 @@ func TestEnqueuerAbortsOnTaskIDCollision(t *testing.T) {
 	testutil.AssertError(t, err, "aborted enqueue leaves no sibling behind")
 }
 
-func TestEnqueuerRejectsWaitingWithoutID(t *testing.T) {
+func TestEnqueuerRejectsWaitingWithoutParent(t *testing.T) {
 	enqueuer, client := newEnqueuerForTest(t)
 	defer client.DB().Close()
 
@@ -335,7 +335,7 @@ func TestEnqueuerRejectsWaitingWithoutID(t *testing.T) {
 		Type:   types.Task.Type.Enrich,
 		Status: types.Task.Status.Waiting,
 	}})
-	testutil.AssertError(t, err, "waiting needs an explicit id")
+	testutil.AssertError(t, err, "a waiting task needs the parent that will activate it")
 }
 
 func TestEnqueuerWaitingChildCarriesNoDedupKey(t *testing.T) {
@@ -481,7 +481,7 @@ func TestEnqueuerDedupKeyPrecheck(t *testing.T) {
 
 func TestRunnerCompletesTask(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	runner := NewRunner(store, registry, testutil.NewTestLogger())
+	runner := NewRunner(store, registry, testSuccessorCatalog(t), testutil.NewTestLogger())
 
 	handler := newMockHandler()
 	registry.Register("consume", handler)
@@ -498,7 +498,7 @@ func TestRunnerCompletesTask(t *testing.T) {
 
 func TestRunnerFailsTask(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	runner := NewRunner(store, registry, testutil.NewTestLogger())
+	runner := NewRunner(store, registry, testSuccessorCatalog(t), testutil.NewTestLogger())
 
 	handler := newMockHandler()
 	handler.fail = true
@@ -550,7 +550,7 @@ func (h *panickingHandler) Handle(ctx context.Context, t Task) (json.RawMessage,
 
 func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	runner := NewRunner(store, registry, testutil.NewTestLogger())
+	runner := NewRunner(store, registry, testSuccessorCatalog(t), testutil.NewTestLogger())
 
 	handler := &wrappedFailHandler{}
 	handler.fail = true
@@ -572,7 +572,7 @@ func TestRunnerExtractsReqIDFromWrappedError(t *testing.T) {
 
 func TestRunnerFailsTaskOnPanic(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	runner := NewRunner(store, registry, testutil.NewTestLogger())
+	runner := NewRunner(store, registry, testSuccessorCatalog(t), testutil.NewTestLogger())
 
 	handler := &panickingHandler{}
 	registry.Register(types.Task.Type.Enrich, handler)
@@ -598,7 +598,7 @@ func TestRunnerFailsTaskOnPanic(t *testing.T) {
 
 func TestRunnerNoTasks(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	runner := NewRunner(store, registry, testutil.NewTestLogger())
+	runner := NewRunner(store, registry, testSuccessorCatalog(t), testutil.NewTestLogger())
 	registry.Register(types.Task.Type.Consume, newMockHandler())
 
 	err := runner.Next(context.Background(), types.Task.Type.Consume)
@@ -608,7 +608,7 @@ func TestRunnerNoTasks(t *testing.T) {
 func TestRunnerNilPayload(t *testing.T) {
 	store, registry, q := setupTaskTest(t)
 	logger := testutil.NewTestLogger()
-	runner := NewRunner(store, registry, logger)
+	runner := NewRunner(store, registry, testSuccessorCatalog(t), logger)
 	handler := newMockHandler()
 	registry.Register("consume", handler)
 
@@ -724,7 +724,7 @@ func TestStoreTransitionWrongOwnerNoop(t *testing.T) {
 	task, _, err := store.ClaimNextPending(ctx, types.Task.Type.Backup)
 	testutil.AssertNoError(t, err, "claim")
 
-	rows, err := store.CompleteTask(ctx, task.ID, json.RawMessage(`{}`), uuid.New())
+	rows, _, err := store.CompleteTask(ctx, task.ID, json.RawMessage(`{}`), uuid.New(), nil)
 	testutil.AssertNoError(t, err, "complete under a foreign guard")
 	if rows != 0 {
 		t.Fatalf("rows=%d, want 0 (the lease guard must refuse the write)", rows)
@@ -734,7 +734,7 @@ func TestStoreTransitionWrongOwnerNoop(t *testing.T) {
 		t.Fatalf("status=%s, want processing", row.Status)
 	}
 
-	rows, err = store.FailTask(ctx, task.ID, "boom", uuid.New())
+	rows, _, err = store.FailTask(ctx, task.ID, task.TaskID, "boom", uuid.New())
 	testutil.AssertNoError(t, err, "fail under a foreign guard")
 	if rows != 0 {
 		t.Fatalf("fail rows=%d, want 0 (the lease guard must refuse the write)", rows)
@@ -759,13 +759,13 @@ func TestStoreGuardAgainstStaleClaimant(t *testing.T) {
 		t.Fatalf("hand the lease to a new execution: %v", err)
 	}
 
-	rows, err := store.CompleteTask(ctx, task.ID, json.RawMessage(`{}`), token)
+	rows, _, err := store.CompleteTask(ctx, task.ID, json.RawMessage(`{}`), token, nil)
 	testutil.AssertNoError(t, err, "stale complete")
 	if rows != 0 {
 		t.Fatalf("stale complete rows=%d, want 0", rows)
 	}
 
-	rows, err = store.CompleteTask(ctx, task.ID, json.RawMessage(`{"ok":true}`), fresh)
+	rows, _, err = store.CompleteTask(ctx, task.ID, json.RawMessage(`{"ok":true}`), fresh, nil)
 	testutil.AssertNoError(t, err, "fresh complete")
 	if rows != 1 {
 		t.Fatalf("fresh complete rows=%d, want 1", rows)

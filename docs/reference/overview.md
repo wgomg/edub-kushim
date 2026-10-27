@@ -71,7 +71,7 @@ internal/
 │   ├── tag.sql.go          # Generated tag queries (includes SearchTagsByName)
 │   ├── people.sql.go       # Generated people queries (CreatePeople with name_native, ListAllPeople, SearchPeopleByName, UpdatePeopleNative, GetPeopleByName)
 │   ├── people_type.sql.go  # Generated people type queries
-│   ├── task.sql.go         # Generated task queries (includes SetEnrichTaskPending, DiscardEnrichTask)
+│   ├── task.sql.go         # Generated task queries (includes the successor link queries over task.parent_task_id)
 │   ├── batch.sql.go        # Generated batch + batch_owner queries (queued/processing, ownership, stale owners)
 │   ├── lock.sql.go          # Generated resource-lock queries (acquire/release/touch/sweeps over the system_signal lock rows)
 │   ├── user.sql.go         # Generated user queries
@@ -279,7 +279,8 @@ internal/
  │   ├── payload.go          # TaskPayload + ReadPayload — display fields decoded from a task payload
  │   ├── progress.go         # Progress tracking (ProgressFunc, ProgressSnapshot, ProgressTracker)
  │   ├── registry.go         # Task type → handler registry (assembled at each command boundary)
- │   ├── store.go            # Task persistence (ClaimNextPending — owner-scoped claim + batch flip + wait verification, CompleteTask/FailTask lease-guarded transitions, ActivateChild activation with dedup discard, Discard)
+ │   ├── store.go            # Task persistence (ClaimNextPending — owner-scoped claim + batch flip + wait verification, CompleteTask completion with successor activation, FailTask with branch cascade — lease-guarded)
+ │   ├── successors.go         # Successor activation plans: InheritPayloadKey contract, plan building, outcomes
  │   └── types.go            # Task domain struct
 ├── testutil/               # Test helpers (config fixtures, minimal PDFs, assertions)
 ├── textnorm/               # Tag and DB-key canonicalization

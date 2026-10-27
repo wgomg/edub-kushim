@@ -8,61 +8,43 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ConsumeTaskHandler consumes one file as a task: it runs the consumer's Process, activates the paired
-// waiting enrich and thumbnail tasks on success, and discards them on failure, best-effort even when the
-// payload does not parse.
+// ConsumeTaskHandler consumes one file as a task: it runs the consumer's Process and returns the document's
+// storage path and ids as the task result. The waiting successors linked to the task are activated, skipped
+// or discarded by the task system when the task completes or fails, so the handler carries no linkage,
+// child-payload or child-dedup code.
 type ConsumeTaskHandler struct {
 	consumer *Consumer
-	store    *task.Store
 	queries  *database.Queries
 	logger   *log.Logger
-	catalog  task.TypeCatalog
 }
 
-// NewConsumeTaskHandler wires the handler to the consumer, the task store, the queries and the task type
-// catalog the activation path derives the children's dedup keys from.
-func NewConsumeTaskHandler(consumer *Consumer, store *task.Store, queries *database.Queries, logger *log.Logger, catalog task.TypeCatalog) *ConsumeTaskHandler {
-	return &ConsumeTaskHandler{
-		consumer: consumer,
-		store:    store,
-		queries:  queries,
-		logger:   logger,
-		catalog:  catalog,
-	}
+// NewConsumeTaskHandler wires the handler to the consumer and the queries its progress tracker writes
+// through.
+func NewConsumeTaskHandler(consumer *Consumer, queries *database.Queries, logger *log.Logger) *ConsumeTaskHandler {
+	return &ConsumeTaskHandler{consumer: consumer, queries: queries, logger: logger}
 }
 
-// Handle consumes the payload's file and returns the document's storage path as the task result; the
-// waiting children activate only when the document row was committed, and are discarded with the parent
-// on failure.
+// Handle consumes the payload's file and returns the document's storage path and ids as the task result; a
+// failure is reported to the runner, which fails the task and discards its waiting branch with the error.
 func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawMessage, error) {
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 
 	var p struct {
-		FilePath             string `json:"file_path"`
-		DocumentID           string `json:"document_id"`
-		OnCompleted          string `json:"on_completed"`
-		OnCompletedThumbnail string `json:"on_completed_thumbnail"`
+		FilePath   string `json:"file_path"`
+		DocumentID string `json:"document_id"`
 	}
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
-		onCompleted, onCompletedThumbnail := h.recoverOnCompleted(t.Payload)
-		return nil, h.withDiscardAttempt(ctx, t, onCompleted, onCompletedThumbnail, fmt.Errorf("unmarshal payload: %w", err))
+		return nil, fmt.Errorf("unmarshal payload: %w", err)
 	}
 	if p.FilePath == "" {
-		if p.DocumentID != "" {
-			return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("task %s has no file_path in payload", t.TaskID)})
-		}
-		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, fmt.Errorf("task %s has no file_path in payload", t.TaskID))
+		return nil, h.documentError(p.DocumentID, fmt.Errorf("task %s has no file_path in payload", t.TaskID))
 	}
 
 	file, err := FileFromPath(p.FilePath)
 	if err != nil {
-		if p.DocumentID != "" {
-			return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("build file from path: %w", err)})
-		}
-		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, fmt.Errorf("build file from path: %w", err))
+		return nil, h.documentError(p.DocumentID, fmt.Errorf("build file from path: %w", err))
 	}
 
 	file, err = h.consumer.Process(ctx, file, p.DocumentID, progress.Set)
@@ -71,7 +53,7 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 		h.logger.Debug(p.DocumentID, "post-consume memory: %s", log.FormatMemFull(mem))
 	}
 	if err != nil {
-		return nil, h.withDiscardAttempt(ctx, t, p.OnCompleted, p.OnCompletedThumbnail, err)
+		return nil, h.documentError(p.DocumentID, err)
 	}
 
 	result := struct {
@@ -87,231 +69,14 @@ func (h *ConsumeTaskHandler) Handle(ctx context.Context, t task.Task) (json.RawM
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
 	}
-
-	if p.OnCompleted != "" && file.DocumentDbId.Int64 != 0 {
-		if err := h.activateChildEnrich(ctx, t, p.OnCompleted, p.DocumentID); err != nil {
-			h.logger.Error(p.DocumentID, "failed to activate enrich task for consume %s: %v", t.TaskID, err)
-		}
-	}
-
-	if p.OnCompletedThumbnail != "" && file.DocumentDbId.Int64 != 0 {
-		if err := h.activateChildThumbnail(ctx, t, p.OnCompletedThumbnail, p.DocumentID, *file.StorageProcessedPath); err != nil {
-			return nil, &task.Error{ReqID: p.DocumentID, Err: fmt.Errorf("activate thumbnail task: %w", err)}
-		}
-	}
-
-	if (p.OnCompleted != "" || p.OnCompletedThumbnail != "") && file.DocumentDbId.Int64 != 0 {
-		progress.Set("activate-children", "", 0)
-	}
-
 	return raw, nil
 }
 
-func (h *ConsumeTaskHandler) activateChildEnrich(
-	ctx context.Context,
-	parent task.Task,
-	onCompleted, documentID string,
-) error {
-	enrichTask, err := h.store.GetTaskByTaskID(ctx, onCompleted)
-	if err != nil {
-		return fmt.Errorf("find waiting enrich task %s: %w", onCompleted, err)
+// documentError carries the document id as the request id when the payload names one, so log correlation
+// survives a failure that happens before the document row exists.
+func (h *ConsumeTaskHandler) documentError(documentID string, err error) error {
+	if documentID == "" {
+		return err
 	}
-	if enrichTask.Payload == nil {
-		return fmt.Errorf("nil payload on enrich task %s", enrichTask.TaskID)
-	}
-
-	var enrichPayload struct {
-		WaitingFor string `json:"waiting_for"`
-	}
-	if err := json.Unmarshal(*enrichTask.Payload, &enrichPayload); err != nil {
-		return fmt.Errorf("parse enrich payload for %s: %w", enrichTask.TaskID, err)
-	}
-	if enrichPayload.WaitingFor != parent.TaskID {
-		return fmt.Errorf("waiting_for mismatch: enrich %s has waiting_for=%q, expected %q",
-			enrichTask.TaskID, enrichPayload.WaitingFor, parent.TaskID)
-	}
-
-	var p map[string]any
-	if err := json.Unmarshal(*enrichTask.Payload, &p); err != nil {
-		return fmt.Errorf("parse enrich payload for update %s: %w", enrichTask.TaskID, err)
-	}
-	p["document_id"] = documentID
-	updatedPayload, _ := json.Marshal(p)
-
-	dedupKey, err := h.childDedupKey(enrichTask.TaskType, updatedPayload)
-	if err != nil {
-		return fmt.Errorf("activate enrich task %s: %w", enrichTask.TaskID, err)
-	}
-	outcome, err := h.store.ActivateChild(ctx, enrichTask.ID, updatedPayload, dedupKey)
-	if err != nil {
-		return fmt.Errorf("activate enrich task %s: %w", enrichTask.TaskID, err)
-	}
-	if outcome == task.DiscardedDuplicate {
-		h.logger.Info("", "enrich task %s discarded: live work already covers its dedup key", enrichTask.TaskID)
-	}
-	return nil
-}
-
-func (h *ConsumeTaskHandler) deactivateChildEnrich(
-	ctx context.Context,
-	parent task.Task,
-	onCompleted string,
-	parentErr error,
-) error {
-	enrichTask, err := h.store.GetTaskByTaskID(ctx, onCompleted)
-	if err != nil {
-		return fmt.Errorf("find waiting enrich task %s: %w", onCompleted, err)
-	}
-	if enrichTask.Payload == nil {
-		return fmt.Errorf("nil payload on enrich task %s", enrichTask.TaskID)
-	}
-
-	var enrichPayload struct {
-		WaitingFor string `json:"waiting_for"`
-	}
-	if err := json.Unmarshal(*enrichTask.Payload, &enrichPayload); err != nil {
-		return fmt.Errorf("parse enrich payload for %s: %w", enrichTask.TaskID, err)
-	}
-	if enrichPayload.WaitingFor != parent.TaskID {
-		return fmt.Errorf("waiting_for mismatch: enrich %s has waiting_for=%q, expected %q",
-			enrichTask.TaskID, enrichPayload.WaitingFor, parent.TaskID)
-	}
-
-	rows, err := h.store.Discard(ctx, enrichTask.ID, parentErr.Error())
-	if err != nil {
-		return fmt.Errorf("discard enrich task %s: %w", enrichTask.TaskID, err)
-	}
-	if rows == 0 {
-		h.logger.Info("", "enrich task %s already discarded or activated (consume %s failed)", enrichTask.TaskID, parent.TaskID)
-	}
-	return nil
-}
-
-func (h *ConsumeTaskHandler) activateChildThumbnail(
-	ctx context.Context,
-	parent task.Task,
-	onCompletedThumbnail, documentID, storagePath string,
-) error {
-	thumbTask, err := h.store.GetTaskByTaskID(ctx, onCompletedThumbnail)
-	if err != nil {
-		return fmt.Errorf("find waiting thumbnail task %s: %w", onCompletedThumbnail, err)
-	}
-	if thumbTask.Payload == nil {
-		return fmt.Errorf("nil payload on thumbnail task %s", thumbTask.TaskID)
-	}
-
-	var thumbPayload struct {
-		WaitingFor string `json:"waiting_for"`
-	}
-	if err := json.Unmarshal(*thumbTask.Payload, &thumbPayload); err != nil {
-		return fmt.Errorf("parse thumbnail payload for %s: %w", thumbTask.TaskID, err)
-	}
-	if thumbPayload.WaitingFor != parent.TaskID {
-		return fmt.Errorf("waiting_for mismatch: thumbnail %s has waiting_for=%q, expected %q",
-			thumbTask.TaskID, thumbPayload.WaitingFor, parent.TaskID)
-	}
-
-	var p map[string]any
-	if err := json.Unmarshal(*thumbTask.Payload, &p); err != nil {
-		return fmt.Errorf("parse thumbnail payload for update %s: %w", thumbTask.TaskID, err)
-	}
-	p["document_id"] = documentID
-	p["storage_path"] = storagePath
-	updatedPayload, _ := json.Marshal(p)
-
-	dedupKey, err := h.childDedupKey(thumbTask.TaskType, updatedPayload)
-	if err != nil {
-		return fmt.Errorf("activate thumbnail task %s: %w", thumbTask.TaskID, err)
-	}
-	outcome, err := h.store.ActivateChild(ctx, thumbTask.ID, updatedPayload, dedupKey)
-	if err != nil {
-		return fmt.Errorf("activate thumbnail task %s: %w", thumbTask.TaskID, err)
-	}
-	if outcome == task.DiscardedDuplicate {
-		h.logger.Info("", "thumbnail task %s discarded: live work already covers its dedup key", thumbTask.TaskID)
-	}
-	return nil
-}
-
-// childDedupKey derives a waiting child's dedup key from its type definition, the same derivation the
-// enqueue applies to pending work, so activation and enqueue agree on what a duplicate is. A missing
-// definition or an empty derived key (for example a payload without document id) fails the activation
-// instead of writing a keyless child that would bypass the duplicate protection.
-func (h *ConsumeTaskHandler) childDedupKey(taskType types.TaskType, payload json.RawMessage) (string, error) {
-	def, err := h.catalog.Definition(taskType)
-	if err != nil {
-		return "", fmt.Errorf("definition for %s: %w", taskType, err)
-	}
-	if def.DedupKey == nil {
-		return "", fmt.Errorf("task type %s declares no dedup key", taskType)
-	}
-	key := def.DedupKey(payload)
-	if key == "" {
-		return "", fmt.Errorf("task type %s derived an empty dedup key (missing document id?)", taskType)
-	}
-	return key, nil
-}
-
-func (h *ConsumeTaskHandler) deactivateChildThumbnail(
-	ctx context.Context,
-	parent task.Task,
-	onCompletedThumbnail string,
-	parentErr error,
-) error {
-	thumbTask, err := h.store.GetTaskByTaskID(ctx, onCompletedThumbnail)
-	if err != nil {
-		return fmt.Errorf("find waiting thumbnail task %s: %w", onCompletedThumbnail, err)
-	}
-	if thumbTask.Payload == nil {
-		return fmt.Errorf("nil payload on thumbnail task %s", thumbTask.TaskID)
-	}
-
-	var thumbPayload struct {
-		WaitingFor string `json:"waiting_for"`
-	}
-	if err := json.Unmarshal(*thumbTask.Payload, &thumbPayload); err != nil {
-		return fmt.Errorf("parse thumbnail payload for %s: %w", thumbTask.TaskID, err)
-	}
-	if thumbPayload.WaitingFor != parent.TaskID {
-		return fmt.Errorf("waiting_for mismatch: thumbnail %s has waiting_for=%q, expected %q",
-			thumbTask.TaskID, thumbPayload.WaitingFor, parent.TaskID)
-	}
-
-	rows, err := h.store.Discard(ctx, thumbTask.ID, parentErr.Error())
-	if err != nil {
-		return fmt.Errorf("discard thumbnail task %s: %w", thumbTask.TaskID, err)
-	}
-	if rows == 0 {
-		h.logger.Info("", "thumbnail task %s already discarded or activated (consume %s failed)", thumbTask.TaskID, parent.TaskID)
-	}
-	return nil
-}
-
-// withDiscardAttempt attempts to discard the consume task's paired enrich and
-// thumbnail tasks on failure; if a discard itself fails, the failure is
-// appended to the returned error so it lands in the task's error field.
-func (h *ConsumeTaskHandler) withDiscardAttempt(ctx context.Context, t task.Task, onCompleted, onCompletedThumbnail string, err error) error {
-	if onCompleted != "" {
-		if discardErr := h.deactivateChildEnrich(ctx, t, onCompleted, err); discardErr != nil {
-			return fmt.Errorf("%w; additionally failed to discard enrich task %s: %v", err, onCompleted, discardErr)
-		}
-	}
-	if onCompletedThumbnail != "" {
-		if discardErr := h.deactivateChildThumbnail(ctx, t, onCompletedThumbnail, err); discardErr != nil {
-			return fmt.Errorf("%w; additionally failed to discard thumbnail task %s: %v", err, onCompletedThumbnail, discardErr)
-		}
-	}
-	return err
-}
-
-// recoverOnCompleted best-effort extracts on_completed and
-// on_completed_thumbnail from a payload that failed strict unmarshalling,
-// so the paired enrich and thumbnail tasks can still be discarded.
-func (h *ConsumeTaskHandler) recoverOnCompleted(payload json.RawMessage) (onCompleted, onCompletedThumbnail string) {
-	var p struct {
-		OnCompleted          string `json:"on_completed"`
-		OnCompletedThumbnail string `json:"on_completed_thumbnail"`
-	}
-	_ = json.Unmarshal(payload, &p)
-	return p.OnCompleted, p.OnCompletedThumbnail
+	return &task.Error{ReqID: documentID, Err: err}
 }

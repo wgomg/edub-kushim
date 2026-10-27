@@ -21,7 +21,7 @@ Audience: developers touching `internal/task/`, `internal/ops/queue/queue.go`,
 5. [Batch ownership: leases with heartbeats](#5-batch-ownership-leases-with-heartbeats)
 6. [The queue daemon](#6-the-queue-daemon)
 7. [The consume command](#7-the-consume-command)
-8. [Parent/child choreography: waiting tasks](#8-parentchild-choreography-waiting-tasks)
+8. [Successor choreography: waiting tasks](#8-successor-choreography-waiting-tasks)
 9. [Deduplication](#9-deduplication)
 10. [Reclamation after crashes](#10-reclamation-after-crashes)
 11. [Retry and resume](#11-retry-and-resume)
@@ -119,7 +119,7 @@ single writer per task and throttles writes to ≥1/s unless the step
 changes; the JSONB shape is the shared `task.ProgressSnapshot` struct that
 the API and CLI readers decode. Step vocabularies:
 consume (`duplicate-check`, `convert`, `extract-text`, `ocr`, `optimize`,
-`place`, `commit`, `activate-children`), enrich (`reduce`, `tag-match`,
+`place`, `commit`), enrich (`reduce`, `tag-match`,
 `analyze`, `consolidate`, `persist`), thumbnail (`render`, `save`), backup
 (`drain-wait`, `snapshot`, `retention`), mirror (`drain-wait`, `sync`),
 migrations (progress reported by the two migration handlers).
@@ -133,16 +133,18 @@ pending --claim--> processing --error--> failed
    | (retry/reset)      +--stale sweep--+--> pending (attempts+1) or failed (quarantine)
 waiting --activate--> pending
 waiting --parent failed--> discarded
-discarded --consume retried/reset--> waiting
+discarded --restore (successor of a live parent)--> waiting
 pending/processing --cancel--> cancelled
 ```
 
-`waiting` is the special one: a child enrich or thumbnail task parked until
-its parent consume task completes (§8). `discarded` is "never ran, never will"
-— it doesn't count as a failure. The `discarded → waiting` restore exists so a
-retried consume (manual retry or automatic crash-reset) re-arms its enrich
-and thumbnail children and the `status = 'waiting'` guard on the discard
-query keeps working on subsequent failures.
+`waiting` is the special one: a successor task parked until the parent that
+will activate it completes (§8 — ingest builds such successors for enrich and
+thumbnail, and any enqueue may chain more). `discarded` is "never ran, never
+will" — it doesn't count as a failure. The `discarded → waiting` restore exists
+so a retried task (manual retry or automatic crash-reset) re-arms its discarded
+successors transitively, and the `status = 'waiting'` guard on the activation
+and discard queries keeps each transition single-sourced: restore owns
+`discarded → waiting`, activation owns `waiting → pending`.
 
 ---
 
@@ -543,15 +545,17 @@ function:
    (the pause already released lease and locks), a non-`processing` status
    stops it without settling, and zero pending+processing tasks ends the run.
 6. **Terminal status** (`task.SettleBatch`): the single terminal writer, from
-   task outcomes — `failed` if any task failed, else `completed`; already-
-   terminal states return their stored status without a write. A settle error
-   is logged and the batch requeued; a settle refused with tasks still active
-   (a waiting child nobody clears) is logged loudly — the wrapper also warns
-   on stdout — and the batch is left to operator recovery, because no retry
-   would clear the child. Before the final settle the run sweeps the batch's
-   failed consume files
-   (`QuarantineFailedFiles` without an id set), because a settle with an
-   active-waiting child would refuse and leave the settlement to nobody.
+    task outcomes — `failed` if any task failed, else `completed`; already-
+    terminal states return their stored status without a write. A settle error
+    is logged and the batch requeued; a settle refused with tasks still active
+    is logged loudly (the wrapper also warns on stdout) and the batch is left
+    to operator recovery, because no retry would clear it — the refusal log
+    reports the status breakdown and every waiting successor with its parent's
+    state (`ListWaitingSuccessorsWithParentStatus`) so an operator can see why.
+    Before the final settle the run sweeps the batch's failed consume files
+    (`QuarantineFailedFiles` without an id set) and discards orphaned waiting
+    successors (`DiscardOrphanedWaitingSuccessors`), so a settle refused over
+    `waiting` tasks is practically unreachable (§10).
 7. **Cleanup**: stop heartbeats, release the lease and the execution's holds
    with a bounded context, then requeue the batch if the run aborted before
    settling — a released lease is invisible to the reaper, so the child hands
@@ -617,96 +621,115 @@ polling scan enforces.
 
 ---
 
-## 8. Parent/child choreography: waiting tasks
+## 8. Successor choreography: waiting tasks
 
-A consume task creates its enrich task *immediately*, in `waiting` state,
-with mutual references (assembly shared by every ingest boundary,
+Ingest creates its enrich and thumbnail successors *immediately*, in `waiting`
+state, linked through the `task.parent_task_id` column (migration `00056`;
+assembly shared by every ingest boundary,
 `internal/documents/consumption/ingest.go`):
 
 ```go
 consumePayload, _ := json.Marshal(map[string]any{
-	"file_path":    file.Path,
-	"file_index":   file.Index,
-	"on_completed": enrichTaskID,      // child's task ID
-	"document_id":  documentID,
-	"md5":          md5,
+	"file_path":   file.Path,
+	"file_index":  file.Index,
+	"document_id": documentID,
+	"md5":         md5,
 })
 enrichPayload, _ := json.Marshal(map[string]any{
-	"waiting_for": consumeTaskID,      // parent's task ID
-	...
+	"file_name":   filepath.Base(file.Path),
+	"file_index":  file.Index,
+	"document_id": documentID,
 })
-result, err := enqueuer.EnqueueBatch(ctx, spec, tasks) // the waiting child rides along
+
+tasks := []task.TaskSpec{
+	{Type: types.Task.Type.Consume, TaskID: consumeTaskID, Payload: consumePayload},
+	{Type: types.Task.Type.Enrich, ParentTaskID: consumeTaskID, Payload: enrichPayload, Status: types.Task.Status.Waiting},
+}
+result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
 ```
 
-On consume success, the child is **activated** (`activateChildEnrich` /
-`activateChildThumbnail`, `internal/documents/consumption/consume.go`): the
-handler validates the `waiting_for` link, injects `document_id` into the
-payload, derives the child's dedup key through the consume handler's catalog
-(the same derivation `EnqueueBatch` applies), and flips the child to `pending` through
-`Store.ActivateChild`:
+The successor names its parent; the parent names nothing. `ParentTaskID` must
+refer to an earlier spec in the same enqueue — a generated id is unknowable to
+a later spec — so a parent of waiting successors always carries an explicit
+`TaskID`, while the waiting successors themselves let the enqueue generate
+theirs. A parent that loses a dedup conflict skips its waiting successors with
+it. Waiting successors are the task system's general chain mechanism: any
+enqueue may append a waiting spec naming an earlier one, and the choreography
+below applies to chains unchanged.
+
+Each successor's payload carries everything its handler needs that exists at
+enqueue time; the thumbnail declares the one field its run produces through
+the `inherit` contract (`task.InheritPayloadKey`, an array of parent-result
+field names): activation copies the named fields out of the parent's result
+into the successor's payload. A malformed list or a parent result missing a
+declared field discards that successor with the reason instead of activating
+it under an unusable payload; nothing between enqueue and activation writes a
+key — waiting successors carry none.
+
+On the parent's success the successors are **activated** in the same
+transaction as the parent's completed write (`Store.CompleteTask`,
+`internal/task/store.go`): the runner assembles one activation plan per
+waiting successor (declared fields merged, dedup key derived through the
+catalog — the same derivation `EnqueueBatch` applies, resolved from the batch
+run's own catalog) and the store flips each successor to `pending` under its
+own savepoint:
 
 ```sql
--- name: SetEnrichTaskPending :exec
+-- name: SetWaitingSuccessorPending :execrows
 UPDATE task SET
     status = 'pending',
     payload = @payload,
-    dedup_key = @dedup_key,
+    dedup_key = @dedup_key::text,
     error = NULL,
     completed_at = NULL
-WHERE id = @id AND status IN ('waiting', 'discarded')
-  AND task_type IN ('enrich', 'thumbnail');
+WHERE id = @id AND status = 'waiting';
 ```
 
-The activation writes the key atomically with the pending flip. The
-`IN ('waiting', 'discarded')` guard means a discarded child can also be
-re-armed. A key that collides with live work discards the duplicate child
-(`DiscardedDuplicate`) instead of failing the parent — the surviving task
-already covers the work — and a key the definition cannot derive (missing
-definition, empty document id) fails the activation rather than writing a
-keyless row that the dedup index could not police. On consume failure, the
-child is **discarded**
-(`deactivateChildEnrich`, same file) — marked
-`discarded` with the parent's error, so the enrich never runs against a
-document that doesn't exist, and it doesn't count as a failed task.
+The `status = 'waiting'` guard makes activation single-sourced: only a
+`waiting` row becomes `pending`, and a successor another path transitioned
+first is left untouched instead of overwritten. A key that collides with live
+work rolls back that successor's savepoint and **discards it as the
+duplicate**, together with its own awaiting branch — the surviving work
+already covers the step, and a step that will not run cannot activate its own
+successors — instead of failing the parent, whose real work is done. A
+successor the plan cannot complete (missing definition, missing inherited
+field, empty key) is likewise discarded with the reason inside the same
+transaction; the parent stays completed and the reason lands on the successor
+row and in the run log.
 
-The waiting→discarded transition is guarded (`status = 'waiting'`), so the
-parent's failure can't clobber a child that some other path already
-activated. A discard that matches 0 rows (child already discarded or
-activated) is a benign no-op logged at info level.
+On the parent's failure, the whole waiting branch below it is **discarded**
+atomically with the failed write (`Store.FailTask`, recursive
+`DiscardWaitingSuccessorBranch`): a task that will not complete can never
+activate its successors, so the branch shares the parent's terminal outcome
+and error text, and a failure never strands a waiting row mid-chain.
 
-**Every consume failure path discards the child**, not just failures inside
-`Process` — the handler wraps all error returns in `withDiscardAttempt`
-(`internal/documents/consumption/consume.go`), covering the early exits too: payload
-unmarshal failure (with a best-effort lenient re-parse of `on_completed` via
-`recoverOnCompleted`), an empty `file_path`, and `FileFromPath` failures
-(the realistic crash-retry case: the inbox file was already moved). If the
-discard itself fails (lookup error, nil payload, `waiting_for` mismatch, DB
-error), the failure is appended to the returned task error
-(`"; additionally failed to discard enrich task <id>: ..."`) so it lands in
-the task's `error` field and is visible in the UI/API.
-
-On retry or reset, the child is restored **discarded → waiting**:
+On retry or reset, the branch is restored **discarded → waiting**:
 
 ```sql
--- name: SetEnrichTaskWaiting :execrows
-UPDATE task SET
-    status = 'waiting',
-    error = NULL,
-    completed_at = NULL
-WHERE task_id = $1 AND status = 'discarded' AND task_type = 'enrich';
+-- name: RestoreDiscardedSuccessorsByBatch :execrows
+WITH RECURSIVE restored(task_id, id) AS (
+    SELECT c.task_id, c.id FROM task c
+    JOIN task p ON c.parent_task_id = p.task_id
+    WHERE c.status = 'discarded' AND p.status IN ('pending', 'waiting')
+      AND p.batch_id = @batch_id::text
+    UNION ALL
+    SELECT c.task_id, c.id FROM task c
+    JOIN restored r ON c.parent_task_id = r.task_id
+    WHERE c.status = 'discarded'
+)
+UPDATE task SET status = 'waiting', error = NULL, completed_at = NULL
+WHERE id IN (SELECT id FROM restored) AND status = 'discarded';
 ```
 
-The restore is targeted by `task_id` (the consume payload's `on_completed`),
-so it cannot race a claim. The join-based variants run inside the same
-transaction as the recovery they belong to: `RestoreDiscardedEnrichTasks`
-(global) and `RestoreDiscardedEnrichTasksByBatch` (per-batch) pair with the
-resets inside the sweep transactions, and `ResumeBatch` runs the per-batch
-variant a second time *after* `RetryFailedTasksByBatch`, so the retried
-consumes (newly `pending`) and their discarded children become visible
-atomically with the requeue (§10-11). The invariant this upholds: an enrich
-is never left `discarded` while its consume is `pending` again, and it is
-never `waiting` while its consume is terminal-`failed` (that half is
-enforced by the sweeps, §10).
+Restore is recursion over the link, seeded by every discarded successor whose
+parent is live again (`pending`, or `waiting` further up the chain), and it
+runs inside the same transaction as the recovery it belongs to (§10-11), with
+`ResumeBatch` re-running it after the retry so the retried tasks and their
+successors surface atomically with the requeue. The dedup index re-decides at
+activation, so restore never has to distinguish a cascade-discard from a
+duplicate-discard. The invariant this upholds, generalized to chains: a
+successor is never left `discarded` under a live parent, and never `waiting`
+under a dead one (the sweeps enforce that half, §10).
 
 ---
 
@@ -729,9 +752,9 @@ catalog: the catalog's static table carries the policy, the boundary wires the
 hooks, and a process refusing to enqueue a type does not import its producer.
 `EnqueueBatch` refuses a pending task whose type carries no hook in the
 process's catalog instead of creating keyless work, applies the hook to pending
-tasks, and the
-consume handler applies the same derivation to its waiting children at
-activation (§8), so the differentiated children carry keys too.
+tasks, and the batch run's catalog serves activation the same way (§8): the
+successor plans derive their keys through it, so activated successors carry
+keys too.
 
 Key formats in use:
 
@@ -745,10 +768,11 @@ Key formats in use:
 | tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
-Activation is the only path that puts a key on a waiting child, and a
-conflicting activation loses to the index: `Store.ActivateChild` writes
-`pending` + key atomically, so a duplicate activation of already-live work
-discards the duplicate child instead of failing its parent. A duplicate
+Activation is the only path that puts a key on a waiting successor, and a
+conflicting activation loses to the index: the completion transaction writes
+`pending` + key per successor under its own savepoint, so a duplicate
+activation of already-live work discards the duplicate — and its awaiting
+branch — instead of failing its parent (§8). A duplicate
 enqueue of keyed work loses the dedup conflict: `EnqueueBatch` skips the
 task, no batch is created, and the boundary reports the work as already
 queued ("re-enrich already queued", `internal/ops/cli/enrich.go`). Only a
@@ -842,24 +866,32 @@ attempts-exhausted query (`GetPermanentlyFailedConsumeTaskPayloads`) that
 covers a run which died between its reset and its quarantine. An empty
 batch id limits the work to the named ids — that is the global sweep's
 cross-batch case, which the daemon runs immediately instead of waiting for
-the batch's next entry. The same function then runs one
-batch-scoped sweep (`DiscardOrphanedWaitingEnriches`) that discards
-**every** still-`waiting` enrich or thumbnail whose parent consume in the
-batch is no longer `pending`/`processing` — failed, cancelled, or completed
-without ever activating its children — copying the parent's error text.
-The sweep runs
-unconditionally (even with zero quarantined rows), so it also catches legacy
-stuck data. The global stale-task sweep (`service.Batch.ResetStaleProcessingTasks`) keeps
-a global variant of the orphan sweep, since
-its quarantined consumes have no batch-level recovery point.
+the batch's next entry. The file pass owns files only; successor state is
+the repair net's business (below).
 
-Both sweeps also **restore**: the reset half (consume back to `pending`)
-pairs with `RestoreDiscardedEnrichTasks` (global) or
-`RestoreDiscardedEnrichTasksByBatch` (per-batch) inside the same
-transaction — a discarded enrich whose consume is `pending` again flips back
-to `waiting`. Quarantined consumes (`failed`) are naturally excluded by the
-`status = 'pending'` filter, and their enriches are discarded by the sweep
-instead.
+The successor repair net is one recursive query, run in the same shape at
+every recovery point: the batch variant (`DiscardOrphanedWaitingSuccessors`)
+runs inside `RunBatch` immediately before the settle
+for **every** batch type, and the global variant
+(`DiscardOrphanedWaitingSuccessorsGlobal`) runs inside
+`service.Batch.ResetStaleProcessingTasks`, whose quarantined tasks have no
+batch-level recovery point. Keep-set: a waiting successor whose parent is
+`pending`, `processing` or `waiting` survives; one whose parent is `completed`,
+`failed`, `cancelled` or `discarded` is discarded with
+`COALESCE(parent.error, 'parent task did not complete')`. Recursion follows
+the link so one pass clears a whole dead branch — the quarantine paths fail a
+mid-chain task in place without cascading, and a one-level sweep would leave
+its tail blocking the settle. `completed` keeps its discard outcome: with
+activation inside the completion transaction, a waiting successor of a
+completed parent is residue.
+
+Both sweeps also **restore**: the reset half (tasks back to `pending`)
+pairs with `RestoreDiscardedSuccessors` (global) or
+`RestoreDiscardedSuccessorsByBatch` (per-batch) inside the same
+transaction — a discarded successor of a live-again parent (seeded on
+`pending`, or `waiting` further up the chain) flips back to `waiting`
+(§8). Quarantined tasks (`failed`) are excluded from the restore by that
+seed, and their waiting branches are discarded by the sweeps instead.
 
 ### Per-task panic recovery
 
@@ -902,9 +934,9 @@ tasks re-run:
 `failed`/`completed`/`cancelled`/`paused` to `queued`, refuses a batch with a
 live lease (`ErrBatchLocked`, database-clock check) or one still queued or
 processing (`ErrBatchNotResumable`), resets the batch's processing tasks
-(quarantine-at-max plus reset, restoring discarded children — §10) inside the
+(quarantine-at-max plus reset, restoring discarded successors — §10) inside the
 same transaction, and when `includeFailed` is set re-runs the restore after
-the retry so the retried consumes and their children surface together with
+the retry so the retried tasks and their successors surface together with
 the requeue. An operation that would leave no active work (a fully cancelled
 batch, say) touches nothing and reports `Resumed = false`.
 
@@ -917,8 +949,8 @@ The reset paths also restore: the batch reset
 (`task.ResetProcessingTasksByBatch`, also offered transactionally through
 `service.Batch.ResetProcessingTasksByBatch`) and the global
 `ResetStaleProcessingTasks` each run their scoped restore inside the same
-transaction as the reset, so a `discarded` child is re-armed exactly when
-its consume returns to `pending`.
+transaction as the reset, so a discarded successor is re-armed exactly when
+its parent chain turns live again.
 
 ---
 
@@ -1202,21 +1234,23 @@ mid-run.
   drops notifications when the daemon is busy — never "fix" that by making
   the channel blocking, or a full channel stalls the daemon.
 - **`waiting` tasks are invisible to normal claims** (they're not `pending`)
-  and must be activated or discarded. Activation only happens on the parent
-  path; the recovery sweeps only *discard* — a `waiting` child whose parent
-  is no longer `pending`/`processing` (failed, cancelled, or completed
-  without activating) is discarded with the parent's error text, over
-  enrich **and** thumbnail children (`DiscardOrphanedWaitingEnriches`).
-- **The enrich invariant is enforced at recovery points, not continuously**:
-  "a child is never `waiting` while its consume is terminal" holds because
-  the handler discards on every failure path, and the sweeps
-  (`QuarantineFailedFiles`, `ResetStaleProcessingTasks`,
-  `DiscardOrphanedWaitingEnriches`) mop up anything the handler missed
-  (crashes, legacy data).
-- **Resume atomicity is the recovery boundary** — the retried consumes and
-  their restored children commit inside the resume transaction, so a failed
+  and must be activated or discarded. Activation happens only in the parent's
+  completion transaction; the recovery sweeps only *discard* — recursively, so
+  one pass clears a whole dead branch (§10). A `waiting` successor whose parent
+  is `completed`, `failed`, `cancelled` or `discarded` is discarded with the
+  parent's error text (`DiscardOrphanedWaitingSuccessors`,
+  `...Global`), for every linked type.
+- **The successor invariant is enforced at recovery points, not continuously**:
+  "a successor is never `waiting` under a dead parent, never `discarded` under
+  a live one" holds because completion activates and failure discards in the
+  same transaction, and the sweeps
+  (`RunBatch` pre-settle, `ResetStaleProcessingTasks`,
+  `DiscardOrphanedWaitingSuccessorsGlobal`) mop up anything else (crashes,
+  legacy data).
+- **Resume atomicity is the recovery boundary** — the retried tasks and
+  their restored successors commit inside the resume transaction, so a failed
   restore rolls the resume back; nothing is reported as resumed with
-  children still `discarded`.
+  successors still `discarded`.
 - **Paused batches refuse to run** and pause is sticky
   — resume is an explicit API/CLI action after the billing issue is fixed.
 - **The dispatcher's slot budget counts only no-holds batches** —
@@ -1226,4 +1260,4 @@ mid-run.
 
 ---
 
-*Last verified against the tree: 2026-10-26. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-10-27. If code and doc disagree, code wins.*

@@ -271,14 +271,14 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 		return task.ResetResult{}, errs.FromDB(err, "reset stale processing tasks")
 	}
 
-	if _, err := txQ.RestoreDiscardedEnrichTasks(ctx); err != nil {
-		return task.ResetResult{}, errs.FromDB(err, "restore discarded enrich tasks")
+	if _, err := txQ.RestoreDiscardedSuccessors(ctx); err != nil {
+		return task.ResetResult{}, errs.FromDB(err, "restore discarded successors")
 	}
 
-	// quarantined stale consumes have no batch-level recovery point (the batch owner may still be live), so
-	// sweep their waiting enriches here
-	if _, err := txQ.DiscardOrphanedWaitingEnrichesGlobal(ctx); err != nil {
-		return task.ResetResult{}, errs.FromDB(err, "discard orphaned waiting enriches")
+	// quarantined stale tasks have no batch-level recovery point (the batch owner may still be live), so
+	// sweep their waiting successors here
+	if _, err := txQ.DiscardOrphanedWaitingSuccessorsGlobal(ctx); err != nil {
+		return task.ResetResult{}, errs.FromDB(err, "discard orphaned waiting successors")
 	}
 
 	if err := tx.Commit(); err != nil {

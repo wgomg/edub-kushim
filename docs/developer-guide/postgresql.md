@@ -364,9 +364,11 @@ result JSONB,
 ```
 
 The pipeline writes task-specific payloads (consume: file path + document id;
-enrich: document id + LLM options) into the same table. What the SQL uses it
-for: extraction with `->>` (text; NULL if missing) inside queries like
-`RestoreDiscardedEnrichTasks` (`task.sql:206`). The Go side declares these
+enrich: document id) into the same table. What the SQL uses it
+for: extraction with `->>` (text; NULL if missing) — the successor link's
+own `task.parent_task_id` column (migration `00056`) is what replaced the
+payload-key joins the old queries read, and the remaining in-query reads are
+display projections like `ListBatchTaskProgress`. The Go side declares these
 columns as `*json.RawMessage` via the sqlc override in `sqlc.yaml`, so
 handlers pass payloads through untouched and only the SQL reads inside them.
 

@@ -18,29 +18,22 @@ type IngestFile struct {
 	DocumentID string
 }
 
-// IngestTaskSpecs returns one file's consume task and its pre-linked waiting children: an enrich task
-// always, and a thumbnail task when thumbnailsEnabled. The consume payload names both children by id,
-// and each child names the consume task as its parent, so a dedup-skipped consume task skips its own
-// children with it. ids are generated per call; the returned consume spec is always the first element.
+// IngestTaskSpecs returns one file's consume task and its pre-linked waiting successors: an enrich task
+// always, and a thumbnail task when thumbnailsEnabled. Each successor names the consume task as its parent
+// and carries everything it can know at enqueue; the thumbnail declares the storage path it inherits from
+// the consume result, because only the run produces it. The task system activates them when the consume
+// completes and discards them with it when it fails. The returned consume spec is always the first element.
 func IngestTaskSpecs(file IngestFile, thumbnailsEnabled bool) []task.TaskSpec {
 	consumeTaskID := uuid.New().String()
-	enrichTaskID := uuid.New().String()
-	thumbnailTaskID := uuid.New().String()
 
-	consumePayloadMap := map[string]any{
-		"file_path":    file.Path,
-		"file_index":   file.Index,
-		"on_completed": enrichTaskID,
-		"document_id":  file.DocumentID,
-		"md5":          file.MD5,
-	}
-	if thumbnailsEnabled {
-		consumePayloadMap["on_completed_thumbnail"] = thumbnailTaskID
-	}
-	consumePayload, _ := json.Marshal(consumePayloadMap)
+	consumePayload, _ := json.Marshal(map[string]any{
+		"file_path":   file.Path,
+		"file_index":  file.Index,
+		"document_id": file.DocumentID,
+		"md5":         file.MD5,
+	})
 
 	enrichPayload, _ := json.Marshal(map[string]any{
-		"waiting_for": consumeTaskID,
 		"file_name":   filepath.Base(file.Path),
 		"file_index":  file.Index,
 		"document_id": file.DocumentID,
@@ -53,7 +46,6 @@ func IngestTaskSpecs(file IngestFile, thumbnailsEnabled bool) []task.TaskSpec {
 		Status:  types.Task.Status.Pending,
 	}, {
 		Type:         types.Task.Type.Enrich,
-		TaskID:       enrichTaskID,
 		ParentTaskID: consumeTaskID,
 		Payload:      enrichPayload,
 		Status:       types.Task.Status.Waiting,
@@ -61,13 +53,13 @@ func IngestTaskSpecs(file IngestFile, thumbnailsEnabled bool) []task.TaskSpec {
 
 	if thumbnailsEnabled {
 		thumbnailPayload, _ := json.Marshal(map[string]any{
-			"waiting_for": consumeTaskID,
-			"file_name":   filepath.Base(file.Path),
-			"file_index":  file.Index,
+			"file_name":            filepath.Base(file.Path),
+			"file_index":           file.Index,
+			"document_id":          file.DocumentID,
+			task.InheritPayloadKey: []string{"storage_path"},
 		})
 		tasks = append(tasks, task.TaskSpec{
 			Type:         types.Task.Type.Thumbnail,
-			TaskID:       thumbnailTaskID,
 			ParentTaskID: consumeTaskID,
 			Payload:      thumbnailPayload,
 			Status:       types.Task.Status.Waiting,

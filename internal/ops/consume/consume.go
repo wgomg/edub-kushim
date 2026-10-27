@@ -119,7 +119,7 @@ func runBatchMode(c *container.Container, batchID, execTokenParam string) error 
 	defer triggerOrphanScan(c)
 
 	store := task.NewStore(client)
-	consumeHandler, err := newConsumeHandler(c, store, client)
+	consumeHandler, err := newConsumeHandler(c, client)
 	if err != nil {
 		return fmt.Errorf("consume handler: %w", err)
 	}
@@ -171,8 +171,8 @@ func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, sto
 	cfg := c.GetConfig()
 	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
 		types.Task.Type.Consume:   {Concurrency: cfg.Consumer.Workers},
-		types.Task.Type.Enrich:    {Concurrency: cfg.Enricher.Workers},
-		types.Task.Type.Thumbnail: {Concurrency: cfg.Consumer.Thumbnail.Workers},
+		types.Task.Type.Enrich:    {Concurrency: cfg.Enricher.Workers, DedupKey: enrichment.DedupKey},
+		types.Task.Type.Thumbnail: {Concurrency: cfg.Consumer.Thumbnail.Workers, DedupKey: service.ThumbnailDedupKey},
 	})
 	if err != nil {
 		return task.BatchRunResult{}, fmt.Errorf("task catalog: %w", err)
@@ -273,21 +273,14 @@ func runDirect(c *container.Container, noWait bool) error {
 	return nil
 }
 
-// newConsumeHandler constructs the ingest handler over the store the execution and its activated children
-// share; the child catalog carries only the two dedup hooks activation derives keys with.
-func newConsumeHandler(c *container.Container, store *task.Store, client *database.Client) (task.Handler, error) {
+// newConsumeHandler constructs the ingest handler over the consumer; successor activation belongs to the
+// execution library, so the handler needs neither the store nor a child catalog.
+func newConsumeHandler(c *container.Container, client *database.Client) (task.Handler, error) {
 	consumer, err := consumption.NewConsumer(c.GetConfig(), c.GetLogger(), client)
 	if err != nil {
 		return nil, err
 	}
-	childCatalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
-		types.Task.Type.Enrich:    {DedupKey: enrichment.DedupKey},
-		types.Task.Type.Thumbnail: {DedupKey: service.ThumbnailDedupKey},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("task catalog: %w", err)
-	}
-	return consumption.NewConsumeTaskHandler(consumer, store, client.Queries, c.GetLogger(), childCatalog), nil
+	return consumption.NewConsumeTaskHandler(consumer, client.Queries, c.GetLogger()), nil
 }
 
 // newEnrichHandler constructs the enrich handler over the command's own enricher.
@@ -323,8 +316,7 @@ func newDirectRun(c *container.Container, thumbnailsEnabled bool) (*directRun, e
 	if err != nil {
 		return nil, fmt.Errorf("database: %w", err)
 	}
-	store := task.NewStore(client)
-	consumeHandler, err := newConsumeHandler(c, store, client)
+	consumeHandler, err := newConsumeHandler(c, client)
 	if err != nil {
 		return nil, fmt.Errorf("consume handler: %w", err)
 	}

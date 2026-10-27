@@ -62,7 +62,7 @@ func TestDedupKeys(t *testing.T) {
 		{"enrich missing document id", types.Task.Type.Enrich, `{"other":"field"}`, ""},
 		{"enrich undecodable payload", types.Task.Type.Enrich, `{not json`, ""},
 		{"thumbnail document id", types.Task.Type.Thumbnail, `{"document_id":"doc-9"}`, "thumbnail:doc:doc-9"},
-		{"thumbnail child without document id", types.Task.Type.Thumbnail, `{"waiting_for":"task-1"}`, ""},
+		{"thumbnail child without document id", types.Task.Type.Thumbnail, `{"inherit":["storage_path"]}`, ""},
 		{"thumbbackfill document id", types.Task.Type.ThumbBackfill, `{"document_id":"doc-9"}`, "thumbnail:doc:doc-9"},
 		{"tag reconcile", types.Task.Type.TagReconcile, `{}`, curation.TagReconcileDedupKey},
 		{"tag measure", types.Task.Type.TagMeasure, `{}`, tags.TagMeasureDedupKey},

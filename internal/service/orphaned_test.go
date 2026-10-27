@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -197,12 +198,22 @@ func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
 	var thumbnailPayload map[string]any
 	json.Unmarshal(*thumbnail.Payload, &thumbnailPayload)
 
-	testutil.AssertEqual(t, enrichPayload["waiting_for"], consume.TaskID, "enrich waiting_for references consume task")
-	testutil.AssertEqual(t, consumePayload["on_completed"], enrich.TaskID, "consume on_completed references enrich task")
+	testutil.AssertEqual(t, enrich.ParentTaskID.String, consume.TaskID, "enrich links to the consume task")
+	testutil.AssertEqual(t, thumbnail.ParentTaskID.String, consume.TaskID, "thumbnail links to the consume task")
 	testutil.AssertEqual(t, consumePayload["document_id"], uuidValue, "consume document_id")
 	testutil.AssertEqual(t, enrichPayload["document_id"], uuidValue, "enrich document_id")
-	testutil.AssertEqual(t, thumbnailPayload["waiting_for"], consume.TaskID, "thumbnail waiting_for references consume task")
-	testutil.AssertEqual(t, consumePayload["on_completed_thumbnail"], thumbnail.TaskID, "consume on_completed_thumbnail references thumbnail task")
+	testutil.AssertEqual(t, thumbnailPayload["document_id"], uuidValue, "thumbnail document_id")
+	inherited, ok := thumbnailPayload[task.InheritPayloadKey].([]any)
+	if !ok || len(inherited) != 1 || inherited[0] != "storage_path" {
+		t.Errorf("thumbnail inherit = %v, want [storage_path]", thumbnailPayload[task.InheritPayloadKey])
+	}
+	for name, payload := range map[string]map[string]any{"consume": consumePayload, "enrich": enrichPayload, "thumbnail": thumbnailPayload} {
+		for _, key := range []string{"waiting_for", "on_completed", "on_completed_thumbnail"} {
+			if _, present := payload[key]; present {
+				t.Errorf("%s payload still carries the retired %q key", name, key)
+			}
+		}
+	}
 
 	batch, err := client.Queries.GetBatch(ctx, consume.BatchID.String)
 	testutil.AssertNoError(t, err, "get batch")

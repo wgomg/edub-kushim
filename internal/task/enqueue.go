@@ -61,10 +61,11 @@ func (s BatchSpec) Schedule() string { return s.schedule }
 
 // TaskSpec describes one task row an enqueue creates. The dedup key is not part of it: the task type
 // definition derives the key from Payload, so a task cannot be created with a key its type does not
-// own. An empty TaskID asks the enqueue to generate one; an explicit id keeps linked waiting children
-// addressable. An empty Status means pending, and waiting creates a pre-linked child that activates
-// when its parent completes; ParentTaskID names that parent and must refer to an earlier spec in the
-// same enqueue, so a child is skipped together with a dedup-skipped parent.
+// own. An empty TaskID asks the enqueue to generate one; a parent of waiting children must carry an
+// explicit id, because those children name it. An empty Status means pending, and waiting creates a
+// pre-linked child that activates when its parent completes; ParentTaskID names that parent and must
+// refer to an earlier spec in the same enqueue, so a child is skipped together with a dedup-skipped
+// parent.
 type TaskSpec struct {
 	Type         types.TaskType
 	TaskID       string
@@ -220,12 +221,13 @@ func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []Tas
 			}
 		}
 		if _, err := queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   taskID,
-			TaskType: t.Type,
-			Status:   statuses[i],
-			BatchID:  sql.NullString{String: batchID, Valid: true},
-			Payload:  &payload,
-			DedupKey: dedupKey,
+			TaskID:       taskID,
+			TaskType:     t.Type,
+			Status:       statuses[i],
+			BatchID:      sql.NullString{String: batchID, Valid: true},
+			Payload:      &payload,
+			DedupKey:     dedupKey,
+			ParentTaskID: sql.NullString{String: t.ParentTaskID, Valid: t.ParentTaskID != ""},
 		}); err != nil {
 			if dedupKey.Valid && errs.IsConstraintOn(err, dedupIndexName) {
 				if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT task_insert"); rbErr != nil {
@@ -292,7 +294,8 @@ func validateParentLinks(tasks []TaskSpec) error {
 }
 
 // taskCreationStatus normalizes a spec's status to pending and rejects every status other than pending
-// or waiting. A waiting child must carry its explicit id, because its parent payload links to it.
+// or waiting. A waiting successor must name the parent that will activate it: without a link it can never
+// run and would strand the settle.
 func taskCreationStatus(t TaskSpec) (types.TaskStatus, error) {
 	switch t.Status {
 	case "":
@@ -300,8 +303,8 @@ func taskCreationStatus(t TaskSpec) (types.TaskStatus, error) {
 	case types.Task.Status.Pending:
 		return types.Task.Status.Pending, nil
 	case types.Task.Status.Waiting:
-		if t.TaskID == "" {
-			return "", fmt.Errorf("waiting %s task requires an explicit task id", t.Type)
+		if t.ParentTaskID == "" {
+			return "", fmt.Errorf("waiting %s task requires a parent task id", t.Type)
 		}
 		return types.Task.Status.Waiting, nil
 	default:

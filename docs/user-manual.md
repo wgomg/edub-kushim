@@ -2900,11 +2900,10 @@ Same as DocumentResponse with these extra fields:
 
 `payload_doc_id` carries the document UUID whenever the task payload has a
 non-empty `document_id` — for `consume` tasks only after the document record
-exists, for `enrich`/`thumbnail` tasks once activated, and for failed tasks of
-any type whose payload references a document (the web UI links it to the
-document page). Discarded `enrich`/`thumbnail` children have an empty
-`payload_doc_id` (their payload only carries `waiting_for`, the parent task
-id). `label` is
+exists, and for `enrich`/`thumbnail` tasks from enqueue onward (their payloads
+carry `document_id` from the start). Discarded `enrich`/`thumbnail`
+successors keep the payload they were enqueued with, so `payload_doc_id` still
+links them to the document. `label` is
 `TaskType: file name` for consume/enrich/thumbnail tasks with a payload file
 (e.g. `"Consume: report.pdf"`), the file name alone for other task types,
 otherwise derived from the task type and, for `backup`, the mode its payload
@@ -3469,7 +3468,7 @@ ensures enrichment never runs before the document is fully ingested.
 | `completed`  | Finished successfully                                         |
 | `failed`     | Finished with an error (retryable via `kushim batch restart <batch-id>`)    |
 | `cancelled`  | Cancelled via `kushim consume cancel`                         |
-| `discarded`  | Enrich task orphaned because its parent consume task failed. Re-activated to `pending` when the parent is retried and succeeds. |
+| `discarded`  | A successor task whose parent failed — its whole waiting branch is discarded with it. Re-armed to `waiting` when the parent is retried; the next successful run of the chain activates it again. |
 
 ### Batch statuses
 

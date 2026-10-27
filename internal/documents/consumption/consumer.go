@@ -543,15 +543,6 @@ func QuarantineFailedFiles(ctx context.Context, queries *database.Queries, stora
 		}
 	}
 
-	// sweep discards every waiting child whose parent consume is no longer pending or processing, covering
-	// failed, cancelled and never-activated parents plus legacy stuck data
-	if batchID != "" {
-		if _, err := queries.DiscardOrphanedWaitingEnriches(ctx, sql.NullString{String: batchID, Valid: true}); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("discard orphaned waiting enriches: %w", err)
-			}
-		}
-	}
 	return firstErr
 }
 

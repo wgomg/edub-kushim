@@ -513,20 +513,21 @@ type TagVerdictEvent struct {
 }
 
 type Task struct {
-	ID          int64
-	TaskID      string
-	TaskType    types.TaskType
-	Status      types.TaskStatus
-	BatchID     sql.NullString
-	Payload     *json.RawMessage
-	Result      *json.RawMessage
-	DedupKey    sql.NullString
-	CreatedAt   sql.NullTime
-	StartedAt   sql.NullTime
-	CompletedAt sql.NullTime
-	Error       sql.NullString
-	Attempts    int32
-	Progress    *json.RawMessage
+	ID           int64
+	TaskID       string
+	TaskType     types.TaskType
+	Status       types.TaskStatus
+	BatchID      sql.NullString
+	Payload      *json.RawMessage
+	Result       *json.RawMessage
+	DedupKey     sql.NullString
+	CreatedAt    sql.NullTime
+	StartedAt    sql.NullTime
+	CompletedAt  sql.NullTime
+	Error        sql.NullString
+	Attempts     int32
+	Progress     *json.RawMessage
+	ParentTaskID sql.NullString
 }
 
 type User struct {

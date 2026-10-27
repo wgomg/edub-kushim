@@ -18,20 +18,25 @@ import (
 
 // Runner drives the claim-run-settle loop for the task types it is registered for. Next claims the next
 // pending task of the batch an execution owns, verifies the waits its type declares, dispatches to the
-// registered handler, recovers handler panics into task failures, and settles the batch after every
-// transition through SettleBatch. The batch's locks, drain and heartbeat belong to RunBatch. Handlers are
-// pure work functions: the runner owns the transitions and the lifecycle. Safe to call from several workers.
+// registered handler, recovers handler panics into task failures, activates the completed task's waiting
+// successors under the keys their type definitions derive, discards a failed task's whole waiting branch,
+// and settles the batch after every transition through SettleBatch. The batch's locks, drain and heartbeat
+// belong to RunBatch. Handlers are pure work functions: the runner owns the transitions and the lifecycle.
+// Safe to call from several workers.
 type Runner struct {
 	store    *Store
 	registry *Registry
+	catalog  TypeCatalog
 	logger   *log.Logger
 }
 
-// NewRunner wires the claim loop to the store and the handler registry.
-func NewRunner(store *Store, registry *Registry, logger *log.Logger) *Runner {
+// NewRunner wires the claim loop to the store, the handler registry and the type catalog that successor
+// activation derives dedup keys from.
+func NewRunner(store *Store, registry *Registry, catalog TypeCatalog, logger *log.Logger) *Runner {
 	return &Runner{
 		store:    store,
 		registry: registry,
+		catalog:  catalog,
 		logger:   logger,
 	}
 }
@@ -109,7 +114,17 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 		return nil
 	}
 
-	rows, err := r.completeTaskWithRetry(ctx, task, exec, result)
+	successors, err := r.buildSuccessorPlans(ctx, task, result)
+	if err != nil {
+		failMsg := fmt.Sprintf("plan waiting successors: %v", err)
+		if failErr := r.failAndSettle(ctx, task, exec, failMsg); failErr != nil {
+			return fmt.Errorf("plan successors of task %s (and fail fallback): %v / %w", task.TaskID, failErr, err)
+		}
+		r.logger.Error(task.TaskID, "task %s completed its work but planning its waiting successors failed — task failed instead", task.TaskID)
+		return nil
+	}
+
+	rows, outcomes, err := r.completeTaskWithRetry(ctx, task, exec, result, successors)
 	if err != nil {
 		// the handler's real work already succeeded; marking failed keeps the task visible and retryable rather
 		// than stuck in processing forever
@@ -124,6 +139,7 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 		r.logger.Error(reqID, "task %s completed handler but CompleteTask failed after retries — task failed instead of stuck", task.TaskID)
 		return nil
 	}
+	r.logSuccessorOutcomes(task, outcomes)
 	if rows == 0 {
 		// the task was already transitioned (cancelled, reset by the stale sweep or reclaimed), so the settle
 		// may find an active task; SettleBatch's guards refuse that write and stay a no-op
@@ -134,12 +150,50 @@ func (r *Runner) Next(ctx context.Context, taskType types.TaskType) (err error) 
 	return nil
 }
 
-// failTask fails the claimed task under its guard; a fail that lands zero rows means the claim was already
-// taken. It deliberately does not settle, so a caller that requests a pause can pause before any terminal
-// write.
+// buildSuccessorPlans reads the task's waiting successors and assembles their activation plans from the
+// result the handler returned. A read failure fails the task rather than completing it with successors left
+// armed behind the caller's back.
+func (r *Runner) buildSuccessorPlans(ctx context.Context, task database.Task, result json.RawMessage) ([]SuccessorPlan, error) {
+	children, err := r.store.WaitingSuccessors(ctx, task.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if len(children) == 0 {
+		return nil, nil
+	}
+	return planSuccessors(children, result, r.catalog), nil
+}
+
+// logSuccessorOutcomes reports every successor whose activation did not simply go pending; an unplannable
+// successor is an error because its payload contract and the type wiring disagree.
+func (r *Runner) logSuccessorOutcomes(task database.Task, outcomes []SuccessorOutcome) {
+	for _, outcome := range outcomes {
+		if outcome.Activation == Activated {
+			continue
+		}
+		switch outcome.Activation {
+		case DiscardedDuplicate:
+			r.logger.Info(task.TaskID, "successor task %s discarded: live work already covers its dedup key", outcome.TaskID)
+		case DiscardedInvalid:
+			r.logger.Error(task.TaskID, "successor task %s discarded: %v", outcome.TaskID, outcome.Err)
+		case AlreadyTransitioned:
+			r.logger.Info(task.TaskID, "successor task %s was already transitioned — left as is", outcome.TaskID)
+		}
+	}
+}
+
+// failTask fails the claimed task under its guard and discards its waiting branch in the same write; a fail
+// that lands zero rows means the claim was already taken, so nothing is discarded either. It deliberately
+// does not settle, so a caller that requests a pause can pause before any terminal write.
 func (r *Runner) failTask(ctx context.Context, task database.Task, exec Execution, msg string) error {
-	_, err := r.store.FailTask(ctx, task.ID, msg, exec.Guard)
-	return err
+	rows, discarded, err := r.store.FailTask(ctx, task.ID, task.TaskID, msg, exec.Guard)
+	if err != nil {
+		return err
+	}
+	if rows > 0 && discarded > 0 {
+		r.logger.Info(task.TaskID, "task %s failed; discarded %d waiting successors", task.TaskID, discarded)
+	}
+	return nil
 }
 
 // failAndSettle fails the claimed task under its guard and settles the batch afterwards. SettleBatch's
@@ -167,22 +221,22 @@ func (r *Runner) settle(ctx context.Context, task database.Task, exec Execution)
 
 // completeTaskWithRetry calls CompleteTask with bounded retries and backoff; the failure class is transient
 // write contention, so a few retries cover the common case without infinite looping.
-func (r *Runner) completeTaskWithRetry(ctx context.Context, task database.Task, exec Execution, result json.RawMessage) (int64, error) {
+func (r *Runner) completeTaskWithRetry(ctx context.Context, task database.Task, exec Execution, result json.RawMessage, successors []SuccessorPlan) (int64, []SuccessorOutcome, error) {
 	const maxAttempts = 3
 	backoff := 50 * time.Millisecond
 
 	for attempt := 1; ; attempt++ {
-		rows, err := r.store.CompleteTask(ctx, task.ID, result, exec.Guard)
+		rows, outcomes, err := r.store.CompleteTask(ctx, task.ID, result, exec.Guard, successors)
 		if err == nil {
-			return rows, nil
+			return rows, outcomes, nil
 		}
 		if attempt >= maxAttempts {
-			return 0, err
+			return 0, nil, err
 		}
 
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return 0, nil, ctx.Err()
 		case <-time.After(backoff):
 			backoff *= 2
 		}
@@ -352,7 +406,7 @@ func RunBatch(ctx context.Context, deps BatchRunDeps, batchID string, token uuid
 	defer stopWorkers()
 
 	// one worker set per task type; the declared count is read once, when the set is sized
-	runner := NewRunner(deps.Store, deps.Registry, deps.Logger)
+	runner := NewRunner(deps.Store, deps.Registry, deps.Catalog, deps.Logger)
 	var workers sync.WaitGroup
 	for _, taskType := range taskTypes {
 		workersForType := 1
@@ -432,15 +486,45 @@ monitor:
 			deps.Logger.Error("", "quarantine files for batch %s: %v", batchID, err)
 		}
 	}
+	// the repair net runs for every batch type, not only the ones whose host supplies a quarantine hook: a
+	// waiting successor whose parent ended without activating it would otherwise refuse the settle
+	if discarded, err := deps.Client.Queries.DiscardOrphanedWaitingSuccessors(ctx, batchID); err != nil {
+		deps.Logger.Error("", "sweep orphaned waiting successors for batch %s: %v", batchID, err)
+	} else if discarded > 0 {
+		deps.Logger.Info("", "batch %s: discarded %d orphaned waiting successors before settling", batchID, discarded)
+	}
 	exec := Execution{BatchID: batchID, Guard: token, Leased: true}
 	status, err := SettleBatch(ctx, deps.Client, deps.Logger, exec)
 	if err != nil {
 		deps.Logger.Error("", "settle batch %s: %v", batchID, err)
 		requeue = true
 	} else if status == types.Batch.Status.Processing {
-		// a refused settle means tasks are still active (a waiting child nobody cleared): no retry would change
-		// that, so the lease is released and the batch is left to operator recovery
+		// a refused settle means tasks are still active: report which ones and in what state their parents are,
+		// because no retry would change it and the batch is left to operator recovery
 		deps.Logger.Error("", "batch %s: settle refused — tasks remain active; left to recovery", batchID)
+		logActiveTasksAtRefusedSettle(ctx, deps, batchID)
 	}
 	return BatchRunResult{Status: status}, nil
+}
+
+// logActiveTasksAtRefusedSettle reports the status breakdown and, for every waiting successor that blocked
+// the settle, its parent's state: the pair is what lets an operator see why the batch never settled.
+func logActiveTasksAtRefusedSettle(ctx context.Context, deps BatchRunDeps, batchID string) {
+	counts, err := deps.Client.Queries.BatchTaskStatusCounts(ctx, sql.NullString{String: batchID, Valid: true})
+	if err != nil {
+		deps.Logger.Error("", "batch %s: count tasks at refused settle: %v", batchID, err)
+	} else {
+		deps.Logger.Error("", "batch %s: %d waiting, %d pending, %d processing remain at refused settle",
+			batchID, counts.Waiting, counts.Pending, counts.Processing)
+	}
+
+	waiting, err := deps.Client.Queries.ListWaitingSuccessorsWithParentStatus(ctx, batchID)
+	if err != nil {
+		deps.Logger.Error("", "batch %s: list waiting successors at refused settle: %v", batchID, err)
+		return
+	}
+	for _, row := range waiting {
+		deps.Logger.Error("", "batch %s: waiting %s task %s awaits parent %s in state %s",
+			batchID, row.TaskType, row.TaskID, row.ParentTaskID, row.ParentStatus)
+	}
 }

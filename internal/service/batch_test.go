@@ -508,14 +508,15 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create batch")
 
-		// below threshold: reset restores the discarded enrich
+		// below threshold: reset restores the discarded successor
 		rstEnrichPayload := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-enrich-e1", TaskType: "enrich", Status: "discarded", Payload: &rstEnrichPayload,
-			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
+			BatchID:      sql.NullString{String: "rst-enrich", Valid: true},
+			ParentTaskID: sql.NullString{String: "rst-enrich-c1", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create discarded enrich")
-		rstC1Payload := json.RawMessage(`{"on_completed":"rst-enrich-e1"}`)
+		rstC1Payload := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-enrich-c1", TaskType: "consume", Status: "processing", Payload: &rstC1Payload,
 			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
@@ -523,14 +524,15 @@ func TestBatch_ResetProcessingTasksByBatch(t *testing.T) {
 		testutil.AssertNoError(t, err, "create processing consume")
 
 		// at threshold: quarantined consume is 'failed', excluded from the
-		// restore — its waiting enrich stays waiting for the caller's sweep
+		// restore — its waiting successor stays waiting for the caller's sweep
 		rstEnrich2Payload := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-enrich-e2", TaskType: "enrich", Status: "waiting", Payload: &rstEnrich2Payload,
-			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
+			BatchID:      sql.NullString{String: "rst-enrich", Valid: true},
+			ParentTaskID: sql.NullString{String: "rst-enrich-c2", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create waiting enrich")
-		rstC2Payload := json.RawMessage(`{"on_completed":"rst-enrich-e2"}`)
+		rstC2Payload := json.RawMessage(`{}`)
 		quarID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rst-enrich-c2", TaskType: "consume", Status: "processing", Payload: &rstC2Payload,
 			BatchID: sql.NullString{String: "rst-enrich", Valid: true},
@@ -566,13 +568,14 @@ func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
 	ctx := context.Background()
 	staleSeconds := int64(60)
 
-	t.Run("resets stale processing task and restores its discarded enrich", func(t *testing.T) {
+	t.Run("resets stale processing task and restores its discarded successor", func(t *testing.T) {
 		enrichPayload := json.RawMessage(`{}`)
 		_, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rsts-e1", TaskType: "enrich", Status: "discarded", Payload: &enrichPayload,
+			ParentTaskID: sql.NullString{String: "rsts-c1", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create discarded enrich")
-		consumePayload := json.RawMessage(`{"on_completed":"rsts-e1"}`)
+		consumePayload := json.RawMessage(`{}`)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rsts-c1", TaskType: "consume", Status: "processing", Payload: &consumePayload,
 		})
@@ -589,13 +592,14 @@ func TestBatch_ResetStaleProcessingTasks(t *testing.T) {
 		testutil.AssertEqual(t, enrich.Status, "waiting", "enrich restored to waiting")
 	})
 
-	t.Run("quarantined stale consume's waiting enrich is swept to discarded", func(t *testing.T) {
+	t.Run("quarantined stale consume's waiting successor is swept to discarded", func(t *testing.T) {
 		enrichPayload := json.RawMessage(`{}`)
 		_, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rsts-e2", TaskType: "enrich", Status: "waiting", Payload: &enrichPayload,
+			ParentTaskID: sql.NullString{String: "rsts-c2", Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create waiting enrich")
-		consumePayload := json.RawMessage(`{"on_completed":"rsts-e2"}`)
+		consumePayload := json.RawMessage(`{}`)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
 			TaskID: "rsts-c2", TaskType: "consume", Status: "processing", Payload: &consumePayload,
 		})

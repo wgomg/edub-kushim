@@ -463,7 +463,7 @@ func TestRemoveFileAndCleanUp(t *testing.T) {
 }
 
 func TestQuarantineFailedFiles(t *testing.T) {
-	t.Run("moves files and discards enrich tasks", func(t *testing.T) {
+	t.Run("moves failed files and leaves task state alone", func(t *testing.T) {
 		client := database.NewTestClient(t)
 		defer client.DB().Close()
 		ctx := context.Background()
@@ -482,14 +482,14 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		os.WriteFile(filePath, []byte("test content"), 0644)
 
 		enrichTaskID := uuid.New().String()
+		consumeTaskID := uuid.New().String()
 		payload, _ := json.Marshal(map[string]any{
-			"file_path":    filePath,
-			"on_completed": enrichTaskID,
+			"file_path": filePath,
 		})
 
 		payloadPtr := json.RawMessage(payload)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   uuid.New().String(),
+			TaskID:   consumeTaskID,
 			TaskType: "consume",
 			Status:   "pending",
 			Payload:  &payloadPtr,
@@ -504,11 +504,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		enrichPayloadPtr := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   enrichTaskID,
-			TaskType: "enrich",
-			Status:   "waiting",
-			Payload:  &enrichPayloadPtr,
-			BatchID:  sql.NullString{String: batchID, Valid: true},
+			TaskID:       enrichTaskID,
+			TaskType:     "enrich",
+			Status:       "waiting",
+			Payload:      &enrichPayloadPtr,
+			BatchID:      sql.NullString{String: batchID, Valid: true},
+			ParentTaskID: sql.NullString{String: consumeTaskID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create enrich task")
 
@@ -527,7 +528,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		enrichTask, err := client.Queries.GetTaskByTaskID(ctx, enrichTaskID)
 		testutil.AssertNoError(t, err, "get enrich task")
-		testutil.AssertEqual(t, enrichTask.Status, "discarded", "enrich task should be discarded")
+		testutil.AssertEqual(t, enrichTask.Status, "waiting", "task state belongs to the failure and repair paths")
 	})
 
 	t.Run("no quarantined tasks is a no-op", func(t *testing.T) {
@@ -562,7 +563,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		}
 	})
 
-	t.Run("discards enrich task without file_path", func(t *testing.T) {
+	t.Run("leaves task state to the failure path when no file_path", func(t *testing.T) {
 		client := database.NewTestClient(t)
 		defer client.DB().Close()
 		ctx := context.Background()
@@ -576,13 +577,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 		testutil.AssertNoError(t, err, "create batch")
 
 		enrichTaskID := uuid.New().String()
-		payload, _ := json.Marshal(map[string]any{
-			"on_completed": enrichTaskID,
-		})
+		consumeTaskID := uuid.New().String()
+		payload, _ := json.Marshal(map[string]any{})
 
 		payloadPtr := json.RawMessage(payload)
 		taskID, err := client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   uuid.New().String(),
+			TaskID:   consumeTaskID,
 			TaskType: "consume",
 			Status:   "pending",
 			Payload:  &payloadPtr,
@@ -597,11 +597,12 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		noPayload2 := json.RawMessage(`{}`)
 		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
-			TaskID:   enrichTaskID,
-			TaskType: "enrich",
-			Status:   "waiting",
-			Payload:  &noPayload2,
-			BatchID:  sql.NullString{String: batchID, Valid: true},
+			TaskID:       enrichTaskID,
+			TaskType:     "enrich",
+			Status:       "waiting",
+			Payload:      &noPayload2,
+			BatchID:      sql.NullString{String: batchID, Valid: true},
+			ParentTaskID: sql.NullString{String: consumeTaskID, Valid: true},
 		})
 		testutil.AssertNoError(t, err, "create enrich task")
 
@@ -610,7 +611,7 @@ func TestQuarantineFailedFiles(t *testing.T) {
 
 		enrichTask, err := client.Queries.GetTaskByTaskID(ctx, enrichTaskID)
 		testutil.AssertNoError(t, err, "get enrich task")
-		testutil.AssertEqual(t, enrichTask.Status, "discarded", "enrich task should be discarded")
+		testutil.AssertEqual(t, enrichTask.Status, "waiting", "the failure path owns the successor's state")
 
 		errorDir := filepath.Join(storageDir, "errors")
 		if _, err := os.Stat(errorDir); !os.IsNotExist(err) {

@@ -133,7 +133,7 @@ func (h *pauseRequestHandler) Handle(ctx context.Context, _ Task) (json.RawMessa
 // batch that already went terminal.
 func TestRunnerPauseRequestPausesInsteadOfSettling(t *testing.T) {
 	store, registry, _ := setupTaskTest(t)
-	runner := NewRunner(store, registry, testutil.NewTestLogger())
+	runner := NewRunner(store, registry, testSuccessorCatalog(t), testutil.NewTestLogger())
 	ctx := context.Background()
 	q := store.client.Queries
 
@@ -244,13 +244,12 @@ func TestResumeBatch(t *testing.T) {
 	logger := testutil.NewTestLogger()
 	q := client.Queries
 
-	t.Run("retries failed tasks and restores their children in one call", func(t *testing.T) {
+	t.Run("retries failed tasks and restores their successors in one call", func(t *testing.T) {
 		createBatchRow(ctx, t, q, "resume-retry", types.Batch.Status.Failed)
 
-		childID, err := createTaskRow(ctx, t, q, types.Task.Type.Enrich, "resume-retry", json.RawMessage(`{}`), "", types.Task.Status.Discarded, "")
-		testutil.AssertNoError(t, err, "create discarded child")
-		consumePayload, _ := json.Marshal(map[string]any{"on_completed": childID})
-		_, err = createTaskRow(ctx, t, q, types.Task.Type.Consume, "resume-retry", consumePayload, "", types.Task.Status.Failed, "")
+		consumeID := uuid.New().String()
+		childID := createSuccessorRow(t, q, consumeID, types.Task.Type.Enrich, json.RawMessage(`{}`), types.Task.Status.Discarded)
+		_, err := createTaskRow(ctx, t, q, types.Task.Type.Consume, "resume-retry", json.RawMessage(`{}`), consumeID, types.Task.Status.Failed, "")
 		testutil.AssertNoError(t, err, "create failed consume")
 
 		result, err := ResumeBatch(ctx, client, logger, "resume-retry", 3, true)
@@ -295,68 +294,223 @@ func TestResumeBatch(t *testing.T) {
 	})
 }
 
-// TestActivateChild covers the activation contract of waiting children:
-// a derived key writes the duplicate protection, a colliding key discards the
-// child instead of failing its parent, and a keyless child is rejected.
-func TestActivateChild(t *testing.T) {
+// TestSuccessorActivation covers the completion and failure contract of waiting successors: a completed
+// parent activates them under their derived keys and merges the fields they declare, a duplicate key
+// discards the successor with its branch instead of failing the parent, an unplannable successor is
+// discarded with its reason, a failed parent discards the whole branch, a completion that lost its claim
+// arms nothing, and a malformed parent result only fails the plan of a successor that declares inheritance.
+func TestSuccessorActivation(t *testing.T) {
 	store, _, client := setupTaskTestClient(t)
 	ctx := context.Background()
 	q := client.Queries
+	catalog := testSuccessorCatalog(t)
 
-	t.Run("activates a waiting child under its dedup key", func(t *testing.T) {
-		childID, err := createTaskRow(ctx, t, q, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", types.Task.Status.Waiting, "")
-		testutil.AssertNoError(t, err, "create waiting child")
-		child, err := q.GetTaskByTaskID(ctx, childID)
-		testutil.AssertNoError(t, err, "read child")
+	t.Run("activates successors under their keys and merges inherited fields", func(t *testing.T) {
+		parent, token := claimParentInBatch(ctx, t, store, q, "succ-activate", types.Task.Type.Consume, json.RawMessage(`{}`))
+		enrichID := createSuccessorRow(t, q, parent.TaskID, types.Task.Type.Enrich, json.RawMessage(`{"document_id":"doc-a"}`), types.Task.Status.Waiting)
+		thumbnailID := createSuccessorRow(t, q, parent.TaskID, types.Task.Type.Thumbnail,
+			json.RawMessage(`{"document_id":"doc-a","inherit":["storage_path"]}`), types.Task.Status.Waiting)
 
-		outcome, err := store.ActivateChild(ctx, child.ID, json.RawMessage(`{"document_id":"doc-a"}`), "enrich:doc:doc-a")
-		testutil.AssertNoError(t, err, "activate")
-		testutil.AssertEqual(t, outcome, Activated, "activated")
-
-		child, err = q.GetTaskByTaskID(ctx, childID)
-		testutil.AssertNoError(t, err, "read child")
-		testutil.AssertEqual(t, string(child.Status), string(types.Task.Status.Pending), "child pending")
-		if !child.DedupKey.Valid || child.DedupKey.String != "enrich:doc:doc-a" {
-			t.Fatalf("dedup_key = %v, want enrich:doc:doc-a", child.DedupKey)
+		outcomes := completeWithSuccessors(t, store, catalog, parent, token, json.RawMessage(`{"storage_path":"/store/a.pdf"}`))
+		testutil.AssertEqual(t, len(outcomes), 2, "one outcome per successor")
+		for _, outcome := range outcomes {
+			testutil.AssertEqual(t, outcome.Activation, Activated, "successor activated")
 		}
+
+		enrich, err := q.GetTaskByTaskID(ctx, enrichID)
+		testutil.AssertNoError(t, err, "read enrich")
+		testutil.AssertEqual(t, string(enrich.Status), string(types.Task.Status.Pending), "enrich pending")
+		if !enrich.DedupKey.Valid || enrich.DedupKey.String != "enrich:doc:doc-a" {
+			t.Fatalf("enrich dedup_key = %v, want enrich:doc:doc-a", enrich.DedupKey)
+		}
+
+		thumbnail, err := q.GetTaskByTaskID(ctx, thumbnailID)
+		testutil.AssertNoError(t, err, "read thumbnail")
+		testutil.AssertEqual(t, string(thumbnail.Status), string(types.Task.Status.Pending), "thumbnail pending")
+		if !thumbnail.DedupKey.Valid || thumbnail.DedupKey.String != "thumbnail:doc:doc-a" {
+			t.Fatalf("thumbnail dedup_key = %v, want thumbnail:doc:doc-a", thumbnail.DedupKey)
+		}
+		var thumbnailPayload map[string]any
+		testutil.AssertNoError(t, json.Unmarshal(*thumbnail.Payload, &thumbnailPayload), "parse thumbnail payload")
+		testutil.AssertEqual(t, thumbnailPayload["storage_path"], "/store/a.pdf", "storage path inherited")
 	})
 
-	t.Run("discards a duplicate instead of failing the parent", func(t *testing.T) {
+	t.Run("discards a duplicate and its branch instead of failing the parent", func(t *testing.T) {
 		_, err := createTaskRow(ctx, t, q, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", types.Task.Status.Pending, "enrich:doc:doc-dup")
 		testutil.AssertNoError(t, err, "create live duplicate")
-		childID, err := createTaskRow(ctx, t, q, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", types.Task.Status.Waiting, "")
-		testutil.AssertNoError(t, err, "create waiting child")
+
+		parent, token := claimParentInBatch(ctx, t, store, q, "succ-duplicate", types.Task.Type.Consume, json.RawMessage(`{}`))
+		childID := createSuccessorRow(t, q, parent.TaskID, types.Task.Type.Enrich, json.RawMessage(`{"document_id":"doc-dup"}`), types.Task.Status.Waiting)
+		grandchildID := createSuccessorRow(t, q, childID, types.Task.Type.TagIdentity, json.RawMessage(`{}`), types.Task.Status.Waiting)
+
+		outcomes := completeWithSuccessors(t, store, catalog, parent, token, json.RawMessage(`{}`))
+		testutil.AssertEqual(t, len(outcomes), 1, "one outcome for the direct successor")
+		testutil.AssertEqual(t, outcomes[0].Activation, DiscardedDuplicate, "duplicate discarded")
+
 		child, err := q.GetTaskByTaskID(ctx, childID)
 		testutil.AssertNoError(t, err, "read child")
-
-		outcome, err := store.ActivateChild(ctx, child.ID, json.RawMessage(`{"document_id":"doc-dup"}`), "enrich:doc:doc-dup")
-		testutil.AssertNoError(t, err, "duplicate must not error the caller")
-		testutil.AssertEqual(t, outcome, DiscardedDuplicate, "duplicate discarded")
-
-		child, err = q.GetTaskByTaskID(ctx, childID)
-		testutil.AssertNoError(t, err, "read child")
-		testutil.AssertEqual(t, string(child.Status), string(types.Task.Status.Discarded), "child discarded")
+		testutil.AssertEqual(t, string(child.Status), string(types.Task.Status.Discarded), "duplicate child discarded")
 		if !strings.Contains(child.Error.String, "duplicate of live work") {
 			t.Fatalf("error = %q, want the duplicate reason", child.Error.String)
 		}
+		grandchild, err := q.GetTaskByTaskID(ctx, grandchildID)
+		testutil.AssertNoError(t, err, "read grandchild")
+		testutil.AssertEqual(t, string(grandchild.Status), string(types.Task.Status.Discarded), "awaiting branch discarded with it")
+
+		completed, err := q.GetTask(ctx, parent.ID)
+		testutil.AssertNoError(t, err, "read parent")
+		testutil.AssertEqual(t, string(completed.Status), string(types.Task.Status.Completed), "parent completes despite the duplicate")
 	})
 
-	t.Run("rejects an empty dedup key", func(t *testing.T) {
-		childID, err := createTaskRow(ctx, t, q, types.Task.Type.Enrich, "", json.RawMessage(`{}`), "", types.Task.Status.Waiting, "")
-		testutil.AssertNoError(t, err, "create waiting child")
+	t.Run("discards an unplannable successor with its reason", func(t *testing.T) {
+		parent, token := claimParentInBatch(ctx, t, store, q, "succ-unplannable", types.Task.Type.Consume, json.RawMessage(`{}`))
+		childID := createSuccessorRow(t, q, parent.TaskID, types.Task.Type.Enrich, json.RawMessage(`{}`), types.Task.Status.Waiting)
+
+		outcomes := completeWithSuccessors(t, store, catalog, parent, token, json.RawMessage(`{}`))
+		testutil.AssertEqual(t, len(outcomes), 1, "one outcome")
+		testutil.AssertEqual(t, outcomes[0].Activation, DiscardedInvalid, "unplannable child discarded")
+		testutil.AssertError(t, outcomes[0].Err, "the reason travels with the outcome")
+
 		child, err := q.GetTaskByTaskID(ctx, childID)
 		testutil.AssertNoError(t, err, "read child")
-
-		_, err = store.ActivateChild(ctx, child.ID, json.RawMessage(`{"document_id":""}`), "")
-		testutil.AssertError(t, err, "empty key rejected")
-
-		child, err = q.GetTaskByTaskID(ctx, childID)
-		testutil.AssertNoError(t, err, "read child")
-		testutil.AssertEqual(t, string(child.Status), string(types.Task.Status.Waiting), "child untouched")
+		testutil.AssertEqual(t, string(child.Status), string(types.Task.Status.Discarded), "child discarded")
+		if !strings.Contains(child.Error.String, "empty dedup key") {
+			t.Fatalf("error = %q, want the empty-key reason", child.Error.String)
+		}
 		if child.DedupKey.Valid {
-			t.Fatal("a rejected activation must not write a keyless row")
+			t.Fatal("a discarded successor must not carry a key")
+		}
+
+		completed, err := q.GetTask(ctx, parent.ID)
+		testutil.AssertNoError(t, err, "read parent")
+		testutil.AssertEqual(t, string(completed.Status), string(types.Task.Status.Completed), "parent completes")
+	})
+
+	t.Run("a failed parent discards its whole waiting branch", func(t *testing.T) {
+		parent, token := claimParentInBatch(ctx, t, store, q, "succ-cascade", types.Task.Type.Consume, json.RawMessage(`{}`))
+		childID := createSuccessorRow(t, q, parent.TaskID, types.Task.Type.Enrich, json.RawMessage(`{"document_id":"doc-c"}`), types.Task.Status.Waiting)
+		grandchildID := createSuccessorRow(t, q, childID, types.Task.Type.TagIdentity, json.RawMessage(`{}`), types.Task.Status.Waiting)
+
+		rows, discarded, err := store.FailTask(ctx, parent.ID, parent.TaskID, "boom", token)
+		testutil.AssertNoError(t, err, "fail")
+		testutil.AssertEqual(t, rows, int64(1), "parent failed")
+		testutil.AssertEqual(t, discarded, int64(2), "whole branch discarded")
+
+		for _, id := range []string{childID, grandchildID} {
+			row, err := q.GetTaskByTaskID(ctx, id)
+			testutil.AssertNoError(t, err, "read successor "+id)
+			testutil.AssertEqual(t, string(row.Status), string(types.Task.Status.Discarded), "successor discarded")
+			testutil.AssertEqual(t, row.Error.String, "boom", "failure text copied")
 		}
 	})
+
+	t.Run("a completion that lost its claim arms nothing", func(t *testing.T) {
+		parent, _ := claimParentInBatch(ctx, t, store, q, "succ-refused", types.Task.Type.Consume, json.RawMessage(`{}`))
+		childID := createSuccessorRow(t, q, parent.TaskID, types.Task.Type.Enrich, json.RawMessage(`{"document_id":"doc-r"}`), types.Task.Status.Waiting)
+
+		children, err := store.WaitingSuccessors(ctx, parent.TaskID)
+		testutil.AssertNoError(t, err, "read successors")
+		plans := planSuccessors(children, json.RawMessage(`{}`), catalog)
+		rows, outcomes, err := store.CompleteTask(ctx, parent.ID, json.RawMessage(`{}`), uuid.New(), plans)
+		testutil.AssertNoError(t, err, "refused completion is not an error")
+		testutil.AssertEqual(t, rows, int64(0), "completion refused")
+		testutil.AssertEqual(t, len(outcomes), 0, "no successor activated")
+
+		child, err := q.GetTaskByTaskID(ctx, childID)
+		testutil.AssertNoError(t, err, "read child")
+		testutil.AssertEqual(t, string(child.Status), string(types.Task.Status.Waiting), "child stays waiting")
+	})
+
+	t.Run("a malformed parent result only fails the plan of a successor that declares inheritance", func(t *testing.T) {
+		enrichID := createSuccessorRow(t, q, "succ-malformed-parent", types.Task.Type.Enrich, json.RawMessage(`{"document_id":"doc-m"}`), types.Task.Status.Waiting)
+		thumbnailID := createSuccessorRow(t, q, "succ-malformed-parent", types.Task.Type.Thumbnail,
+			json.RawMessage(`{"document_id":"doc-m","inherit":["storage_path"]}`), types.Task.Status.Waiting)
+
+		children, err := store.WaitingSuccessors(ctx, "succ-malformed-parent")
+		testutil.AssertNoError(t, err, "read successors")
+		plans := planSuccessors(children, json.RawMessage(`{"storage_path":`), catalog)
+		testutil.AssertEqual(t, len(plans), 2, "one plan per successor")
+		if plans[0].Err != nil {
+			t.Fatalf("a successor declaring nothing must ignore the result: %v", plans[0].Err)
+		}
+		testutil.AssertError(t, plans[1].Err, "an inherit-declaring successor cannot merge a malformed result")
+		if !strings.Contains(plans[1].Err.Error(), "not valid JSON") {
+			t.Fatalf("plan error = %q, want the malformed-result reason", plans[1].Err)
+		}
+
+		for _, id := range []string{enrichID, thumbnailID} {
+			row, err := q.GetTaskByTaskID(ctx, id)
+			testutil.AssertNoError(t, err, "read "+id)
+			testutil.AssertEqual(t, string(row.Status), string(types.Task.Status.Waiting), id+" stays waiting until a completion executes its plan")
+		}
+	})
+}
+
+// testSuccessorCatalog wires the dedup hooks successor activation derives keys with.
+func testSuccessorCatalog(t *testing.T) *Catalog {
+	t.Helper()
+	catalog, err := NewCatalog(map[types.TaskType]TypeWiring{
+		types.Task.Type.Enrich:       {DedupKey: payloadDocumentKey("enrich:doc:")},
+		types.Task.Type.Thumbnail:    {DedupKey: payloadDocumentKey("thumbnail:doc:")},
+		types.Task.Type.TagIdentity:  {DedupKey: ConstantDedupKey("tagidentity")},
+		types.Task.Type.TagReconcile: {DedupKey: ConstantDedupKey("tagreconcile")},
+		types.Task.Type.TagAudit:     {DedupKey: ConstantDedupKey("tagaudit")},
+	})
+	testutil.AssertNoError(t, err, "build successor catalog")
+	return catalog
+}
+
+// payloadDocumentKey derives "<prefix><document_id>", empty when the payload names no document.
+func payloadDocumentKey(prefix string) DedupKeyFunc {
+	return func(payload json.RawMessage) string {
+		var p struct {
+			DocumentID string `json:"document_id"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil || p.DocumentID == "" {
+			return ""
+		}
+		return prefix + p.DocumentID
+	}
+}
+
+// claimParentInBatch creates a leased batch, a pending parent inside it and claims the parent, returning the
+// claimed row and its guard: the state every completion or failure requires.
+func claimParentInBatch(ctx context.Context, t *testing.T, store *Store, q *database.Queries, batchID string, parentType types.TaskType, payload json.RawMessage) (database.Task, uuid.UUID) {
+	t.Helper()
+	leasedBatch(ctx, t, q, batchID, types.Batch.Status.Queued)
+	createTaskRow(ctx, t, q, parentType, batchID, payload, "", "", "")
+	parent, token, err := store.ClaimNextPending(ctx, parentType)
+	testutil.AssertNoError(t, err, "claim parent")
+	return parent, token
+}
+
+// createSuccessorRow inserts a successor of parentTaskID in the given status.
+func createSuccessorRow(t *testing.T, q *database.Queries, parentTaskID string, taskType types.TaskType, payload json.RawMessage, status types.TaskStatus) string {
+	t.Helper()
+	taskID := uuid.New().String()
+	body := payload
+	_, err := q.CreateTask(context.Background(), database.CreateTaskParams{
+		TaskID:       taskID,
+		TaskType:     taskType,
+		Status:       status,
+		Payload:      &body,
+		ParentTaskID: sql.NullString{String: parentTaskID, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "create "+string(status)+" "+string(taskType))
+	return taskID
+}
+
+// completeWithSuccessors reads the parent's waiting successors, plans them from the result and completes the
+// parent with them: the runner's own sequence, driven directly by the store-level tests.
+func completeWithSuccessors(t *testing.T, store *Store, catalog TypeCatalog, parent database.Task, token uuid.UUID, result json.RawMessage) []SuccessorOutcome {
+	t.Helper()
+	children, err := store.WaitingSuccessors(context.Background(), parent.TaskID)
+	testutil.AssertNoError(t, err, "read waiting successors")
+	plans := planSuccessors(children, result, catalog)
+	rows, outcomes, err := store.CompleteTask(context.Background(), parent.ID, result, token, plans)
+	testutil.AssertNoError(t, err, "complete with successors")
+	testutil.AssertEqual(t, rows, int64(1), "parent completed")
+	return outcomes
 }
 
 // TestCancelBatch pins the single cancel operation: one call takes every

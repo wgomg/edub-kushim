@@ -32,15 +32,17 @@ func (s *Store) SetOwnerID(id string) {
 	s.ownerID = id
 }
 
-// Activation reports what activating a waiting child did: it became pending, or it was discarded because
-// live work already covers its dedup key.
+// Activation reports what activating one waiting successor did: it became pending, it was discarded because
+// live work already covers its dedup key, it was discarded because its plan could not be completed, or it
+// was no longer waiting because another path transitioned it first.
 type Activation int
 
-// Outcomes of ActivateChild: the child went pending, or it was discarded because live work already covers
-// its dedup key and the surviving task does the work.
+// Outcomes of successor activation; the zero value is Activated, so an ignored outcome reads as success.
 const (
 	Activated Activation = iota
 	DiscardedDuplicate
+	DiscardedInvalid
+	AlreadyTransitioned
 )
 
 // ClaimNextPending claims one pending task of the type under the batch's execution guard and returns the
@@ -130,112 +132,174 @@ func (s *Store) GetTaskByTaskID(ctx context.Context, taskID string) (database.Ta
 	return s.queries.GetTaskByTaskID(ctx, taskID)
 }
 
-// CompleteTask marks a claimed task completed, writing only while the task is still processing under the
-// owning execution's lease; the return is the rows updated.
-func (s *Store) CompleteTask(ctx context.Context, id int64, result json.RawMessage, token uuid.UUID) (int64, error) {
-	return s.withTransition(ctx, "complete", id, token, func(txQ *database.Queries) (int64, error) {
-		return txQ.CompleteBlockingTask(ctx, database.CompleteBlockingTaskParams{
-			Result:  &result,
-			ID:      id,
-			OwnerID: token.String(),
-		})
-	})
-}
-
-// FailTask marks a claimed task failed under the owning execution's lease, with the same guard rule as
-// CompleteTask.
-func (s *Store) FailTask(ctx context.Context, id int64, errMsg string, token uuid.UUID) (int64, error) {
-	return s.withTransition(ctx, "fail", id, token, func(txQ *database.Queries) (int64, error) {
-		return txQ.FailBlockingTask(ctx, database.FailBlockingTaskParams{
-			Error:   sql.NullString{String: errMsg, Valid: true},
-			ID:      id,
-			OwnerID: token.String(),
-		})
-	})
-}
-
-// ActivateChild makes a waiting child pending under the dedup key its type definition derives, in one
-// transaction. The key must be non-empty: a child that cannot carry its own dedup key would bypass the
-// duplicate protection, so an empty key fails the activation instead of writing a keyless row. A key that
-// collides with live work discards the child instead of failing its parent: the duplicate carries no work
-// the surviving task does not already cover. A child that is no longer waiting or discarded is left as is
-// and reports Activated.
-func (s *Store) ActivateChild(ctx context.Context, id int64, payload json.RawMessage, dedupKey string) (Activation, error) {
-	if dedupKey == "" {
-		return Activated, fmt.Errorf("activate child %d: empty dedup key", id)
-	}
-
+// CompleteTask marks a claimed task completed and activates its planned successors in one transaction: the
+// guarded terminal write under the owning execution's lease, then per successor a savepoint flip under the
+// key its type definition derived. A completion that writes no row (the claim was taken elsewhere) activates
+// nothing, so a stale executor cannot arm successors of work it no longer owns. The transaction commits only
+// when the completion and every activation write succeeded; the returned rows are the completion's and the
+// outcomes describe each planned successor for the caller's log.
+func (s *Store) CompleteTask(ctx context.Context, id int64, result json.RawMessage, token uuid.UUID, successors []SuccessorPlan) (int64, []SuccessorOutcome, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
-		return Activated, fmt.Errorf("begin activation transaction: %w", err)
+		return 0, nil, fmt.Errorf("begin complete transaction: %w", err)
 	}
 	defer tx.Rollback()
 
 	txQ := s.client.Queries.WithTx(tx)
-	key := sql.NullString{String: dedupKey, Valid: true}
+	rows, err := txQ.CompleteBlockingTask(ctx, database.CompleteBlockingTaskParams{
+		Result:  &result,
+		ID:      id,
+		OwnerID: token.String(),
+	})
+	if err != nil {
+		return 0, nil, fmt.Errorf("complete task %d: %w", id, err)
+	}
+	if rows == 0 {
+		return 0, nil, nil
+	}
+
+	outcomes, err := activateSuccessors(ctx, tx, txQ, successors)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, nil, fmt.Errorf("commit complete transaction: %w", err)
+	}
+	return rows, outcomes, nil
+}
+
+// FailTask marks a claimed task failed and discards its awaiting successor branch in one transaction: a task
+// that will not complete can never activate its successors, so the whole waiting branch below it shares its
+// terminal outcome and error text. A failure that writes no row (the claim was taken elsewhere) touches
+// nothing. The returned counts are the failed rows and the discarded successors.
+func (s *Store) FailTask(ctx context.Context, id int64, taskID, errMsg string, token uuid.UUID) (int64, int64, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin fail transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	txQ := s.client.Queries.WithTx(tx)
+	rows, err := txQ.FailBlockingTask(ctx, database.FailBlockingTaskParams{
+		Error:   sql.NullString{String: errMsg, Valid: true},
+		ID:      id,
+		OwnerID: token.String(),
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("fail task %d: %w", id, err)
+	}
+
+	discarded := int64(0)
+	if rows > 0 {
+		discarded, err = txQ.DiscardWaitingSuccessorBranch(ctx, database.DiscardWaitingSuccessorBranchParams{
+			Error:        errMsg,
+			ParentTaskID: taskID,
+		})
+		if err != nil {
+			return 0, 0, fmt.Errorf("discard successors of failed task %s: %w", taskID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("commit fail transaction: %w", err)
+	}
+	return rows, discarded, nil
+}
+
+// WaitingSuccessors returns one parent's waiting successors in enqueue order, the order activation applies
+// them in so a pair of same-key successors resolves deterministically.
+func (s *Store) WaitingSuccessors(ctx context.Context, parentTaskID string) ([]database.ListWaitingSuccessorsByParentRow, error) {
+	return s.queries.ListWaitingSuccessorsByParent(ctx, parentTaskID)
+}
+
+// activateSuccessors executes one plan per waiting successor inside the completion transaction. Each
+// successor flips under its own savepoint, so a dedup-index collision rolls back only that successor; any
+// other error aborts the whole completion, letting the caller's failure path discard the branch instead of
+// leaving half-activated work behind.
+func activateSuccessors(ctx context.Context, tx *sql.Tx, txQ *database.Queries, plans []SuccessorPlan) ([]SuccessorOutcome, error) {
+	outcomes := make([]SuccessorOutcome, 0, len(plans))
+	for _, plan := range plans {
+		outcome, err := activateSuccessor(ctx, tx, txQ, plan)
+		if err != nil {
+			return nil, err
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	return outcomes, nil
+}
+
+// activateSuccessor executes one plan: an unplannable successor is discarded with its error, and a plannable
+// one flips to pending under its dedup key, or is discarded as the duplicate of live work together with the
+// waiting branch below it when the key collides.
+func activateSuccessor(ctx context.Context, tx *sql.Tx, txQ *database.Queries, plan SuccessorPlan) (SuccessorOutcome, error) {
+	outcome := SuccessorOutcome{TaskID: plan.TaskID}
+
+	if plan.Err != nil {
+		rows, err := txQ.DiscardWaitingSuccessor(ctx, database.DiscardWaitingSuccessorParams{
+			Error: plan.Err.Error(),
+			ID:    plan.ID,
+		})
+		if err != nil {
+			return outcome, fmt.Errorf("discard unplannable successor %s: %w", plan.TaskID, err)
+		}
+		if rows == 0 {
+			outcome.Activation = AlreadyTransitioned
+			return outcome, nil
+		}
+		outcome.Activation = DiscardedInvalid
+		outcome.Err = plan.Err
+		return outcome, nil
+	}
 
 	if _, err := tx.ExecContext(ctx, "SAVEPOINT child_activation"); err != nil {
-		return Activated, fmt.Errorf("set activation savepoint: %w", err)
+		return outcome, fmt.Errorf("set activation savepoint: %w", err)
 	}
-	if err := txQ.SetEnrichTaskPending(ctx, database.SetEnrichTaskPendingParams{
-		Payload:  &payload,
-		DedupKey: key,
-		ID:       id,
-	}); err != nil {
-		if errs.IsConstraintOn(err, dedupIndexName) {
-			if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT child_activation"); rbErr != nil {
-				return Activated, fmt.Errorf("roll back activation savepoint: %w", rbErr)
-			}
-			if _, discardErr := txQ.DiscardEnrichTask(ctx, database.DiscardEnrichTaskParams{
-				Error: sql.NullString{String: "duplicate of live work: " + dedupKey, Valid: true},
-				ID:    id,
-			}); discardErr != nil {
-				return Activated, fmt.Errorf("discard duplicate child %d: %w", id, discardErr)
-			}
-			if err := tx.Commit(); err != nil {
-				return Activated, fmt.Errorf("commit duplicate discard: %w", err)
-			}
-			return DiscardedDuplicate, nil
+	rows, err := txQ.SetWaitingSuccessorPending(ctx, database.SetWaitingSuccessorPendingParams{
+		Payload:  &plan.Payload,
+		DedupKey: plan.DedupKey,
+		ID:       plan.ID,
+	})
+	if err != nil {
+		if !errs.IsConstraintOn(err, dedupIndexName) {
+			return outcome, fmt.Errorf("activate successor %s: %w", plan.TaskID, err)
 		}
-		return Activated, fmt.Errorf("activate child %d: %w", id, err)
+		if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT child_activation"); rbErr != nil {
+			return outcome, fmt.Errorf("roll back activation savepoint: %w", rbErr)
+		}
+		outcome.Activation, err = discardDuplicateSuccessor(ctx, txQ, plan)
+		if err != nil {
+			return outcome, err
+		}
+		return outcome, nil
 	}
 	if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT child_activation"); err != nil {
-		return Activated, fmt.Errorf("release activation savepoint: %w", err)
+		return outcome, fmt.Errorf("release activation savepoint: %w", err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		return Activated, fmt.Errorf("commit activation transaction: %w", err)
+	if rows == 0 {
+		outcome.Activation = AlreadyTransitioned
+		return outcome, nil
 	}
-	return Activated, nil
+	outcome.Activation = Activated
+	return outcome, nil
 }
 
-// Discard marks a task (and its waiting children) discarded, removing it from the batch counts; the
-// return is the children discarded.
-func (s *Store) Discard(ctx context.Context, id int64, errMsg string) (int64, error) {
-	return s.queries.DiscardEnrichTask(ctx, database.DiscardEnrichTaskParams{
-		ID:    id,
-		Error: sql.NullString{String: errMsg, Valid: true},
-	})
-}
-
-// withTransition runs one guarded task transition. The batch's locks belong to the run and are released by
-// the settle, pause, cancel or reclamation, never by an individual task.
-func (s *Store) withTransition(ctx context.Context, op string, id int64, token uuid.UUID, transition func(*database.Queries) (int64, error)) (int64, error) {
-	tx, err := s.client.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin %s transaction: %w", op, err)
+// discardDuplicateSuccessor ends the duplicate's row and its whole awaiting branch with the duplicate
+// reason: the surviving live task covers the step, and a step that will not run cannot activate its own
+// successors.
+func discardDuplicateSuccessor(ctx context.Context, txQ *database.Queries, plan SuccessorPlan) (Activation, error) {
+	reason := "duplicate of live work: " + plan.DedupKey
+	if _, err := txQ.DiscardWaitingSuccessor(ctx, database.DiscardWaitingSuccessorParams{
+		Error: reason,
+		ID:    plan.ID,
+	}); err != nil {
+		return DiscardedDuplicate, fmt.Errorf("discard duplicate successor %s: %w", plan.TaskID, err)
 	}
-	defer tx.Rollback()
-
-	txQ := s.client.Queries.WithTx(tx)
-
-	rows, err := transition(txQ)
-	if err != nil {
-		return 0, fmt.Errorf("%s task %d: %w", op, id, err)
+	if _, err := txQ.DiscardWaitingSuccessorBranch(ctx, database.DiscardWaitingSuccessorBranchParams{
+		Error:        reason,
+		ParentTaskID: plan.TaskID,
+	}); err != nil {
+		return DiscardedDuplicate, fmt.Errorf("discard branch of duplicate successor %s: %w", plan.TaskID, err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit %s transaction: %w", op, err)
-	}
-	return rows, nil
+	return DiscardedDuplicate, nil
 }
