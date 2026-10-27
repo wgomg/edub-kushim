@@ -148,7 +148,7 @@ The helpers formerly grouped in `internal/utils/` live next to their owners.
 
 ### `copy.go`
 
-`CopyTree(src, dst string) error` — Recursively copies a directory tree (regular files only); `copyFile` (unexported) is the single-file primitive.
+`CopyTree(ctx, src, dst string) error` — Recursively copies a directory tree (regular files only), aborting with the context's error when it ends (checked per entry, and per file via a watchdog that closes the source so a stalled read returns; an incomplete destination is removed); `copyFile` (unexported) is the single-file primitive.
 
 ---
 

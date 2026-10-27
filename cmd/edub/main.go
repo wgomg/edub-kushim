@@ -73,7 +73,7 @@ func startServer() {
 		errLogger.Fatal("Unable to establish database connection:", err)
 	}
 
-	if err := database.InitializeSchema(db); err != nil {
+	if err := database.InitializeSchema(context.Background(), db); err != nil {
 		logger.Fatal("Unable to initialize database schema:", err)
 	}
 

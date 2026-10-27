@@ -7,6 +7,8 @@
 `NewPostgresDB(dsn string) (*sql.DB, error)`, `NewClient(db) *Client`
 
 - `NewPostgresDB` opens a PostgreSQL connection pool via `pgx/stdlib` (25 max open, 5 max idle, 5 min lifetime). Before opening the target database it calls `ensureDatabaseExists` which connects to the `postgres` bootstrap database, checks existence via `pg_database`, and auto-creates the target if missing.
+- `WithConnectTimeout(dsn, seconds) string` — Appends the `connect_timeout` parameter to a URL-shaped DSN (returned unchanged otherwise).
+- `PrepareFreshDatabase(dsn string) error` — Setup-time database claim: connects to the `postgres` bootstrap database (10s connect timeout), creates the target database when missing, then verifies the target is reachable and accepts it only when it has no tables in any non-system schema; a target holding tables fails with `ErrDatabaseNotEmpty` ("drop it or choose another database name"). Opens no schema — callers run `InitializeSchema` after persisting their configuration. Used by `kushim setup` (wizard and CLI) before any settings are persisted.
 - `NewClient` wraps a `*sql.DB` and an embedded `*Queries` (sqlc-generated). Exposes `BeginTx(ctx, opts)` and `DB()` for direct `*sql.DB` access. All query methods on `*Queries` are promoted to `*Client`.
 
 ---
@@ -15,7 +17,7 @@
 
 ### Functions
 
-`InitializeSchema(db) error` — Configures goose (`SetBaseFS`, `SetDialect("postgres")`), runs pending migrations via `goose.Up()` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `tag-aliases`, `document-types`, `people-types`. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables and indexes (PostgreSQL syntax). On existing databases, only unapplied migrations are executed.
+`InitializeSchema(ctx, db) error` — Configures goose (`SetBaseFS`, `SetDialect("postgres")`), runs pending migrations via `goose.UpContext(ctx)` from the embedded `sql/schema/migrations/` directory, then runs seeders: `tags`, `tag-aliases`, `document-types`, `people-types`. The context bounds the whole sequence — the backfill passes derive their budgets from it — and migrations are transactional per file, so a cancelled run resumes on the next attempt. On a fresh database, the baseline migration (`00001_baseline.sql`) creates all tables and indexes (PostgreSQL syntax). On existing databases, only unapplied migrations are executed.
 
 > The baseline uses PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `TIMESTAMPTZ`, `JSONB`). Connection and goose dialect are PostgreSQL.
 

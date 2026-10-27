@@ -1,6 +1,7 @@
-// Package wizard is the setup wizard server: the same config handler the API exposes, served on its own
-// port before a configuration exists, with the embedded wizard SPA. Bootstrap happens here first; the main
-// server then serves the configured instance. Once bootstrapped, the wizard is the setup-time dispatcher
+// Package wizard is the setup wizard server: the same config handler the API exposes, served on its own port
+// before a configuration exists, with the embedded wizard SPA. Bootstrap prepares the config directory and
+// skeleton config; the database is opened only when the operator submits the connection settings, so no
+// database operation precedes the schema creation. Once bootstrapped, the wizard is the setup-time dispatcher
 // for migrations, executing their handlers in-process while no queue daemon exists yet.
 package wizard
 
@@ -9,6 +10,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,13 +32,21 @@ const dispatchSafetyInterval = 30 * time.Second
 // setup wizard used before the dispatcher.
 const inProcessDrainTimeout = 30 * time.Second
 
+// setupConnectTimeoutSeconds bounds the bootstrap connect so an unreachable server fails the setup request
+// in seconds instead of stalling it.
+const setupConnectTimeoutSeconds = 10
+
 // Server is the setup wizard's HTTP server; Start serves the SPA and the
 // config endpoints until the process is stopped.
 type Server struct {
 	httpServer *http.Server
 	logger     *log.Logger
 	addr       string
+	configDir  string
 	db         *sql.DB
+
+	servicesMu      sync.Mutex
+	servicesStarted bool
 
 	client         *database.Client
 	batchSvc       *service.Batch
@@ -54,8 +64,9 @@ func NewServer(addr string, logger *log.Logger) *Server {
 	}
 }
 
-// Start assembles the wizard routes, auto-resumes an existing
-// configuration if one is found, and serves until Shutdown.
+// Start assembles the wizard routes and serves until Shutdown. RunSetup refuses to start it over an existing
+// configuration, so the wizard always begins from an empty environment and sets its in-memory config at the
+// config-directory step.
 func (s *Server) Start() error {
 	var cfgPtr atomic.Pointer[config.Config]
 	getConfig := func() *config.Config { return cfgPtr.Load() }
@@ -63,18 +74,7 @@ func (s *Server) Start() error {
 
 	configHandler := handlers.NewConfigHandler(getConfig, onConfigSet, nil, s.logger, nil, nil)
 	configHandler.OnBootstrap = s.bootstrap
-
-	if configDir, err := config.ConfigDir(); err == nil {
-		if config.ConfigExists(*configDir) {
-			s.logger.Info("", "existing config found at %s — auto-resuming", *configDir)
-			if cfg, client, enqueuer, err := s.bootstrap(*configDir); err != nil {
-				s.logger.Error("", "auto-resume bootstrap: %v", err)
-			} else {
-				onConfigSet(cfg)
-				configHandler.SetServices(client, enqueuer)
-			}
-		}
-	}
+	configHandler.OnDatabaseInit = s.bootstrapServices
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /wizard/config", configHandler.GetConfig)
@@ -97,24 +97,61 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, *task.Enqueuer, error) {
-	if s.db != nil {
-		return nil, nil, nil, fmt.Errorf("already bootstrapped")
-	}
+// bootstrap prepares the configuration environment for the wizard: it creates the directories and the
+// skeleton config and returns the loaded settings. It never opens the database, so setup stays free of any
+// database operation until the operator submits the connection settings.
+func (s *Server) bootstrap(configDir string) (*config.Config, error) {
+	s.configDir = configDir
 
 	cfg, err := config.LoadOrBootstrap(configDir)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("bootstrap config: %w", err)
+		return nil, fmt.Errorf("bootstrap config: %w", err)
+	}
+	return cfg, nil
+}
+
+// bootstrapServices opens the configured database, applies the schema and wires the setup-time dispatcher to
+// it. It runs only after the database target was claimed by PrepareFreshDatabase, so adopting an existing
+// database here is always adopting the setup's own. One initialization is claimed at a time: a retry that
+// arrives while the schema work is in flight, or after it already finished, is refused instead of racing a
+// second goose run. The context bounds the schema work; a cancelled run leaves no services bound, so a retry
+// resumes it.
+func (s *Server) bootstrapServices(ctx context.Context) (*database.Client, *task.Enqueuer, error) {
+	s.servicesMu.Lock()
+	claimed := s.servicesStarted
+	s.servicesStarted = true
+	s.servicesMu.Unlock()
+	if claimed {
+		return nil, nil, fmt.Errorf("database initialization already started")
 	}
 
-	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	client, enqueuer, err := s.initServices(ctx)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("open database: %w", err)
+		s.servicesMu.Lock()
+		s.servicesStarted = false
+		s.servicesMu.Unlock()
+		return nil, nil, err
 	}
-	s.db = db
+	return client, enqueuer, nil
+}
 
-	if err := database.InitializeSchema(db); err != nil {
-		return nil, nil, nil, fmt.Errorf("initialize schema: %w", err)
+// initServices performs the one-time wiring bootstrapServices guards: it loads the configuration from disk,
+// connects with a bounded connect attempt, applies the schema and starts the setup dispatcher.
+func (s *Server) initServices(ctx context.Context) (*database.Client, *task.Enqueuer, error) {
+	cfg, err := config.Load(s.configDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load config: %w", err)
+	}
+
+	dsn := database.WithConnectTimeout(config.BuildPostgresDSN(cfg.Db), setupConnectTimeoutSeconds)
+	db, err := database.NewPostgresDB(dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open database: %w", err)
+	}
+
+	if err := database.InitializeSchema(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("initialize schema: %w", err)
 	}
 
 	client := database.NewClient(db)
@@ -127,7 +164,8 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 		types.Task.Type.MigrateStorage: {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage)},
 	})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("task catalog: %w", err)
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("task catalog: %w", err)
 	}
 	enqueuer := task.NewEnqueuer(client, catalog)
 
@@ -135,6 +173,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 	if maxConcurrent < 1 {
 		maxConcurrent = 2
 	}
+	s.db = db
 	s.client = client
 	s.batchSvc = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	s.dispatchNotify = make(chan struct{}, 4)
@@ -150,7 +189,7 @@ func (s *Server) bootstrap(configDir string) (*config.Config, *database.Client, 
 		})
 	s.startDispatch(cfg)
 
-	return cfg, client, enqueuer, nil
+	return client, enqueuer, nil
 }
 
 // wakeDispatcher pokes the dispatch loop once; it is the dispatcher's backoff-expiry callback.

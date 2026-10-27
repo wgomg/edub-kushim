@@ -48,7 +48,7 @@ func NewTestDB(t TB) *sql.DB {
 		release()
 		t.Fatalf("failed to open test database: %v", err)
 	}
-	if err := InitializeSchema(db); err != nil {
+	if err := InitializeSchema(context.Background(), db); err != nil {
 		_ = db.Close()
 		release()
 		t.Fatalf("failed to initialize schema: %v", err)

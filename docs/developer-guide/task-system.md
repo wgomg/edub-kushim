@@ -920,9 +920,6 @@ The reset paths also restore: the batch reset
 transaction as the reset, so a `discarded` child is re-armed exactly when
 its consume returns to `pending`.
 
-The wizard also auto-resumes config setup on boot
-(`internal/api/wizard/server.go`).
-
 ---
 
 ## 12. The resource locks

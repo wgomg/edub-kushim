@@ -77,17 +77,22 @@ Document Management System v2.9.0
 
 ### `kushim setup`
 
-Generate a config file, create required directories, initialize the PostgreSQL
-database schema (auto-creates the database if it doesn't exist), download OCR language
-data, and download the Hugot embedding model (`BAAI/bge-m3`).
+Generate a config file, create required directories, download OCR language data,
+and download the Hugot embedding model (`BAAI/bge-m3`). No database connection is
+made until the settings are submitted; the setup then claims the target database —
+auto-creating it when missing and adopting it only when completely empty — and
+applies the schema. A target that already contains tables aborts setup: drop the
+database or choose another name. `kushim setup` also refuses to run over an
+existing configuration; to start over, delete `~/.config/edub-kushim/config.yaml`
+and run setup again.
 
 By default, `kushim setup` launches a **web-based setup wizard** at
 `http://0.0.0.0:8420`. The wizard provides a six-step guided flow:
 
-1. **Config directory** — specify where configuration, database, and models are stored
+1. **Config directory** — specify where configuration, database, and models are stored (no database connection is made)
 2. **Consumer settings** — choose OCR engine, add languages, configure worker counts, select supported file types, enable the DOCX/ODT converter
-3. **Enricher settings** — LLM provider/model, tag matcher, text reducer
-4. **Progress** — missing tessdata language files and the Hugot model download as direct config updates started by the save; a spinner and pending-work counter cover the downloads and any queued migrations
+3. **Enricher settings** — LLM provider/model, tag matcher, text reducer; submitting this step claims the target database (creating it when missing, refusing a populated one), applies the schema, and binds the running wizard to it
+4. **Progress** — missing tessdata language files and the Hugot model download as direct config updates started by the save; a spinner and pending-work counter cover the downloads
 5. **Admin user** — optionally create an admin user account (username + password)
 6. **Completion** — ready to run `edub` to start the server
 
@@ -1036,7 +1041,7 @@ archive and run `psql -f edub.sql` manually on the remote host.
 
 Run the database or storage migration logic from the CLI, without enqueueing anything. Both subcommands coordinate through the resource locks — `migrate database` refuses while the `maintenance` lock is held, `migrate storage` acquires the `maintenance` and `storage` locks (waiting by default; `--no-wait` exits non-zero) — wait for in-flight tasks to drain, and persist the new settings to `config.yaml` only after the operation succeeds.
 
-The command also has a **batch mode** (`kushim migrate --from-batch <id> --exec-token <token>`, no subcommand): it executes one queued `migrate-db`/`migrate-storage` batch claimed by the dispatcher or `kushim batch run`, registering both migration handlers and running whichever the batch carries. The lease and every settle write stay in the source database — the handler only rewrites `config.yaml` — so the claiming execution's lifecycle is unaffected by the connection switch. The daemon's scheduler enqueues migration batches from the wizard/config UI flows and forks this batch mode; the wizard's setup-time dispatcher runs the same handlers in-process while no daemon exists.
+The command also has a **batch mode** (`kushim migrate --from-batch <id> --exec-token <token>`, no subcommand): it executes one queued `migrate-db`/`migrate-storage` batch claimed by the dispatcher or `kushim batch run`, registering both migration handlers and running whichever the batch carries. The lease and every settle write stay in the source database — the handler only rewrites `config.yaml` — so the claiming execution's lifecycle is unaffected by the connection switch. The daemon's scheduler enqueues migration batches from the wizard/config UI flows and forks this batch mode; the wizard's setup-time dispatcher runs the same handlers in-process while no daemon exists. Handler-executed migrations are bounded by an execution deadline — 30 minutes for `migrate-db`, 2 hours for `migrate-storage` — so a blocked run fails into the retry path instead of hanging; storage migrations resume naturally after an abort (entries already moved are gone from the source listing, and a re-copy overwrites partial writes). The direct subcommands below run without a deadline.
 
 ```
 kushim migrate database --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]
@@ -2069,14 +2074,18 @@ Content-Type: application/json
 { "config_dir": "/home/user/.config/edub-kushim" }
 ```
 
-Three-phase API:
+Four-phase API:
 
-- **Bootstrap phase** — send `{ "config_dir": "..." }` to create directories,
-  write skeleton config, and initialize the database. Returns `200` with
+- **Bootstrap phase** — send `{ "config_dir": "..." }` to create directories and
+  write skeleton config. No database connection is made. Returns `200` with
   `{ ... }`.
 - **Update phase** — send settings key-value pairs (dot notation) to update
   the config and trigger background downloads (see "Database connection
-  changes" below for the third phase):
+  changes" below for the third phase). On the setup wizard's first submit —
+  the database step — the same request claims the target database
+  (created when missing; refused with `400` if it already contains tables),
+  applies the schema, and binds the running wizard to it before the downloads
+  start:
 
 ```json
 {

@@ -157,7 +157,7 @@ func TestMigrateDBTask(t *testing.T) {
 	}
 
 	// goose_db_version must survive the dump so InitializeSchema is a no-op.
-	if err := database.InitializeSchema(targetDB); err != nil {
+	if err := database.InitializeSchema(context.Background(), targetDB); err != nil {
 		t.Errorf("InitializeSchema on migrated database: %v", err)
 	}
 	var srcVersion, dstVersion int64

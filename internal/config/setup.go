@@ -6,12 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/knights-analytics/hugot"
 	"github.com/spf13/viper"
 	"github.com/wgomg/edub-kushim/internal/auth"
-	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
@@ -26,6 +26,34 @@ func ConfigExists(configDir string) bool {
 	return err == nil
 }
 
+// databaseSettingsKeys are the config keys a setup claim persists, the database connection fields only. The
+// deferred-migration flow persisted database.runtime/container without them, so a config holding just those
+// does not mark a claimed target.
+var databaseSettingsKeys = []string{
+	"database.host", "database.port", "database.user", "database.password",
+	"database.database", "database.sslmode", "database.dsn",
+}
+
+// DatabaseSettingsPresent reports whether a previous setup claim persisted the database connection settings.
+// It reads the raw file because Load fills the defaults in, which makes a skeleton config and a claimed one
+// indistinguishable afterwards; the setup handler uses it to tell a retry of an already-claimed target from
+// a first submission. It says nothing about whether setup completed. A missing file reports false.
+func DatabaseSettingsPresent(configDir string) bool {
+	configPath := filepath.Join(configDir, "config.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		return false
+	}
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+	v.SetConfigFile(configPath)
+	if err := v.ReadInConfig(); err != nil {
+		return false
+	}
+
+	return slices.ContainsFunc(databaseSettingsKeys, v.IsSet)
+}
+
 // LoadOrBootstrap loads the configuration, bootstrapping the environment
 // first when no config exists yet.
 func LoadOrBootstrap(configDir string) (*Config, error) {
@@ -35,11 +63,10 @@ func LoadOrBootstrap(configDir string) (*Config, error) {
 	return Bootstrap(configDir)
 }
 
-// Bootstrap prepares a fresh environment: it creates the config, storage,
-// consumption and tessdata directories, writes the skeleton config with a
-// generated session secret and authentication off, and verifies the
-// database connection opens. It does not download the embedding model or
-// the OCR languages.
+// Bootstrap prepares a fresh environment: it creates the config, storage, consumption, and tessdata
+// directories and writes the skeleton config with a generated session secret and authentication off. It never
+// touches the database; the connection is established only once the operator submits the connection settings
+// and the schema is created. It does not download the embedding model or the OCR languages.
 func Bootstrap(configDir string) (*Config, error) {
 	cfg := DefaultConfig(configDir)
 
@@ -71,12 +98,6 @@ func Bootstrap(configDir string) (*Config, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("write bootstrap config: %w", err)
 	}
-
-	db, err := database.NewPostgresDB(BuildPostgresDSN(cfg.Db))
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	db.Close()
 
 	return cfg, nil
 }

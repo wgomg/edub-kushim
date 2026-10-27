@@ -97,6 +97,14 @@ func StorageMigrationPayload(cfg *config.Config, newStorageDir, newConsumptionDi
 	return payload, payload.NewStorageDir != "" || payload.NewConsumptionDir != ""
 }
 
+// The migration handlers bound their execution so a blocked dump, restore or file copy fails the task,
+// landing in the failed list with the regular retry path, instead of hanging it forever. Variables rather
+// than constants so tests can shrink them.
+var (
+	migrateDBTimeout      = 30 * time.Minute
+	migrateStorageTimeout = 2 * time.Hour
+)
+
 // MigrateDBTaskHandler runs a database migration task.
 type MigrateDBTaskHandler struct {
 	queries *database.Queries
@@ -108,8 +116,13 @@ func NewMigrateDBTaskHandler(queries *database.Queries, logger *log.Logger) *Mig
 	return &MigrateDBTaskHandler{queries: queries, logger: logger}
 }
 
-// Handle runs the database migration, tracking progress on the task row.
+// Handle runs the database migration, tracking progress on the task row. The execution is bounded by
+// migrateDBTimeout; a deadline kill rolls the restore transaction back, so the failed task can be retried
+// safely.
 func (h *MigrateDBTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
+	ctx, cancel := context.WithTimeout(ctx, migrateDBTimeout)
+	defer cancel()
+
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 
 	var p MigrateDBPayload
@@ -135,8 +148,12 @@ func NewMigrateStorageTaskHandler(queries *database.Queries, logger *log.Logger)
 	return &MigrateStorageTaskHandler{queries: queries, logger: logger}
 }
 
-// Handle runs the storage move, reporting a no-op migration as a result instead of an error.
+// Handle runs the storage move, reporting a no-op migration as a result instead of an error. The execution
+// is bounded by migrateStorageTimeout between copied entries.
 func (h *MigrateStorageTaskHandler) Handle(ctx context.Context, t task.Task) (result json.RawMessage, err error) {
+	ctx, cancel := context.WithTimeout(ctx, migrateStorageTimeout)
+	defer cancel()
+
 	progress := task.NewProgressTracker(h.queries, t.TaskID)
 
 	var p MigrateStoragePayload
@@ -335,14 +352,14 @@ func moveDirEntries(ctx context.Context, oldDir, newDir, mode string, dirsOnly b
 		}
 		src := filepath.Join(oldDir, e.Name())
 		dst := filepath.Join(newDir, e.Name())
-		if err := movePath(src, dst, mode, logger); err != nil {
+		if err := movePath(ctx, src, dst, mode, logger); err != nil {
 			return fmt.Errorf("relocate %s: %w", e.Name(), err)
 		}
 	}
 	return nil
 }
 
-func movePath(src, dst, mode string, logger *log.Logger) error {
+func movePath(ctx context.Context, src, dst, mode string, logger *log.Logger) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("create destination parent: %w", err)
 	}
@@ -353,7 +370,7 @@ func movePath(src, dst, mode string, logger *log.Logger) error {
 			return nil
 		}
 	}
-	if err := storage.CopyTree(src, dst); err != nil {
+	if err := storage.CopyTree(ctx, src, dst); err != nil {
 		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
 	if err := os.RemoveAll(src); err != nil {

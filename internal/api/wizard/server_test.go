@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +17,7 @@ import (
 // Start must assemble its routes without a database client: the wizard runs
 // before bootstrap exists, so a nil client has to answer requests, not panic.
 func TestStart_NilClientServesRoutes(t *testing.T) {
-	// an empty HOME has no config.yaml, so Start skips the DB auto-resume
+	// an empty HOME has no config.yaml, so Start serves without services
 	t.Setenv("HOME", t.TempDir())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -79,5 +82,36 @@ func TestStart_NilClientServesRoutes(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("static route returned %d, want 200", resp.StatusCode)
+	}
+}
+
+// A failed initialization must release its claim, so the settings-save retry
+// re-enters bootstrapServices instead of failing with "already started".
+func TestBootstrapServices_ResetsClaimAfterFailure(t *testing.T) {
+	s := NewServer("127.0.0.1:0", log.NewDiscardLogger())
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("{{{invalid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.configDir = configDir
+	ctx := context.Background()
+
+	_, _, first := s.bootstrapServices(ctx)
+	if first == nil {
+		t.Fatal("first bootstrapServices must fail on a malformed config")
+	}
+	if !strings.Contains(first.Error(), "load config") {
+		t.Fatalf("first error = %v, want a load config failure", first)
+	}
+
+	_, _, second := s.bootstrapServices(ctx)
+	if second == nil {
+		t.Fatal("second bootstrapServices must fail again")
+	}
+	if strings.Contains(second.Error(), "already started") {
+		t.Fatal("a failed initialization must release the claim so a retry can run")
+	}
+	if !strings.Contains(second.Error(), "load config") {
+		t.Fatalf("second error = %v, want the same load config failure", second)
 	}
 }

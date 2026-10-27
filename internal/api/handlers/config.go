@@ -39,7 +39,12 @@ type ConfigHandler struct {
 	logger      *log.Logger
 	enqueuer    *task.Enqueuer
 	services    *service.CrudServices
-	OnBootstrap func(configDir string) (*config.Config, *database.Client, *task.Enqueuer, error)
+	// OnBootstrap prepares the configuration environment of the setup wizard without opening any database.
+	// OnDatabaseInit opens the configured database, applies the schema and returns the services bound to it;
+	// the setup wizard wires it, the API server leaves it nil because it always starts with services attached.
+	// The context bounds the schema work, so the save can report its outcome before the server write timeout.
+	OnBootstrap    func(configDir string) (*config.Config, error)
+	OnDatabaseInit func(ctx context.Context) (*database.Client, *task.Enqueuer, error)
 
 	downloadMu   sync.Mutex
 	downloadErrs map[string]string
@@ -144,12 +149,10 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 	if configDir, ok := body["config_dir"].(string); ok && h.getConfig() == nil {
 		var cfg *config.Config
-		var client *database.Client
-		var enqueuer *task.Enqueuer
 		var err error
 
 		if h.OnBootstrap != nil {
-			cfg, client, enqueuer, err = h.OnBootstrap(configDir)
+			cfg, err = h.OnBootstrap(configDir)
 		} else {
 			cfg, err = config.Bootstrap(configDir)
 		}
@@ -159,7 +162,6 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.onConfigSet(cfg)
-		h.SetServices(client, enqueuer)
 
 		svcPath, svcErr := config.GenerateServiceFiles(configDir)
 		if svcErr != nil {
@@ -197,6 +199,11 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.client == nil {
+		h.freshSetup(r.Context(), w, configDir, body, newDB)
+		return
+	}
+
 	cfg := h.getConfig()
 	newStorageDir := storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir)
 	newConsumptionDir := storageDirFromBody(body, "storage.consumption_dir", cfg.Storage.ConsumptionDir)
@@ -224,26 +231,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 		downloading := h.startAssetDownloads(cfg)
 
-		if downloading > 0 {
-			resp := map[string]any{
-				"pending_tasks": downloading,
-				"missing_tools": missing,
-			}
-			if svcPath != "" {
-				resp["service_files_path"] = svcPath
-			}
-			writeJSON(w, http.StatusCreated, resp)
-			return
-		}
-
-		resp := map[string]any{
-			"configured":    true,
-			"missing_tools": missing,
-		}
-		if svcPath != "" {
-			resp["service_files_path"] = svcPath
-		}
-		writeJSON(w, http.StatusOK, resp)
+		writeConfigSaveResponse(w, downloading, missing, svcPath)
 		return
 	}
 
@@ -306,6 +294,117 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		"pending_tasks": pending,
 		"message":       "migration(s) queued — settings apply once the migration completes",
 	})
+}
+
+// writeConfigSaveResponse is the settings-save answer both the immediate-save branch and the fresh-setup
+// branch produce: a download count keeps the wizard's step gate polling, an empty count advances it. The
+// service-files path rides along when generation succeeded.
+func writeConfigSaveResponse(w http.ResponseWriter, downloading int, missing []config.ExternalTool, svcPath string) {
+	if downloading > 0 {
+		resp := map[string]any{
+			"pending_tasks": downloading,
+			"missing_tools": missing,
+		}
+		if svcPath != "" {
+			resp["service_files_path"] = svcPath
+		}
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
+	resp := map[string]any{
+		"configured":    true,
+		"missing_tools": missing,
+	}
+	if svcPath != "" {
+		resp["service_files_path"] = svcPath
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// schemaInitTimeout bounds the fresh-setup schema initialization: it must finish inside the wizard server's
+// 60s write deadline, so the save reports success or failure instead of having its response cut. A slow
+// database aborts here, and the next attempt resumes the idempotent migrations where they stopped.
+const schemaInitTimeout = 55 * time.Second
+
+// freshSetup applies the first settings submission of a setup wizard, before any service is bound: it claims
+// the target database under the empty-only policy, persists the whole configuration including the connection
+// fields, then has the wizard open that database, create the schema and bind its services to it. Nothing is
+// persisted when the database cannot be claimed, so a rejected target leaves the wizard on the settings step.
+// It writes the response itself.
+func (h *ConfigHandler) freshSetup(ctx context.Context, w http.ResponseWriter, configDir string, body map[string]any, newDB config.DatabaseConfig) {
+	cfg := h.getConfig()
+
+	newStorageDir := storageDirFromBody(body, "storage.storage_dir", cfg.Storage.StorageDir)
+	newConsumptionDir := storageDirFromBody(body, "storage.consumption_dir", cfg.Storage.ConsumptionDir)
+	for _, dir := range []string{newStorageDir, newConsumptionDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			http.Error(w, fmt.Sprintf("create directory %s: %v", dir, err), http.StatusInternalServerError)
+			return
+		}
+	}
+	if err := probeWritableDir(newStorageDir, "storage.storage_dir"); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := probeWritableDir(newConsumptionDir, "storage.consumption_dir"); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// connection keys are persisted only once the claim passes, so a later adopt of this target can only be
+	// the setup's own database; a retry of an unchanged persisted target already passed the claim
+	if !config.DatabaseSettingsPresent(configDir) || config.DatabaseConnectionChanged(cfg.Db, newDB) {
+		if err := database.PrepareFreshDatabase(config.BuildPostgresDSN(newDB)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	saved := make(map[string]any, len(body)+7)
+	maps.Copy(saved, body)
+	saved["database.host"] = newDB.Host
+	saved["database.port"] = newDB.Port
+	saved["database.user"] = newDB.User
+	saved["database.password"] = newDB.Password
+	saved["database.database"] = newDB.Database
+	saved["database.sslmode"] = newDB.SSLMode
+	saved["database.dsn"] = ""
+
+	if err := config.SaveMap(configDir, saved); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	reloaded, err := config.Load(configDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.onConfigSet(reloaded)
+
+	if h.OnDatabaseInit == nil {
+		http.Error(w, "database not ready — retry after setup completes", http.StatusServiceUnavailable)
+		return
+	}
+	initCtx, cancel := context.WithTimeout(ctx, schemaInitTimeout)
+	defer cancel()
+	client, enqueuer, initErr := h.OnDatabaseInit(initCtx)
+	if initErr != nil {
+		http.Error(w, initErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.SetServices(client, enqueuer)
+
+	svcPath, svcErr := config.GenerateServiceFiles(configDir)
+	if svcErr != nil {
+		h.logger.Warn("", "failed to generate service files: %v", svcErr)
+	}
+
+	missing := config.MissingExternalToolErrors(reloaded)
+
+	downloading := h.startAssetDownloads(reloaded)
+	writeConfigSaveResponse(w, downloading, missing, svcPath)
 }
 
 // hugotAssetKey names the hugot model in the direct-download bookkeeping; tessdata entries use the language
@@ -663,12 +762,16 @@ var configHostedTaskTypes = []itypes.TaskType{
 }
 
 // ConfigStatus serves the environment status the setup wizard polls: readiness, tool failures, pending or
-// failed migration tasks and the direct asset downloads.
+// failed migration tasks and the direct asset downloads. Until the database is bound—setup has not reached
+// the schema step—nothing counts as configured or pending: asset downloads only start with the settings
+// save, so the wizard keeps the operator on the settings step instead of polling work that was never
+// started.
 func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	cfg := h.getConfig()
-	configured := cfg != nil && len(cfg.Consumer.OCR.Languages) > 0
+	ready := cfg != nil && h.client != nil
+	configured := ready && len(cfg.Consumer.OCR.Languages) > 0
 
 	pendingTasks := 0
 	var errors []string
@@ -720,9 +823,11 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 	if cfg != nil {
 		// asset downloads have no task rows: pending counts the live missing assets, and the failures come from
 		// the update path's in-memory record
-		missing := missingAssets(cfg)
-		resp.PendingTasks += len(missing)
-		resp.FailedTasks = append(resp.FailedTasks, h.failedAssetTasks(missing)...)
+		if ready {
+			missing := missingAssets(cfg)
+			resp.PendingTasks += len(missing)
+			resp.FailedTasks = append(resp.FailedTasks, h.failedAssetTasks(missing)...)
+		}
 
 		allTools := config.MissingExternalTools(cfg)
 		resp.Tools = allTools

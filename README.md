@@ -90,7 +90,7 @@ The `kushim setup` wizard and `edub` server expect these defaults (matching [con
 | Database | `edub`        |
 | SSL mode | `disable`     |
 
-The setup wizard auto-creates the database if it doesn't exist, so no manual `CREATE DATABASE` is needed as long as the user has creation privileges. To use a different database, adjust the `database:` section in `~/.config/edub-kushim/config.yaml` or use a DSN string:
+The setup wizard auto-creates the database if it doesn't exist, so no manual `CREATE DATABASE` is needed as long as the user has creation privileges. A target database that already contains tables aborts setup — drop it or point setup at another name. To use a different database, adjust the `database:` section in `~/.config/edub-kushim/config.yaml` or use a DSN string:
 
 ```yaml
 database:
@@ -118,7 +118,7 @@ kushim queue &
 edub
 ```
 
-The setup wizard walks you through configuration (OCR languages, LLM provider, storage paths, admin user). It connects to PostgreSQL using the settings from the config file and auto-creates the database if missing. After setup, drop PDFs into your inbox — the queue daemon picks them up automatically. Documents are processed, OCR'd if needed, and classified asynchronously.
+The setup wizard walks you through configuration (OCR languages, LLM provider, storage paths, admin user). It connects to PostgreSQL only when the settings are submitted, auto-creates the database if missing — a database that already contains tables aborts setup — and applies the schema. After setup, drop PDFs into your inbox — the queue daemon picks them up automatically. Documents are processed, OCR'd if needed, and classified asynchronously.
 
 ---
 

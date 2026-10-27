@@ -5,6 +5,7 @@
 package container
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -86,7 +87,7 @@ func (c *Container) GetDB() (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := database.InitializeSchema(db); err != nil {
+		if err := database.InitializeSchema(context.Background(), db); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("initialize schema: %w", err)
 		}
@@ -130,7 +131,7 @@ func (c *Container) ReconnectClient() (*database.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := database.InitializeSchema(newDB); err != nil {
+	if err := database.InitializeSchema(context.Background(), newDB); err != nil {
 		newDB.Close()
 		return nil, err
 	}

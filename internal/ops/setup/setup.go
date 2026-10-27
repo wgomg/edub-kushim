@@ -7,6 +7,7 @@ package setup
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,9 +27,9 @@ import (
 	"golang.org/x/term"
 )
 
-// RunSetup is the kushim setup verb: it refuses to run over an existing
-// configuration and drives either the terminal wizard or the served
-// wizard, based on the flags.
+// RunSetup is the kushim setup verb: it refuses to run over an existing configuration and drives either the
+// terminal wizard or the served wizard, based on the flags. Interrupted setups keep that refusal and are
+// re-run by deleting the config file the message names.
 func RunSetup(args []string, logger *log.Logger) error {
 	configDir, err := config.ConfigDir()
 	if err != nil {
@@ -36,7 +37,7 @@ func RunSetup(args []string, logger *log.Logger) error {
 	}
 	configPath := filepath.Join(*configDir, "config.yaml")
 	if _, err := os.Stat(configPath); err == nil {
-		return fmt.Errorf("setup has already been completed — remove %s to re-run", configPath)
+		return fmt.Errorf("a configuration already exists at %s — remove it to re-run setup", configPath)
 	}
 
 	var cli bool
@@ -198,6 +199,18 @@ Flags:
 		v.Set("database.dsn", dbDsn)
 	}
 
+	// the database is claimed and its schema created before the configuration is written, so a rejected
+	// target leaves no configuration behind; the target is the default connection or the --db-dsn override
+	effectiveDB := config.DefaultConfig(*configDir).Db
+	if dbDsn != "" {
+		effectiveDB.DSN = dbDsn
+	}
+	db, err := prepareSetupDatabase(effectiveDB, resetDb, logger)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
 	if err := v.WriteConfigAs(configPath); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
@@ -222,25 +235,6 @@ Flags:
 	if err := os.MkdirAll(tessdataDir, 0755); err != nil {
 		return fmt.Errorf("create tessdata directory: %w", err)
 	}
-
-	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	defer db.Close()
-
-	if resetDb {
-		logger.Info("", "resetting database...")
-		if err := database.ResetDatabase(db); err != nil {
-			return err
-		}
-		logger.Info("", "database reset complete")
-	} else {
-		if err := database.InitializeSchema(db); err != nil {
-			return err
-		}
-	}
-	logger.Info("", "created database")
 
 	if err := config.DownloadHugotModel(context.Background(), cfg, logger); err != nil {
 		return fmt.Errorf("hugot model download: %w", err)
@@ -326,4 +320,40 @@ Flags:
 	fmt.Println("\nNext: run 'kushim consume' to process documents")
 
 	return nil
+}
+
+// prepareSetupDatabase creates the schema on the connection the written config will carry. Without reset it
+// enforces the empty-only policy first, so setup never adopts a database that already holds tables; with
+// reset it drops and re-creates the existing one as asked. It returns the open handle the admin user
+// creation and later setup steps use.
+func prepareSetupDatabase(dbCfg config.DatabaseConfig, reset bool, logger *log.Logger) (*sql.DB, error) {
+	dsn := config.BuildPostgresDSN(dbCfg)
+
+	if reset {
+		db, err := database.NewPostgresDB(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open database: %w", err)
+		}
+		logger.Info("", "resetting database...")
+		if err := database.ResetDatabase(db); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		logger.Info("", "database reset complete")
+		return db, nil
+	}
+
+	if err := database.PrepareFreshDatabase(dsn); err != nil {
+		return nil, err
+	}
+	db, err := database.NewPostgresDB(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := database.InitializeSchema(context.Background(), db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	logger.Info("", "created database")
+	return db, nil
 }

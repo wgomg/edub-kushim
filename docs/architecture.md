@@ -412,7 +412,7 @@ six-step guided flow:
    language-pack guidance.
 3. **Enricher settings** — tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
    text reducer engine/timeout/target-words; enricher workers
-4. **Progress** — tessdata language files and the Hugot model download as direct config updates started by the config save (no task rows); the UI polls `GET /wizard/config/status` every 3 seconds, whose pending count covers the missing assets live plus the queued migrations
+4. **Progress** — tessdata language files and the Hugot model download as direct config updates started by the config save (no task rows); the UI polls `GET /wizard/config/status` every 3 seconds, whose pending count covers the missing assets live
 5. **Admin user** — optionally create an admin user account (username + password)
 6. **Completion** — all downloads are finished; the server is ready to run.
    If any required external tools are missing, a notice lists what to install
@@ -420,10 +420,14 @@ six-step guided flow:
    prerequisite). The wizard does not block completion — tools can be installed
    later.
 
-The wizard server uses a stripped-down version of the full server stack: it bootstraps
-the config directory (via `config.Bootstrap`), initializes the PostgreSQL schema, constructs
-the task catalog and enqueuer at boot with the dedup hooks of the two migration task
-types (`migrate-db`, `migrate-storage`), and runs the setup-time dispatcher —
+The wizard server uses a stripped-down version of the full server stack, in two
+stages. The config-directory step bootstraps the config directory (via
+`config.Bootstrap`) only — no database connection exists yet. When the settings
+submit claims the target database (`database.PrepareFreshDatabase`: create when
+missing, refuse unless completely empty — a populated target aborts setup with
+the reason), the server initializes the PostgreSQL schema, constructs the task
+catalog and enqueuer with the dedup hooks of the two migration task types
+(`migrate-db`, `migrate-storage`), and runs the setup-time dispatcher —
 fork-free, with an in-process registration whose runner executes a claimed
 migration batch itself while no `kushim queue` daemon exists (the child pid
 stays 0 on the lease, so nothing signals the wizard). It serves the wizard UI directly via `//go:embed` on

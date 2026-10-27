@@ -203,7 +203,7 @@ func TestReplaceFiles_SQLDump(t *testing.T) {
 	t.Cleanup(func() {
 		restoreDB.Exec("DROP SCHEMA IF EXISTS public CASCADE")
 		restoreDB.Exec("CREATE SCHEMA public")
-		database.InitializeSchema(restoreDB)
+		database.InitializeSchema(context.Background(), restoreDB)
 	})
 
 	dbCfg, dsn := restoreDBConfig(t)
@@ -445,7 +445,7 @@ func newRestoreDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() {
 		db.Exec("DROP SCHEMA IF EXISTS public CASCADE")
 		db.Exec("CREATE SCHEMA public")
-		database.InitializeSchema(db)
+		database.InitializeSchema(context.Background(), db)
 	})
 	return db
 }

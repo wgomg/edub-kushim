@@ -244,3 +244,31 @@ func TestValidateSave_BackupSchedulesClearDeprecatedFlatFields(t *testing.T) {
 		t.Errorf("ValidateSave rejected flat+schedules merged config: %v (flat fields should have been cleared in the validation copy)", err)
 	}
 }
+
+func TestDatabaseSettingsPresent(t *testing.T) {
+	cases := []struct {
+		name string
+		file string // empty means no config.yaml at all
+		want bool
+	}{
+		{name: "missing config", file: "", want: false},
+		{name: "skeleton config", file: "server:\n  auth_enabled: false\n  session_secret: abc\n", want: false},
+		{name: "runtime and container only", file: "database:\n  runtime: podman\n  container: edub-postgres\n", want: false},
+		{name: "connection key present", file: "database:\n  host: localhost\n  port: 5433\n", want: true},
+		{name: "dsn only", file: "database:\n  dsn: postgres://localhost/edub\n", want: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			if tc.file != "" {
+				if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(tc.file), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := DatabaseSettingsPresent(configDir); got != tc.want {
+				t.Errorf("DatabaseSettingsPresent = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

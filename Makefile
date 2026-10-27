@@ -366,6 +366,7 @@ test-cgo:
 		./internal/ops/cli/ \
 		./internal/ops/consume/ \
 		./internal/ops/queue/ \
+		./internal/ops/setup/ \
 		./internal/enrichment/ \
 		./internal/tags/ \
 		./internal/tags/admission/ \

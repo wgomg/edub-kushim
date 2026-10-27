@@ -194,8 +194,8 @@ on the task row (`task.NewProgressTracker`) and perform no lifecycle work —
 the run owns the claim, the batch flip, the locks and the settle under the
 execution's lease owner.
 
-- `MigrateDBTaskHandler` — unmarshals `MigrateDBPayload` and calls `MigrateDatabase`
-- `MigrateStorageTaskHandler` — unmarshals `MigrateStoragePayload` and calls `MigrateStorage`; a no-op migration is reported as a `{"status":"no-op"}` result instead of an error
+- `MigrateDBTaskHandler` — unmarshals `MigrateDBPayload` and calls `MigrateDatabase` under a 30-minute execution deadline (context-bounded; a deadline abort fails the task into the retry path)
+- `MigrateStorageTaskHandler` — unmarshals `MigrateStoragePayload` and calls `MigrateStorage` under a 2-hour execution deadline; a no-op migration is reported as a `{"status":"no-op"}` result instead of an error. The file copy is context-interruptible (`storage.CopyTree` checks the context per entry and a watchdog aborts an in-progress file copy at the next chunk), so the deadline is observed for healthy filesystems
 
 ### Package functions
 
@@ -275,7 +275,8 @@ edub constructs its catalog at boot/`rebuild` and its own enqueuer over it,
 wiring the hooks of everything its handlers can enqueue (`consume`, `enrich`,
 `thumbbackfill`, `migrate-db`, `migrate-storage`, `tagidentity`, `tagaudit`),
 and never claims a batch: the `kushim queue` daemon forks the batches' owning
-task CLIs. The wizard constructs the same shape at bootstrap with the two
+task CLIs. The wizard constructs the same shape when its settings submit
+initializes the database (`OnDatabaseInit`), with the two
 migration hooks, and additionally runs the setup-time dispatcher whose
 in-process registration covers `migrate-db`/`migrate-storage` — it registers
 both migration handlers over the bootstrap client and executes a claimed
