@@ -109,23 +109,18 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ### Types
 
-- `TaskFilter` — `BatchID`, `Status`, `TaskType`, `Limit`, `Offset`
-- `BatchFilter` — `Status`, `Limit`, `Offset`
-- `BatchCounts` — `BatchID`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
-  - `Total() int64` — Sum of all statuses including Waiting and Discarded
+- `TaskFilter` — `BatchID`, `Status`, `TaskType`, `Limit`, `Offset`; `Limit` must be positive (the guard answers before any query)
 - `ErrTaskNotFound` — `errors.New("task not found")`
 
 ### Functions
 
 - `Get(ctx, queries, taskID) (database.Task, error)` — By UUID task_id
-- `ListFiltered(ctx, queries, filter) ([]database.Task, error)` — By batch/status/type/pagination; handles all combinations of filters via sqlc-generated queries (`ListTasks`, `ListTasksByStatus`, `ListTasksByBatch`, `ListTasksByBatchAndStatus`, `ListTasksByType`, `ListTasksByBatchAndType`, `ListTasksByStatusAndType`, `ListTasksByBatchAndStatusAndType` and their `All` variants)
-- `CountBatchStatuses(ctx, queries, batchID) BatchCounts` — Counts per status including `waiting` and `discarded`
-- `ListBatchSummaries(ctx, queries, filter) ([]BatchCounts, error)` — Lists batch summaries with filtering; uses `ListDistinctBatchIDs` or `ListDistinctBatchIDsByStatus`
+- `ListFiltered(ctx, queries, filter) ([]database.Task, error)` — By batch/status/type/pagination; one sqlc-generated query per filter combination (`ListTasks`, `ListTasksByStatus`, `ListTasksByBatch`, `ListTasksByBatchAndStatus`, `ListTasksByType`, `ListTasksByBatchAndType`, `ListTasksByStatusAndType`, `ListTasksByBatchAndStatusAndType`); a non-positive limit is rejected with an error
 
 ### Lifecycle ops (`batch.go`)
 
 - `LeaseStaleSeconds int32 = 15` — the lease window every staleness query compares against, decided by the database clock
-- `ErrBatchLocked` / `ErrBatchTerminal` / `ErrBatchNotResumable` / `ErrBatchNotQueued` / `ErrTaskNotFound` / `ErrTaskNotFailed` — the lifecycle sentinels the API surfaces map
+- `ErrBatchLocked` / `ErrBatchTerminal` / `ErrBatchNotResumable` / `ErrBatchNotQueued` / `ErrTaskNotFound` — the lifecycle sentinels the API surfaces map
 - `Execution{BatchID, Guard, Leased}` — the authorization a caller carries for one run's writes: the batch lease owner; the reaper's guardless settle passes a NULL owner
 - `ClaimRequest{BatchID, ExecToken, Holds, Waits, DispatcherID}` — one batch claim: the execution token the forked child adopts, the lock sets the claim acquires and verifies, and the dispatcher owning the lease (zero for a manual run, which never charges a dispatcher's slot budget)
 - `TaskIdentity{TaskID, TaskType}` / `ResetResult{Reset, Quarantined}` (`ConsumeTaskIDs()`) / `CancelResult{PendingCancelled, ProcessingCancelled, OwnerPID, OwnerAlive, Signalled}` / `ResumeResult{Resumed, Reset, FailedRetried}`
@@ -133,13 +128,12 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 - `ClaimBatch(ctx, client, claim) error` — the guarded batch claim in one transaction: row-lock the batch, require `queued`, insert the pid-0 lease under the execution token, acquire the holds all-or-nothing while verifying the waits the holding types declare, flip `queued → processing`; `ErrLockBusy` leaves nothing acquired, a non-queued batch reports `ErrBatchNotQueued`, a batch that already carries a lease `ErrBatchLocked`
 - `ResetProcessingTasksByBatch(ctx, client, batchID, maxRetries) (ResetResult, error)` — the takeover variant: one transaction that releases the batch's locks, quarantines the tasks at the retry bound, resets the rest (attempts + 1) and restores discarded children; returns the reset count and the quarantined identities
 - `ResetProcessingTasksForClaim(ctx, client, batchID, maxRetries) (ResetResult, error)` — the claim-path variant: the same reset without the lock release, so the holds the claim acquired survive entry repair
-- `IsOrphaned(state, pending, processing)` / `IsAlive(pid)` — the owner-liveness predicates (`IsAlive` refuses `pid <= 0`, so `kill(0)` can never target the caller's group)
+- `IsAlive(pid)` — the owner-liveness predicate (refuses `pid <= 0`, so `kill(0)` can never target the caller's group)
 - `SettleBatch(ctx, client, logger, exec) (types.BatchStatus, error)` — the normal settlement writer: `failed` when any task failed, `completed` otherwise, computed inside the guarded write; refuses (returns the current status untouched) while a pending/processing/waiting task exists, while the status is not `processing`, and when a lease row exists that is not the executor's; the settle transaction releases the batch's locks; a terminal batch is idempotent. The one sanctioned failure-terminal exception is `FailUnstartedBatch`
 - `FailUnstartedBatch(ctx, client, batchID, execToken) (applied, error)` — the launch-failure terminal write: under the execution token's lease fence it cancels the tasks that never ran, releases the batch's locks and writes `failed` in one transaction; `applied = false` when the lease no longer belongs to the token (the batch changed hands since the launch decision) and nothing is written
 - `PauseBatch(ctx, client, logger, exec) error` — guarded `processing → paused` through the batch lease owner, releasing the batch's locks and the caller's lease; a refused pause writes nothing
 - `CancelBatch(ctx, client, logger, batchID) (CancelResult, error)` — signals a live owner (SIGTERM through `IsAlive`), cancels pending + waiting + processing, releases the batch's locks and lease, writes `cancelled`; refuses a missing (`ErrBatchNotFound`) or terminal (`ErrBatchTerminal`) batch
 - `ResumeBatch(ctx, client, logger, batchID, maxRetries, includeFailed) (ResumeResult, error)` — the single recovery: from `failed|completed|cancelled|paused` to `queued`, resets processing tasks (quarantine-at-max + restore) in the same transaction and, when `includeFailed`, retries the failed tasks with the batch restore re-run after the retry; refuses a live lease (`ErrBatchLocked`), a queued or processing batch (`ErrBatchNotResumable`) and leaves a batch with no resurrectable work untouched (`Resumed = false`)
-- `RetryTask(ctx, client, logger, taskID, maxRetries) error` — theCompatibility alias behind the retry surfaces: resolves the task (`ErrTaskNotFound`), refuses a non-failed one (`ErrTaskNotFailed`), then resumes its batch with failed tasks reset
 
 ---
 
@@ -299,7 +293,7 @@ dispatcher := dispatch.NewDispatcher(catalog, logger, types.HostWizard, budget, 
 ## See Also
 
 - [API](api.md) — Task/batch API handlers and response types
-- [CLI](cli.md) — Task CLI commands (list, status, retry)
+- [CLI](cli.md) — Task CLI commands (list, status)
 - [Database](database.md) — Task table schema, generated task queries
 - [Pipeline](pipeline.md) — Consumer and Enricher invoked by task handlers
 - [Config & Utils](config-and-utils.md) — Config setup functions used by ConfigTaskHandler

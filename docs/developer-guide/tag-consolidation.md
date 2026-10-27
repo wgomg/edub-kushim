@@ -443,8 +443,9 @@ re-pointed count), skipped ones under the `alias_skip` skip reason.
 enum; the `internal/types` registry declares the full blocking stack for the
 task type — the batch claim acquires the maintenance lock (verifying the
 waits are free) and the reconciling child keeps it fresh (heartbeat + drain)
-for the whole run — and `tagreconcile` joins `NonConsumeTaskTypes`, the list
-the batch overviews use to classify the maintenance batches.
+for the whole run — maintenance and tag batches dispatch exactly like ingest
+batches, so the orphan rule is the same for them: a `processing` batch whose
+lease is missing or stale.
 
 **Scheduling** — one declarative schedule (`tagreconcile`,
 `internal/ops/queue/scheduler.go`) runs on the queue daemon's housekeeping

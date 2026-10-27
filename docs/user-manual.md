@@ -468,7 +468,8 @@ kushim task list --status pending --limit 50
 | Flag       | Default | Description                                                                                           |
 | ---------- | ------- | ----------------------------------------------------------------------------------------------------- |
 | `--batch`  | all     | Filter by batch UUID                                                                                  |
-| `--status` | all     | Filter by status: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded` |
+| `--status` | all     | Filter by status: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded`, or `active` (the pending/processing/waiting view) |
+| `--type`   | all     | Filter by task type: `consume`, `enrich`, `thumbnail`, `thumbbackfill`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `migrate-db`, `migrate-storage` |
 | `--limit`  | `20`    | Max results (1–100)                                                                                   |
 | `--offset` | `0`     | Result offset for pagination                                                                          |
 
@@ -503,29 +504,8 @@ Started:    2024-03-19T10:30:05Z
 Completed:  2024-03-19T10:30:12Z
 Document ID: 550e8400-e29b-41d4-a716-446655440000
 ```
-Note: `Error:` only appears when the task has failed.
-
-### `kushim task retry`
-
-Retry a failed task by resuming the batch it belongs to: the failed tasks of
-the batch are reset to `pending` and the batch goes back to `queued` for a
-worker to pick up. The paired tasks of a retried consume (its discarded
-enrich and thumbnail children) are restored to `waiting` before the batch
-becomes visible again.
-
-```
-kushim task retry 880e8400-e29b-41d4-a716-446655440003
-```
-
-Output:
-
-```
-Task "880e8400-e29b-41d4-a716-446655440003" retried — its batch requeued
-```
-
-Only failed tasks can be retried; a task that is not failed is refused.
-Resuming a batch whose worker is a live execution is also refused — wait for
-the batch to settle first.
+Note: `Error:` only appears when the task has failed. Recover a failed task
+by resuming its batch — `kushim batch restart <batch-id>` (see below).
 
 ### `kushim batch create <task> [args]`
 
@@ -2264,29 +2244,35 @@ Response `200` — array of objects:
 | `extension` | `string` | Canonical file extension (e.g. `.jpg`, `.tiff`) |
 | `label`     | `string` | Short format name for display (e.g. "PDF")      |
 
-### Batch Retry
+### Batch Resume
 
-Resume a batch with its failed tasks reset to pending. This is the batch
-alias of task retry: failed tasks re-run, the batch goes back to `queued`,
-and the paired children of retried consume tasks are restored before the
-batch becomes visible again.
+Requeue a settled or paused batch: its `processing` tasks reset to `pending`
+and the batch goes back to `queued` for the daemon. The paired children of
+retried consume tasks are restored before the batch becomes visible again.
+Pass `retry_failed=true` to also reset the batch's `failed` tasks to
+`pending` so they re-run (the `restart` behavior of the CLI).
 
 ```
-POST /api/v1/batches/{batchID}/retry
+POST /api/v1/batches/{batchID}/resume?retry_failed=true
 ```
 
-Response `200`:
+Response `202 Accepted` (the batch was requeued):
 
 ```json
 {
+  "resumed": true,
+  "reset": 2,
   "retried": 3
 }
 ```
 
-A batch without failed tasks answers `{"retried": 0}`; an unknown batch id
-answers `404`.
+When nothing can become active the batch stays settled and the server
+answers `200` with `resumed: false` and a `reason`. An unknown batch id
+answers `404`; a batch still queued or processing answers `409`.
 
-Idempotent — returns 0 retried when no failed tasks remain.
+| Field      | Type     | Description                                     |
+| ---------- | -------- | ----------------------------------------------- |
+| `retry_failed` | query, `boolean` | When `true`, failed tasks are reset to `pending` and re-run (default `false` — failed tasks stay failed) |
 
 ### Consume
 
@@ -2410,6 +2396,9 @@ Response `200`:
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
   "summary": {
     "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "processing",
+    "origin": "cli",
+    "created_at": "2024-03-19T10:30:00Z",
     "total": 5,
     "waiting": 0,
     "pending": 2,
@@ -2418,7 +2407,10 @@ Response `200`:
     "failed": 1,
     "cancelled": 0,
     "discarded": 0,
-    "orphaned": false
+    "owner_state": "live",
+    "owner_pid": 31245,
+    "orphaned": false,
+    "duration_ms": null
   },
   "tasks": [
     {
@@ -2437,7 +2429,9 @@ Response `200`:
 }
 ```
 
-The `summary` field is only present when a `batch` filter is applied.
+The `summary` field is only present when a `batch` filter is applied; an
+unknown batch id answers `404`. The summary is the same [BatchResponse](#batchresponse)
+shape the batch list and dashboard report.
 
 ### Get Task
 
@@ -2451,30 +2445,37 @@ Response `200` — single [TaskResponse](#taskresponse).
 
 ```
 GET /api/v1/batches
-GET /api/v1/batches?status=pending&limit=10
+GET /api/v1/batches?status=queued&limit=10
 ```
 
 | Query param | Default | Description                                             |
 | ----------- | ------- | ------------------------------------------------------- |
-| `status`    | all     | Filter to batches with at least one task in this status |
+| `status`    | all     | Filter by batch status: `queued`, `processing`, `paused`, `completed`, `failed`, `cancelled` |
 | `limit`     | `20`    | Max results (1–100)                                     |
 | `offset`    | `0`     | Pagination offset                                       |
 
-Response `200`:
+Response `200` — [BatchResponse](#batchresponse) items, newest first:
 
 ```json
 {
   "batches": [
     {
       "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "processing",
+      "origin": "cli",
+      "created_at": "2024-03-19T10:30:00Z",
       "total": 5,
+      "waiting": 0,
       "pending": 2,
       "processing": 1,
       "completed": 1,
       "failed": 1,
       "cancelled": 0,
       "discarded": 0,
-      "orphaned": false
+      "owner_state": "live",
+      "owner_pid": 31245,
+      "orphaned": false,
+      "duration_ms": null
     }
   ]
 }
@@ -2486,11 +2487,14 @@ Response `200`:
 GET /api/v1/batches/{batchID}
 ```
 
-Response `200`:
+Response `200` — one [BatchResponse](#batchresponse) item:
 
 ```json
 {
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "processing",
+  "origin": "cli",
+  "created_at": "2024-03-19T10:30:00Z",
   "total": 5,
   "waiting": 0,
   "pending": 2,
@@ -2499,9 +2503,14 @@ Response `200`:
   "failed": 1,
   "cancelled": 0,
   "discarded": 0,
-  "orphaned": false
+  "owner_state": "live",
+  "owner_pid": 31245,
+  "orphaned": false,
+  "duration_ms": null
 }
 ```
+
+An unknown batch id answers `404`.
 
 ### Batch Cancel
 
@@ -2687,7 +2696,7 @@ Authorization: Bearer token or API key required. Returns `401` if unauthenticate
 GET /api/v1/dashboard
 ```
 
-Returns up to 25 active tasks (`pending`/`processing`/`waiting`, processing-first), plus the 20 most recent batches with per-batch task status summaries, origin, owner state, orphan detection, and duration (when settled).
+Returns up to 25 active tasks (`pending`/`processing`/`waiting`, processing-first), plus the 10 most recent batches ([BatchResponse](#batchresponse) items: origin, schedule, per-status task counts, owner state, orphan detection, and duration when settled).
 
 Response `200`:
 
@@ -2696,17 +2705,19 @@ Response `200`:
   "recent_batches": [
     {
       "batch_id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "completed",
       "origin": "api",
+      "schedule": "mirror",
       "created_at": "2026-06-25T10:30:00Z",
       "total": 5,
       "waiting": 0,
-      "pending": 2,
-      "processing": 1,
-      "completed": 1,
-      "failed": 1,
+      "pending": 0,
+      "processing": 0,
+      "completed": 5,
+      "failed": 0,
       "cancelled": 0,
       "discarded": 0,
-      "owner_state": "live",
+      "owner_state": "none",
       "orphaned": false,
       "duration_ms": 42000
     }
@@ -2732,13 +2743,13 @@ Response `200`:
       },
       {
         "task_id": "660e8400-e29b-41d4-a716-446655440002",
-        "batch_id": "",
-        "task_type": "config",
-        "file_name": "",
-        "payload_doc_id": "",
+        "batch_id": "990e8400-e29b-41d4-a716-446655440009",
+        "task_type": "enrich",
+        "file_name": "invoice.pdf",
+        "payload_doc_id": "880e8400-e29b-41d4-a716-446655440008",
         "status": "pending",
         "error": null,
-        "label": "Database migration",
+        "label": "Enrich: invoice.pdf",
         "created_at": "2026-06-25T10:28:00Z",
         "started_at": null,
         "completed_at": null
@@ -2751,7 +2762,9 @@ Response `200`:
 | Field            | Type      | Description                                                                          |
 | ---------------- | --------- | ------------------------------------------------------------------------------------ |
 | `batch_id`       | `string`  | Batch UUID                                                                           |
-| `source`         | `string`  | Origin: `"cli"`, `"web"`, or `"upload"`                                             |
+| `status`         | `string`  | Batch status: `queued`, `processing`, `paused`, `completed`, `failed`, `cancelled`    |
+| `origin`         | `string`  | Where the batch came from: `"cli"`, `"api"`, `"polling"`, `"schedule"`, `"setup"`, or `"wizard"` |
+| `schedule`       | `string`  | The batch's schedule name (present when scheduled)                                    |
 | `created_at`     | `string`  | RFC 3339 timestamp                                                                   |
 | `total`          | `int`     | Total task count in batch                                                            |
 | `waiting`        | `int`     | Tasks waiting for their prerequisite                                                 |
@@ -2762,7 +2775,8 @@ Response `200`:
 | `cancelled`    | `int`     | Tasks cancelled via cancel endpoint                                                  |
 | `discarded`    | `int`     | Enrich tasks orphaned by a failed consume                                            |
 | `owner_state`  | `string`  | `"none"`, `"live"`, or `"stale"`                                                     |
-| `orphaned`     | `bool`    | True when owner is not live but tasks remain pending or processing                   |
+| `owner_pid`    | `int`     | The lease holder's process id (present when an owner exists)                          |
+| `orphaned`     | `bool`    | True when a `processing` batch's lease is missing or stale                            |
 | `duration_ms`  | `int`     | Batch duration in milliseconds. Present only when the batch is fully settled.        |
 
 #### Active Task (`running_tasks`)
@@ -2774,11 +2788,11 @@ Object with `count` (total active tasks across all task types, uncapped) and `ta
 | `count`       | `int`    | Total number of active tasks (uncapped)                                                                                |
 | `tasks`       | `array`  | Active tasks, capped at 25, ordered processing-first then oldest-queued                                                |
 | `tasks[].task_id` | `string` | Task UUID                                                                                                          |
-| `tasks[].batch_id` | `string` | Batch UUID (empty for `backup`/`config` tasks)                                                                     |
-| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `config`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, or `thumbbackfill`                                                            |
+| `tasks[].batch_id` | `string` | Batch UUID                                                                                                          |
+| `tasks[].task_type` | `string` | `consume`, `enrich`, `thumbnail`, `thumbbackfill`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `migrate-db`, or `migrate-storage`                                                            |
 | `tasks[].file_name` | `string` | File name from the payload, if any                                                                                 |
 | `tasks[].status` | `string` | `pending`, `processing`, or `waiting`                                                                              |
-| `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from task type + dedup key (e.g. `"Backup (full)"`, `"Database migration"`) |
+| `tasks[].label` | `string` | Human-readable title: `TaskType: file name` for consume/enrich/thumbnail (e.g. `"Consume: report.pdf"`), else derived from the task type and, for backup, the payload's mode (defaulting to `full`) — e.g. `"Backup (full)"`, `"Database migration"` |
 | `tasks[].created_at` | `string` | RFC 3339 timestamp                                                                                                |
 | `tasks[].started_at` | `string` | RFC 3339 timestamp, `null` while queued                                                                           |
 
@@ -2884,10 +2898,11 @@ document page). Discarded `enrich`/`thumbnail` children have an empty
 id). `label` is
 `TaskType: file name` for consume/enrich/thumbnail tasks with a payload file
 (e.g. `"Consume: report.pdf"`), the file name alone for other task types,
-otherwise derived from the task type and dedup key (e.g. `"Backup (full)"`,
-`"Database migration"`);
+otherwise derived from the task type and, for `backup`, the mode its payload
+records, defaulting to `full` when absent (e.g. `"Backup (full)"`);
 for other task types it falls back to the task type name (`"Consume"`, `"Enrich"`,
-`"Thumbnail"`, `"Thumbnail backfill"`).
+`"Thumbnail"`, `"Thumbnail backfill"`, `"Mirror"`, `"Database migration"`,
+`"Storage migration"`).
 
 `progress` is present only while the task is `processing` and a handler has
 reported a step. It is a display aid: `step` is required, `detail`/`pct`
@@ -2898,7 +2913,11 @@ unless the step changes).
 the persisted reconciliation `Report` JSON described under [Tag Reconciliation
 Report](#tag-reconciliation-report). List endpoints and other task types omit it.
 
-#### BatchSummaryResponse
+#### BatchResponse
+
+One batch row shared by the batch list, the single-batch endpoint, the task
+list's summary and the dashboard — one aggregate over the batch table, so
+every surface reports the same rows and counts.
 
 ```json
 {
@@ -2906,15 +2925,19 @@ Report](#tag-reconciliation-report). List endpoints and other task types omit it
   "status": "completed",
   "origin": "schedule",
   "schedule": "backup:full",
+  "created_at": "2026-06-25T10:30:00Z",
   "total": 5,
   "waiting": 0,
-  "pending": 2,
-  "processing": 1,
-  "completed": 1,
-  "failed": 1,
+  "pending": 0,
+  "processing": 0,
+  "completed": 5,
+  "failed": 0,
   "cancelled": 0,
   "discarded": 0,
-  "orphaned": false
+  "owner_state": "none",
+  "owner_pid": 0,
+  "orphaned": false,
+  "duration_ms": 42000
 }
 ```
 
@@ -2927,10 +2950,11 @@ orphan restore, or the tag actions), `polling` (daemon inbox scan), `schedule`
 vocabulary is a closed Postgres enum (`batch_origin`), mirrored by the Go
 registry in `internal/types`. `owner_state` (`"none"`, `"live"`, `"stale"`)
 is included when set. Every processing batch carries a `batch_owner` lease —
-maintenance and tag batches dispatch exactly like ingest batches — so the
-orphan state is simply "live/stale owner exists" for every batch; a
-`processing` batch without an owner row (execution lost) is the orphan case
-for all task types alike.
+maintenance and tag batches dispatch exactly like ingest batches — so orphan
+is one rule for every batch: a `processing` batch whose lease is missing or
+stale (execution lost or its heartbeat older than the reclaim threshold).
+Queued and paused batches never report orphaned — they have no lease by
+design — and neither does any settled batch.
 
 ---
 
@@ -3434,7 +3458,7 @@ ensures enrichment never runs before the document is fully ingested.
 | `pending`    | Ready for a worker to pick up                                 |
 | `processing` | Currently being handled by a worker                           |
 | `completed`  | Finished successfully                                         |
-| `failed`     | Finished with an error (retryable via `kushim task retry`)    |
+| `failed`     | Finished with an error (retryable via `kushim batch restart <batch-id>`)    |
 | `cancelled`  | Cancelled via `kushim consume cancel`                         |
 | `discarded`  | Enrich task orphaned because its parent consume task failed. Re-activated to `pending` when the parent is retried and succeeds. |
 

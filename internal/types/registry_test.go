@@ -14,12 +14,6 @@ func TestAllCounts(t *testing.T) {
 	if got, want := len(AllTaskTypes()), 12; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskStatuses()), 7; got != want {
-		t.Errorf("AllTaskStatuses len = %d, want %d", got, want)
-	}
-	if got, want := len(NonConsumeTaskTypes()), 8; got != want {
-		t.Errorf("NonConsumeTaskTypes len = %d, want %d", got, want)
-	}
 }
 
 func TestValid(t *testing.T) {
@@ -49,7 +43,7 @@ func TestValid(t *testing.T) {
 }
 
 func TestParseRoundTrip(t *testing.T) {
-	for _, st := range AllTaskStatuses() {
+	for _, st := range allTaskStatuses {
 		got, err := ParseTaskStatus(string(st))
 		if err != nil {
 			t.Errorf("ParseTaskStatus(%q) error: %v", st, err)
@@ -72,31 +66,6 @@ func TestAllReturnsClone(t *testing.T) {
 	a[0] = TaskType("mutated")
 	if AllTaskTypes()[0] == TaskType("mutated") {
 		t.Error("AllTaskTypes did not return an independent clone")
-	}
-}
-
-func TestNonConsumeTaskTypes(t *testing.T) {
-	want := map[TaskType]bool{
-		Task.Type.MigrateDB:      true,
-		Task.Type.MigrateStorage: true,
-		Task.Type.Backup:         true,
-		Task.Type.Mirror:         true,
-		Task.Type.TagReconcile:   true,
-		Task.Type.TagMeasure:     true,
-		Task.Type.TagIdentity:    true,
-		Task.Type.TagAudit:       true,
-	}
-	values := NonConsumeTaskTypeValues()
-	if len(values) != len(want) {
-		t.Fatalf("NonConsumeTaskTypeValues len = %d, want %d", len(values), len(want))
-	}
-	for i, typ := range NonConsumeTaskTypes() {
-		if !want[typ] {
-			t.Errorf("unexpected non-consume task type: %q", typ)
-		}
-		if values[i] != string(typ) {
-			t.Errorf("value %q does not match type %q", values[i], typ)
-		}
 	}
 }
 

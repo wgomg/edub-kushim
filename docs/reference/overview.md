@@ -184,9 +184,9 @@ internal/
 │   │   ├── tagaudit.go    # `kushim tagaudit` (direct run / `--from-batch` batch mode) coverage-audit pass
 │   │   ├── tagidentity.go  # `kushim tagidentity` (direct run / `--from-batch` batch mode) identity adjudication
 │   │   ├── tagmeasure.go   # `kushim tagmeasure` (direct run / `--from-batch` batch mode) measurement pass
-│   │   ├── tagpass.go      # Shared tag-verb plumbing (deprecated --run alias, manual lock holder, batch executor)
+│   │   ├── tagpass.go      # Shared tag-verb plumbing (batch-mode selector validation, manual lock holder, batch executor)
 │   │   ├── tagreconcile.go # `kushim tagreconcile` (direct run / `--from-batch` batch mode) reconciliation pass
-│   │   ├── task.go         # Task commands (list, status, retry)
+│   │   ├── task.go         # Task commands (list, status)
  │   │   ├── thumbnails.go   # `kushim thumbnails` — direct thumbnail runs (--all/--document) plus the --from-batch child
 │   │   └── user.go         # User commands (create)
  │   ├── container/          # Shared-services lazy assembler (config, DB reconnect, tag service, search, matcher client, tag tools)
@@ -215,7 +215,7 @@ internal/
 │   ├── people.go           # People service (NewPeople, batch CRUD)
 │   ├── peopletype.go       # PeopleType service (NewPeopleType, batch CRUD)
 │   ├── document_type.go    # DocumentType service (NewDocumentType, batch CRUD)
- │   ├── batch.go            # Batch service (NewBatch, GetSummary, ListSummaries, ListOverviews, CountOrphaned, HasPendingWork, CountPausedBatches, ListPausedBatches, CountQueuedConsumeBatches, ListQueuedBatchesByAge, CountLiveBatches, CountLiveNoHoldsBatches, ListStaleBatchOwners, DeleteBatchOwnerByBatchID, ResetProcessingTasksByBatch, ResetStaleProcessingTasks); BatchSummary/BatchOverview read models
+ │   ├── batch.go            # Batch service (NewBatch, GetOverview, ListOverviews, CountBatches, CountActiveBatches, CountOrphaned, HasPendingWork, CountPausedBatches, ListPausedBatches, ListQueuedBatchesByAge, CountLiveNoHoldsBatches, ListStaleBatchOwners, DeleteBatchOwnerByBatchID, ResetProcessingTasksByBatch, ResetStaleProcessingTasks); BatchOverview read model — one aggregate row the list, dashboard, summary and CLI share
 │   ├── orphaned.go         # Orphaned file service (scan, list, delete, restore, move-to-inbox, orphaned-thumbnail sweep)
 │   ├── trash.go            # Trash service (soft delete, restore, permanent delete, purge + hourly background purge)
 │   ├── errored.go          # Errored file service (list on disk, get path, delete, delete-all)
@@ -265,8 +265,8 @@ internal/
 │       ├── bootstrap.go    # Log bootstrap parser (absorbed pairs and band-keep lines from the daemon's log rotations)
 │       └── compounds.go    # Stored-compound decomposition scan (JudgeCompounds-driven over the substrate reconstructibility reading)
 ├── task/                   # Generic task system
- │   ├── batch.go            # Batch ownership (Owner.Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease-only), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore), RetryTask alias; Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive, IsOrphaned; ResetProcessingTasksByBatch/ForClaim
- │   ├── crud.go             # Task CRUD (Get, ListFiltered, CountBatchStatuses, ListBatchSummaries)
+ │   ├── batch.go            # Batch ownership (Owner.Adopt/Release/Heartbeat) + the guarded lifecycle ops: ClaimBatch (atomic dispatcher claim), SettleBatch (normal settlement writer), FailUnstartedBatch (launch-failure terminal write), PauseBatch (lease-only), CancelBatch (signal + counts + release), ResumeBatch (guarded recovery with in-tx child restore and optional failed-task retry); Execution guard, ClaimRequest, ResetResult/CancelResult/ResumeResult, TaskIdentity; LeaseStaleSeconds, IsAlive; ResetProcessingTasksByBatch/ForClaim
+ │   ├── crud.go             # Task CRUD (Get, ListFiltered — batch/status/type paging over the per-shape queries, positive limit required)
  │   ├── direct.go           # RunDirect — the manual holder path for direct CLI commands (NULL-token locks, wait/--no-wait)
  │   ├── enqueue.go          # BatchSpec/TaskSpec + Enqueuer — the single transactional creation path; refuses a pending task whose type carries no dedup hook in the boundary's catalog
  │   ├── catalog.go          # Catalog — one boundary's task type table: static policy (locks, direct locks, CLI surface, hosts) merged with boundary-supplied wiring (TypeWiring: dedup hooks, worker counts, preconditions)

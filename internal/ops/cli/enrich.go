@@ -20,13 +20,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const enrichHelpText = "Usage: kushim enrich [<document-id>] [--limit N | --all] [--no-wait]\n\n" +
+const enrichHelpText = "Usage: kushim enrich [<document-id>] [--limit N | --all] [--no-wait]\n" +
+	"       kushim enrich --from-batch <id> --exec-token <id>\n\n" +
 	"  Re-run enrichment (LLM classification) for stored documents.\n\n" +
 	"  With a document id: enrich that single document now.\n" +
 	"  Without a document id: enrich live documents, oldest first.\n\n" +
 	"  --limit N          cap the run at N documents (default: consumer.max_files_per_batch)\n" +
 	"  --all              select every live document\n" +
-	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n\n" +
+	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n" +
+	"  --from-batch <id>  execute one claimed batch (dispatcher and 'kushim batch run' contract)\n" +
+	"  --exec-token <id>  execution token passed with --from-batch\n\n" +
 	"  Runs immediately under the maintenance lock, creating no queue rows.\n" +
 	"  To enqueue enrichment: kushim batch create enrich <document-id>... | --all | --limit N"
 

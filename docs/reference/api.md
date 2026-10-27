@@ -128,21 +128,19 @@ See `AuthMiddleware` under `server.go` → Functions.
 ### Struct
 
 - `TaskHandler`
-  - **Fields**: `queries *database.Queries`, `logger *log.Logger`, `getConfig func() *config.Config`
+  - **Fields**: `services *service.CrudServices`, `client *database.Client`, `queries *database.Queries`, `logger *log.Logger`, `getConfig func() *config.Config`
   - **Methods**:
-    - `NewTaskHandler(queries, logger, getConfig) *TaskHandler`
-    - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes batch summary when `batch` is set. `status=active` is a special value returning `pending`+`processing`+`waiting` (processing-first) via `ListActiveTasks`
+    - `NewTaskHandler(services, client, logger, getConfig) *TaskHandler`
+    - `ListTasks(w, r)` — Filters by `batch`, `status`, `limit`, `offset`; includes the batch summary ([BatchResponse](#batchresponse)) when `batch` is set — served by `service.Batch.GetOverview`, an unknown batch answers `404` via `writeServiceError`. `status=active` is a special value returning `pending`+`processing`+`waiting` (processing-first) via `ListActiveTasks`
     - `GetTask(w, r)` — Single task by UUID (uses `taskDetailResponse`: includes `result` for `tagreconcile` tasks)
     - `GetTagReconcileReport(w, r)` — `GET /api/v1/tags/reconciliation/report` — Returns the latest completed `tagreconcile` task's report (`task_id`, `completed_at`, `result` = persisted `Report` JSON) via `GetLastCompletedTagReconcileTaskWithResult`. `404` when no completed run exists. Viewer-gated, Postgres-only (no matcher dependency).
-    - `RetryTask(w, r)` — `POST /api/v1/tasks/{id}/retry` — the task alias over `task.ResumeBatch`: a failed task resumes its batch with failed tasks reset, answering `204 No Content`. Missing task → `404`, non-failed task → `409` with the shared lifecycle message.
-    - `ListBatches(w, r)` — Lists all batch summaries with filtering (`status`, `limit`, `offset`)
-    - `GetBatchSummary(w, r)` — Counts per status for a single batch (via `{id}`)
-    - `RetryBatch(w, r)` — `POST /api/v1/batches/{id}/retry` — the batch alias over `ResumeBatch` (`includeFailed: true`). Returns `200 {"retried": <n>}` (0 when nothing is failed, which is a valid success); missing batch → `404`, a batch still queued/processing or held by a live owner → `409`.
-    - `ResumeBatch(w, r)` — `POST /api/v1/batches/{id}/resume` — the single guarded recovery (`task.ResumeBatch`, `includeFailed: false`): refuses a live owner or a still-queued/processing batch (`409`, one shared `batchLifecycleError` mapping for all retry/resume surfaces), resets `processing`→`pending` in a transaction with the requeue — children of retried consumes restore in the same transaction when retried through the retry aliases — and requeues the batch for the daemon. Returns `202 {"resumed": true}`, or `200 {"resumed": false}` when nothing can become active.
+    - `ListBatches(w, r)` — One page of [BatchResponse](#batchresponse) items via `service.Batch.ListOverviews`, newest first; `status` filters batch status
+    - `GetBatchSummary(w, r)` — One batch's [BatchResponse](#batchresponse) row (via `{id}`); an unknown batch answers `404` via `writeServiceError`
+    - `ResumeBatch(w, r)` — `POST /api/v1/batches/{id}/resume?retry_failed=<bool>` — the single guarded recovery (`task.ResumeBatch`; the flag is the retry intent, default `false`): refuses a live owner or a still-queued/processing batch (`409`, one shared `batchLifecycleError` mapping for the resume and cancel surfaces), resets `processing`→`pending` in a transaction with the requeue — children of retried consumes restore in the same transaction when retried with the flag — and requeues the batch for the daemon. Returns `202 {"resumed": true, "reset": <n>, "retried": <m>}` (`retried` counts the failed tasks reset when `retry_failed=true`), or `200 {"resumed": false, ..., "reason": ...}` when nothing can become active.
     - `CancelBatch(w, r)` — `POST /api/v1/batches/{id}/cancel` — the single cancel operation (`task.CancelBatch`): signals a live owner (SIGTERM) when its lease row names a live process, cancels pending + waiting + processing tasks, and releases the batch's locks and lease. Returns `200` with `cancelled_pending`, `cancelled_processing`, and `signal_sent`; a missing batch → `404`, a terminal batch → `409` (terminal states are immutable).
-    - `GetDashboard(w, r)` — Returns `recent_batches` (top 20) + `running_tasks` (object with `count` = uncapped active-task total and `tasks` = top 25 active tasks: `pending`/`processing`/`waiting`, processing-first, via `ListActiveTasks`; the count is derived from the per-status counts) + `analytics` (language/document-type/tag distributions, missing counts) + `processing_health` (task success rate, avg duration, active/orphaned batches, missing tools count) + storage panel fields (`total_batches`, `total_files`, `inbox_files` (files in the consumption dir matching `consumer.supported_files`), per-status counts, `originals_size_bytes` (sum of `file_size`), `processed_size_bytes` (sum of `processed_size`, sentinel `-1` excluded), `original_type_breakdown`, `storage_trend`, `avg_file_size_bytes`, `total_pages`, `total_words`). Active tasks carry a derived `label` (`TaskType: file name` for consume/enrich/thumbnail, task-type/dedup-key based otherwise). Processing health queries use a 7-day window and reuses `config.MissingExternalToolErrors` to detect missing tools at request time.
+    - `GetDashboard(w, r)` — Returns `recent_batches` (top 10 [BatchResponse](#batchresponse) items) + `running_tasks` (object with `count` = uncapped active-task total and `tasks` = top 25 active tasks: `pending`/`processing`/`waiting`, processing-first, via `ListActiveTasks`; the count is derived from the per-status counts) + `analytics` (language/document-type/tag distributions, missing counts) + `processing_health` (task success rate, avg duration, active/orphaned batches, missing tools count) + storage panel fields (`total_batches`, `total_files`, `inbox_files` (files in the consumption dir matching `consumer.supported_files`), per-status counts, `originals_size_bytes` (sum of `file_size`), `processed_size_bytes` (sum of `processed_size`, sentinel `-1` excluded), `original_type_breakdown`, `storage_trend`, `avg_file_size_bytes`, `total_pages`, `total_words`). Active tasks carry a derived `label` (`TaskType: file name` for consume/enrich/thumbnail, task-type/payload based otherwise; the backup mode defaults to `full`). Processing health reads the batch-table counts (`CountBatches`, `CountActiveBatches`, `CountOrphaned`) and reuses `config.MissingExternalToolErrors` to detect missing tools at request time.
 
-    - **Helpers**: `buildBatchSummary(ctx, queries, batchID) BatchSummaryResponse`, `buildDocumentAnalytics(ctx, reqID) *DocumentAnalytics`, `buildProcessingHealth(ctx, reqID) *ProcessingHealth`, `taskLabel(taskType, dedupKey) string`, `taskToResponse(t) TaskResponse` (list shape — no `result`), `taskDetailResponse(t) TaskResponse` (includes `result` for `tagreconcile` tasks), `buildTaskResponse(t, includeResult)`
+    - **Helpers**: `batchItemFromOverview(ov *service.BatchOverview) BatchItem`, `buildDocumentAnalytics(ctx, reqID) *DocumentAnalytics`, `buildProcessingHealth(ctx) *ProcessingHealth`, `taskLabel(taskType, payload) string`, `taskToResponse(t) TaskResponse` (list shape — no `result`), `taskDetailResponse(t) TaskResponse` (includes `result` for `tagreconcile` tasks), `buildTaskResponse(t, includeResult)`
 
 ---
 
@@ -171,19 +169,18 @@ See `AuthMiddleware` under `server.go` → Functions.
 
 ### Structs
 
-- `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `Error *string`, `Label` (`TaskType: file name` for consume/enrich/thumbnail, task-type/dedup-key derived otherwise), `Progress *TaskProgressResponse`, `Result json.RawMessage` (present only for `tagreconcile` tasks on the detail endpoint — the persisted reconciliation `Report`), `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
+- `TaskResponse` — `TaskID`, `BatchID`, `TaskType`, `FileName`, `PayloadDocID`, `Status`, `Error *string`, `Label` (`TaskType: file name` for consume/enrich/thumbnail, task-type/payload derived otherwise — the backup mode defaults to `full`), `Progress *TaskProgressResponse`, `Result json.RawMessage` (present only for `tagreconcile` tasks on the detail endpoint — the persisted reconciliation `Report`), `CreatedAt`, `StartedAt *string`, `CompletedAt *string`
 - `TagReconcileReportResponse` — `TaskID string`, `CompletedAt string`, `Result json.RawMessage` (the persisted reconciliation `Report` of the latest completed run)
-- `BatchSummaryResponse` — `BatchID`, `Status`, `Origin`, `Schedule` (empty when unscheduled), `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
-- `BatchOverviewItem` — `BatchID`, `Status`, `Origin`, `Schedule`, `CreatedAt`, `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `OwnerState`, `Orphaned`, `DurationMs *int64`
-- `BatchCounts` — `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`
-- `ListBatchesResponse` — `Batches []BatchSummaryResponse`
-- `ListTasksResponse` — `BatchID`, `Summary *BatchSummaryResponse`, `Tasks []TaskResponse`
+- `BatchItem` — `BatchID`, `Status`, `Origin`, `Schedule` (omitempty), `CreatedAt` (RFC 3339, omitempty), embedded `BatchCounts`, `OwnerPID int64` (omitempty), `DurationMs *int64` (omitempty); one row shared by the batch list, the single-batch endpoint, the task list's summary and the dashboard
+- `BatchCounts` — `Total`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `OwnerState`, `Orphaned`
+- `ListBatchesResponse` — `Batches []BatchItem`
+- `ListTasksResponse` — `BatchID`, `Summary *BatchItem`, `Tasks []TaskResponse`
 - `OriginalTypeStat` — `OriginalType`, `Count`, `TotalBytes`
 - `StorageTrendPoint` — `Date`, `DailyCount`, `DailyBytes`, `CumulativeBytes`
 - `DistributionItem` — `Label string`, `Count int64`
 - `DocumentAnalytics` — `LanguageDistribution []DistributionItem`, `DocumentTypeDistribution []DistributionItem`, `TagFrequency []DistributionItem`, `MissingLanguageCount int64`, `MissingTypeCount int64`, `MissingTagsCount int64`
 - `ProcessingHealth` — `SuccessRate float64`, `CompletedLast7d int64`, `FailedLast7d int64`, `AvgDurationMs int64`, `ActiveBatches int64`, `OrphanedBatches int64`, `MissingTools int64`
-- `DashboardResponse` — `RecentBatches []BatchOverviewItem`, `RunningTasks RunningTasksResponse`, `Analytics *DocumentAnalytics`, `ProcessingHealth *ProcessingHealth`, `TotalBatches`, `TotalFiles`, `InboxFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `OriginalsSizeBytes`, `ProcessedSizeBytes`, `OriginalTypeBreakdown []OriginalTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
+- `DashboardResponse` — `RecentBatches []BatchItem`, `RunningTasks RunningTasksResponse`, `Analytics *DocumentAnalytics`, `ProcessingHealth *ProcessingHealth`, `TotalBatches`, `TotalFiles`, `InboxFiles`, `Waiting`, `Pending`, `Processing`, `Completed`, `Failed`, `Cancelled`, `Discarded`, `OriginalsSizeBytes`, `ProcessedSizeBytes`, `OriginalTypeBreakdown []OriginalTypeStat`, `StorageTrend []StorageTrendPoint`, `AvgFileSizeBytes`, `TotalPages`, `TotalWords`
 - `RunningTasksResponse` — `Count int64` (uncapped total of active tasks), `Tasks []TaskResponse` (capped at 25)
 
 ---
@@ -558,10 +555,8 @@ mux.Handle("PUT /api/v1/document-types/{id}", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/document-types/{id}", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/consume", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/consume/upload", RequireRole(editor...)(...))
-mux.Handle("POST /api/v1/tasks/{id}/retry", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/batches/{id}/resume", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/batches/{id}/cancel", RequireRole(editor...)(...))
-mux.Handle("POST /api/v1/batches/{id}/retry", RequireRole(editor...)(...))
 mux.Handle("GET /api/v1/orphaned", RequireRole(editor...)(...))
 mux.Handle("POST /api/v1/orphaned/scan", RequireRole(editor...)(...))
 mux.Handle("DELETE /api/v1/orphaned/{id}", RequireRole(editor...)(...))

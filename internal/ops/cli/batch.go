@@ -503,7 +503,7 @@ func batchListHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 	svc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	batches, err := svc.ListOverviews(context.Background(), int32(limit), int32(offset))
+	batches, err := svc.ListOverviews(context.Background(), "", int32(limit), int32(offset))
 	if err != nil {
 		return fmt.Errorf("list batches: %w", err)
 	}
@@ -554,7 +554,7 @@ func batchStatusHandler(c *container.Container, args []string) error {
 	}
 
 	svc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	summary, err := svc.GetSummary(context.Background(), batchID)
+	overview, err := svc.GetOverview(context.Background(), batchID)
 	if err != nil {
 		if errs.KindOf(err) == errs.KindNotFound {
 			return fmt.Errorf("batch %q not found", batchID)
@@ -562,24 +562,21 @@ func batchStatusHandler(c *container.Container, args []string) error {
 		return err
 	}
 
-	total := summary.Waiting + summary.Pending + summary.Processing + summary.Completed +
-		summary.Failed + summary.Cancelled + summary.Discarded
-
-	fmt.Printf("Batch ID:   %s\n", summary.BatchID)
-	fmt.Printf("Status:     %s\n", summary.Status)
-	fmt.Printf("Origin:     %s\n", summary.Origin)
-	if summary.Schedule != "" {
-		fmt.Printf("Schedule:   %s\n", summary.Schedule)
+	fmt.Printf("Batch ID:   %s\n", overview.BatchID)
+	fmt.Printf("Status:     %s\n", overview.Status)
+	fmt.Printf("Origin:     %s\n", overview.Origin)
+	if overview.Schedule != "" {
+		fmt.Printf("Schedule:   %s\n", overview.Schedule)
 	}
 	fmt.Printf("Tasks:      %d total — %d waiting, %d pending, %d processing, %d completed, %d failed, %d cancelled, %d discarded\n",
-		total, summary.Waiting, summary.Pending, summary.Processing, summary.Completed,
-		summary.Failed, summary.Cancelled, summary.Discarded)
-	if summary.OwnerPID > 0 {
-		fmt.Printf("Owner:      %s (PID %d)\n", summary.OwnerState, summary.OwnerPID)
+		overview.Total, overview.Waiting, overview.Pending, overview.Processing, overview.Completed,
+		overview.Failed, overview.Cancelled, overview.Discarded)
+	if overview.OwnerPID > 0 {
+		fmt.Printf("Owner:      %s (PID %d)\n", overview.OwnerState, overview.OwnerPID)
 	} else {
-		fmt.Printf("Owner:      %s\n", summary.OwnerState)
+		fmt.Printf("Owner:      %s\n", overview.OwnerState)
 	}
-	fmt.Printf("Orphaned:   %t\n", summary.Orphaned)
+	fmt.Printf("Orphaned:   %t\n", overview.Orphaned)
 	fmt.Printf("\nTask details: kushim task list --batch %s\n", batchID)
 	return nil
 }

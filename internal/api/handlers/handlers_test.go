@@ -1118,8 +1118,8 @@ func TestGetDashboardProcessingHealth(t *testing.T) {
 	if resp.ProcessingHealth.FailedLast7d != 1 {
 		t.Fatalf("expected failed_last_7d 1, got %d", resp.ProcessingHealth.FailedLast7d)
 	}
-	if resp.ProcessingHealth.ActiveBatches != 1 {
-		t.Fatalf("expected active_batches 1 (ph-batch-2 has pending), got %d", resp.ProcessingHealth.ActiveBatches)
+	if resp.ProcessingHealth.ActiveBatches != 2 {
+		t.Fatalf("expected active_batches 2 (both batches are non-terminal), got %d", resp.ProcessingHealth.ActiveBatches)
 	}
 	// Bound is intentionally loose: the completed task takes ~0ms locally,
 	// but CI runners measure 2-3ms, so a tight upper bound would flake.
@@ -1843,8 +1843,7 @@ func TestProcessingHealthMissingTools(t *testing.T) {
 	err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "mh-batch", Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued})
 	testutil.AssertNoError(t, err, "create batch")
 
-	reqID := "missing-tools"
-	ph, err := h.buildProcessingHealth(ctx, reqID)
+	ph, err := h.buildProcessingHealth(ctx)
 	testutil.AssertNoError(t, err, "build health")
 
 	if ph.MissingTools == 0 {
@@ -3294,10 +3293,9 @@ func TestTagSiblingsEndpoint(t *testing.T) {
 	testutil.AssertEqual(t, page.Results[0].Gray, true, "the pair carries its review band")
 }
 
-// TestRetryAndResumeAliases pins the compatibility aliases: retry resolves to
-// resume, and each lifecycle sentinel maps to one status so the same failure
-// is never reported differently by endpoint.
-func TestRetryAndResumeAliases(t *testing.T) {
+// TestResumeSurfaces pins the single resume surface: the retry intent is the retry_failed parameter, and
+// each lifecycle sentinel maps to one status so the same failure is never reported differently by endpoint.
+func TestResumeSurfaces(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	cfg := config.DefaultConfig(t.TempDir())
 	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return cfg })
@@ -3318,52 +3316,15 @@ func TestRetryAndResumeAliases(t *testing.T) {
 		testutil.AssertNoError(t, err, "create task "+taskID)
 	}
 
-	t.Run("retry of a failed task resumes its batch", func(t *testing.T) {
-		aliasBatch(t, "alias-retry-task-batch", itypes.Batch.Status.Failed)
-		aliasTask(t, "alias-retry-task", "alias-retry-task-batch", "failed")
+	t.Run("resume with retry_failed reports the retried count", func(t *testing.T) {
+		aliasBatch(t, "alias-resume-retry-batch", itypes.Batch.Status.Failed)
+		aliasTask(t, "alias-resume-retry-task", "alias-resume-retry-batch", "failed")
 
 		w := rec()
-		r := req(t, "POST", "/api/v1/tasks/alias-retry-task/retry", nil)
-		r.SetPathValue("id", "alias-retry-task")
-		h.RetryTask(w, r)
-		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
-
-		batch, err := env.client.GetBatch(ctx, "alias-retry-task-batch")
-		testutil.AssertNoError(t, err, "read batch")
-		testutil.AssertEqual(t, batch.Status, itypes.Batch.Status.Queued, "alias requeues the batch")
-	})
-
-	t.Run("retry of a task that did not fail conflicts", func(t *testing.T) {
-		aliasBatch(t, "alias-retry-done-batch", itypes.Batch.Status.Completed)
-		aliasTask(t, "alias-retry-done", "alias-retry-done-batch", "completed")
-
-		w := rec()
-		r := req(t, "POST", "/api/v1/tasks/alias-retry-done/retry", nil)
-		r.SetPathValue("id", "alias-retry-done")
-		h.RetryTask(w, r)
-		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
-		if !strings.Contains(w.Body.String(), "can only retry failed tasks") {
-			t.Fatalf("body = %q, want the retry conflict message", w.Body.String())
-		}
-	})
-
-	t.Run("retry of an unknown task is not found", func(t *testing.T) {
-		w := rec()
-		r := req(t, "POST", "/api/v1/tasks/alias-retry-missing/retry", nil)
-		r.SetPathValue("id", "alias-retry-missing")
-		h.RetryTask(w, r)
-		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "status")
-	})
-
-	t.Run("retry of a batch reports the retried count", func(t *testing.T) {
-		aliasBatch(t, "alias-retry-batch", itypes.Batch.Status.Failed)
-		aliasTask(t, "alias-retry-batch-task", "alias-retry-batch", "failed")
-
-		w := rec()
-		r := req(t, "POST", "/api/v1/batches/alias-retry-batch/retry", nil)
-		r.SetPathValue("id", "alias-retry-batch")
-		h.RetryBatch(w, r)
-		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+		r := req(t, "POST", "/api/v1/batches/alias-resume-retry-batch/resume?retry_failed=true", nil)
+		r.SetPathValue("id", "alias-resume-retry-batch")
+		h.ResumeBatch(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
 
 		var resp map[string]int64
 		json.NewDecoder(w.Body).Decode(&resp)
@@ -3383,6 +3344,21 @@ func TestRetryAndResumeAliases(t *testing.T) {
 		var resp map[string]any
 		json.NewDecoder(w.Body).Decode(&resp)
 		testutil.AssertEqual(t, resp["resumed"], true, "resumed")
+	})
+
+	t.Run("resume without retry_failed leaves failed tasks failed", func(t *testing.T) {
+		aliasBatch(t, "alias-resume-plain-batch", itypes.Batch.Status.Failed)
+		aliasTask(t, "alias-resume-plain-task", "alias-resume-plain-batch", "failed")
+
+		w := rec()
+		r := req(t, "PUT", "/api/v1/batches/alias-resume-plain-batch/resume", nil)
+		r.SetPathValue("id", "alias-resume-plain-batch")
+		h.ResumeBatch(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "200: nothing to requeue without the flag")
+
+		task, err := env.client.Queries.GetTaskByTaskID(ctx, "alias-resume-plain-task")
+		testutil.AssertNoError(t, err, "read task")
+		testutil.AssertEqual(t, task.Status, itypes.Task.Status.Failed, "failed task stays failed")
 	})
 
 	t.Run("resume of a processing batch conflicts", func(t *testing.T) {
@@ -3405,4 +3381,22 @@ func TestRetryAndResumeAliases(t *testing.T) {
 		h.ResumeBatch(w, r)
 		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "status")
 	})
+}
+
+// TestBatchOverviewNotFound pins one not-found answer for the shared batch read model: the task list's
+// summary and the single-batch endpoint answer 404 for an unknown id, never a server fault.
+func TestBatchOverviewNotFound(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	cfg := config.DefaultConfig(t.TempDir())
+	h := NewTaskHandler(env.services, env.client, env.logger, func() *config.Config { return cfg })
+
+	w := rec()
+	h.ListTasks(w, req(t, "GET", "/api/v1/tasks?batch=missing-batch", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusNotFound, "task list summary of an unknown batch")
+
+	w = rec()
+	r := req(t, "GET", "/api/v1/batches/missing-batch", nil)
+	r.SetPathValue("id", "missing-batch")
+	h.GetBatchSummary(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusNotFound, "single-batch summary of an unknown batch")
 }

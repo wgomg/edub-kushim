@@ -200,8 +200,8 @@ activation rather than writing a keyless row the dedup index could not
 police. If the consume task fails, the handler
 discards the waiting enrich task by setting it to `discarded` with the
 parent error message (via `Store.Discard`). **On retry** — a retried consume
-rides the batch alias (`kushim task retry` or the batch retry endpoint
-resolve to `task.ResumeBatch`): the failed consume goes back to `pending` and
+rides the one batch resume operation (`kushim batch restart` or
+`POST /api/v1/batches/{id}/resume?retry_failed=true`): the failed consume goes back to `pending` and
 its discarded children are restored to `waiting` in the same transaction, so
 the requeue never exposes a consume whose children still look dead; a later
 successful run re-activates them.

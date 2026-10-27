@@ -18,27 +18,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// BatchSummary is one batch's task counts by status plus its owner's liveness; Orphaned is never true
-// for a batch with a non-consume task, which has no owner row by design.
-type BatchSummary struct {
-	BatchID    string
-	Status     string
-	Origin     string
-	Schedule   string
-	Waiting    int64
-	Pending    int64
-	Processing int64
-	Completed  int64
-	Failed     int64
-	Cancelled  int64
-	Discarded  int64
-	OwnerState string
-	Orphaned   bool
-	OwnerPID   int64
-}
-
-// BatchOverview is one batch row for the list view: identity, counts, owner state, and the total run
-// duration once completed.
+// BatchOverview is one batch row for every read surface: identity, origin, schedule, the per-status task
+// counts, the owner's liveness and the total run duration once terminal. The list, the dashboard, the
+// single-batch summary and the CLI all read this one aggregate.
 type BatchOverview struct {
 	BatchID    string
 	Status     string
@@ -54,21 +36,18 @@ type BatchOverview struct {
 	Cancelled  int64
 	Discarded  int64
 	OwnerState string
+	OwnerPID   int64
 	Orphaned   bool
 	DurationMs *int64
 }
 
-// Batch is the batch read model and reclamation service: summaries, orphan detection and the stale-task
-// resets the queue driver uses.
+// Batch is the batch read model and reclamation service: overviews, orphan and active counts, and the
+// stale-task resets the queue driver uses.
 type Batch struct {
 	client     *database.Client
 	queries    *database.Queries
 	maxRetries int32
 }
-
-// Batches with a non-consume task have no batch_owner row by design; never report them as orphaned.
-// The registry owns the task-type set, so the display rule cannot drift from the dispatch exclusion.
-var nonConsumeTaskTypeValues = types.NonConsumeTaskTypeValues()
 
 // lockNameValues is the closed lock set in SQL parameter form, owned by the vocabulary in internal/types.
 var lockNameValues = types.LockNameValues()
@@ -79,107 +58,37 @@ func NewBatch(client *database.Client, maxRetries int) *Batch {
 	return &Batch{client: client, queries: client.Queries, maxRetries: int32(maxRetries)}
 }
 
-// GetSummary returns one batch's per-status task counts and owner state.
-func (s *Batch) GetSummary(ctx context.Context, batchID string) (*BatchSummary, error) {
-	statuses := types.AllTaskStatuses()
-	summary := &BatchSummary{BatchID: batchID}
-
-	batch, err := s.queries.GetBatch(ctx, batchID)
+// GetOverview returns one batch's aggregate row from the same query the list uses, so the single-batch
+// view cannot drift from the list. A missing batch surfaces as a not-found error; an owner join failure
+// fails the read instead of being reported as a missing owner.
+func (s *Batch) GetOverview(ctx context.Context, batchID string) (*BatchOverview, error) {
+	rows, err := s.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
+		BatchID:           sql.NullString{String: batchID, Valid: true},
+		StaleAfterSeconds: task.LeaseStaleSeconds,
+		RowLimit:          1,
+	})
 	if err != nil {
 		return nil, errs.FromDB(err, "get batch "+batchID)
 	}
-	summary.Status = string(batch.Status)
-	summary.Origin = string(batch.Origin)
-	summary.Schedule = batch.Schedule.String
-
-	for _, status := range statuses {
-		count, err := s.queries.CountTasksByBatchAndStatus(ctx, database.CountTasksByBatchAndStatusParams{
-			BatchID: sql.NullString{String: batchID, Valid: true},
-			Status:  status,
-		})
-		if err != nil {
-			return nil, errs.FromDB(err, "count "+string(status)+" for batch "+batchID)
-		}
-		switch status {
-		case types.Task.Status.Waiting:
-			summary.Waiting = count
-		case types.Task.Status.Pending:
-			summary.Pending = count
-		case types.Task.Status.Processing:
-			summary.Processing = count
-		case types.Task.Status.Completed:
-			summary.Completed = count
-		case types.Task.Status.Failed:
-			summary.Failed = count
-		case types.Task.Status.Cancelled:
-			summary.Cancelled = count
-		case types.Task.Status.Discarded:
-			summary.Discarded = count
-		}
+	if len(rows) == 0 {
+		return nil, errs.ENotFound("get batch "+batchID, sql.ErrNoRows)
 	}
-
-	state, pid, err := s.batchOwnerState(ctx, batchID)
-	if err != nil {
-		summary.OwnerState = "none"
-		summary.Orphaned = false
-	} else {
-		summary.OwnerState = state.String()
-		summary.OwnerPID = pid
-		nonConsume, err := s.queries.BatchHasNonConsumeTask(ctx, database.BatchHasNonConsumeTaskParams{
-			BatchID:         sql.NullString{String: batchID, Valid: true},
-			NonConsumeTypes: nonConsumeTaskTypeValues,
-		})
-		if err != nil {
-			return nil, errs.FromDB(err, "classify batch "+batchID)
-		}
-		summary.Orphaned = task.IsOrphaned(state, summary.Pending, summary.Processing) && !nonConsume
-	}
-
-	return summary, nil
+	return overviewFromRow(rows[0]), nil
 }
 
-// ListSummaries returns the summaries matching the batch filter.
-func (s *Batch) ListSummaries(ctx context.Context, f task.BatchFilter) ([]BatchSummary, error) {
-	var rows []sql.NullString
-	var err error
-
-	if f.Status != "" {
-		rows, err = s.queries.ListDistinctBatchIDsByStatus(ctx, database.ListDistinctBatchIDsByStatusParams{
-			Status: types.TaskStatus(f.Status),
-			Limit:  f.Limit,
-			Offset: f.Offset,
-		})
-	} else {
-		rows, err = s.queries.ListDistinctBatchIDs(ctx, database.ListDistinctBatchIDsParams{
-			Limit:  f.Limit,
-			Offset: f.Offset,
-		})
-	}
-	if err != nil {
-		return nil, errs.FromDB(err, "list batch summaries")
+// ListOverviews returns one page of batch aggregate rows, newest first; an empty status means every
+// batch, otherwise the batch status must match.
+func (s *Batch) ListOverviews(ctx context.Context, status string, limit, offset int32) ([]BatchOverview, error) {
+	statusParam := sql.NullString{}
+	if status != "" {
+		statusParam = sql.NullString{String: status, Valid: true}
 	}
 
-	summaries := make([]BatchSummary, 0, len(rows))
-	for _, row := range rows {
-		if !row.Valid {
-			continue
-		}
-		s, err := s.GetSummary(ctx, row.String)
-		if err != nil {
-			continue
-		}
-		summaries = append(summaries, *s)
-	}
-	return summaries, nil
-}
-
-// ListOverviews pages the batch rows for the list view.
-func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]BatchOverview, error) {
 	rows, err := s.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
-		Limit:             limit,
-		Offset:            offset,
 		StaleAfterSeconds: task.LeaseStaleSeconds,
-		NonConsumeTypes:   nonConsumeTaskTypeValues,
+		Status:            statusParam,
+		RowLimit:          limit,
+		RowOffset:         offset,
 	})
 	if err != nil {
 		return nil, errs.FromDB(err, "list batch overviews")
@@ -187,91 +96,37 @@ func (s *Batch) ListOverviews(ctx context.Context, limit, offset int32) ([]Batch
 
 	items := make([]BatchOverview, 0, len(rows))
 	for _, row := range rows {
-		pending := toInt64(row.Pending)
-		processing := toInt64(row.Processing)
-		waiting := toInt64(row.Waiting)
-
-		state := deriveOwnerState(row.OwnerLastHeartbeat, row.OwnerStale)
-
-		var createdAt time.Time
-		if row.BatchCreatedAt.Valid {
-			createdAt = row.BatchCreatedAt.Time
-		}
-
-		var durationMs *int64
-		if pending == 0 && processing == 0 && waiting == 0 {
-			firstStarted := toNullTime(row.FirstStartedAt)
-			lastCompleted := toNullTime(row.LastCompletedAt)
-			if firstStarted.Valid && lastCompleted.Valid {
-				v := lastCompleted.Time.Sub(firstStarted.Time).Milliseconds()
-				durationMs = &v
-			}
-		}
-
-		var schedule string
-		if row.Schedule.Valid {
-			schedule = row.Schedule.String
-		}
-
-		items = append(items, BatchOverview{
-			BatchID:    row.BatchID,
-			Status:     string(row.BatchStatus),
-			Origin:     string(row.Origin),
-			Schedule:   schedule,
-			CreatedAt:  createdAt,
-			Total:      row.Total,
-			Waiting:    waiting,
-			Pending:    pending,
-			Processing: processing,
-			Completed:  toInt64(row.Completed),
-			Failed:     toInt64(row.Failed),
-			Cancelled:  toInt64(row.Cancelled),
-			Discarded:  toInt64(row.Discarded),
-			OwnerState: state.String(),
-			Orphaned:   task.IsOrphaned(state, pending, processing) && !row.NonConsume,
-			DurationMs: durationMs,
-		})
+		items = append(items, *overviewFromRow(row))
 	}
 	return items, nil
 }
 
-// CountOrphaned counts live batches whose owner is gone while work
-// remains.
-func (s *Batch) CountOrphaned(ctx context.Context) (int64, error) {
-	activeIDs, err := s.queries.ActiveBatchIDs(ctx)
+// CountBatches counts the batch table directly; the total is batch-derived, not task-derived.
+func (s *Batch) CountBatches(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountBatches(ctx)
 	if err != nil {
-		return 0, errs.FromDB(err, "active batch ids")
-	}
-
-	orphanedCount := int64(0)
-	for _, batchID := range activeIDs {
-		state, _, err := s.batchOwnerState(ctx, batchID)
-		if err != nil {
-			continue
-		}
-		if state != task.OwnerLive {
-			orphanedCount++
-		}
-	}
-	return orphanedCount, nil
-}
-
-// CountDistinct counts the batch ids in the task table.
-func (s *Batch) CountDistinct(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountDistinctBatches(ctx)
-	if err != nil {
-		return 0, errs.FromDB(err, "count distinct batches")
+		return 0, errs.FromDB(err, "count batches")
 	}
 	return count, nil
 }
 
-// ActiveIDs lists the batch ids that are not terminal.
-func (s *Batch) ActiveIDs(ctx context.Context) ([]string, error) {
-	ids, err := s.queries.ActiveBatchIDs(ctx)
+// CountActiveBatches counts the non-terminal batches: queued, processing and paused.
+func (s *Batch) CountActiveBatches(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountActiveBatches(ctx)
 	if err != nil {
-		return nil, errs.FromDB(err, "active batch ids")
+		return 0, errs.FromDB(err, "count active batches")
 	}
-	return ids, nil
+	return count, nil
+}
+
+// CountOrphaned counts the batches whose processing lease is missing or stale; the rule lives in the
+// database's batch_orphaned function, so the list and the count cannot disagree.
+func (s *Batch) CountOrphaned(ctx context.Context) (int64, error) {
+	count, err := s.queries.CountOrphanedBatches(ctx, task.LeaseStaleSeconds)
+	if err != nil {
+		return 0, errs.FromDB(err, "count orphaned batches")
+	}
+	return count, nil
 }
 
 // HasPendingWork reports whether the batch still has waiting or pending
@@ -440,22 +295,47 @@ func (s *Batch) ResetStaleProcessingTasks(ctx context.Context, staleAfterSeconds
 	return result, nil
 }
 
-func (s *Batch) batchOwnerState(ctx context.Context, batchID string) (task.OwnerState, int64, error) {
-	bo, err := s.queries.GetBatchOwner(ctx, database.GetBatchOwnerParams{
-		BatchID:           batchID,
-		StaleAfterSeconds: task.LeaseStaleSeconds,
-	})
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return task.OwnerNone, 0, nil
-		}
-		return task.OwnerNone, 0, err
+// overviewFromRow maps the aggregate row every batch surface reports.
+func overviewFromRow(row database.ListBatchOverviewsRow) *BatchOverview {
+	var createdAt time.Time
+	if row.BatchCreatedAt.Valid {
+		createdAt = row.BatchCreatedAt.Time
 	}
 
-	if bo.Stale {
-		return task.OwnerStale, bo.Pid, nil
+	var schedule string
+	if row.Schedule.Valid {
+		schedule = row.Schedule.String
 	}
-	return task.OwnerLive, bo.Pid, nil
+
+	var durationMs *int64
+	if row.Waiting == 0 && row.Pending == 0 && row.Processing == 0 {
+		firstStarted := toNullTime(row.FirstStartedAt)
+		lastCompleted := toNullTime(row.LastCompletedAt)
+		if firstStarted.Valid && lastCompleted.Valid {
+			v := lastCompleted.Time.Sub(firstStarted.Time).Milliseconds()
+			durationMs = &v
+		}
+	}
+
+	return &BatchOverview{
+		BatchID:    row.BatchID,
+		Status:     string(row.BatchStatus),
+		Origin:     string(row.Origin),
+		Schedule:   schedule,
+		CreatedAt:  createdAt,
+		Total:      row.Total,
+		Waiting:    row.Waiting,
+		Pending:    row.Pending,
+		Processing: row.Processing,
+		Completed:  row.Completed,
+		Failed:     row.Failed,
+		Cancelled:  row.Cancelled,
+		Discarded:  row.Discarded,
+		OwnerState: deriveOwnerState(row.OwnerLastHeartbeat, row.OwnerStale).String(),
+		OwnerPID:   row.OwnerPid.Int64,
+		Orphaned:   row.Orphaned,
+		DurationMs: durationMs,
+	}
 }
 
 func deriveOwnerState(hb sql.NullTime, stale sql.NullBool) task.OwnerState {
@@ -468,17 +348,8 @@ func deriveOwnerState(hb sql.NullTime, stale sql.NullBool) task.OwnerState {
 	return task.OwnerLive
 }
 
-func toInt64(v any) int64 {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case float64:
-		return int64(n)
-	default:
-		return 0
-	}
-}
-
+// toNullTime reads the aggregate timestamps the database driver returns as interface values for the
+// lateral subquery's MIN/MAX columns; sqlc cannot infer their type through the join.
 func toNullTime(v any) sql.NullTime {
 	switch t := v.(type) {
 	case string:

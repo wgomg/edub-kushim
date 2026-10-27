@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -92,5 +93,15 @@ func TestListFilteredActiveWithBatchOrTypeFilter(t *testing.T) {
 	testutil.AssertNoError(t, err, "list active with type")
 	if len(withType) != 0 {
 		t.Fatalf("type+active returned %d tasks, want 0 (no task has literal status 'active')", len(withType))
+	}
+}
+
+func TestListFilteredRejectsNonPositiveLimit(t *testing.T) {
+	// the guard answers before any query runs, so a nil handle also proves no lookup is attempted
+	for _, limit := range []int32{0, -1} {
+		_, err := ListFiltered(context.Background(), nil, TaskFilter{Status: "active", Limit: limit})
+		if err == nil || !strings.Contains(err.Error(), "positive limit") {
+			t.Fatalf("limit %d: got %v, want a positive-limit error", limit, err)
+		}
 	}
 }

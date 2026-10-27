@@ -2,18 +2,19 @@ package enrichment
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/log"
-	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // LogBatchBookend adds one INFO line with the aggregated per-document enrich counts over the batch's
-// completed enrich tasks, complementing the batch settle line. A failed listing is logged, not returned:
-// the bookend is observability, not lifecycle.
+// completed enrich tasks, complementing the batch settle line. It reads the batch's whole task set, not a
+// page, so the totals cover every document. A failed listing is logged, not returned: the bookend is
+// observability, not lifecycle.
 func LogBatchBookend(ctx context.Context, queries *database.Queries, logger *log.Logger, batchID string, status types.BatchStatus) {
-	tasks, err := task.ListFiltered(ctx, queries, task.TaskFilter{BatchID: batchID})
+	tasks, err := queries.ListAllTasksByBatch(ctx, sql.NullString{String: batchID, Valid: true})
 	if err != nil {
 		logger.Error("", "batch %s enrich bookend: list tasks: %v", batchID, err)
 		return

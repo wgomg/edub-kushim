@@ -149,9 +149,8 @@ func TestReEnrich_DocumentNotFound(t *testing.T) {
 	testutil.AssertError(t, err, "not found")
 
 	overviews, listErr := client.Queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
-		Limit:             10,
+		RowLimit:          10,
 		StaleAfterSeconds: 15,
-		NonConsumeTypes:   types.NonConsumeTaskTypeValues(),
 	})
 	testutil.AssertNoError(t, listErr, "list batches")
 	testutil.AssertEqual(t, len(overviews), 0, "no batch on not-found")

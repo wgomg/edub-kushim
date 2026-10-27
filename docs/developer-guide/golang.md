@@ -380,23 +380,27 @@ Every generated query method (`GetDocument`, `CreateTask`, ...) is promoted, so
 `client.GetDocument(...)` works directly — while `Client` adds transaction
 support on top. This is the "wrapper with promotions" idiom.
 
-### 2. `handlers.BatchSummaryResponse` embeds `BatchCounts` for reuse
+### 2. `handlers.BatchItem` embeds `BatchCounts` for reuse
 
 ```go
-// internal/api/handlers/task.go:814
-type BatchSummaryResponse struct {
-	BatchID string `json:"batch_id"`
-	Status  string `json:"status"`
-	Source  string `json:"source"`
+// internal/api/handlers/task.go
+type BatchItem struct {
+	BatchID   string `json:"batch_id"`
+	Status    string `json:"status"`
+	Origin    string `json:"origin"`
+	Schedule  string `json:"schedule,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 	BatchCounts
-	OwnerPID int64 `json:"owner_pid,omitempty"`
+	OwnerPID   int64  `json:"owner_pid,omitempty"`
+	DurationMs *int64 `json:"duration_ms,omitempty"`
 }
 ```
 
-`BatchCounts` (`internal/api/handlers/task.go:777`) holds the per-status task
-histogram; embedding promotes its fields into both `BatchSummaryResponse` and
-`BatchOverviewItem`, so their JSON shape stays identical without redeclaring
-the counts.
+`BatchCounts` (`internal/api/handlers/task.go`) holds the per-status task
+histogram plus the owner's liveness; embedding promotes its fields into
+`BatchItem`, so the batch list, the single-batch endpoint, the task list's
+summary and the dashboard share one JSON shape without redeclaring the
+counts.
 
 ### 3. `auth.Claims` embeds `jwt.RegisteredClaims`
 

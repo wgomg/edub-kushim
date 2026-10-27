@@ -18,9 +18,9 @@ func taskHandler(c *container.Container, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Println("Usage: kushim task <subcommand> [options]\n\n" +
 			"Subcommands:\n" +
-			"  list              list tasks (--batch, --status, --limit, --offset)\n" +
-			"  status <task-id>  show task details and error if failed\n" +
-			"  retry  <task-id>  resume the batch of a failed task")
+			"  list              list tasks (--batch, --status, --type, --limit, --offset)\n" +
+			"  status <task-id>  show task details and error if failed\n\n" +
+			"  To retry a failed task, resume its batch with 'kushim batch restart <batch-id>'.")
 		if len(args) == 0 {
 			return fmt.Errorf("task requires a subcommand")
 		}
@@ -32,8 +32,6 @@ func taskHandler(c *container.Container, args []string) error {
 		return taskListHandler(c, args[1:])
 	case "status":
 		return taskStatusHandler(c, args[1:])
-	case "retry":
-		return taskRetryHandler(c, args[1:])
 	default:
 		return fmt.Errorf("unknown task subcommand: %s", args[0])
 	}
@@ -45,8 +43,9 @@ func taskListHandler(c *container.Container, args []string) error {
 	if fp.Help("Usage: kushim task list [--batch <id>] [--status <status>] [--type <type>] [--limit N] [--offset N]\n" +
 		"  List tasks with optional filters.\n\n" +
 		"  --batch <id>      filter by batch UUID\n" +
-		"  --status <s>      filter by status (waiting|pending|processing|completed|failed)\n" +
-		"  --type <type>     filter by task type (consume|enrich|thumbnail|backup|mirror|config|tagreconcile|thumbbackfill|tagmeasure|tagidentity)\n" +
+		"  --status <s>      filter by status (waiting|pending|processing|completed|failed|cancelled|discarded|active)\n" +
+		"  --type <type>     filter by task type (consume|enrich|thumbnail|thumbbackfill|backup|mirror|\n" +
+		"                    tagreconcile|tagmeasure|tagidentity|tagaudit|migrate-db|migrate-storage)\n" +
 		"  --limit N         max results (default 20, max 100)\n" +
 		"  --offset N        result offset (default 0)") {
 		return nil
@@ -167,35 +166,5 @@ func taskStatusHandler(c *container.Container, args []string) error {
 		fmt.Printf("Error:      %s\n", t.Error.String)
 	}
 
-	return nil
-}
-
-func taskRetryHandler(c *container.Container, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: task retry <task-id>")
-	}
-	if args[0] == "--help" || args[0] == "-h" {
-		fmt.Println("Usage: kushim task retry <task-id>\n\n" +
-			"  Retry a failed task by resuming its batch with the failed tasks\n" +
-			"  reset to pending, so a worker picks them up on the next claim.\n" +
-			"  Only failed tasks can be retried.")
-		return nil
-	}
-
-	client, err := c.GetClient()
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-
-	ctx := context.Background()
-	maxRetries := int32(c.GetConfig().Consumer.Reclaim.MaxRetries)
-	if err := task.RetryTask(ctx, client, c.GetLogger(), args[0], maxRetries); err != nil {
-		if errors.Is(err, task.ErrTaskNotFound) {
-			return fmt.Errorf("task %q not found", args[0])
-		}
-		return err
-	}
-
-	fmt.Printf("Task %q retried — its batch requeued\n", args[0])
 	return nil
 }

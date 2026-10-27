@@ -27,7 +27,7 @@ the process layer is split by role: the verb table and the `kushim` verbs live i
 
 ### Functions
 
-- `batchHandler(c, args) error` — The `kushim batch` queue surface. Subcommands: `create <task> [args]` (enqueue; the owning producer builds the task set, the daemon processes), `run <batch-id>` (claim and run now, foreground), `stop`/`cancel <batch-id>` (cancel), `resume <batch-id>` (requeue, failed tasks stay failed), `restart <batch-id>` (requeue and retry the failed tasks), `list [--limit N] [--offset N]` (recent batches, newest first, via `service.Batch.ListOverviews`), `status <batch-id>` (one batch's state via `service.Batch.GetSummary`, with a hint to `kushim task list --batch`). Bare and `--help` print the help; an unknown subcommand is refused.
+- `batchHandler(c, args) error` — The `kushim batch` queue surface. Subcommands: `create <task> [args]` (enqueue; the owning producer builds the task set, the daemon processes), `run <batch-id>` (claim and run now, foreground), `stop`/`cancel <batch-id>` (cancel), `resume <batch-id>` (requeue, failed tasks stay failed), `restart <batch-id>` (requeue and retry the failed tasks), `list [--limit N] [--offset N]` (recent batches, newest first, via `service.Batch.ListOverviews`), `status <batch-id>` (one batch's state via `service.Batch.GetOverview`, with a hint to `kushim task list --batch`). Bare and `--help` print the help; an unknown subcommand is refused.
 - `batchRunHandler(c, args) error` — Builds a static catalog and delegates to `dispatch.LaunchQueuedBatch` (which claims the batch and forks the task CLI, waiting for the child); argument and refusal errors surface as-is.
 - `batchStopHandler(c, args) error` — Delegates to `task.CancelBatch`; the printed outcome mirrors `consumeCancelHandler`'s.
 - `batchResumeHandler(c, args, includeFailed) error` — `resume` passes `includeFailed=false` and `restart` `true`; both delegate to `task.ResumeBatch` with `max_retries` from the config.
@@ -162,10 +162,9 @@ Listens on a Unix socket (cleaned up on shutdown). Handles SIGTERM/SIGINT for gr
 
 ### Functions
 
-- `taskHandler(c, args) error` — Routes to list, status, retry subcommand
+- `taskHandler(c, args) error` — Routes to list and status subcommands; bare or `--help` prints the help with a pointer at `kushim batch restart <batch-id>` for failed-task recovery
 - `taskListHandler(c, args) error` — Lists tasks with batch/status/type/limit/offset filters; columns: TASK ID, TYPE, STATUS, BATCH, FILE
 - `taskStatusHandler(c, args) error` — Shows task details with type, timestamps, document DB ID, document UUID, error for failed tasks
-- `taskRetryHandler(c, args) error` — The `task retry <task-id>` verb over the compatibility alias (`task.RetryTask`): a failed task resumes its batch with failed tasks reset, a non-failed task is refused, an unknown task id is reported; the command prints the retried task and the requeued batch id.
 
 ---
 
@@ -305,13 +304,13 @@ All four tag verbs map to the same three-shape contract through the helpers in `
 - `tagPass(ctx, c) (json.RawMessage, error)` (per verb) — runs one pass over the container's services and returns its serialized report; the report is also marshalled into the task row by the batch-mode handler
 - `runTagPassDirect(c, taskType, noWait, pass)` — the no-flag mode: `task.RunDirect` under the type's manual lock declarations (hold `maintenance`, wait by default, `--no-wait` to fail fast), creating no queue rows, printing the report JSON
 - `runTagPassBatch(c, batchID, execToken, taskType, pass)` — executes one claimed tag batch: builds the store plus the single-type registry whose handler runs the pass and stores the report as the task result, then `consume.RunClaimedBatch`
-- `resolveTagPassSelection(batchID, execToken, runID)` — folds the deprecated `--run <id>` alias onto `--from-batch`; a batch-mode invocation requires `--exec-token` (a tokenless refusal points at `kushim batch run`), and a malformed token refuses before anything touches the database
+- `resolveTagPassSelection(batchID, execToken)` — validates the batch-mode selector before anything touches the database: a batch-mode invocation requires `--exec-token` (a tokenless refusal points at `kushim batch run`), and a malformed token refuses before anything touches the database
 
 ## `tagidentity.go`
 
 ### Functions
 
-- `tagIdentityHandler(c, args) error` — `kushim tagidentity [--from-batch <id> --exec-token <id>] [--no-wait]`. **Direct mode** runs the pass immediately under the manual maintenance hold and prints the report; **batch mode** executes one claimed batch whose handler resolves pending identity evidence through `admission.IdentityResolver` (criteria judged, same-intent pairs adjudicated, dispositions applied) under `enricher.tag_reconcile.max_rejudge`, storing the report on the task row. Enqueue is `kushim batch create tagidentity`; the deprecated `--run <id>` alias still parses until the command-grammar alignment pass.
+- `tagIdentityHandler(c, args) error` — `kushim tagidentity [--from-batch <id> --exec-token <id>] [--no-wait]`. **Direct mode** runs the pass immediately under the manual maintenance hold and prints the report; **batch mode** executes one claimed batch whose handler resolves pending identity evidence through `admission.IdentityResolver` (criteria judged, same-intent pairs adjudicated, dispositions applied) under `enricher.tag_reconcile.max_rejudge`, storing the report on the task row. Enqueue is `kushim batch create tagidentity`.
 
 ---
 

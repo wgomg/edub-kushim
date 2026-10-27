@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,21 +20,10 @@ const tagPassTimeout = 6 * time.Hour
 // the direct mode prints and the batch mode stores as the task result.
 type tagPass func(ctx context.Context) (json.RawMessage, error)
 
-// resolveTagPassSelection folds the deprecated --run alias onto the batch selector and validates the
-// execution token's shape before anything touches the database. A batch-mode invocation must carry the
-// token; a tokenless --run refuses and points at batch run, because the nested-fork contract that ran a
-// pass without a lease and lock no longer exists.
-func resolveTagPassSelection(batchID, execToken, runID string) (string, string, error) {
-	if runID != "" {
-		if batchID != "" {
-			return "", "", fmt.Errorf("--run is a deprecated alias of --from-batch; pass only one")
-		}
-		if execToken == "" {
-			return "", "", fmt.Errorf("--run is deprecated and now requires --exec-token: run 'kushim batch run <id>' to execute a queued batch")
-		}
-		fmt.Fprintln(os.Stderr, "warning: --run is deprecated; use --from-batch with --exec-token")
-		batchID = runID
-	}
+// resolveTagPassSelection validates the batch selector and the execution token's shape before anything
+// touches the database. A batch-mode invocation must carry the token; a tokenless selector refuses and
+// points at batch run.
+func resolveTagPassSelection(batchID, execToken string) (string, string, error) {
 	if batchID == "" && execToken == "" {
 		return "", "", nil
 	}

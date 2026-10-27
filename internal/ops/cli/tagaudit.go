@@ -20,8 +20,7 @@ const tagAuditHelpText = "Usage: kushim tagaudit [--from-batch <id> --exec-token
 	"  Runs the pass immediately under the maintenance lock, creating no queue rows.\n" +
 	"  --from-batch <id>  execute one claimed batch (dispatcher and 'kushim batch run' contract)\n" +
 	"  --exec-token <id>  execution token passed with --from-batch\n" +
-	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n" +
-	"  --run <id>         deprecated alias of --from-batch\n\n" +
+	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n\n" +
 	"  To enqueue an audit: kushim batch create tagaudit"
 
 func tagAuditHandler(c *container.Container, args []string) error {
@@ -30,14 +29,11 @@ func tagAuditHandler(c *container.Container, args []string) error {
 		return nil
 	}
 
-	var batchID, execTokenParam, runID string
+	var batchID, execTokenParam string
 	if err := fp.String("--from-batch", &batchID); err != nil {
 		return err
 	}
 	if err := fp.String("--exec-token", &execTokenParam); err != nil {
-		return err
-	}
-	if err := fp.String("--run", &runID); err != nil {
 		return err
 	}
 	noWait := false
@@ -46,7 +42,7 @@ func tagAuditHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("unknown flag(s): %v", rest)
 	}
 
-	batchID, execTokenParam, err := resolveTagPassSelection(batchID, execTokenParam, runID)
+	batchID, execTokenParam, err := resolveTagPassSelection(batchID, execTokenParam)
 	if err != nil {
 		return err
 	}

@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
@@ -20,8 +20,8 @@ import (
 	itypes "github.com/wgomg/edub-kushim/internal/types"
 )
 
-// TaskHandler is the task and batch API: listings, the batch summary and
-// dashboard analytics, retries, and the two-phase batch cancel.
+// TaskHandler is the task and batch API: task and batch listings, the batch summary, the dashboard analytics
+// and the two-phase batch cancel.
 type TaskHandler struct {
 	services  *service.CrudServices
 	client    *database.Client
@@ -78,13 +78,13 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 	if batchID != "" {
 		resp.BatchID = batchID
-		s, err := h.services.Batch.GetSummary(ctx, batchID)
+		overview, err := h.services.Batch.GetOverview(ctx, batchID)
 		if err != nil {
-			h.logger.Error(reqID, "get batch summary for %s: %v", batchID, err)
-			s = &service.BatchSummary{BatchID: batchID, OwnerState: "none"}
+			writeServiceError(w, h.logger, reqID, "get batch "+batchID, err)
+			return
 		}
-		summary := batchSummaryToResponse(s)
-		resp.Summary = &summary
+		item := batchItemFromOverview(overview)
+		resp.Summary = &item
 	}
 
 	for _, t := range tasks {
@@ -149,65 +149,12 @@ func (h *TaskHandler) GetTagReconcileReport(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// RetryTask is a compatibility alias: it resolves the task's batch and resumes it with the failed tasks
-// retried. Stage 8 moves the callers to the resume endpoint.
-func (h *TaskHandler) RetryTask(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := log.ReqIDFrom(ctx)
-
-	taskID := r.PathValue("id")
-
-	maxRetries, ok := h.reclaimMaxRetries(w)
-	if !ok {
-		return
-	}
-
-	if err := task.RetryTask(ctx, h.client, h.logger, taskID, maxRetries); err != nil {
-		if !writeBatchLifecycleError(w, err) {
-			h.logger.Error(reqID, "retry task %s: %v", taskID, err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// RetryBatch is a compatibility alias: it resumes the batch with the failed tasks retried. Stage 8 moves
-// the callers to the resume endpoint.
-func (h *TaskHandler) RetryBatch(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	reqID := log.ReqIDFrom(ctx)
-
-	batchID := r.PathValue("id")
-
-	maxRetries, ok := h.reclaimMaxRetries(w)
-	if !ok {
-		return
-	}
-
-	result, err := task.ResumeBatch(ctx, h.client, h.logger, batchID, maxRetries, true)
-	if err != nil {
-		if !writeBatchLifecycleError(w, err) {
-			h.logger.Error(reqID, "retry batch %s: %v", batchID, err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]int64{"retried": result.FailedRetried})
-}
-
-// batchLifecycleError classifies a lifecycle sentinel into the HTTP status and message that every retry,
-// resume and cancel surface shares, so the same failure is never reported differently by endpoint.
+// batchLifecycleError classifies a lifecycle sentinel into the HTTP status and message that every resume
+// and cancel surface shares, so the same failure is never reported differently by endpoint.
 func batchLifecycleError(err error) (status int, message string, handled bool) {
 	switch {
 	case errors.Is(err, task.ErrBatchNotFound):
 		return http.StatusNotFound, "batch not found", true
-	case errors.Is(err, task.ErrTaskNotFound):
-		return http.StatusNotFound, "task not found", true
-	case errors.Is(err, task.ErrTaskNotFailed):
-		return http.StatusConflict, "can only retry failed tasks", true
 	case errors.Is(err, task.ErrBatchTerminal), errors.Is(err, task.ErrBatchLocked),
 		errors.Is(err, task.ErrBatchNotResumable):
 		return http.StatusConflict, err.Error(), true
@@ -216,16 +163,7 @@ func batchLifecycleError(err error) (status int, message string, handled bool) {
 	}
 }
 
-// writeBatchLifecycleError writes the classified response and reports whether one was written.
-func writeBatchLifecycleError(w http.ResponseWriter, err error) bool {
-	status, message, handled := batchLifecycleError(err)
-	if handled {
-		http.Error(w, message, status)
-	}
-	return handled
-}
-
-// ListBatches serves the batch summaries, optionally filtered by status.
+// ListBatches serves one page of batch overviews, optionally filtered by batch status.
 func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
@@ -240,11 +178,7 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	limit := pb.GetInt64("limit", 20, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 0)
 
-	summaries, err := h.services.Batch.ListSummaries(ctx, task.BatchFilter{
-		Status: statusFilter,
-		Limit:  int32(limit),
-		Offset: int32(offset),
-	})
+	overviews, err := h.services.Batch.ListOverviews(ctx, statusFilter, int32(limit), int32(offset))
 	if err != nil {
 		h.logger.Error(reqID, "list batches: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -252,35 +186,42 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := ListBatchesResponse{
-		Batches: make([]BatchSummaryResponse, 0, len(summaries)),
+		Batches: make([]BatchItem, 0, len(overviews)),
 	}
 
-	for _, s := range summaries {
-		resp.Batches = append(resp.Batches, batchSummaryToResponse(&s))
+	for i := range overviews {
+		resp.Batches = append(resp.Batches, batchItemFromOverview(&overviews[i]))
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func batchSummaryToResponse(s *service.BatchSummary) BatchSummaryResponse {
-	return BatchSummaryResponse{
-		BatchID:  s.BatchID,
-		Status:   s.Status,
-		Origin:   s.Origin,
-		Schedule: s.Schedule,
+// batchItemFromOverview maps the one read model every batch surface reports.
+func batchItemFromOverview(ov *service.BatchOverview) BatchItem {
+	var createdAt string
+	if !ov.CreatedAt.IsZero() {
+		createdAt = ov.CreatedAt.Format(time.RFC3339)
+	}
+	return BatchItem{
+		BatchID:   ov.BatchID,
+		Status:    ov.Status,
+		Origin:    ov.Origin,
+		Schedule:  ov.Schedule,
+		CreatedAt: createdAt,
 		BatchCounts: BatchCounts{
-			Total:      s.Waiting + s.Pending + s.Processing + s.Completed + s.Failed + s.Cancelled + s.Discarded,
-			Waiting:    s.Waiting,
-			Pending:    s.Pending,
-			Processing: s.Processing,
-			Completed:  s.Completed,
-			Failed:     s.Failed,
-			Cancelled:  s.Cancelled,
-			Discarded:  s.Discarded,
-			OwnerState: s.OwnerState,
-			Orphaned:   s.Orphaned,
+			Total:      ov.Total,
+			Waiting:    ov.Waiting,
+			Pending:    ov.Pending,
+			Processing: ov.Processing,
+			Completed:  ov.Completed,
+			Failed:     ov.Failed,
+			Cancelled:  ov.Cancelled,
+			Discarded:  ov.Discarded,
+			OwnerState: ov.OwnerState,
+			Orphaned:   ov.Orphaned,
 		},
-		OwnerPID: s.OwnerPID,
+		OwnerPID:   ov.OwnerPID,
+		DurationMs: ov.DurationMs,
 	}
 }
 
@@ -290,36 +231,13 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
-	items := make([]BatchOverviewItem, 0)
-	overviews, err := h.services.Batch.ListOverviews(ctx, 10, 0)
+	items := make([]BatchItem, 0)
+	overviews, err := h.services.Batch.ListOverviews(ctx, "", 10, 0)
 	if err != nil {
 		h.logger.Error(reqID, "list batch overviews: %v", err)
 	} else {
-		for _, ov := range overviews {
-			var createdAt string
-			if !ov.CreatedAt.IsZero() {
-				createdAt = ov.CreatedAt.Format(time.RFC3339)
-			}
-			items = append(items, BatchOverviewItem{
-				BatchID:   ov.BatchID,
-				Status:    ov.Status,
-				Origin:    ov.Origin,
-				Schedule:  ov.Schedule,
-				CreatedAt: createdAt,
-				BatchCounts: BatchCounts{
-					Total:      ov.Total,
-					Waiting:    ov.Waiting,
-					Pending:    ov.Pending,
-					Processing: ov.Processing,
-					Completed:  ov.Completed,
-					Failed:     ov.Failed,
-					Cancelled:  ov.Cancelled,
-					Discarded:  ov.Discarded,
-					OwnerState: ov.OwnerState,
-					Orphaned:   ov.Orphaned,
-				},
-				DurationMs: ov.DurationMs,
-			})
+		for i := range overviews {
+			items = append(items, batchItemFromOverview(&overviews[i]))
 		}
 	}
 
@@ -336,16 +254,16 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	analytics := h.buildDocumentAnalytics(ctx, reqID)
 
 	var processingHealth *ProcessingHealth
-	ph, err := h.buildProcessingHealth(ctx, reqID)
+	ph, err := h.buildProcessingHealth(ctx)
 	if err != nil {
 		h.logger.Error(reqID, "processing health: %v", err)
 	} else {
 		processingHealth = ph
 	}
 
-	totalBatches, batchErr := h.services.Batch.CountDistinct(ctx)
+	totalBatches, batchErr := h.services.Batch.CountBatches(ctx)
 	if batchErr != nil {
-		h.logger.Error(reqID, "count distinct batches: %v", batchErr)
+		h.logger.Error(reqID, "count batches: %v", batchErr)
 	}
 
 	agg, aggErr := h.queries.DocumentAggregates(ctx)
@@ -498,7 +416,7 @@ func (h *TaskHandler) buildDocumentAnalytics(ctx context.Context, reqID string) 
 	return analytics
 }
 
-func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID string) (*ProcessingHealth, error) {
+func (h *TaskHandler) buildProcessingHealth(ctx context.Context) (*ProcessingHealth, error) {
 	successRow, err := h.queries.TaskSuccessRate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("task success rate: %w", err)
@@ -515,14 +433,14 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID string) (
 		return nil, fmt.Errorf("avg task duration: %w", err)
 	}
 
-	activeIDs, err := h.services.Batch.ActiveIDs(ctx)
+	activeBatches, err := h.services.Batch.CountActiveBatches(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("active batch ids: %w", err)
+		return nil, fmt.Errorf("count active batches: %w", err)
 	}
 
-	orphanedCount, err := h.services.Batch.CountOrphaned(ctx)
+	orphanedBatches, err := h.services.Batch.CountOrphaned(ctx)
 	if err != nil {
-		h.logger.Debug(reqID, "count orphaned: %v", err)
+		return nil, fmt.Errorf("count orphaned batches: %w", err)
 	}
 
 	missingTools := int64(0)
@@ -536,44 +454,51 @@ func (h *TaskHandler) buildProcessingHealth(ctx context.Context, reqID string) (
 		CompletedLast7d: successRow.Completed,
 		FailedLast7d:    successRow.Failed,
 		AvgDurationMs:   durRow.AvgDurationMs,
-		ActiveBatches:   int64(len(activeIDs)),
-		OrphanedBatches: orphanedCount,
+		ActiveBatches:   activeBatches,
+		OrphanedBatches: orphanedBatches,
 		MissingTools:    missingTools,
 	}, nil
 }
 
-// GetBatchSummary serves one batch's per-status counts.
+// GetBatchSummary serves one batch's aggregate row.
 func (h *TaskHandler) GetBatchSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
 	batchID := r.PathValue("id")
 
-	s, err := h.services.Batch.GetSummary(ctx, batchID)
+	overview, err := h.services.Batch.GetOverview(ctx, batchID)
 	if err != nil {
-		h.logger.Error(reqID, "get batch summary %s: %v", batchID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeServiceError(w, h.logger, reqID, "get batch "+batchID, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, batchSummaryToResponse(s))
+	writeJSON(w, http.StatusOK, batchItemFromOverview(overview))
 
-	h.logger.Debug(reqID, "batch summary: %+v", s)
+	h.logger.Debug(reqID, "batch overview: %+v", overview)
 }
 
-// ResumeBatch requeues a settled or paused batch, resetting its processing tasks.
+// ResumeBatch requeues a settled or paused batch, optionally retrying its failed tasks; the retry intent
+// is the retry_failed query parameter.
 func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
 
+	pb := GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	batchID := r.PathValue("id")
+	retryFailed := pb.GetBool("retry_failed", false)
 
 	maxRetries, ok := h.reclaimMaxRetries(w)
 	if !ok {
 		return
 	}
 
-	result, err := task.ResumeBatch(ctx, h.client, h.logger, batchID, maxRetries, false)
+	result, err := task.ResumeBatch(ctx, h.client, h.logger, batchID, maxRetries, retryFailed)
 	if err != nil {
 		if status, message, handled := batchLifecycleError(err); handled {
 			writeJSON(w, status, map[string]string{"error": message})
@@ -587,6 +512,8 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 	if !result.Resumed {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"resumed": false,
+			"reset":   result.Reset,
+			"retried": result.FailedRetried,
 			"reason":  "batch is already settled",
 		})
 		return
@@ -596,6 +523,8 @@ func (h *TaskHandler) ResumeBatch(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"resumed": true,
+		"reset":   result.Reset,
+		"retried": result.FailedRetried,
 	})
 }
 
@@ -637,23 +566,24 @@ func (h *TaskHandler) reclaimMaxRetries(w http.ResponseWriter) (int32, bool) {
 	return int32(cfg.Consumer.Reclaim.MaxRetries), true
 }
 
-// Labels derive from the task type and, for the type-specific variants, from the dedup key.
-func taskLabel(taskType itypes.TaskType, dedupKey sql.NullString) string {
-	key := dedupKey.String
-	switch {
-	case strings.HasPrefix(key, "backup:"):
-		mode := strings.TrimPrefix(key, "backup:")
-		if i := strings.IndexByte(mode, ':'); i >= 0 {
-			mode = mode[:i]
+// taskLabel names a task from its type and payload: the backup variant reads the mode the payload records,
+// defaulting to full.
+func taskLabel(taskType itypes.TaskType, payload json.RawMessage) string {
+	switch taskType {
+	case itypes.Task.Type.Backup:
+		var p struct {
+			Mode string `json:"mode"`
 		}
+		if len(payload) > 0 {
+			_ = json.Unmarshal(payload, &p)
+		}
+		mode := p.Mode
 		if mode == "" {
-			return "Backup"
+			mode = string(backup.BackupModeFull)
 		}
 		return "Backup (" + mode + ")"
-	case strings.HasPrefix(key, "mirror:"):
+	case itypes.Task.Type.Mirror:
 		return "Mirror"
-	}
-	switch taskType {
 	case itypes.Task.Type.Consume:
 		return "Consume"
 	case itypes.Task.Type.Enrich:
@@ -710,15 +640,20 @@ func buildTaskResponse(t database.Task, includeResult bool) TaskResponse {
 		}
 	}
 
+	var payload json.RawMessage
+	if t.Payload != nil {
+		payload = *t.Payload
+	}
+
 	fileName := ""
 	payloadDocID := ""
-	if t.Payload != nil {
+	if len(payload) > 0 {
 		var p struct {
 			FilePath   string `json:"file_path"`
 			FileName   string `json:"file_name"`
 			DocumentID string `json:"document_id"`
 		}
-		_ = json.Unmarshal(*t.Payload, &p)
+		_ = json.Unmarshal(payload, &p)
 		payloadDocID = p.DocumentID
 		if p.FilePath != "" {
 			fileName = filepath.Base(p.FilePath)
@@ -727,7 +662,7 @@ func buildTaskResponse(t database.Task, includeResult bool) TaskResponse {
 		}
 	}
 
-	label := taskLabel(t.TaskType, t.DedupKey)
+	label := taskLabel(t.TaskType, payload)
 	if fileName != "" {
 		switch t.TaskType {
 		case itypes.Task.Type.Consume, itypes.Task.Type.Enrich, itypes.Task.Type.Thumbnail:
@@ -809,27 +744,29 @@ type BatchCounts struct {
 	Orphaned   bool   `json:"orphaned"`
 }
 
-// BatchSummaryResponse is one batch's API view: identity, status, origin, schedule and the counts.
-type BatchSummaryResponse struct {
-	BatchID  string `json:"batch_id"`
-	Status   string `json:"status"`
-	Origin   string `json:"origin"`
-	Schedule string `json:"schedule,omitempty"`
+// BatchItem is one batch as every surface shows it: identity, status, origin, schedule, the per-status
+// counts, the owner's liveness and the run duration once terminal.
+type BatchItem struct {
+	BatchID   string `json:"batch_id"`
+	Status    string `json:"status"`
+	Origin    string `json:"origin"`
+	Schedule  string `json:"schedule,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 	BatchCounts
-	OwnerPID int64 `json:"owner_pid,omitempty"`
+	OwnerPID   int64  `json:"owner_pid,omitempty"`
+	DurationMs *int64 `json:"duration_ms,omitempty"`
 }
 
-// ListBatchesResponse wraps the batch summaries.
+// ListBatchesResponse wraps the batch items.
 type ListBatchesResponse struct {
-	Batches []BatchSummaryResponse `json:"batches"`
+	Batches []BatchItem `json:"batches"`
 }
 
-// ListTasksResponse is one batch's task list, optionally with its
-// summary.
+// ListTasksResponse is one batch's task list, optionally with its overview.
 type ListTasksResponse struct {
-	BatchID string                `json:"batch_id,omitempty"`
-	Summary *BatchSummaryResponse `json:"summary,omitempty"`
-	Tasks   []TaskResponse        `json:"tasks"`
+	BatchID string         `json:"batch_id,omitempty"`
+	Summary *BatchItem     `json:"summary,omitempty"`
+	Tasks   []TaskResponse `json:"tasks"`
 }
 
 // OriginalTypeStat is one file-type bucket of the storage usage.
@@ -846,17 +783,6 @@ type StorageTrendPoint struct {
 	DailyCount      int64  `json:"daily_count"`
 	DailyBytes      int64  `json:"daily_bytes"`
 	CumulativeBytes int64  `json:"cumulative_bytes"`
-}
-
-// BatchOverviewItem is one recent batch for the dashboard.
-type BatchOverviewItem struct {
-	BatchID   string `json:"batch_id"`
-	Status    string `json:"status"`
-	Origin    string `json:"origin"`
-	Schedule  string `json:"schedule,omitempty"`
-	CreatedAt string `json:"created_at"`
-	BatchCounts
-	DurationMs *int64 `json:"duration_ms,omitempty"`
 }
 
 // DistributionItem is one labeled bucket of a distribution chart.
@@ -896,7 +822,7 @@ type RunningTasksResponse struct {
 
 // DashboardResponse is everything the dashboard needs in one payload.
 type DashboardResponse struct {
-	RecentBatches         []BatchOverviewItem  `json:"recent_batches"`
+	RecentBatches         []BatchItem          `json:"recent_batches"`
 	RunningTasks          RunningTasksResponse `json:"running_tasks"`
 	Analytics             *DocumentAnalytics   `json:"analytics,omitempty"`
 	ProcessingHealth      *ProcessingHealth    `json:"processing_health,omitempty"`

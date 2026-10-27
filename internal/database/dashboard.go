@@ -233,36 +233,6 @@ func (q *Queries) AvgTaskDurationMs(ctx context.Context) (AvgTaskDurationMsRow, 
 	return r, err
 }
 
-// ActiveBatchIDs lists the batch ids still carrying processing tasks.
-func (q *Queries) ActiveBatchIDs(ctx context.Context) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, `
-		SELECT DISTINCT batch_id
-		FROM task
-		WHERE batch_id IS NOT NULL
-		  AND status IN ('pending', 'processing')
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan active batch id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
 // DistinctLanguages lists the distinct stored languages.
 func (q *Queries) DistinctLanguages(ctx context.Context) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx,

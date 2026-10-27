@@ -47,7 +47,7 @@ var commandSets = map[string]map[string]Command{
 		},
 		"task": {
 			Name:        "task",
-			Description: "Manage tasks (list, status, retry)",
+			Description: "Manage tasks (list, status)",
 			Handler:     taskHandler,
 		},
 		"batch": {

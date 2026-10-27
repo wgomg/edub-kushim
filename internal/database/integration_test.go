@@ -1084,9 +1084,9 @@ func TestTaskHealthQueries(t *testing.T) {
 		assertNoError(t, err, "avg duration")
 		assertEqual(t, dur.AvgDurationMs, int64(0), "avg duration ms")
 
-		ids, err := q.ActiveBatchIDs(ctx)
-		assertNoError(t, err, "active batch ids")
-		assertEqual(t, len(ids), 0, "no active batches")
+		activeBatches, err := q.CountActiveBatches(ctx)
+		assertNoError(t, err, "count active batches")
+		assertEqual(t, activeBatches, int64(0), "no active batches")
 	})
 
 	t.Run("with mixed tasks", func(t *testing.T) {
@@ -1122,6 +1122,7 @@ func TestTaskHealthQueries(t *testing.T) {
 		})
 		assertNoError(t, err, "create pending task")
 
+		seedLease(t, q, "th-batch-2", "th-owner-2")
 		id4, err := q.CreateTask(ctx, CreateTaskParams{
 			TaskID: "th-processing", TaskType: types.Task.Type.Consume, Status: types.Task.Status.Pending,
 			BatchID: sql.NullString{String: "th-batch-2", Valid: true},
@@ -1144,19 +1145,9 @@ func TestTaskHealthQueries(t *testing.T) {
 			t.Fatalf("avg duration ms: got %d, want <= 5000", dur.AvgDurationMs)
 		}
 
-		ids, err := q.ActiveBatchIDs(ctx)
-		assertNoError(t, err, "active batch ids")
-		assertEqual(t, len(ids), 2, "two active batches")
-		found := map[string]bool{}
-		for _, id := range ids {
-			found[id] = true
-		}
-		if !found["th-batch-1"] {
-			t.Fatal("expected th-batch-1 in active batches")
-		}
-		if !found["th-batch-2"] {
-			t.Fatal("expected th-batch-2 in active batches")
-		}
+		activeBatches, err := q.CountActiveBatches(ctx)
+		assertNoError(t, err, "count active batches")
+		assertEqual(t, activeBatches, int64(3), "three active batches")
 	})
 }
 

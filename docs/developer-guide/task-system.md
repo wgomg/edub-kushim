@@ -883,19 +883,18 @@ sweeps handle process death after the cutoff.
 
 ## 11. Retry and resume
 
-Four surfaces resolve to **one** operation, `task.ResumeBatch`
+Three surfaces resolve to **one** operation, `task.ResumeBatch`
 (`internal/task/batch.go`), with `includeFailed` selecting whether failed
 tasks re-run:
 
-- **`kushim task retry <id>` / `POST /api/v1/tasks/{id}/retry`** — the task
-  alias: resolve the task, refuse a non-failed task (`409`), missing task
-  (`404`), then resume its batch with failed tasks reset (`includeFailed:
-  true`), answering `204`.
-- **`POST /api/v1/batches/{id}/retry`** — the batch alias with
-  `includeFailed: true`, answering `{"retried": <n>}`.
-- **`POST /api/v1/batches/{id}/resume`** — `includeFailed: false`; answers
-  `{"resumed": true}` when the batch went back to `queued` and
-  `{"resumed": false}` when nothing can become active.
+- **`POST /api/v1/batches/{id}/resume?retry_failed=<bool>`** — the API
+  recovery surface: `retry_failed=true` answers
+  `{"resumed": true, "reset": <n>, "retried": <n>}` when the batch went back
+  to `queued`, or `200 {"resumed": false, ..., "reason": ...}` when nothing
+  can become active.
+- **`kushim batch resume <batch-id>` / `kushim batch restart <batch-id>`** —
+  the CLI's two spellings of the same operation: `resume` passes
+  `includeFailed: false` (failed tasks stay failed), `restart` passes `true`.
 - **`POST /wizard/config/retry`** — resume of the wizard's failed migration
   batches, plus a re-trigger of the failed or missing direct asset downloads.
 
@@ -910,8 +909,8 @@ the requeue. An operation that would leave no active work (a fully cancelled
 batch, say) touches nothing and reports `Resumed = false`.
 
 **Every endpoint maps one lifecycle sentinel the same way** (`batchLifecycleError`,
-`internal/api/handlers/task.go`): missing batch/task → `404`, terminal / locked
-by a live owner / not resumable / task-not-failed → `409` with the sentinel's
+`internal/api/handlers/task.go`): missing batch → `404`, terminal / locked
+by a live owner / not resumable → `409` with the sentinel's
 message — so the same failure is never reported differently by endpoint.
 
 The reset paths also restore: the batch reset

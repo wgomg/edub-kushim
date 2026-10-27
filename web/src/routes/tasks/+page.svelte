@@ -13,6 +13,9 @@
 	let taskRefreshKey = $state(0);
 	let batchRefreshKey = $state(0);
 
+	// the statuses ResumeBatch accepts; keep in sync with internal/task/batch.go
+	const RESUMABLE_BATCH_STATUSES = ['failed', 'completed', 'cancelled', 'paused'];
+
 	function formatDate(v) {
 		if (!v) return '—';
 		return new Date(v).toLocaleString();
@@ -124,12 +127,12 @@
 			cell: (_v, row) => {
 				if (authStore.authEnabled() && !authStore.isEditor()) return '';
 				let buttons = '';
-				if (row.failed) {
+				if (row.failed && RESUMABLE_BATCH_STATUSES.includes(row.status)) {
 					buttons += actionButton(RETRY_ICON, 'Retry', 'text-parchment-400 hover:text-gold-500', {
 						'data-retry-batch': row.batch_id
 					});
 				}
-				if (row.orphaned) {
+				if (row.status === 'paused') {
 					buttons += actionButton(RESUME_ICON, 'Resume', 'text-parchment-400 hover:text-gold-500', {
 						'data-resume-batch': row.batch_id
 					});
@@ -223,7 +226,7 @@
 				if (authStore.authEnabled() && !authStore.isEditor()) return '';
 				if (row.status !== 'failed') return '';
 				return actionButton(RETRY_ICON, 'Retry', 'text-parchment-400 hover:text-gold-500', {
-					'data-retry-task': row.task_id
+					'data-retry-task-batch': row.batch_id
 				});
 			}
 		}
@@ -255,12 +258,13 @@
 	}
 
 	function handlePageClick(e) {
-		const taskBtn = e.target.closest('[data-retry-task]');
-		if (taskBtn) {
+		const taskBatchBtn = e.target.closest('[data-retry-task-batch]');
+		if (taskBatchBtn) {
 			e.stopPropagation();
-			const taskId = taskBtn.getAttribute('data-retry-task');
-			api.tasks.retry(taskId).then(() => {
+			const batchId = taskBatchBtn.getAttribute('data-retry-task-batch');
+			api.batches.resume(batchId, true).then(() => {
 				taskRefreshKey++;
+				batchRefreshKey++;
 			});
 			return;
 		}
@@ -268,7 +272,7 @@
 		if (batchBtn) {
 			e.stopPropagation();
 			const batchId = batchBtn.getAttribute('data-retry-batch');
-			api.batches.retry(batchId).then(() => {
+			api.batches.resume(batchId, true).then(() => {
 				batchRefreshKey++;
 			});
 			return;

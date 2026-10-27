@@ -119,4 +119,15 @@ describe('api', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(await api.supportedMimeTypes()).toEqual([{ extension: '.pdf' }]);
 	});
+
+	it('batches.resume posts to the resume endpoint, adding retry_failed only when asked', async () => {
+		fetchMock.mockResolvedValue(jsonResponse({ body: { resumed: true } }));
+
+		await api.batches.resume('b-1', true);
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/batches/b-1/resume?retry_failed=true');
+		expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+
+		await api.batches.resume('b-2');
+		expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/batches/b-2/resume');
+	});
 });

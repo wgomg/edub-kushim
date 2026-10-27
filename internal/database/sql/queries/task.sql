@@ -28,54 +28,31 @@ SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;
 
+-- name: ListAllTasksByBatch :many
+-- the ListAll prefix marks an unpaginated read of the filtered shape, not an unfiltered table scan:
+-- this is one batch's whole task set, used by the settle-time enrich bookend
+SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
+       created_at, started_at, completed_at, error, attempts, progress
+FROM task WHERE batch_id = $1 ORDER BY created_at DESC;
+
 -- name: ListTasksByBatchAndStatus :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress
 FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4;
 
--- name: ListAllTasks :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
-FROM task ORDER BY created_at DESC;
-
--- name: ListAllTasksByStatus :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
-FROM task WHERE status = $1 ORDER BY created_at DESC;
-
--- name: ListAllTasksByBatch :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
-FROM task WHERE batch_id = $1 ORDER BY created_at DESC;
-
 -- name: ListBatchTaskProgress :many
 SELECT task_id, task_type, status, payload, error, progress
 FROM task WHERE batch_id = $1 ORDER BY created_at DESC;
-
--- name: ListAllTasksByBatchAndStatus :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
-FROM task WHERE batch_id = $1 AND status = $2 ORDER BY created_at DESC;
 
 -- name: ListTasksByBatchAndStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress
 FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC LIMIT $4 OFFSET $5;
 
--- name: ListAllTasksByBatchAndStatusAndType :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
-FROM task WHERE batch_id = $1 AND status = $2 AND task_type = $3 ORDER BY created_at DESC;
-
 -- name: ListTasksByBatchAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress
 FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4;
-
--- name: ListAllTasksByBatchAndType :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
-FROM task WHERE batch_id = $1 AND task_type = $2 ORDER BY created_at DESC;
 
 -- name: ListTasksByStatusAndType :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
@@ -91,11 +68,6 @@ FROM task WHERE status = $1 AND task_type = $2 ORDER BY created_at DESC;
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
        created_at, started_at, completed_at, error, attempts, progress
 FROM task WHERE task_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;
-
--- name: ListAllTasksByType :many
-SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
-       created_at, started_at, completed_at, error, attempts, progress
-FROM task WHERE task_type = $1 ORDER BY created_at DESC;
 
 -- name: ListActiveTasks :many
 SELECT id, task_id, task_type, status, batch_id, payload, result, dedup_key,
@@ -255,23 +227,6 @@ WHERE batch_id = $1 AND status IN ('pending', 'waiting');
 -- name: CancelProcessingTasksByBatch :execrows
 UPDATE task SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
 WHERE batch_id = $1 AND status = 'processing';
-
--- name: ListDistinctBatchIDs :many
-SELECT batch_id FROM task
-WHERE batch_id IS NOT NULL
-GROUP BY batch_id
-ORDER BY MAX(created_at) DESC
-LIMIT $1 OFFSET $2;
-
--- name: ListDistinctBatchIDsByStatus :many
-SELECT batch_id FROM task
-WHERE batch_id IS NOT NULL AND status = $1
-GROUP BY batch_id
-ORDER BY MAX(created_at) DESC
-LIMIT $2 OFFSET $3;
-
--- name: CountDistinctBatches :one
-SELECT COUNT(DISTINCT batch_id) FROM task WHERE batch_id IS NOT NULL;
 
 -- name: CountAllTasks :one
 SELECT COUNT(*) FROM task;

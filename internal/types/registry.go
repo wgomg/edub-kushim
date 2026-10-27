@@ -284,9 +284,6 @@ func AllBatchStatuses() []BatchStatus { return slices.Clone(allBatchStatuses) }
 // AllTaskTypes returns every declared task type, cloned.
 func AllTaskTypes() []TaskType { return slices.Clone(allTaskTypes) }
 
-// AllTaskStatuses returns every declared task status, cloned.
-func AllTaskStatuses() []TaskStatus { return slices.Clone(allTaskStatuses) }
-
 // LockDeclarationFor returns the queued lock declaration of a task type; a type without a declaration
 // declares neither locks nor waits. The returned slices are cloned, so callers cannot mutate the table.
 func LockDeclarationFor(t TaskType) LockDeclaration {
@@ -340,31 +337,6 @@ func LockNameValues() []string {
 		values[i] = string(name)
 	}
 	return values
-}
-
-// NonConsumeTaskTypes are the task types whose batches are maintenance work rather than consume work:
-// the batch overviews use the list to classify them outside the consume slot.
-func NonConsumeTaskTypes() []TaskType { return slices.Clone(nonConsumeTaskTypes) }
-
-// NonConsumeTaskTypeValues is NonConsumeTaskTypes in plain string form for the query parameters that
-// classify batches, so the SQL predicates cannot drift from the Go list.
-func NonConsumeTaskTypeValues() []string {
-	values := make([]string, len(nonConsumeTaskTypes))
-	for i, taskType := range nonConsumeTaskTypes {
-		values[i] = string(taskType)
-	}
-	return values
-}
-
-var nonConsumeTaskTypes = []TaskType{
-	Task.Type.MigrateDB,
-	Task.Type.MigrateStorage,
-	Task.Type.Backup,
-	Task.Type.Mirror,
-	Task.Type.TagReconcile,
-	Task.Type.TagMeasure,
-	Task.Type.TagIdentity,
-	Task.Type.TagAudit,
 }
 
 var allBatchOrigins = []BatchOrigin{

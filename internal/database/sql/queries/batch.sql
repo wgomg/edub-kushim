@@ -174,55 +174,62 @@ SELECT task_id, payload FROM task
 WHERE batch_id = @batch_id AND task_type = 'consume'
   AND status = 'failed' AND attempts >= @attempts;
 
--- name: BatchHasNonConsumeTask :one
-SELECT EXISTS (
-    SELECT 1 FROM task t
-    WHERE t.batch_id = $1 AND t.task_type::text = ANY(@non_consume_types::text[])
-);
-
 -- name: ListBatchOverviews :many
+-- the batch table is the only listing source: the list, the dashboard, the single-batch summary and the CLI
+-- read this one aggregate shape, and the orphan flag comes from the single batch_orphaned definition
 SELECT
     b.id AS batch_id,
     b.origin,
     b.schedule,
     b.created_at AS batch_created_at,
     b.status AS batch_status,
-    COALESCE(sub.total, 0) AS total,
-    COALESCE(sub.waiting, 0) AS waiting,
-    COALESCE(sub.pending, 0) AS pending,
-    COALESCE(sub.processing, 0) AS processing,
-    COALESCE(sub.completed, 0) AS completed,
-    COALESCE(sub.failed, 0) AS failed,
-    COALESCE(sub.cancelled, 0) AS cancelled,
-    COALESCE(sub.discarded, 0) AS discarded,
+    COALESCE(sub.total, 0)::bigint AS total,
+    COALESCE(sub.waiting, 0)::bigint AS waiting,
+    COALESCE(sub.pending, 0)::bigint AS pending,
+    COALESCE(sub.processing, 0)::bigint AS processing,
+    COALESCE(sub.completed, 0)::bigint AS completed,
+    COALESCE(sub.failed, 0)::bigint AS failed,
+    COALESCE(sub.cancelled, 0)::bigint AS cancelled,
+    COALESCE(sub.discarded, 0)::bigint AS discarded,
     sub.first_started_at AS first_started_at,
     sub.last_completed_at AS last_completed_at,
     bo.last_heartbeat AS owner_last_heartbeat,
     bo.pid AS owner_pid,
     (bo.last_heartbeat IS NOT NULL
       AND bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)) AS owner_stale,
-    EXISTS (
-        SELECT 1 FROM task t2
-        WHERE t2.batch_id = b.id AND t2.task_type::text = ANY(@non_consume_types::text[])
-    ) AS non_consume
+    batch_orphaned(b.id, @stale_after_seconds::int) AS orphaned
 FROM batch b
 LEFT JOIN LATERAL (
     SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN t.status = 'waiting'   THEN 1 ELSE 0 END) AS waiting,
-        SUM(CASE WHEN t.status = 'pending'   THEN 1 ELSE 0 END) AS pending,
-        SUM(CASE WHEN t.status = 'processing' THEN 1 ELSE 0 END) AS processing,
-        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN t.status = 'failed'    THEN 1 ELSE 0 END) AS failed,
-        SUM(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
-        SUM(CASE WHEN t.status = 'discarded' THEN 1 ELSE 0 END) AS discarded,
+        COUNT(*)::bigint AS total,
+        COUNT(*) FILTER (WHERE t.status = 'waiting')::bigint AS waiting,
+        COUNT(*) FILTER (WHERE t.status = 'pending')::bigint AS pending,
+        COUNT(*) FILTER (WHERE t.status = 'processing')::bigint AS processing,
+        COUNT(*) FILTER (WHERE t.status = 'completed')::bigint AS completed,
+        COUNT(*) FILTER (WHERE t.status = 'failed')::bigint AS failed,
+        COUNT(*) FILTER (WHERE t.status = 'cancelled')::bigint AS cancelled,
+        COUNT(*) FILTER (WHERE t.status = 'discarded')::bigint AS discarded,
         MIN(t.started_at) AS first_started_at,
         MAX(t.completed_at) AS last_completed_at
     FROM task t WHERE t.batch_id = b.id
 ) sub ON true
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
+WHERE (sqlc.narg('batch_id')::text IS NULL OR b.id = sqlc.narg('batch_id')::text)
+  AND (sqlc.narg('status')::text IS NULL OR b.status = sqlc.narg('status')::batch_status)
 ORDER BY b.created_at DESC
-LIMIT $1 OFFSET $2;
+LIMIT @row_limit OFFSET @row_offset;
+
+-- name: CountBatches :one
+SELECT COUNT(*)::bigint FROM batch;
+
+-- name: CountActiveBatches :one
+-- non-terminal batches are the ones the dashboard's active card reports
+SELECT COUNT(*)::bigint FROM batch WHERE status IN ('queued', 'processing', 'paused');
+
+-- name: CountOrphanedBatches :one
+-- the status pre-filter keeps the per-row function off non-processing batches; the function is the rule
+SELECT COUNT(*)::bigint FROM batch b
+WHERE b.status = 'processing' AND batch_orphaned(b.id, @stale_after_seconds::int);
 
 -- name: CountPausedBatches :one
 SELECT COUNT(*) FROM batch WHERE status = 'paused';

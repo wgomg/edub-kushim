@@ -24,10 +24,12 @@ func backfillThumbnailsHandler(c *container.Container, args []string) error {
 	if fp.Help("Usage: kushim thumbnails <mode> [flags]\n\n" +
 		"Modes:\n" +
 		"  --all                Generate every missing thumbnail now\n" +
-		"  --document <id>      Generate one document's thumbnail now\n\n" +
+		"  --document <id>      Generate one document's thumbnail now\n" +
+		"  --from-batch <id>    Execute one claimed batch (dispatcher and 'kushim batch run' contract)\n\n" +
 		"Flags:\n" +
 		"  --force              Proceed even if thumbnails are disabled in config\n" +
-		"  --no-wait            Exit non-zero instead of waiting for a lock or in-flight work\n\n" +
+		"  --no-wait            Exit non-zero instead of waiting for a lock or in-flight work\n" +
+		"  --exec-token <id>    Execution token passed with --from-batch\n\n" +
 		"  Runs immediately under the storage hold, creating no queue rows.\n" +
 		"  To enqueue a backfill: kushim batch create thumbnails [--from-batch <id> | --document <id>]") {
 		return nil

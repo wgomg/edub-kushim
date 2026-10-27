@@ -25,12 +25,12 @@
 
 	async function handleRetry() {
 		retrying = true;
-		const res = await fetch(`/api/v1/tasks/${params.id}/retry`, { method: 'POST' });
-		if (res.ok) {
-			toastStore.success('Task retried');
+		const res = await api.batches.resume(task.batch_id, true);
+		if (res.resumed) {
+			toastStore.success('Batch resumed');
 			task = await api.tasks.get(params.id);
 		} else {
-			toastStore.error('Failed to retry task');
+			toastStore.error(res.reason ?? 'Failed to resume the batch');
 		}
 		retrying = false;
 	}
@@ -171,7 +171,7 @@
 				aria-live="polite"
 				class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-950 focus-visible:outline-none disabled:opacity-50"
 			>
-				{retrying ? 'Retrying…' : 'Retry Task'}
+				{retrying ? 'Retrying…' : 'Retry Batch'}
 			</button>
 		{/if}
 	{/if}

@@ -24,17 +24,17 @@ func TestTagCommandsDispatchHelp(t *testing.T) {
 	}
 }
 
-// TestTagCommandsValidateRunID pins the batch-mode contract across the tag verbs: --run is the deprecated
-// alias of --from-batch and requires the execution token, and a malformed token is rejected before a pass
-// is launched.
+// TestTagCommandsValidateRunID pins the batch-mode contract across the tag verbs: --from-batch requires
+// the execution token, the removed --run alias is rejected as an unknown flag, and a malformed token is
+// rejected before a pass is launched.
 func TestTagCommandsValidateRunID(t *testing.T) {
 	c, _ := newTestContainer(t)
 	runner := NewCommandRunner(c, "cli")
 
 	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
 		err := runner.ExecuteCommand(name, []string{"--run", "not-a-uuid"})
-		if err == nil || !strings.Contains(err.Error(), "--exec-token") {
-			t.Errorf("%s --run without a token: got %v, want the deprecation refusal pointing at --exec-token", name, err)
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("%s --run: got %v, want an unknown-flag error", name, err)
 		}
 
 		err = runner.ExecuteCommand(name, []string{"--from-batch", "batch-1", "--exec-token", "not-a-uuid"})

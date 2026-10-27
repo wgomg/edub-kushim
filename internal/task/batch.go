@@ -266,12 +266,6 @@ func resetProcessing(ctx context.Context, client *database.Client, batchID strin
 	return result, nil
 }
 
-// IsOrphaned decides whether a batch needs takeover: the owner state and the pending and processing
-// counts together say whether a dead owner left work behind.
-func IsOrphaned(state OwnerState, pending, processing int64) bool {
-	return state != OwnerLive && (pending > 0 || processing > 0)
-}
-
 // IsAlive reports whether a PID belongs to a live process; a non-positive pid is never alive, since kill(0)
 // targets the caller's own process group and a negative pid targets another group.
 func IsAlive(pid int64) bool {
@@ -569,25 +563,6 @@ func ResumeBatch(ctx context.Context, client *database.Client, logger *log.Logge
 	result.Resumed = true
 	logger.Info("", "batch %s resumed: %d processing tasks reset, %d failed tasks retried", batchID, result.Reset, result.FailedRetried)
 	return result, nil
-}
-
-// ErrTaskNotFailed reports a retry request on a task that has not failed.
-var ErrTaskNotFailed = errors.New("task is not failed")
-
-// RetryTask is the compatibility alias behind the task retry surfaces: it resolves the task and resumes its
-// batch with the failed tasks retried. An unknown id reports ErrTaskNotFound and a task that has not failed
-// reports ErrTaskNotFailed; a live lease or a non-resumable batch surfaces from ResumeBatch. logger must be
-// non-nil.
-func RetryTask(ctx context.Context, client *database.Client, logger *log.Logger, taskID string, maxRetries int32) error {
-	t, err := Get(ctx, client.Queries, taskID)
-	if err != nil {
-		return err
-	}
-	if t.Status != types.Task.Status.Failed {
-		return fmt.Errorf("%w: task %s is %s", ErrTaskNotFailed, taskID, t.Status)
-	}
-	_, err = ResumeBatch(ctx, client, logger, t.BatchID.String, maxRetries, true)
-	return err
 }
 
 func executionOwner(exec Execution) sql.NullString {

@@ -38,25 +38,6 @@ func (q *Queries) AdoptBatchOwner(ctx context.Context, arg AdoptBatchOwnerParams
 	return result.RowsAffected()
 }
 
-const batchHasNonConsumeTask = `-- name: BatchHasNonConsumeTask :one
-SELECT EXISTS (
-    SELECT 1 FROM task t
-    WHERE t.batch_id = $1 AND t.task_type::text = ANY($2::text[])
-)
-`
-
-type BatchHasNonConsumeTaskParams struct {
-	BatchID         sql.NullString
-	NonConsumeTypes []string
-}
-
-func (q *Queries) BatchHasNonConsumeTask(ctx context.Context, arg BatchHasNonConsumeTaskParams) (bool, error) {
-	row := q.db.QueryRowContext(ctx, batchHasNonConsumeTask, arg.BatchID, pq.Array(arg.NonConsumeTypes))
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const batchTaskStatusCounts = `-- name: BatchTaskStatusCounts :one
 SELECT
     COUNT(*) FILTER (WHERE status = 'waiting')::bigint AS waiting,
@@ -92,6 +73,18 @@ func (q *Queries) BatchTaskStatusCounts(ctx context.Context, batchID sql.NullStr
 		&i.Discarded,
 	)
 	return i, err
+}
+
+const countActiveBatches = `-- name: CountActiveBatches :one
+SELECT COUNT(*)::bigint FROM batch WHERE status IN ('queued', 'processing', 'paused')
+`
+
+// non-terminal batches are the ones the dashboard's active card reports
+func (q *Queries) CountActiveBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveBatches)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countActiveBatchesForSchedule = `-- name: CountActiveBatchesForSchedule :one
@@ -135,6 +128,17 @@ func (q *Queries) CountActiveTagIdentityBatches(ctx context.Context) (int64, err
 	return count, err
 }
 
+const countBatches = `-- name: CountBatches :one
+SELECT COUNT(*)::bigint FROM batch
+`
+
+func (q *Queries) CountBatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countBatches)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countLiveNoHoldsBatches = `-- name: CountLiveNoHoldsBatches :one
 SELECT COUNT(*) FROM batch_owner bo
 WHERE bo.dispatcher_id = $1::uuid
@@ -160,6 +164,19 @@ func (q *Queries) CountLiveNoHoldsBatches(ctx context.Context, arg CountLiveNoHo
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countOrphanedBatches = `-- name: CountOrphanedBatches :one
+SELECT COUNT(*)::bigint FROM batch b
+WHERE b.status = 'processing' AND batch_orphaned(b.id, $1::int)
+`
+
+// the status pre-filter keeps the per-row function off non-processing batches; the function is the rule
+func (q *Queries) CountOrphanedBatches(ctx context.Context, staleAfterSeconds int32) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOrphanedBatches, staleAfterSeconds)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countPausedBatches = `-- name: CountPausedBatches :one
@@ -389,49 +406,49 @@ SELECT
     b.schedule,
     b.created_at AS batch_created_at,
     b.status AS batch_status,
-    COALESCE(sub.total, 0) AS total,
-    COALESCE(sub.waiting, 0) AS waiting,
-    COALESCE(sub.pending, 0) AS pending,
-    COALESCE(sub.processing, 0) AS processing,
-    COALESCE(sub.completed, 0) AS completed,
-    COALESCE(sub.failed, 0) AS failed,
-    COALESCE(sub.cancelled, 0) AS cancelled,
-    COALESCE(sub.discarded, 0) AS discarded,
+    COALESCE(sub.total, 0)::bigint AS total,
+    COALESCE(sub.waiting, 0)::bigint AS waiting,
+    COALESCE(sub.pending, 0)::bigint AS pending,
+    COALESCE(sub.processing, 0)::bigint AS processing,
+    COALESCE(sub.completed, 0)::bigint AS completed,
+    COALESCE(sub.failed, 0)::bigint AS failed,
+    COALESCE(sub.cancelled, 0)::bigint AS cancelled,
+    COALESCE(sub.discarded, 0)::bigint AS discarded,
     sub.first_started_at AS first_started_at,
     sub.last_completed_at AS last_completed_at,
     bo.last_heartbeat AS owner_last_heartbeat,
     bo.pid AS owner_pid,
     (bo.last_heartbeat IS NOT NULL
-      AND bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $3::int)) AS owner_stale,
-    EXISTS (
-        SELECT 1 FROM task t2
-        WHERE t2.batch_id = b.id AND t2.task_type::text = ANY($4::text[])
-    ) AS non_consume
+      AND bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $1::int)) AS owner_stale,
+    batch_orphaned(b.id, $1::int) AS orphaned
 FROM batch b
 LEFT JOIN LATERAL (
     SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN t.status = 'waiting'   THEN 1 ELSE 0 END) AS waiting,
-        SUM(CASE WHEN t.status = 'pending'   THEN 1 ELSE 0 END) AS pending,
-        SUM(CASE WHEN t.status = 'processing' THEN 1 ELSE 0 END) AS processing,
-        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN t.status = 'failed'    THEN 1 ELSE 0 END) AS failed,
-        SUM(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
-        SUM(CASE WHEN t.status = 'discarded' THEN 1 ELSE 0 END) AS discarded,
+        COUNT(*)::bigint AS total,
+        COUNT(*) FILTER (WHERE t.status = 'waiting')::bigint AS waiting,
+        COUNT(*) FILTER (WHERE t.status = 'pending')::bigint AS pending,
+        COUNT(*) FILTER (WHERE t.status = 'processing')::bigint AS processing,
+        COUNT(*) FILTER (WHERE t.status = 'completed')::bigint AS completed,
+        COUNT(*) FILTER (WHERE t.status = 'failed')::bigint AS failed,
+        COUNT(*) FILTER (WHERE t.status = 'cancelled')::bigint AS cancelled,
+        COUNT(*) FILTER (WHERE t.status = 'discarded')::bigint AS discarded,
         MIN(t.started_at) AS first_started_at,
         MAX(t.completed_at) AS last_completed_at
     FROM task t WHERE t.batch_id = b.id
 ) sub ON true
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
+WHERE ($2::text IS NULL OR b.id = $2::text)
+  AND ($3::text IS NULL OR b.status = $3::batch_status)
 ORDER BY b.created_at DESC
-LIMIT $1 OFFSET $2
+LIMIT $5 OFFSET $4
 `
 
 type ListBatchOverviewsParams struct {
-	Limit             int32
-	Offset            int32
 	StaleAfterSeconds int32
-	NonConsumeTypes   []string
+	BatchID           sql.NullString
+	Status            sql.NullString
+	RowOffset         int32
+	RowLimit          int32
 }
 
 type ListBatchOverviewsRow struct {
@@ -453,15 +470,18 @@ type ListBatchOverviewsRow struct {
 	OwnerLastHeartbeat sql.NullTime
 	OwnerPid           sql.NullInt64
 	OwnerStale         sql.NullBool
-	NonConsume         bool
+	Orphaned           bool
 }
 
+// the batch table is the only listing source: the list, the dashboard, the single-batch summary and the CLI
+// read this one aggregate shape, and the orphan flag comes from the single batch_orphaned definition
 func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviewsParams) ([]ListBatchOverviewsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listBatchOverviews,
-		arg.Limit,
-		arg.Offset,
 		arg.StaleAfterSeconds,
-		pq.Array(arg.NonConsumeTypes),
+		arg.BatchID,
+		arg.Status,
+		arg.RowOffset,
+		arg.RowLimit,
 	)
 	if err != nil {
 		return nil, err
@@ -489,7 +509,7 @@ func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviews
 			&i.OwnerLastHeartbeat,
 			&i.OwnerPid,
 			&i.OwnerStale,
-			&i.NonConsume,
+			&i.Orphaned,
 		); err != nil {
 			return nil, err
 		}
