@@ -13,6 +13,9 @@ func TestDefaultConfig_TagMeasure(t *testing.T) {
 	if cfg.Enricher.TagMeasure.Time != "03:00" {
 		t.Errorf("TagMeasure.Time = %q, want 03:00", cfg.Enricher.TagMeasure.Time)
 	}
+	if cfg.Enricher.TagMeasure.AfterEnrichmentBatch {
+		t.Error("TagMeasure.AfterEnrichmentBatch should default to false")
+	}
 }
 
 func TestFinalizeConfig_TagMeasure(t *testing.T) {
@@ -53,12 +56,14 @@ func TestFinalizeConfig_TagMeasure(t *testing.T) {
 		cfg.Enricher.TagMeasure.Enabled = true
 		cfg.Enricher.TagMeasure.Interval = 3
 		cfg.Enricher.TagMeasure.Time = "04:30"
+		cfg.Enricher.TagMeasure.AfterEnrichmentBatch = true
 		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
 			t.Fatalf("finalizeConfig: %v", err)
 		}
 		if !cfg.Enricher.TagMeasure.Enabled ||
 			cfg.Enricher.TagMeasure.Interval != 3 ||
-			cfg.Enricher.TagMeasure.Time != "04:30" {
+			cfg.Enricher.TagMeasure.Time != "04:30" ||
+			!cfg.Enricher.TagMeasure.AfterEnrichmentBatch {
 			t.Fatalf("explicit values overwritten: %+v", cfg.Enricher.TagMeasure)
 		}
 	})

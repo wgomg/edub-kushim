@@ -157,7 +157,7 @@ func TestParseCreateSelection(t *testing.T) {
 			{task: "frobnicate"}, // unknown task, refused before parsing
 		}
 		for _, tc := range cases {
-			sel, err := parseCreateSelection(tc.task, tc.args)
+			sel, err := parseCreateSelection(tc.task, tc.args, &config.Config{})
 			if err != nil {
 				t.Fatalf("parseCreateSelection(%q, %v) = %v, want no error", tc.task, tc.args, err)
 			}
@@ -178,7 +178,7 @@ func TestParseCreateSelection(t *testing.T) {
 			{task: "thumbnails", args: []string{"--from-batch", "batch-1"}},
 		}
 		for _, tc := range cases {
-			sel, err := parseCreateSelection(tc.task, tc.args)
+			sel, err := parseCreateSelection(tc.task, tc.args, &config.Config{})
 			if err != nil {
 				t.Fatalf("parseCreateSelection(%q, %v) = %v, want no error", tc.task, tc.args, err)
 			}
@@ -201,7 +201,7 @@ func TestParseCreateSelection(t *testing.T) {
 			{task: "thumbnails", args: []string{"--document", "d", "extra"}, want: "unknown argument"},
 		}
 		for _, tc := range cases {
-			sel, err := parseCreateSelection(tc.task, tc.args)
+			sel, err := parseCreateSelection(tc.task, tc.args, &config.Config{})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("parseCreateSelection(%q, %v) = %v, want an error mentioning %q", tc.task, tc.args, err, tc.want)
 			}

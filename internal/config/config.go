@@ -327,12 +327,14 @@ type TagReconcileConfig struct {
 	ProvisionalGraceDays int     `mapstructure:"provisional_grace_days" yaml:"provisional_grace_days" json:"provisional_grace_days"`
 }
 
-// TagMeasureConfig is the scheduled measurement section: enablement and
-// schedule.
+// TagMeasureConfig is the measurement section: enablement and schedule for the standalone run, plus whether
+// a measurement batch follows every consume and reenrich batch. AfterEnrichmentBatch is independent of
+// Enabled: the scheduled run is the aging safety net, the batch-level run observes production as it lands.
 type TagMeasureConfig struct {
-	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
-	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
+	Enabled              bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Interval             float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time                 string  `mapstructure:"time" yaml:"time" json:"time"`
+	AfterEnrichmentBatch bool    `mapstructure:"after_enrichment_batch" yaml:"after_enrichment_batch" json:"after_enrichment_batch"`
 }
 
 // TagAuditConfig is the scheduled completeness audit section: enablement, schedule, and the per-run sample
@@ -738,9 +740,10 @@ func DefaultConfig(configDir string) *Config {
 				ProvisionalGraceDays: 30,
 			},
 			TagMeasure: TagMeasureConfig{
-				Enabled:  false,
-				Interval: 7,
-				Time:     "03:00",
+				Enabled:              false,
+				Interval:             7,
+				Time:                 "03:00",
+				AfterEnrichmentBatch: false,
 			},
 			TagAudit: TagAuditConfig{
 				Enabled:    false,

@@ -1,5 +1,5 @@
 -- name: CreateBatch :exec
-INSERT INTO batch (id, origin, schedule, status) VALUES ($1, $2, $3, $4)
+INSERT INTO batch (id, origin, schedule, status, follow_up) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (id) DO NOTHING;
 
 -- name: GetBatchOwner :one
@@ -86,7 +86,9 @@ UPDATE batch SET status = 'processing'
 WHERE id = $1 AND status = 'queued';
 
 -- the status is computed inside the write so a task that fails between a read and the settle cannot be lost;
--- any active task, a non-processing batch or a foreign lease refuses the write and leaves the row untouched
+-- any active task, a non-processing batch or a foreign lease refuses the write and leaves the row untouched.
+-- the follow-up declaration is returned with the landed write, so its tasks are created in the same
+-- transaction that made the batch terminal
 -- name: SettleBatch :one
 UPDATE batch SET status = CASE
     WHEN EXISTS (SELECT 1 FROM task t WHERE t.batch_id = batch.id AND t.status = 'failed')
@@ -106,7 +108,7 @@ WHERE batch.id = @id
       WHERE bo.batch_id = batch.id AND bo.owner_id = sqlc.narg(owner_id)::text
     )
   )
-RETURNING status;
+RETURNING status, follow_up;
 
 -- pause authorizes like the settle: the execution must still own the lease, so a stale executor cannot
 -- pause the new run that replaced it

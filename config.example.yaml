@@ -183,6 +183,7 @@ enricher:
   #   enabled: false             # disabled by default
   #   interval: 7                # days between runs
   #   time: "03:00"              # preferred time of day (HH:MM)
+  #   after_enrichment_batch: false # measure after every consume and reenrich batch settles
 
   # tag_audit:                   # scheduled tag coverage audit (verify and repair application recall)
   #   enabled: false             # disabled by default

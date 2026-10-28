@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/backup"
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
@@ -114,7 +115,7 @@ func batchCreateHandler(c *container.Container, args []string) error {
 			"tagreconcile, tagmeasure, tagidentity, tagaudit, tagmaintenance, migrate-db, migrate-storage", taskName)
 	}
 
-	selection, err := parseCreateSelection(taskName, args[1:])
+	selection, err := parseCreateSelection(taskName, args[1:], c.GetConfig())
 	if err != nil {
 		return err
 	}
@@ -179,6 +180,12 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		if err != nil {
 			return fmt.Errorf("scan inbox: %w", err)
 		}
+		if c.GetConfig().Enricher.TagMeasure.AfterEnrichmentBatch {
+			spec, err = task.WithFollowUp(spec, curation.MeasureSpecs())
+			if err != nil {
+				return err
+			}
+		}
 
 	case "backup":
 		fp := flags.NewFlagParser(args[1:])
@@ -228,6 +235,12 @@ func batchCreateHandler(c *container.Container, args []string) error {
 		tasks, err = enrichment.EnrichSpecs(documentIDs)
 		if err != nil {
 			return err
+		}
+		if c.GetConfig().Enricher.TagMeasure.AfterEnrichmentBatch {
+			spec, err = task.WithFollowUp(spec, curation.MeasureSpecs())
+			if err != nil {
+				return err
+			}
 		}
 
 	case "thumbnails":
@@ -594,7 +607,7 @@ type createSelection struct {
 // parseCreateSelection validates the flags of the create verbs whose task set is selected from live data
 // rather than an explicit id list; it touches no database, so argument errors surface even when the
 // database is unreachable.
-func parseCreateSelection(taskName string, args []string) (createSelection, error) {
+func parseCreateSelection(taskName string, args []string, cfg *config.Config) (createSelection, error) {
 	switch taskName {
 	case "enrich":
 		fp := flags.NewFlagParser(args)
@@ -619,7 +632,7 @@ func parseCreateSelection(taskName string, args []string) (createSelection, erro
 			limit = 0
 		}
 		return createSelection{run: func(client *database.Client, enqueuer *task.Enqueuer) error {
-			return enqueueEnrichSelection(client, enqueuer, int64(limit))
+			return enqueueEnrichSelection(client, enqueuer, cfg, int64(limit))
 		}}, nil
 
 	case "thumbnails":
@@ -652,10 +665,16 @@ func parseCreateSelection(taskName string, args []string) (createSelection, erro
 
 // enqueueEnrichSelection enqueues enrichment for live documents, oldest first, capped by limit (0 means
 // no cap).
-func enqueueEnrichSelection(client *database.Client, enqueuer *task.Enqueuer, limit int64) error {
+func enqueueEnrichSelection(client *database.Client, enqueuer *task.Enqueuer, cfg *config.Config, limit int64) error {
 	spec, err := cliBatchSpec()
 	if err != nil {
 		return err
+	}
+	if cfg.Enricher.TagMeasure.AfterEnrichmentBatch {
+		spec, err = task.WithFollowUp(spec, curation.MeasureSpecs())
+		if err != nil {
+			return err
+		}
 	}
 
 	svc := service.NewReEnrich(client.Queries, enqueuer)

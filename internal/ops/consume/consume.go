@@ -25,6 +25,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -173,6 +174,9 @@ func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, sto
 		types.Task.Type.Consume:   {Concurrency: cfg.Consumer.Workers},
 		types.Task.Type.Enrich:    {Concurrency: cfg.Enricher.Workers, DedupKey: enrichment.DedupKey},
 		types.Task.Type.Thumbnail: {Concurrency: cfg.Consumer.Thumbnail.Workers, DedupKey: service.ThumbnailDedupKey},
+		types.Task.Type.TagMeasure: {
+			DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey),
+		},
 	})
 	if err != nil {
 		return task.BatchRunResult{}, fmt.Errorf("task catalog: %w", err)

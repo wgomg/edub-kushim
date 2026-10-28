@@ -40,6 +40,15 @@ func batchStatus(ctx context.Context, t *testing.T, q *database.Queries, id stri
 	return b.Status
 }
 
+// emptySettleCatalog is the empty task catalog these tests settle with; none of their batches declares a
+// follow-up, so no type has to resolve.
+func emptySettleCatalog(t *testing.T) *Catalog {
+	t.Helper()
+	catalog, err := NewCatalog(nil)
+	testutil.AssertNoError(t, err, "catalog")
+	return catalog
+}
+
 // insertLease creates a fresh ownership row; Pid 999999999 exceeds pid_max so no process can be signalled.
 func insertLease(ctx context.Context, t *testing.T, q *database.Queries, batchID, ownerID string) {
 	t.Helper()
@@ -70,7 +79,7 @@ func TestSettleBatch(t *testing.T) {
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "settle-done", json.RawMessage(`{}`), "", types.Task.Status.Completed, "")
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "settle-done", json.RawMessage(`{}`), "", types.Task.Status.Cancelled, "")
 
-		status, err := SettleBatch(ctx, client, logger, Execution{BatchID: "settle-done"})
+		status, err := SettleBatch(ctx, client, logger, emptySettleCatalog(t), Execution{BatchID: "settle-done"})
 		testutil.AssertNoError(t, err, "settle")
 		testutil.AssertEqual(t, status, types.Batch.Status.Completed, "settled status")
 		testutil.AssertEqual(t, batchStatus(ctx, t, q, "settle-done"), types.Batch.Status.Completed, "batch row")
@@ -81,7 +90,7 @@ func TestSettleBatch(t *testing.T) {
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "settle-fail", json.RawMessage(`{}`), "", types.Task.Status.Completed, "")
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "settle-fail", json.RawMessage(`{}`), "", types.Task.Status.Failed, "")
 
-		status, err := SettleBatch(ctx, client, logger, Execution{BatchID: "settle-fail"})
+		status, err := SettleBatch(ctx, client, logger, emptySettleCatalog(t), Execution{BatchID: "settle-fail"})
 		testutil.AssertNoError(t, err, "settle")
 		testutil.AssertEqual(t, status, types.Batch.Status.Failed, "settled status")
 	})
@@ -91,7 +100,7 @@ func TestSettleBatch(t *testing.T) {
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "settle-active", json.RawMessage(`{}`), "", types.Task.Status.Completed, "")
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "settle-active", json.RawMessage(`{}`), "", types.Task.Status.Pending, "")
 
-		status, err := SettleBatch(ctx, client, logger, Execution{BatchID: "settle-active"})
+		status, err := SettleBatch(ctx, client, logger, emptySettleCatalog(t), Execution{BatchID: "settle-active"})
 		testutil.AssertNoError(t, err, "refusal is not an error")
 		testutil.AssertEqual(t, status, types.Batch.Status.Processing, "returned status")
 		testutil.AssertEqual(t, batchStatus(ctx, t, q, "settle-active"), types.Batch.Status.Processing, "batch untouched")
@@ -101,7 +110,7 @@ func TestSettleBatch(t *testing.T) {
 		createBatchRow(ctx, t, q, "settle-foreign", types.Batch.Status.Processing)
 		insertLease(ctx, t, q, "settle-foreign", "other-owner")
 
-		status, err := SettleBatch(ctx, client, logger, Execution{BatchID: "settle-foreign", Guard: uuid.New(), Leased: true})
+		status, err := SettleBatch(ctx, client, logger, emptySettleCatalog(t), Execution{BatchID: "settle-foreign", Guard: uuid.New(), Leased: true})
 		testutil.AssertNoError(t, err, "refusal is not an error")
 		testutil.AssertEqual(t, status, types.Batch.Status.Processing, "returned status")
 		testutil.AssertEqual(t, batchStatus(ctx, t, q, "settle-foreign"), types.Batch.Status.Processing, "batch untouched")
@@ -111,7 +120,7 @@ func TestSettleBatch(t *testing.T) {
 		createBatchRow(ctx, t, q, "settle-immutable", types.Batch.Status.Completed)
 		createTaskRow(ctx, t, q, types.Task.Type.Consume, "settle-immutable", json.RawMessage(`{}`), "", types.Task.Status.Failed, "")
 
-		status, err := SettleBatch(ctx, client, logger, Execution{BatchID: "settle-immutable"})
+		status, err := SettleBatch(ctx, client, logger, emptySettleCatalog(t), Execution{BatchID: "settle-immutable"})
 		testutil.AssertNoError(t, err, "idempotent settle")
 		testutil.AssertEqual(t, status, types.Batch.Status.Completed, "returned status")
 		testutil.AssertEqual(t, batchStatus(ctx, t, q, "settle-immutable"), types.Batch.Status.Completed, "failed task must not rewrite a settled batch")
@@ -233,6 +242,117 @@ func TestClaimNextPendingSkipsUnclaimableBatch(t *testing.T) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("claim with only unclaimable work: err = %v, want sql.ErrNoRows", err)
 	}
+}
+
+// TestSettleBatchFollowUp pins the post-batch link: a completed or failed batch that declared follow-up
+// tasks has them created as a new trigger-origin batch inside the settle, live work on the declared key
+// collapses the creation, and a broken declaration rolls back without failing the settle. A cancelled batch
+// never reaches this writer (cancel is its own terminal write, pinned by TestCancelBatch), so only the two
+// firing statuses are exercisable here.
+func TestSettleBatchFollowUp(t *testing.T) {
+	_, _, client := setupTaskTestClient(t)
+	ctx := context.Background()
+	logger := testutil.NewTestLogger()
+	q := client.Queries
+
+	createDeclaredBatch := func(id string, declaration []byte, status types.BatchStatus) {
+		t.Helper()
+		stored := json.RawMessage(declaration)
+		err := q.CreateBatch(ctx, database.CreateBatchParams{ID: id, Origin: types.Batch.Origin.CLI, Status: status, FollowUp: &stored})
+		testutil.AssertNoError(t, err, "create declared batch "+id)
+	}
+	followUpCatalog := func(key string) *Catalog {
+		t.Helper()
+		catalog, err := NewCatalog(map[types.TaskType]TypeWiring{
+			types.Task.Type.TagMeasure: {DedupKey: ConstantDedupKey(key)},
+		})
+		testutil.AssertNoError(t, err, "follow-up catalog")
+		return catalog
+	}
+	measureDeclaration := func() []byte {
+		declaration, err := json.Marshal([]followUpTask{{Type: types.Task.Type.TagMeasure, Payload: json.RawMessage(`{}`)}})
+		testutil.AssertNoError(t, err, "marshal declaration")
+		return declaration
+	}
+	countTriggerBatches := func() int64 {
+		t.Helper()
+		var count int64
+		err := client.DB().QueryRowContext(ctx, "SELECT count(*) FROM batch WHERE origin = 'trigger'").Scan(&count)
+		testutil.AssertNoError(t, err, "count trigger batches")
+		return count
+	}
+
+	t.Run("a completed settle creates the declared follow-up batch", func(t *testing.T) {
+		createDeclaredBatch("followup-done", measureDeclaration(), types.Batch.Status.Processing)
+		createTaskRow(ctx, t, q, types.Task.Type.Consume, "followup-done", json.RawMessage(`{}`), "", types.Task.Status.Completed, "")
+
+		status, err := SettleBatch(ctx, client, logger, followUpCatalog("tagmeasure-done"), Execution{BatchID: "followup-done"})
+		testutil.AssertNoError(t, err, "settle")
+		testutil.AssertEqual(t, status, types.Batch.Status.Completed, "settled status")
+
+		var origin, batchState, taskState, dedupKey string
+		var schedule sql.NullString
+		err = client.DB().QueryRowContext(ctx, `
+			SELECT b.origin, b.status, b.schedule, t.dedup_key, t.status
+			FROM batch b JOIN task t ON t.batch_id = b.id
+			WHERE t.dedup_key = $1`, "tagmeasure-done").Scan(&origin, &batchState, &schedule, &dedupKey, &taskState)
+		testutil.AssertNoError(t, err, "read the follow-up batch")
+		testutil.AssertEqual(t, origin, "trigger", "follow-up origin")
+		testutil.AssertEqual(t, batchState, "queued", "follow-up queued for dispatch")
+		testutil.AssertEqual(t, schedule.Valid, false, "the follow-up is not a scheduled batch")
+		testutil.AssertEqual(t, dedupKey, "tagmeasure-done", "dedup key derived from the settle catalog")
+		testutil.AssertEqual(t, taskState, "pending", "follow-up task pending")
+	})
+
+	t.Run("a failed settle fires the declaration too", func(t *testing.T) {
+		createDeclaredBatch("followup-failed", measureDeclaration(), types.Batch.Status.Processing)
+		createTaskRow(ctx, t, q, types.Task.Type.Consume, "followup-failed", json.RawMessage(`{}`), "", types.Task.Status.Failed, "")
+
+		status, err := SettleBatch(ctx, client, logger, followUpCatalog("tagmeasure-failed"), Execution{BatchID: "followup-failed"})
+		testutil.AssertNoError(t, err, "settle")
+		testutil.AssertEqual(t, status, types.Batch.Status.Failed, "settled status")
+
+		var pending int64
+		err = client.DB().QueryRowContext(ctx,
+			"SELECT count(*) FROM task WHERE task_type = 'tagmeasure' AND dedup_key = $1 AND status = 'pending'",
+			"tagmeasure-failed").Scan(&pending)
+		testutil.AssertNoError(t, err, "count the follow-up task")
+		testutil.AssertEqual(t, pending, int64(1), "the failed producer's declaration created its task")
+	})
+
+	t.Run("live work on the declared key collapses the follow-up", func(t *testing.T) {
+		createDeclaredBatch("followup-dedup", measureDeclaration(), types.Batch.Status.Processing)
+		createTaskRow(ctx, t, q, types.Task.Type.Consume, "followup-dedup", json.RawMessage(`{}`), "", types.Task.Status.Completed, "")
+		_, err := createTaskRow(ctx, t, q, types.Task.Type.TagMeasure, "", json.RawMessage(`{}`), "", types.Task.Status.Pending, "tagmeasure-dedup")
+		testutil.AssertNoError(t, err, "create the live measure task")
+
+		before := countTriggerBatches()
+		status, err := SettleBatch(ctx, client, logger, followUpCatalog("tagmeasure-dedup"), Execution{BatchID: "followup-dedup"})
+		testutil.AssertNoError(t, err, "settle")
+		testutil.AssertEqual(t, status, types.Batch.Status.Completed, "settled status")
+		testutil.AssertEqual(t, countTriggerBatches(), before, "a dedup-collapsed declaration creates no batch")
+
+		var pending int64
+		err = client.DB().QueryRowContext(ctx,
+			"SELECT count(*) FROM task WHERE task_type = 'tagmeasure' AND dedup_key = $1 AND status = 'pending'",
+			"tagmeasure-dedup").Scan(&pending)
+		testutil.AssertNoError(t, err, "count tasks on the key")
+		testutil.AssertEqual(t, pending, int64(1), "only the pre-existing measure task remains")
+	})
+
+	t.Run("a broken declaration rolls back and never fails the settle", func(t *testing.T) {
+		broken, err := json.Marshal([]followUpTask{{Type: "not-a-task-type", Payload: json.RawMessage(`{}`)}})
+		testutil.AssertNoError(t, err, "marshal broken declaration")
+		createDeclaredBatch("followup-broken", broken, types.Batch.Status.Processing)
+		createTaskRow(ctx, t, q, types.Task.Type.Consume, "followup-broken", json.RawMessage(`{}`), "", types.Task.Status.Completed, "")
+
+		before := countTriggerBatches()
+		status, err := SettleBatch(ctx, client, logger, followUpCatalog("tagmeasure-broken"), Execution{BatchID: "followup-broken"})
+		testutil.AssertNoError(t, err, "settle survives a broken declaration")
+		testutil.AssertEqual(t, status, types.Batch.Status.Completed, "producer still settles")
+		testutil.AssertEqual(t, batchStatus(ctx, t, q, "followup-broken"), types.Batch.Status.Completed, "producer batch row completed")
+		testutil.AssertEqual(t, countTriggerBatches(), before, "the broken follow-up rolled back")
+	})
 }
 
 // TestResumeBatch pins the resume contract: the retried consumes and their

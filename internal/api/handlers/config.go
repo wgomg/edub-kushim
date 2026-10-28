@@ -1176,9 +1176,10 @@ type TagReconcileConfigResponse struct {
 
 // TagMeasureConfigResponse is the measure section's API view.
 type TagMeasureConfigResponse struct {
-	Enabled  bool    `json:"enabled"`
-	Interval float64 `json:"interval"`
-	Time     string  `json:"time"`
+	Enabled              bool    `json:"enabled"`
+	Interval             float64 `json:"interval"`
+	Time                 string  `json:"time"`
+	AfterEnrichmentBatch bool    `json:"after_enrichment_batch"`
 }
 
 // TagAuditConfigResponse is the coverage audit section's API view.
@@ -1401,6 +1402,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMeasure.Enabled = cfg.Enricher.TagMeasure.Enabled
 	resp.Enricher.TagMeasure.Interval = cfg.Enricher.TagMeasure.Interval
 	resp.Enricher.TagMeasure.Time = cfg.Enricher.TagMeasure.Time
+	resp.Enricher.TagMeasure.AfterEnrichmentBatch = cfg.Enricher.TagMeasure.AfterEnrichmentBatch
 	resp.Enricher.TagAudit.Enabled = cfg.Enricher.TagAudit.Enabled
 	resp.Enricher.TagAudit.Interval = cfg.Enricher.TagAudit.Interval
 	resp.Enricher.TagAudit.Time = cfg.Enricher.TagAudit.Time

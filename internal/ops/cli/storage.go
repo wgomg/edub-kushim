@@ -10,6 +10,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -44,7 +45,8 @@ func newOrphanedService(c *container.Container) (*service.Orphaned, error) {
 	}
 
 	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
-		types.Task.Type.Consume: {DedupKey: consumption.DedupKey},
+		types.Task.Type.Consume:    {DedupKey: consumption.DedupKey},
+		types.Task.Type.TagMeasure: {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("task catalog: %w", err)

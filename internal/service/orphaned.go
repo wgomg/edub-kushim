@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
@@ -179,6 +180,14 @@ func (s *Orphaned) Restore(ctx context.Context, spec task.BatchSpec, id int64) e
 		MD5:        md5,
 		DocumentID: row.DocumentKey,
 	}, s.cfg.Consumer.Thumbnail.Enabled)
+
+	if s.cfg.Enricher.TagMeasure.AfterEnrichmentBatch {
+		spec, err = task.WithFollowUp(spec, curation.MeasureSpecs())
+		if err != nil {
+			storage.RemoveOrphanedFile(destPath)
+			return err
+		}
+	}
 
 	result, err := s.enqueuer.EnqueueBatch(ctx, spec, tasks)
 	if err != nil {

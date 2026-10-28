@@ -330,7 +330,7 @@ See `AuthMiddleware` under `server.go` → Functions.
 - `TagQualityConfigResponse` — `Enabled bool`, `Timeout int`, `Llm TagAdjudicatorLlmResponse` (the decision thresholds are internal constants, absent from the response by design)
 - `TagAdjudicatorLlmResponse` — `Adapter string`, `Provider string`, `Model string`, `Token string` (omitempty), `RequestDelay float64`
 - `TagReconcileConfigResponse` — `Enabled bool`, `ReportOnly bool`, `Interval float64`, `Time string`, `MaxRejudge int`, `MaxRetag int`, `DeadTagGraceDays int`, `ProvisionalGraceDays int`
-- `TagMeasureConfigResponse` — `Enabled bool`, `Interval float64`, `Time string`
+- `TagMeasureConfigResponse` — `Enabled bool`, `Interval float64`, `Time string`, `AfterEnrichmentBatch bool`
 - `TagAuditConfigResponse` — `Enabled bool`, `Interval float64`, `Time string`, `SampleSize int`
 - `FailedTaskSummary` — `TaskID string`, `Op string`, `Lang string` (omitempty), `Error string`
 - `BootstrapResponse` — `AuthEnabled bool`, `MissingTools []config.ExternalTool` — Returned by `GET /wizard/bootstrap`. Contains only non-sensitive fields so the SPA can render the login screen without exposing LLM tokens or DB connection details.
@@ -353,7 +353,7 @@ See `AuthMiddleware` under `server.go` → Functions.
     - `ListOrphaned(w, r)` — `GET /api/v1/orphaned` — Lists all pending orphaned file records as JSON array. Returns `200`.
     - `ScanOrphaned(w, r)` — `POST /api/v1/orphaned/scan` — Walks `originals/` and `processed/` dirs, quarantines files without matching DB records. Returns `200 {"quarantined": <n>}`.
     - `DeleteOrphaned(w, r)` — `DELETE /api/v1/orphaned/{id}` — Removes file from quarantine + soft-deletes DB record. Returns `204`.
-    - `RestoreOrphaned(w, r)` — `POST /api/v1/orphaned/{id}/restore` — Copies uuid-named files to inbox, calculates MD5, creates the ingest task set through the shared assembly (`consumption.IngestTaskSpecs`): the consume task plus its linked enrich — and thumbnail when thumbnails are enabled — waiting successors via `parent_task_id`, each with its enqueue-time dedup key derivation, then creates batch record with `status='queued'` (queue daemon picks it up). Returns `202`. Rejects dbid-named files and existing UUID collisions.
+    - `RestoreOrphaned(w, r)` — `POST /api/v1/orphaned/{id}/restore` — Copies uuid-named files to inbox, calculates MD5, creates the ingest task set through the shared assembly (`consumption.IngestTaskSpecs`): the consume task plus its linked enrich — and thumbnail when thumbnails are enabled — waiting successors via `parent_task_id`, each with its enqueue-time dedup key derivation, then creates batch record with `status='queued'` (queue daemon picks it up); with `enricher.tag_measure.after_enrichment_batch` set the batch also declares the measurement follow-up. Returns `202`. Rejects dbid-named files and existing UUID collisions.
     - `MoveToInbox(w, r)` — `POST /api/v1/orphaned/{id}/move-to-inbox` — Copies any orphan to inbox without creating a consume task (the normal inbox scan will pick it up). Returns `202`.
     - `DeleteAllOrphaned(w, r)` — `POST /api/v1/orphaned/delete-all` — Removes all pending files + bulk marks deleted. Returns `200 {"deleted": <n>}`.
     - `MoveAllToInbox(w, r)` — `POST /api/v1/orphaned/move-to-inbox-all` — Moves all pending orphans to inbox. Returns `200 {"moved": <n>}`.

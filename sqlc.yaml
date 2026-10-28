@@ -20,6 +20,8 @@ sql:
             go_type: '*encoding/json.RawMessage'
           - column: 'system_signal.data'
             go_type: '*encoding/json.RawMessage'
+          - column: 'batch.follow_up'
+            go_type: '*encoding/json.RawMessage'
           - db_type: 'batch_origin'
             go_type:
               import: 'github.com/wgomg/edub-kushim/internal/types'

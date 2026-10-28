@@ -18,7 +18,7 @@ func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
 	if !cfg.Consumer.Reclaim.Enabled {
 		return
 	}
-	if err := reclaimStaleBatches(ctx, cfg, d.client.Load(), d.batchSvc, d.c.GetLogger()); err != nil {
+	if err := reclaimStaleBatches(ctx, cfg, d.client.Load(), d.batchSvc, d.catalog, d.c.GetLogger()); err != nil {
 		d.c.GetLogger().Error("", "stale reclamation: %v", err)
 	}
 	minInterval := max(cfg.Consumer.Reclaim.StaleTaskAfter/10, 60)
@@ -30,7 +30,7 @@ func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
 	}
 }
 
-func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, logger *log.Logger) error {
+func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, catalog task.TypeCatalog, logger *log.Logger) error {
 	owners, err := batchSvc.ListStaleBatchOwners(ctx)
 	if err != nil {
 		return fmt.Errorf("list stale batch owners: %w", err)
@@ -81,7 +81,7 @@ func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *databa
 			continue
 		}
 		if !hasWork {
-			status, settleErr := task.SettleBatch(ctx, client, logger, task.Execution{BatchID: owner.BatchID})
+			status, settleErr := task.SettleBatch(ctx, client, logger, catalog, task.Execution{BatchID: owner.BatchID})
 			if settleErr != nil {
 				logger.Error("", "settle stale batch %s: %v", owner.BatchID, settleErr)
 				requeueReleasedBatch(ctx, client, logger, owner.BatchID)

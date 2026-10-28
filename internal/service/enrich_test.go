@@ -88,6 +88,7 @@ func newServiceEnqueuer(_ *testing.T, client *database.Client) *task.Enqueuer {
 		types.Task.Type.Enrich:        {Type: types.Task.Type.Enrich, DedupKey: enrichKey},
 		types.Task.Type.Thumbnail:     {Type: types.Task.Type.Thumbnail, DedupKey: thumbnailKey},
 		types.Task.Type.ThumbBackfill: {Type: types.Task.Type.ThumbBackfill, DedupKey: thumbnailKey},
+		types.Task.Type.TagMeasure:    {Type: types.Task.Type.TagMeasure, DedupKey: task.ConstantDedupKey("tagmeasure")},
 	}}
 	return task.NewEnqueuer(client, catalog)
 }

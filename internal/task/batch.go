@@ -3,12 +3,14 @@ package task
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -276,8 +278,11 @@ func IsAlive(pid int64) bool {
 // it. The write itself refuses while any pending, processing or waiting task remains, and settles failed when
 // any task failed, otherwise completed. A terminal batch is immutable and returns its stored status without a
 // write. The settle transaction also releases the batch's locks; the execution releases its own lease on
-// teardown, and the reaper releases a stale one before settling. logger must be non-nil.
-func SettleBatch(ctx context.Context, client *database.Client, logger *log.Logger, exec Execution) (types.BatchStatus, error) {
+// teardown, and the reaper releases a stale one before settling. A completed or failed batch that declared
+// follow-up tasks has them created as a new batch in this same transaction; catalog derives the declared
+// tasks' dedup keys, and a follow-up failure is logged and never fails the settle. logger and catalog must
+// be non-nil.
+func SettleBatch(ctx context.Context, client *database.Client, logger *log.Logger, catalog TypeCatalog, exec Execution) (types.BatchStatus, error) {
 	tx, err := client.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("begin settle transaction for batch %s: %w", exec.BatchID, err)
@@ -285,7 +290,7 @@ func SettleBatch(ctx context.Context, client *database.Client, logger *log.Logge
 	defer tx.Rollback()
 
 	txQ := client.Queries.WithTx(tx)
-	status, err := txQ.SettleBatch(ctx, database.SettleBatchParams{
+	settled, err := txQ.SettleBatch(ctx, database.SettleBatchParams{
 		ID:      exec.BatchID,
 		OwnerID: executionOwner(exec),
 	})
@@ -298,6 +303,11 @@ func SettleBatch(ctx context.Context, client *database.Client, logger *log.Logge
 			return current.Status, nil
 		}
 		return "", fmt.Errorf("settle batch %s: %w", exec.BatchID, err)
+	}
+	status := settled.Status
+
+	if err := createFollowUpBatch(ctx, tx, txQ, catalog, settled); err != nil {
+		logger.Error("", "batch %s: follow-up batch: %v (settle continues)", exec.BatchID, err)
 	}
 
 	if err := ReleaseLocksForBatch(ctx, txQ, exec.BatchID); err != nil {
@@ -314,6 +324,115 @@ func SettleBatch(ctx context.Context, client *database.Client, logger *log.Logge
 	}
 	logSettled(logger, exec.BatchID, status, counts)
 	return status, nil
+}
+
+// followUpTask is one task a batch declared for creation when it settles, in the form stored on the batch
+// row.
+type followUpTask struct {
+	Type    types.TaskType  `json:"task_type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// createFollowUpBatch creates the batch a settled batch declared. It runs under a savepoint so the settle
+// itself is never unbalanceable: a declaration that dedup skips, fails to decode or fails to insert is rolled
+// back and reported to the caller, which logs it while the settle commits. A terminal batch settles once, so
+// the declaration fires at most once. A cancelled batch never produced what its declaration was meant to
+// observe, so the follow-up only fires on completed and failed.
+func createFollowUpBatch(ctx context.Context, tx *sql.Tx, txQ *database.Queries, catalog TypeCatalog, settled database.SettleBatchRow) error {
+	if settled.FollowUp == nil {
+		return nil
+	}
+	if settled.Status != types.Batch.Status.Completed && settled.Status != types.Batch.Status.Failed {
+		return nil
+	}
+
+	var declared []followUpTask
+	if err := json.Unmarshal(*settled.FollowUp, &declared); err != nil {
+		return fmt.Errorf("decode declaration: %w", err)
+	}
+	if len(declared) == 0 {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, "SAVEPOINT batch_follow_up"); err != nil {
+		return fmt.Errorf("set follow-up savepoint: %w", err)
+	}
+
+	batchID := uuid.New().String()
+	if err := txQ.CreateBatch(ctx, database.CreateBatchParams{
+		ID:     batchID,
+		Origin: types.Batch.Origin.Trigger,
+		Status: types.Batch.Status.Queued,
+	}); err != nil {
+		return rollbackFollowUp(ctx, tx, fmt.Errorf("create follow-up batch: %w", err))
+	}
+
+	created := 0
+	for _, declaredTask := range declared {
+		def, err := catalog.Definition(declaredTask.Type)
+		if err != nil {
+			return rollbackFollowUp(ctx, tx, err)
+		}
+
+		payload := declaredTask.Payload
+		var dedupKey sql.NullString
+		if def.DedupKey != nil {
+			if key := def.DedupKey(payload); key != "" {
+				dedupKey = sql.NullString{String: key, Valid: true}
+			}
+		}
+
+		// the per-task savepoint mirrors the enqueue: a dedup conflict skips this task without aborting the
+		// settle transaction, while any other insert error rolls back the whole follow-up batch
+		if dedupKey.Valid {
+			if _, err := tx.ExecContext(ctx, "SAVEPOINT follow_up_task"); err != nil {
+				return rollbackFollowUp(ctx, tx, fmt.Errorf("set follow-up task savepoint: %w", err))
+			}
+		}
+		_, err = txQ.CreateTask(ctx, database.CreateTaskParams{
+			TaskID:   uuid.New().String(),
+			TaskType: declaredTask.Type,
+			Status:   types.Task.Status.Pending,
+			BatchID:  sql.NullString{String: batchID, Valid: true},
+			Payload:  &payload,
+			DedupKey: dedupKey,
+		})
+		if err != nil {
+			if dedupKey.Valid && errs.IsConstraintOn(err, dedupIndexName) {
+				if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT follow_up_task"); rbErr != nil {
+					return rollbackFollowUp(ctx, tx, fmt.Errorf("roll back dedup savepoint: %w", rbErr))
+				}
+				continue
+			}
+			return rollbackFollowUp(ctx, tx, fmt.Errorf("create %s follow-up task: %w", declaredTask.Type, err))
+		}
+		if dedupKey.Valid {
+			if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT follow_up_task"); err != nil {
+				return rollbackFollowUp(ctx, tx, fmt.Errorf("release dedup savepoint: %w", err))
+			}
+		}
+		created++
+	}
+
+	if created == 0 {
+		return rollbackFollowUp(ctx, tx, nil)
+	}
+	if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT batch_follow_up"); err != nil {
+		return fmt.Errorf("release follow-up savepoint: %w", err)
+	}
+	return nil
+}
+
+// rollbackFollowUp undoes the partial follow-up batch and returns err, so the caller logs one failure while
+// the settle proceeds; nil is the all-skipped path and rolls back silently.
+func rollbackFollowUp(ctx context.Context, tx *sql.Tx, err error) error {
+	if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT batch_follow_up"); rbErr != nil {
+		if err == nil {
+			return fmt.Errorf("roll back follow-up savepoint: %w", rbErr)
+		}
+		return fmt.Errorf("%w (roll back follow-up savepoint: %v)", err, rbErr)
+	}
+	return err
 }
 
 // PauseBatch moves a processing batch to paused and releases its locks and lease. It authorizes through the

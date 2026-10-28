@@ -113,7 +113,12 @@ function ensureTagMeasureBlock() {
 	if (!cfg) return;
 	if (!cfg.enricher) cfg.enricher = {};
 	if (cfg.enricher.tag_measure) return;
-	cfg.enricher.tag_measure = { enabled: false, interval: 7, time: '03:00' };
+	cfg.enricher.tag_measure = {
+		enabled: false,
+		interval: 7,
+		time: '03:00',
+		after_enrichment_batch: false
+	};
 }
 
 function ensureTagAuditBlock() {
@@ -272,6 +277,8 @@ function bodyFromConfig() {
 		'enricher.tag_measure.enabled': cfg.enricher.tag_measure.enabled,
 		'enricher.tag_measure.interval': Number(cfg.enricher.tag_measure.interval),
 		'enricher.tag_measure.time': cfg.enricher.tag_measure.time,
+		'enricher.tag_measure.after_enrichment_batch':
+			cfg.enricher.tag_measure.after_enrichment_batch,
 		'enricher.tag_audit.enabled': cfg.enricher.tag_audit.enabled,
 		'enricher.tag_audit.interval': Number(cfg.enricher.tag_audit.interval),
 		'enricher.tag_audit.time': cfg.enricher.tag_audit.time,

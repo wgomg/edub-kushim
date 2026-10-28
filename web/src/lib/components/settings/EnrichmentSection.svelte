@@ -917,6 +917,13 @@
 					disabled={tagSchedulesLocked}
 					bind:value={cfg.enricher.tag_measure.time}
 				/>
+				<div class="sm:col-span-2">
+					<Switch
+						id="tag-measure-after-enrichment-batch"
+						bind:checked={cfg.enricher.tag_measure.after_enrichment_batch}
+						label="Measure after each consume and reenrich batch"
+					/>
+				</div>
 			</div>
 		</Card>
 

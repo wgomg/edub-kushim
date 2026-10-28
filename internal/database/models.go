@@ -24,6 +24,7 @@ const (
 	BatchOriginSchedule BatchOrigin = "schedule"
 	BatchOriginSetup    BatchOrigin = "setup"
 	BatchOriginWizard   BatchOrigin = "wizard"
+	BatchOriginTrigger  BatchOrigin = "trigger"
 )
 
 func (e *BatchOrigin) Scan(src interface{}) error {
@@ -256,6 +257,7 @@ type Batch struct {
 	CreatedAt sql.NullTime
 	Origin    types.BatchOrigin
 	Schedule  sql.NullString
+	FollowUp  *json.RawMessage
 }
 
 type BatchOwner struct {

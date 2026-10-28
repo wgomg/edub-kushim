@@ -297,6 +297,7 @@ describe('settingsStore tag matcher and audit keys', () => {
 		settingsStore.cfg.enricher.tag_audit.sample_size = 75;
 		settingsStore.cfg.enricher.tag_maintenance.enabled = true;
 		settingsStore.cfg.enricher.tag_maintenance.interval = 3;
+		settingsStore.cfg.enricher.tag_measure.after_enrichment_batch = true;
 		await settingsStore.applyAll();
 
 		const body = apiMocks.configUpdate.mock.calls[0][0];
@@ -304,6 +305,7 @@ describe('settingsStore tag matcher and audit keys', () => {
 		expect(body['enricher.tag_audit.sample_size']).toBe(75);
 		expect(body['enricher.tag_maintenance.enabled']).toBe(true);
 		expect(body['enricher.tag_maintenance.interval']).toBe(3);
+		expect(body['enricher.tag_measure.after_enrichment_batch']).toBe(true);
 		expect(body).not.toHaveProperty('enricher.contentanalyzer.max_tags');
 	});
 });

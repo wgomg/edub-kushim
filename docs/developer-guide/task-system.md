@@ -558,16 +558,36 @@ function:
     to operator recovery, because no retry would clear it — the refusal log
     reports the status breakdown and every waiting successor with its parent's
     state (`ListWaitingSuccessorsWithParentStatus`) so an operator can see why.
-    Before the final settle the run sweeps the batch's failed consume files
-    (`QuarantineFailedFiles` without an id set) and discards orphaned waiting
-    successors (`DiscardOrphanedWaitingSuccessors`), so a settle refused over
-    `waiting` tasks is practically unreachable (§10).
-7. **Cleanup**: stop heartbeats, release the lease and the execution's holds
-   with a bounded context, then requeue the batch if the run aborted before
-   settling — a released lease is invisible to the reaper, so the child hands
-   the batch back to the queue itself (the guarded `processing → queued`
-   write refuses a batch a settle, pause or cancel already finished). The
-   settle and pause transactions release the batch locks themselves.
+     Before the final settle the run sweeps the batch's failed consume files
+     (`QuarantineFailedFiles` without an id set) and discards orphaned waiting
+     successors (`DiscardOrphanedWaitingSuccessors`), so a settle refused over
+     `waiting` tasks is practically unreachable (§10).
+ 7. **Cleanup**: stop heartbeats, release the lease and the execution's holds
+    with a bounded context, then requeue the batch if the run aborted before
+    settling — a released lease is invisible to the reaper, so the child hands
+    the batch back to the queue itself (the guarded `processing → queued`
+    write refuses a batch a settle, pause or cancel already finished). The
+    settle and pause transactions release the batch locks themselves.
+
+A batch may declare follow-up tasks at enqueue time (`task.WithFollowUp`,
+stored as a JSON declaration on the batch row); the settle transaction is when
+they fire: for a settled `completed` or `failed` batch the same transaction
+creates a new batch of origin `trigger` with no schedule name, holding the
+declared tasks as pending entry points whose dedup keys the settling process's
+catalog derives (the declaring process must therefore have validated the types
+the same way `EnqueueBatch` validates pending tasks). The creation runs under a
+savepoint, so the settle can never be unbalanced: a dedup conflict — live work
+already covering the declared key — skips the whole creation, any other failure
+rolls it back and is logged, and the settle commits in both cases. The settle
+transaction also writes `notify_batch_queued` through the insert, so the
+dispatcher wakes and dispatches the follow-up like any other queued batch; a
+cancelled batch never settles through this writer and never produces follow-up
+work, and `FailUnstartedBatch` (a batch whose tasks never ran) skips it
+deliberately. The only current producer is the production-measurement link:
+`enricher.tag_measure.after_enrichment_batch` makes every ingest and reenrich
+enqueue declare the measurement pass (`kushim tagmeasure`, §12), whose
+follow-up batch then holds the `maintenance` lock at claim time, so a running
+backup or mirror simply delays it.
 
 Command-level extras live with their verbs: the enrich bookend
 (`enrichment.LogBatchBookend`, the aggregated per-document enrich counts over
@@ -1124,7 +1144,13 @@ the flag if the sweep fails. A bare `kushim tagmeasure` runs the pass now
 under the manual holder path, and `kushim batch create tagmeasure` enqueues
 the same queued task (dedup key `tagmeasure`);
 `enricher.tag_measure.enabled` gates only the schedule
-that enqueues runs automatically.
+that enqueues runs automatically. When
+`enricher.tag_measure.after_enrichment_batch` is set, the pass also follows
+production: every ingest and reenrich batch declares it as a follow-up the
+settle turns into a queued `tagmeasure` batch (§7), deduplicated to one live
+run by the constant key; the production observation survives
+`enricher.tag_maintenance.enabled`, whose routine keeps its own closing
+measure.
 
 The **tagidentity** task (`internal/tags/admission/tagidentity.go`) follows
 the same shape: a `tagidentity` batch is claimed with the lock held, and the
@@ -1234,6 +1260,7 @@ mid-run.
 | `mirror.enabled` / `mirror.path` / `mirror.interval` / `mirror.time` | — | mirror scheduling (rsync --delete over storage; requires rsync on PATH) |
 | `polling.interval` (min) | — | inbox scan cadence (floor 1 min) |
 | `polling.active_windows` | — | only scan within these windows |
+| `enricher.tag_measure.after_enrichment_batch` | `false` | every ingest and reenrich enqueue declares a measurement follow-up the batch settle creates (§7); never while a pass run is queued or already live |
 
 ---
 

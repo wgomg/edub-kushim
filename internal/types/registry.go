@@ -87,6 +87,7 @@ var Batch = struct {
 		Schedule BatchOrigin
 		Setup    BatchOrigin
 		Wizard   BatchOrigin
+		Trigger  BatchOrigin
 	}
 	Status struct {
 		Queued     BatchStatus
@@ -104,6 +105,7 @@ var Batch = struct {
 		Schedule BatchOrigin
 		Setup    BatchOrigin
 		Wizard   BatchOrigin
+		Trigger  BatchOrigin
 	}{
 		CLI:      "cli",
 		API:      "api",
@@ -111,6 +113,7 @@ var Batch = struct {
 		Schedule: "schedule",
 		Setup:    "setup",
 		Wizard:   "wizard",
+		Trigger:  "trigger",
 	},
 	Status: struct {
 		Queued     BatchStatus
@@ -346,6 +349,7 @@ var allBatchOrigins = []BatchOrigin{
 	Batch.Origin.Schedule,
 	Batch.Origin.Setup,
 	Batch.Origin.Wizard,
+	Batch.Origin.Trigger,
 }
 
 var allBatchStatuses = []BatchStatus{

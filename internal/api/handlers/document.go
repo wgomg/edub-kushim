@@ -697,6 +697,14 @@ func (h *DocumentHandler) ReEnrich(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.getConfig().Enricher.TagMeasure.AfterEnrichmentBatch {
+		spec, err = task.WithFollowUp(spec, curation.MeasureSpecs())
+		if err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	batchID, err := h.services.ReEnrich.ReEnrich(ctx, spec, documentID)
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "re-enrich document", err)

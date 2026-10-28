@@ -19,11 +19,13 @@ import (
 const dedupIndexName = "idx_task_dedup"
 
 // BatchSpec is the requester metadata every enqueue carries: the entry-point origin and, when scheduled,
-// the name of the schedule that produced the run. Its fields stay unexported so only NewBatchSpec can set
-// them; the constructor and the enqueue share one validation, so a zero-value spec is rejected too.
+// the name of the schedule that produced the run, plus the tasks the batch declares for creation when it
+// settles. Its fields stay unexported so only NewBatchSpec and WithFollowUp can set them; the constructor
+// and the enqueue share one validation, so a zero-value spec is rejected too.
 type BatchSpec struct {
 	origin   types.BatchOrigin
 	schedule string
+	followUp []TaskSpec
 }
 
 // NewBatchSpec validates the origin and schedule supplied by an entry-point boundary and returns the
@@ -58,6 +60,44 @@ func (s BatchSpec) Origin() types.BatchOrigin { return s.origin }
 
 // Schedule returns the schedule that produced the batch, empty for non-scheduled work.
 func (s BatchSpec) Schedule() string { return s.schedule }
+
+// WithFollowUp returns spec carrying the tasks a batch declares for creation when it settles. The tasks run
+// in a batch of their own, created inside the settle transaction, so they are entry points with no parent
+// link and a pending-only status. The declaration is validated against this process's catalog when the
+// enqueue persists it, exactly like the batch's own pending tasks; the returned spec stores a copy.
+func WithFollowUp(spec BatchSpec, tasks []TaskSpec) (BatchSpec, error) {
+	if err := validateFollowUpSpecs(tasks); err != nil {
+		return BatchSpec{}, err
+	}
+	spec.followUp = slices.Clone(tasks)
+	return spec, nil
+}
+
+// validateFollowUpSpecs rejects a declaration the settle could not turn into work: an empty list, a task
+// that names an id or a parent (follow-up tasks are the entry points of their own batch), a non-pending
+// status, or a nil payload the runner would fail.
+func validateFollowUpSpecs(tasks []TaskSpec) error {
+	if len(tasks) == 0 {
+		return fmt.Errorf("follow-up declaration carries no tasks")
+	}
+	for _, t := range tasks {
+		if t.TaskID != "" {
+			return fmt.Errorf("follow-up %s task names an id; the declaration creates the task", t.Type)
+		}
+		if t.ParentTaskID != "" {
+			return fmt.Errorf("follow-up %s task carries a parent link; follow-up tasks are entry points", t.Type)
+		}
+		switch t.Status {
+		case "", types.Task.Status.Pending:
+		default:
+			return fmt.Errorf("follow-up %s task status %q cannot create work, only pending", t.Type, t.Status)
+		}
+		if len(t.Payload) == 0 {
+			return fmt.Errorf("follow-up %s task carries no payload", t.Type)
+		}
+	}
+	return nil
+}
 
 // TaskSpec describes one task row an enqueue creates. The dedup key is not part of it: the task type
 // definition derives the key from Payload, so a task cannot be created with a key its type does not
@@ -120,7 +160,9 @@ func NewEnqueuer(client *database.Client, catalog TypeCatalog) *Enqueuer {
 // work is skipped, and when every task is skipped nothing at all is created and the result then carries
 // an empty BatchID. A pending task whose type has no dedup hook in this process's catalog is refused
 // instead of being created without deduplication. The task types in one batch must declare the same
-// Holds; their Preconditions run before any row is written and a failure creates nothing.
+// Holds; their Preconditions run before any row is written and a failure creates nothing. A follow-up
+// declaration carried by the spec is validated like the batch's own pending tasks and persisted with the
+// batch row, so an unresolvable, unhooked or precondition-failing declared type refuses the enqueue.
 func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []TaskSpec) (EnqueueResult, error) {
 	if err := spec.validate(); err != nil {
 		return EnqueueResult{}, err
@@ -162,6 +204,11 @@ func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []Tas
 		return EnqueueResult{}, err
 	}
 
+	followUp, err := e.prepareFollowUp(ctx, spec.followUp)
+	if err != nil {
+		return EnqueueResult{}, err
+	}
+
 	batchID := uuid.New().String()
 	tx, err := e.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -180,6 +227,7 @@ func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []Tas
 		Origin:   spec.origin,
 		Schedule: schedule,
 		Status:   types.Batch.Status.Queued,
+		FollowUp: followUp,
 	}); err != nil {
 		return EnqueueResult{}, fmt.Errorf("create batch: %w", err)
 	}
@@ -260,6 +308,41 @@ func (e *Enqueuer) EnqueueBatch(ctx context.Context, spec BatchSpec, tasks []Tas
 // EnqueueTask enqueues a single task through EnqueueBatch, sharing its validation, dedup and atomicity.
 func (e *Enqueuer) EnqueueTask(ctx context.Context, spec BatchSpec, t TaskSpec) (EnqueueResult, error) {
 	return e.EnqueueBatch(ctx, spec, []TaskSpec{t})
+}
+
+// prepareFollowUp validates a declaration against this process's catalog and returns its stored form, or nil
+// when the batch declares none. A declared task is an entry point of its own batch, so it needs the dedup
+// hook any pending task needs; the declared types must agree on the locks their batch will hold, and their
+// preconditions run here so an unmet environment requirement creates nothing.
+func (e *Enqueuer) prepareFollowUp(ctx context.Context, tasks []TaskSpec) (*json.RawMessage, error) {
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	definitions := make([]TypeDefinition, len(tasks))
+	declared := make([]followUpTask, len(tasks))
+	for i, t := range tasks {
+		def, err := e.catalog.Definition(t.Type)
+		if err != nil {
+			return nil, fmt.Errorf("resolve follow-up task type %q: %w", t.Type, err)
+		}
+		definitions[i] = def
+		if def.DedupKey == nil {
+			return nil, fmt.Errorf("follow-up %s task carries no dedup hook in this process", t.Type)
+		}
+		declared[i] = followUpTask{Type: t.Type, Payload: t.Payload}
+	}
+	if err := validateCommonHolds(definitions); err != nil {
+		return nil, fmt.Errorf("follow-up: %w", err)
+	}
+	if err := checkPreconditions(ctx, definitions); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(declared)
+	if err != nil {
+		return nil, fmt.Errorf("marshal follow-up declaration: %w", err)
+	}
+	declaration := json.RawMessage(raw)
+	return &declaration, nil
 }
 
 // DedupKey derives the key a task of the given type would carry with the given payload. Boundaries use

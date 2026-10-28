@@ -18,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -48,7 +49,15 @@ func NewConsumeHandler(getConfig func() *config.Config, logger *log.Logger, enqu
 // enrich and thumbnail children per file. It returns how many files were actually queued, since files
 // skipped as existing documents, or whose consume task lost a dedup conflict, do not count.
 func (h *ConsumeHandler) enqueueBatchFiles(ctx context.Context, spec task.BatchSpec, paths []string, reqID string) (result task.EnqueueResult, enqueued int, err error) {
-	thumbnailsEnabled := h.getConfig().Consumer.Thumbnail.Enabled
+	cfg := h.getConfig()
+	thumbnailsEnabled := cfg.Consumer.Thumbnail.Enabled
+
+	if cfg.Enricher.TagMeasure.AfterEnrichmentBatch {
+		spec, err = task.WithFollowUp(spec, curation.MeasureSpecs())
+		if err != nil {
+			return task.EnqueueResult{}, 0, err
+		}
+	}
 
 	var tasks []task.TaskSpec
 	consumeTaskIDs := make(map[string]struct{}, len(paths))

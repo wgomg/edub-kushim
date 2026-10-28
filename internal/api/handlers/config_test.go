@@ -370,6 +370,7 @@ func TestConfigResponseFrom_TagMeasure(t *testing.T) {
 	cfg.Enricher.TagMeasure.Enabled = true
 	cfg.Enricher.TagMeasure.Interval = 3
 	cfg.Enricher.TagMeasure.Time = "04:30"
+	cfg.Enricher.TagMeasure.AfterEnrichmentBatch = true
 
 	resp := ConfigResponseFrom(cfg)
 
@@ -381,5 +382,8 @@ func TestConfigResponseFrom_TagMeasure(t *testing.T) {
 	}
 	if resp.Enricher.TagMeasure.Time != "04:30" {
 		t.Errorf("TagMeasure.Time = %q, want 04:30", resp.Enricher.TagMeasure.Time)
+	}
+	if !resp.Enricher.TagMeasure.AfterEnrichmentBatch {
+		t.Error("TagMeasure.AfterEnrichmentBatch = false, want true")
 	}
 }

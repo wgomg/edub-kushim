@@ -214,7 +214,7 @@ func (r *Runner) settle(ctx context.Context, task database.Task, exec Execution)
 	if exec.BatchID == "" {
 		return
 	}
-	if _, err := SettleBatch(ctx, r.store.client, r.logger, exec); err != nil {
+	if _, err := SettleBatch(ctx, r.store.client, r.logger, r.catalog, exec); err != nil {
 		r.logger.Error(task.TaskID, "settle batch %s: %v", exec.BatchID, err)
 	}
 }
@@ -494,7 +494,7 @@ monitor:
 		deps.Logger.Info("", "batch %s: discarded %d orphaned waiting successors before settling", batchID, discarded)
 	}
 	exec := Execution{BatchID: batchID, Guard: token, Leased: true}
-	status, err := SettleBatch(ctx, deps.Client, deps.Logger, exec)
+	status, err := SettleBatch(ctx, deps.Client, deps.Logger, deps.Catalog, exec)
 	if err != nil {
 		deps.Logger.Error("", "settle batch %s: %v", batchID, err)
 		requeue = true

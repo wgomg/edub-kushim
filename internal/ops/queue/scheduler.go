@@ -302,7 +302,7 @@ func (s *scheduler) fire(ctx context.Context, client *database.Client, enqueuer 
 		return fmt.Errorf("build tasks: %w", err)
 	}
 
-	result, err := enqueueEntryBatch(ctx, enqueuer, entry, tasks)
+	result, err := enqueueEntryBatch(ctx, enqueuer, cfg, entry, tasks)
 	if err != nil {
 		if precondition, ok := errors.AsType[*task.PreconditionError](err); ok {
 			s.logger.Info("", "%s: occurrence skipped — %v", entry.label(), precondition)
@@ -364,11 +364,19 @@ func (s *scheduler) due(ctx context.Context, queries *database.Queries, name str
 }
 
 // enqueueEntryBatch enqueues one entry's producer-built task set, returning the full result. The entry's
-// origin and schedule name are set here, at the scheduler boundary; NewBatchSpec rejects the mismatch.
-func enqueueEntryBatch(ctx context.Context, enqueuer *task.Enqueuer, entry schedulerEntry, tasks []task.TaskSpec) (task.EnqueueResult, error) {
+// origin and schedule name are set here, at the scheduler boundary; NewBatchSpec rejects the mismatch. The
+// unnamed polling entry builds the inbox ingest batches, so they declare the measurement follow-up when
+// the configuration enables it.
+func enqueueEntryBatch(ctx context.Context, enqueuer *task.Enqueuer, cfg *config.Config, entry schedulerEntry, tasks []task.TaskSpec) (task.EnqueueResult, error) {
 	spec, err := task.NewBatchSpec(entry.origin, entry.name)
 	if err != nil {
 		return task.EnqueueResult{}, fmt.Errorf("build %s batch spec: %w", entry.label(), err)
+	}
+	if entry.name == "" && cfg.Enricher.TagMeasure.AfterEnrichmentBatch {
+		spec, err = task.WithFollowUp(spec, curation.MeasureSpecs())
+		if err != nil {
+			return task.EnqueueResult{}, fmt.Errorf("build %s batch spec: %w", entry.label(), err)
+		}
 	}
 	return enqueuer.EnqueueBatch(ctx, spec, tasks)
 }

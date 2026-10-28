@@ -12,6 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/service"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -53,6 +54,8 @@ func TestReclaimStaleBatches(t *testing.T) {
 
 	logger := testutil.NewTestLogger()
 	batchSvc := service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
+	catalog, err := task.NewCatalog(nil)
+	testutil.AssertNoError(t, err, "catalog")
 	q := client.Queries
 
 	t.Run("requeues a stale batch that still has work", func(t *testing.T) {
@@ -68,7 +71,7 @@ func TestReclaimStaleBatches(t *testing.T) {
 		testutil.AssertNoError(t, err, "create processing task")
 		staleLeaseFor(ctx, t, client, "reclaim-requeue")
 
-		testutil.AssertNoError(t, reclaimStaleBatches(ctx, cfg, client, batchSvc, logger), "reclaim")
+		testutil.AssertNoError(t, reclaimStaleBatches(ctx, cfg, client, batchSvc, catalog, logger), "reclaim")
 
 		batch, err := q.GetBatch(ctx, "reclaim-requeue")
 		testutil.AssertNoError(t, err, "read batch")
@@ -99,7 +102,7 @@ func TestReclaimStaleBatches(t *testing.T) {
 		}
 		staleLeaseFor(ctx, t, client, "reclaim-settle")
 
-		testutil.AssertNoError(t, reclaimStaleBatches(ctx, cfg, client, batchSvc, logger), "reclaim")
+		testutil.AssertNoError(t, reclaimStaleBatches(ctx, cfg, client, batchSvc, catalog, logger), "reclaim")
 
 		batch, err := q.GetBatch(ctx, "reclaim-settle")
 		testutil.AssertNoError(t, err, "read batch")
@@ -136,7 +139,7 @@ func TestReclaimStaleBatches(t *testing.T) {
 			t.Fatalf("backdate heartbeat: %v", err)
 		}
 
-		testutil.AssertNoError(t, reclaimStaleBatches(ctx, cfg, client, batchSvc, logger), "reclaim")
+		testutil.AssertNoError(t, reclaimStaleBatches(ctx, cfg, client, batchSvc, catalog, logger), "reclaim")
 
 		batch, err := q.GetBatch(ctx, "reclaim-preadopt")
 		testutil.AssertNoError(t, err, "read batch")

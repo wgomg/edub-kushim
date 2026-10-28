@@ -221,6 +221,44 @@ func TestOrphaned_Restore_UUIDOnly(t *testing.T) {
 	testutil.AssertEqual(t, string(batch.Status), "queued", "batch status")
 }
 
+// TestOrphaned_Restore_MeasureFollowUp pins the restore site of the production-measurement link: with the
+// option enabled, the restore batch declares the measurement follow-up the settle turns into work.
+func TestOrphaned_Restore_MeasureFollowUp(t *testing.T) {
+	svc, cfg, client, cleanup := newTestOrphaned(t)
+	defer cleanup()
+	ctx := context.Background()
+	cfg.Enricher.TagMeasure.AfterEnrichmentBatch = true
+
+	uuidValue := "550e8400-e29b-41d4-a716-446655440000"
+	createTestOrphanFile(t, cfg.Storage.StorageDir, "originals", uuidValue+".pdf")
+	svc.ScanAndQuarantine(ctx)
+	files, _ := svc.List(ctx)
+	testutil.AssertEqual(t, len(files), 1, "quarantined")
+
+	testutil.AssertNoError(t, svc.Restore(ctx, testBatchSpec(t, types.Batch.Origin.API), files[0].ID), "restore")
+
+	destPath := filepath.Join(cfg.Storage.ConsumptionDir, uuidValue+".pdf")
+	md5hash, err := storage.CalculateMD5(destPath)
+	testutil.AssertNoError(t, err, "compute md5")
+	consumeTask, err := client.Queries.GetConfigTaskByDedupKey(ctx, database.GetConfigTaskByDedupKeyParams{
+		TaskType: types.Task.Type.Consume,
+		DedupKey: sql.NullString{String: "consume:" + md5hash, Valid: true},
+	})
+	testutil.AssertNoError(t, err, "find consume task")
+
+	batch, err := client.Queries.GetBatch(ctx, consumeTask.BatchID.String)
+	testutil.AssertNoError(t, err, "read the restore batch")
+	if batch.FollowUp == nil {
+		t.Fatal("restore batch must declare the measurement follow-up")
+	}
+	var declared []struct {
+		Type types.TaskType `json:"task_type"`
+	}
+	testutil.AssertNoError(t, json.Unmarshal(*batch.FollowUp, &declared), "decode declaration")
+	testutil.AssertEqual(t, len(declared), 1, "one declared task")
+	testutil.AssertEqual(t, declared[0].Type, types.Task.Type.TagMeasure, "the measurement pass is declared")
+}
+
 func TestOrphaned_Restore_RejectsDBID(t *testing.T) {
 	svc, cfg, _, cleanup := newTestOrphaned(t)
 	defer cleanup()

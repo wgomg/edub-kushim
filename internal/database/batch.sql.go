@@ -191,7 +191,7 @@ func (q *Queries) CountPausedBatches(ctx context.Context) (int64, error) {
 }
 
 const createBatch = `-- name: CreateBatch :exec
-INSERT INTO batch (id, origin, schedule, status) VALUES ($1, $2, $3, $4)
+INSERT INTO batch (id, origin, schedule, status, follow_up) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (id) DO NOTHING
 `
 
@@ -200,6 +200,7 @@ type CreateBatchParams struct {
 	Origin   types.BatchOrigin
 	Schedule sql.NullString
 	Status   types.BatchStatus
+	FollowUp *json.RawMessage
 }
 
 func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) error {
@@ -208,6 +209,7 @@ func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) error 
 		arg.Origin,
 		arg.Schedule,
 		arg.Status,
+		arg.FollowUp,
 	)
 	return err
 }
@@ -225,7 +227,7 @@ func (q *Queries) DeleteBatchOwnerByBatchID(ctx context.Context, batchID string)
 }
 
 const getBatch = `-- name: GetBatch :one
-SELECT id, status, created_at, origin, schedule FROM batch WHERE id = $1
+SELECT id, status, created_at, origin, schedule, follow_up FROM batch WHERE id = $1
 `
 
 func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
@@ -237,6 +239,7 @@ func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
 		&i.CreatedAt,
 		&i.Origin,
 		&i.Schedule,
+		&i.FollowUp,
 	)
 	return i, err
 }
@@ -857,7 +860,7 @@ WHERE batch.id = $1
       WHERE bo.batch_id = batch.id AND bo.owner_id = $2::text
     )
   )
-RETURNING status
+RETURNING status, follow_up
 `
 
 type SettleBatchParams struct {
@@ -865,13 +868,20 @@ type SettleBatchParams struct {
 	OwnerID sql.NullString
 }
 
+type SettleBatchRow struct {
+	Status   types.BatchStatus
+	FollowUp *json.RawMessage
+}
+
 // the status is computed inside the write so a task that fails between a read and the settle cannot be lost;
-// any active task, a non-processing batch or a foreign lease refuses the write and leaves the row untouched
-func (q *Queries) SettleBatch(ctx context.Context, arg SettleBatchParams) (types.BatchStatus, error) {
+// any active task, a non-processing batch or a foreign lease refuses the write and leaves the row untouched.
+// the follow-up declaration is returned with the landed write, so its tasks are created in the same
+// transaction that made the batch terminal
+func (q *Queries) SettleBatch(ctx context.Context, arg SettleBatchParams) (SettleBatchRow, error) {
 	row := q.db.QueryRowContext(ctx, settleBatch, arg.ID, arg.OwnerID)
-	var status types.BatchStatus
-	err := row.Scan(&status)
-	return status, err
+	var i SettleBatchRow
+	err := row.Scan(&i.Status, &i.FollowUp)
+	return i, err
 }
 
 const tryInsertBatchOwner = `-- name: TryInsertBatchOwner :execrows
