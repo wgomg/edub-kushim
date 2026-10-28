@@ -246,9 +246,10 @@ catalog wired with exactly the hooks of the types it creates, and builds its
 task sets through the owning producer:
 
 - inbox scans: `consumption.IngestSpecsFromInbox` (`batch create consume`,
-  `kushim batch create consume` paused-guard) and `consumption.ScanAndEnqueue`
-  (polling) / the orphan restore (`service.Orphaned.Restore` via
-  `consumption.IngestTaskSpecs`)
+  `kushim batch create consume` paused-guard) and `consumption.ScanInboxSpecs`
+  (the queue daemon's polling entry; the scheduler engine enqueues the
+  returned set with origin `polling`) / the orphan restore
+  (`service.Orphaned.Restore` via `consumption.IngestTaskSpecs`)
 - re-enrichment: `enrichment.EnrichSpecs` (explicit ids) and
   `service.ReEnrich` (the `--all | --limit` selection)
 - thumbnails: `service.ThumbnailBackfillSpecs` (the all-documents scan) and

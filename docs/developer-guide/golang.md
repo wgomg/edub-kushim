@@ -624,7 +624,7 @@ so dropping is safe:
 ```go
 select {
 case notifyCh <- struct{}{}:
-default: // channel full -> drop; the polling loop re-checks anyway
+default: // channel full -> drop; the safety poll re-checks anyway
 }
 ```
 

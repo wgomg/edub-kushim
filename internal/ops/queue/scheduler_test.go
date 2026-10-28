@@ -2,13 +2,18 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -26,35 +31,33 @@ func fullScheduleConfig() *config.Config {
 	return cfg
 }
 
-// TestScheduleNamesAreUnique pins one schedule name per definition: due-ness and the active check are
-// keyed by the name, so a collision would silently merge two cadences under one anchor.
+// TestScheduleNamesAreUnique pins one schedule name per named entry: due-ness and the active check are
+// keyed by the name, so a collision would silently merge two cadences under one anchor. The unnamed
+// polling entry carries no name and is the only entry allowed to.
 func TestScheduleNamesAreUnique(t *testing.T) {
-	schedules := schedulesFor(fullScheduleConfig())
-	seen := make(map[string]bool, len(schedules))
-	for _, def := range schedules {
-		if seen[def.name] {
-			t.Fatalf("duplicate schedule name %q", def.name)
+	entries := entriesFor(fullScheduleConfig())
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if seen[entry.name] {
+			t.Fatalf("duplicate schedule name %q", entry.name)
 		}
-		seen[def.name] = true
+		seen[entry.name] = true
 	}
-	if got, want := len(schedules), 9; got != want {
-		t.Fatalf("schedule count = %d, want %d (three backup modes plus the six fixed schedules)", got, want)
+	if got, want := len(entries), 10; got != want {
+		t.Fatalf("entry count = %d, want %d (three backup modes plus the six fixed schedules and polling)", got, want)
 	}
 }
 
 // TestBackupSchedulesArePerMode pins the backup cadence split: one schedule per configured mode named
-// after its dedup-key prefix so the modes keep independent due-ness, and no backup schedule at all
-// while the backup section is disabled.
+// after its mode so the modes keep independent due-ness, and no backup entry at all while the backup
+// section is disabled.
 func TestBackupSchedulesArePerMode(t *testing.T) {
 	cfg := fullScheduleConfig()
-	schedules := schedulesFor(cfg)
+	entries := entriesFor(cfg)
 	for _, entry := range cfg.Backup.Schedules {
-		def, ok := findSchedule(schedules, backupSchedulePrefix+entry.Mode)
+		def, ok := findSchedule(entries, backupSchedulePrefix+entry.Mode)
 		if !ok {
 			t.Fatalf("backup schedule %q missing", backupSchedulePrefix+entry.Mode)
-		}
-		if def.taskType != types.Task.Type.Backup {
-			t.Errorf("%s task type = %q, want backup", def.name, def.taskType)
 		}
 		if got, want := def.timing(cfg), (backup.ScheduleTiming{Interval: entry.Interval, Time: entry.Time}); got != want {
 			t.Errorf("%s timing = %+v, want %+v", def.name, got, want)
@@ -63,33 +66,9 @@ func TestBackupSchedulesArePerMode(t *testing.T) {
 
 	disabled := &config.Config{}
 	disabled.Backup.Schedules = cfg.Backup.Schedules
-	for _, def := range schedulesFor(disabled) {
-		if def.taskType == types.Task.Type.Backup {
+	for _, def := range entriesFor(disabled) {
+		if strings.HasPrefix(def.name, backupSchedulePrefix) {
 			t.Fatalf("backup schedule %q declared while backup is disabled", def.name)
-		}
-	}
-}
-
-// TestScheduleProducersMatchDeclaredType pins each producer's task-set contract: the scheduler refuses
-// a spec whose type differs from the definition's, so a producer must build exactly its own type.
-// The thumbnail-backfill producer reads the documents table and runs under the database gate.
-func TestScheduleProducersMatchDeclaredType(t *testing.T) {
-	cfg := fullScheduleConfig()
-	for _, def := range schedulesFor(cfg) {
-		if def.taskType == types.Task.Type.ThumbBackfill {
-			continue
-		}
-		tasks, err := def.produce(context.Background(), cfg, nil)
-		if err != nil {
-			t.Fatalf("%s produce: %v", def.name, err)
-		}
-		if len(tasks) == 0 {
-			t.Errorf("%s produced no tasks", def.name)
-		}
-		for _, spec := range tasks {
-			if spec.Type != def.taskType {
-				t.Errorf("%s produced a %q spec, want %q", def.name, spec.Type, def.taskType)
-			}
 		}
 	}
 }
@@ -120,7 +99,7 @@ func TestScheduleEnabledGates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
 			tc.mutate(cfg)
-			def, ok := findSchedule(schedulesFor(cfg), tc.schedule)
+			def, ok := findSchedule(entriesFor(cfg), tc.schedule)
 			if !ok {
 				t.Fatalf("schedule %q missing from the table", tc.schedule)
 			}
@@ -190,5 +169,148 @@ func TestSchedulerDueDerivesFromTerminalBatches(t *testing.T) {
 	}
 	if !due {
 		t.Error("a terminal batch well past its interval must leave the schedule due")
+	}
+}
+
+// TestPollingEntryOriginPairing pins the BatchSpec pairing the scheduler boundary relies on: exactly one
+// unnamed entry carrying origin polling and declaring no timing, with every named entry carrying origin
+// schedule. A mismatch fails NewBatchSpec on every evaluation instead of enqueueing.
+func TestPollingEntryOriginPairing(t *testing.T) {
+	entries := entriesFor(fullScheduleConfig())
+	unnamed := 0
+	for _, entry := range entries {
+		if entry.name != "" {
+			if entry.origin != types.Batch.Origin.Schedule {
+				t.Errorf("%s: origin = %q, want schedule", entry.name, entry.origin)
+			}
+			continue
+		}
+		unnamed++
+		if entry.origin != types.Batch.Origin.Polling {
+			t.Errorf("unnamed entry origin = %q, want polling", entry.origin)
+		}
+		if entry.timing != nil {
+			t.Error("unnamed entry declares timing; its due path reads the polling interval instead")
+		}
+	}
+	if unnamed != 1 {
+		t.Fatalf("unnamed entries = %d, want exactly 1", unnamed)
+	}
+}
+
+// TestPollingEntryEnabledGates pins the polling entry's config gate: it never fires with the polling flag
+// off, and an all-day active window keeps it enabled once the flag is on.
+func TestPollingEntryEnabledGates(t *testing.T) {
+	entry := pollingEntry()
+	if entry.enabled(&config.Config{}) {
+		t.Error("polling fires while the polling config flag is off")
+	}
+
+	enabled := &config.Config{}
+	enabled.Consumer.Polling.Enabled = true
+	if !entry.enabled(enabled) {
+		t.Error("polling does not fire while the polling config flag is on")
+	}
+
+	enabled.Consumer.Polling.Windows = []config.PollingWindow{{Start: "00:00", End: "24:00"}}
+	if !entry.enabled(enabled) {
+		t.Error("polling does not fire inside an all-day active window")
+	}
+}
+
+// TestIntervalDue pins the unnamed entry's cadence: due immediately with no recorded fire, otherwise due
+// only once a full configured interval — floored at one minute — has elapsed since the last dispatch.
+func TestIntervalDue(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name     string
+		interval int
+		last     time.Time
+		want     bool
+	}{
+		{name: "never fired", interval: 1, want: true},
+		{name: "inside the interval", interval: 1, last: now.Add(-59 * time.Second), want: false},
+		{name: "interval elapsed", interval: 1, last: now.Add(-time.Minute), want: true},
+		{name: "zero interval floors at one minute", interval: 0, last: now.Add(-30 * time.Second), want: false},
+		{name: "multi-minute interval pending", interval: 5, last: now.Add(-4 * time.Minute), want: false},
+		{name: "multi-minute interval elapsed", interval: 5, last: now.Add(-5 * time.Minute), want: true},
+	}
+	s := newScheduler(testutil.NewTestLogger())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Consumer.Polling.Interval = tc.interval
+			s.lastFire = map[string]time.Time{}
+			if !tc.last.IsZero() {
+				s.lastFire[""] = tc.last
+			}
+			if got := s.intervalDue("", cfg, now); got != tc.want {
+				t.Errorf("intervalDue = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFireSkipsUnmetPrecondition pins the enqueue-precondition contract: an unmet environment precondition
+// skips the occurrence without surfacing an error and creates no batch, instead of making the daemon log a
+// hard error on every evaluation.
+func TestFireSkipsUnmetPrecondition(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+
+	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
+		types.Task.Type.Backup: {
+			DedupKey: task.ConstantDedupKey("backup:precondition-test"),
+			Preconditions: []task.Precondition{
+				func(context.Context) error { return errors.New("rsync unavailable (test)") },
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+
+	entry := schedulerEntry{
+		name:   "precondition-test",
+		origin: types.Batch.Origin.Schedule,
+		produce: func(context.Context, *config.Config, *database.Client, *log.Logger) ([]task.TaskSpec, error) {
+			return []task.TaskSpec{{Type: types.Task.Type.Backup, Payload: json.RawMessage(`{}`)}}, nil
+		},
+	}
+
+	s := newScheduler(testutil.NewTestLogger())
+	if err := s.fire(ctx, client, task.NewEnqueuer(client, catalog), &config.Config{}, entry); err != nil {
+		t.Fatalf("fire: an unmet precondition must skip the occurrence, got error: %v", err)
+	}
+
+	var batches int64
+	if err := client.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM batch").Scan(&batches); err != nil {
+		t.Fatalf("count batches: %v", err)
+	}
+	if batches != 0 {
+		t.Errorf("batch count = %d, want 0 (a precondition skip creates nothing)", batches)
+	}
+}
+
+// TestFirePropagatesProducerError pins that a producer failure is not swallowed: fire returns it so the
+// calling loop logs it under the entry's label instead of silently dropping the occurrence.
+func TestFirePropagatesProducerError(t *testing.T) {
+	want := errors.New("producer failed")
+	entry := schedulerEntry{
+		name:   "producer-error-test",
+		origin: types.Batch.Origin.Schedule,
+		produce: func(context.Context, *config.Config, *database.Client, *log.Logger) ([]task.TaskSpec, error) {
+			return nil, want
+		},
+	}
+
+	s := newScheduler(testutil.NewTestLogger())
+	err := s.fire(context.Background(), nil, nil, &config.Config{}, entry)
+	if !errors.Is(err, want) {
+		t.Fatalf("fire error = %v, want it to wrap %v", err, want)
 	}
 }

@@ -55,7 +55,7 @@ func TestTagIdentityScheduleDefinition(t *testing.T) {
 	cfg.Enricher.TagReconcile.Interval = 7
 	cfg.Enricher.TagReconcile.Time = "05:00"
 
-	def, ok := findSchedule(schedulesFor(cfg), scheduleTagIdentity)
+	def, ok := findSchedule(entriesFor(cfg), scheduleTagIdentity)
 	if !ok {
 		t.Fatal("identity schedule definition missing")
 	}
@@ -73,11 +73,11 @@ func TestTagIdentityScheduleDefinition(t *testing.T) {
 	}
 }
 
-func findSchedule(schedules []scheduleDefinition, name string) (scheduleDefinition, bool) {
-	for _, def := range schedules {
-		if def.name == name {
-			return def, true
+func findSchedule(entries []schedulerEntry, name string) (schedulerEntry, bool) {
+	for _, entry := range entries {
+		if entry.name == name {
+			return entry, true
 		}
 	}
-	return scheduleDefinition{}, false
+	return schedulerEntry{}, false
 }

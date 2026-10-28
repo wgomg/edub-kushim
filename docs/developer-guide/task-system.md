@@ -376,18 +376,19 @@ Three mechanisms keep it responsive without busy-polling
 (`queue.go:145-186`):
 
 ```go
-go d.runPollingLoop(ctx)
-
-notifyCh := make(chan struct{}, 4)
-go dispatch.ListenForBatchNotifications(ctx, config.BuildPostgresDSN(c.GetConfig().Db), notifyCh, c.GetLogger())
+d.startNotify(ctx)
+defer d.stopNotify()
 
 safetyInterval := 30 * time.Second
 safetyTimer := time.NewTimer(safetyInterval)
 defer safetyTimer.Stop()
 
+hkTicker := time.NewTicker(5 * time.Second)
+defer hkTicker.Stop()
+
 for {
 	select {
-	case <-notifyCh:
+	case <-d.notifyCh:
 		if err := d.dispatcher.Dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
 		if !safetyTimer.Stop() {
 			select { case <-safetyTimer.C: default: }
@@ -397,6 +398,9 @@ for {
 	case <-safetyTimer.C:
 		if err := d.dispatcher.Dispatch(ctx, d.client.Load(), d.batchSvc); err != nil { ... }
 		safetyTimer.Reset(safetyInterval)
+
+	case <-hkTicker.C:
+		d.tick(ctx)
 	...
 ```
 
@@ -413,7 +417,8 @@ for {
    notify** so a busy batch flow doesn't double-poll.
 3. **The 5s housekeeping ticker**: config reload
    (`c.cfg.Store(newCfg)`), the declarative scheduler
-   (`internal/ops/queue/scheduler.go`), and stale-task reclamation (throttled
+   (`internal/ops/queue/scheduler.go`) — which also drives the inbox polling
+   as its unnamed entry — and stale-task reclamation (throttled
    to `StaleTaskAfter/10` seconds, min 60s).
 
 ### The dispatcher and the launcher
@@ -1037,19 +1042,34 @@ the maintenance lock is held or gated tasks are processing (plus polling and
 daemon PID checks for restore), try-acquire with a NULL token, and never wait
 or drain.
 
-Scheduling: only the polling scan still skips while `IsLockHeld(maintenance)`; a
-`storage`-only holder does not pause it. Released locks notify
-`lock_released`, which wakes the daemon's dispatch tick alongside
-`batch_queued`. Every recurring schedule lives in one declarative table
-(`internal/ops/queue/scheduler.go`): a definition per schedule — name, task
-type, enabled predicate, timing, and the producer that builds the run's task
-set — evaluated every tick against the freshly reloaded config. Backup
-contributes one schedule per configured mode (names `backup:<mode>`, after
-the dedup-key vocabulary); mirror, thumbnail-backfill and the four tag passes
-keep their earlier names, so scheduled batches already in the table keep
-anchoring their cadence. Per schedule the loop runs the enabled predicate, the
-active check (`CountActiveBatchesForSchedule` — any queued or processing
-batch of that schedule name), the due check
+Scheduling: only the polling entry's producer still skips its scan while
+`IsLockHeld(maintenance)`; a `storage`-only holder does not pause it. Released
+locks notify `lock_released`, which wakes the daemon's dispatch tick alongside
+`batch_queued`. Every recurring enqueue lives in one declarative table
+(`internal/ops/queue/scheduler.go`): an entry — batch schedule name, batch
+origin, enabled predicate, timing (named entries only), and the producer that
+builds the run's task set — evaluated every tick against the freshly reloaded
+config. Entries are type-blind: a producer returns any task set, chained
+waiting children included, exactly like the ingest producers, and the enqueue
+validates it (dedup hooks for pending tasks, parent links, common holds,
+preconditions); the entry itself carries no task type. The table carries one
+entry per configured backup mode (names `backup:<mode>`, after the dedup-key
+vocabulary) plus mirror, thumbnail-backfill and the four tag passes, which
+keep their earlier names so scheduled batches already in the table keep
+anchoring their cadence, and one unnamed entry for the inbox poll: origin
+`polling`, no schedule name, enabled by `consumer.polling` (flag plus active
+windows), due on a plain interval — `max(interval, one minute)` measured from
+its last dispatch, recorded in the scheduler's `lastFire` map when the
+occurrence fires, because a scan that finds nothing creates no batch row to
+anchor on. Its producer skips the occurrence while the maintenance lock is
+held or an external tool is missing, and runs the scan on its own goroutine
+(an in-flight flag refuses a new one) so slow inbox I/O never stalls the
+daemon's dispatch, reclamation or shutdown loop; overlap is the consume dedup
+keys' responsibility, as it always was.
+
+Per named entry the loop runs the enabled predicate, the active check
+(`CountActiveBatchesForSchedule` — any queued or processing batch of that
+schedule name), the due check
 (`GetLastTerminalBatchCreatedAtForSchedule` — the last terminal batch,
 `completed`, `failed` or `cancelled`, anchors `NextBackupTime` over its
 `created_at`, so a failed occurrence waits for the next occurrence instead of
@@ -1058,10 +1078,10 @@ with origin `schedule`. A zero-enqueued result creates nothing and leaves the
 schedule due; overlap beyond the name-keyed active check remains the dedup
 key's responsibility. Unmet preconditions — the mirror's rsync check — skip
 the occurrence with a log line, a failure in one schedule never stops the
-others, and no production enqueues by forking a CLI. A schedule with no
+others, and no production enqueues by forking a CLI. A named entry with no
 terminal batch yet waits for the next preferred time-of-day, anchored in the
-scheduler's `firstDue` map once per daemon lifetime; the entry becomes
-irrelevant once the first batch lands. The scheduler never checks resource
+scheduler's `firstDue` map once per daemon lifetime; the anchor becomes
+irrelevant once the first batch lands. Named entries never check resource
 locks: enqueueing while `maintenance` is held just queues the batch, which
 the dispatcher claims when the locks free.
 

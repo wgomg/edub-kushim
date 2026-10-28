@@ -96,7 +96,7 @@ internal/
 │   ├── consumption/        # Document processing engine + its task handlers
 │   │   ├── consumer.go     # Main consumer (extract → OCR → optimize → store), duplicate detection (MD5+SHA512)
 │   │   ├── consume.go      # ConsumeTaskHandler (uses FileFromPath)
-│   │   ├── scan.go         # ScanAndEnqueue — shared inbox scan → dedup → batch creation
+│   │   ├── scan.go         # ScanInboxSpecs — inbox scan → dedup → ingest task specs (enqueued by the scheduler engine)
 │   │   ├── storage.go      # File operations, checksums, FileFromPath, MIME detection via mimetype lib
 │   │   └── thumbnail.go    # ThumbnailTaskHandler (render + save page thumbnail)
 │   ├── storage/            # Filesystem operations for documents and orphaned/trashed files

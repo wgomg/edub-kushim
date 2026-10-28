@@ -331,7 +331,7 @@ tesseract language packs are shown as advisory notes but do not block.
 ### Paused Batch Guard
 
 Ingest batch creation is guarded while batches are paused due to LLM provider
-credit/balance errors: the polling daemon skips its inbox-scanning tick (it
+credit/balance errors: the queue daemon's polling entry skips its inbox scan (it
 logs a line and waits for the next interval), and `kushim batch create
 consume` refuses with a hard error listing the paused batch IDs:
 

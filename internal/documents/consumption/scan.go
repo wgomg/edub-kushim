@@ -12,22 +12,22 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
-	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// ScanAndEnqueue scans the consumption directory and enqueues one consume task (with its own waiting
-// enrich and, when thumbnails are enabled, a thumbnail child) per new file through the transactional
-// enqueuer, deduplicating by MD5 plus SHA-512 parity against existing documents and within the scan
-// itself. The batch and its tasks commit together, and a dedup-skipped consume task takes its linked
-// children with it. Any paused batch skips the scan entirely, returning empty with a nil error.
-func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Client, enqueuer *task.Enqueuer, logger *log.Logger) (batchID string, enqueued int, err error) {
+// ScanInboxSpecs scans the consumption directory and builds one consume task — with its own waiting enrich
+// and, when thumbnails are enabled, a thumbnail child — per new file, deduplicating by MD5 plus SHA-512
+// parity against existing documents and within the scan itself. It performs the file moves that duplicate
+// detection implies but writes no queue rows: the caller enqueues the returned specs, so the batch and its
+// tasks commit together there and a dedup-skipped consume task takes its linked children with it. Any
+// paused batch skips the scan entirely, returning no specs and a nil error.
+func ScanInboxSpecs(ctx context.Context, cfg *config.Config, client *database.Client, logger *log.Logger) ([]task.TaskSpec, error) {
 	pausedCount, err := client.Queries.CountPausedBatches(ctx)
 	if err != nil {
-		return "", 0, fmt.Errorf("count paused batches: %w", err)
+		return nil, fmt.Errorf("count paused batches: %w", err)
 	}
 	if pausedCount > 0 {
 		logger.Info("", "scan: skipped — %d paused batch(es) exist; resolve credit issue first", pausedCount)
-		return "", 0, nil
+		return nil, nil
 	}
 
 	paths, err := storage.ListFilePaths(
@@ -36,11 +36,11 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		cfg.Consumer.MaxFilesPerBatch,
 	)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
 
 	if len(paths) == 0 {
-		return "", 0, nil
+		return nil, nil
 	}
 
 	// compute MD5 for all files, skipping unreadable ones
@@ -60,7 +60,7 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 	}
 
 	if len(entries) == 0 {
-		return "", 0, nil
+		return nil, nil
 	}
 
 	// batch dedup: single query for all MD5 hashes instead of one per file
@@ -74,12 +74,11 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 		duplicates = make(map[string]duplicateInfo)
 	}
 
-	// hashes already enqueued earlier in this scan; the consume task's dedup key ("consume:<md5>") would
+	// hashes already seen earlier in this scan; the consume task's dedup key ("consume:<md5>") would still
 	// reject a second copy anyway
 	seen := make(map[string]bool)
 
 	var tasks []task.TaskSpec
-	consumeTaskIDs := make(map[string]struct{}, len(entries))
 
 	for _, e := range entries {
 		if seen[e.md5] {
@@ -106,31 +105,11 @@ func ScanAndEnqueue(ctx context.Context, cfg *config.Config, client *database.Cl
 			MD5:        e.md5,
 			DocumentID: uuid.New().String(),
 		}, cfg.Consumer.Thumbnail.Enabled)
-		consumeTaskIDs[fileTasks[0].TaskID] = struct{}{}
 		tasks = append(tasks, fileTasks...)
 		seen[e.md5] = true
 	}
 
-	if len(tasks) == 0 {
-		return "", 0, nil
-	}
-
-	spec, err := task.NewBatchSpec(types.Batch.Origin.Polling, "")
-	if err != nil {
-		return "", 0, fmt.Errorf("build polling batch spec: %w", err)
-	}
-
-	result, err := enqueuer.EnqueueBatch(ctx, spec, tasks)
-	if err != nil {
-		return "", 0, err
-	}
-	for _, taskID := range result.TaskIDs {
-		if _, ok := consumeTaskIDs[taskID]; ok {
-			enqueued++
-		}
-	}
-
-	return result.BatchID, enqueued, nil
+	return tasks, nil
 }
 
 // DedupKey derives a consume task's dedup key from the payload's content checksum: one live consume

@@ -78,15 +78,47 @@ func setupScanTest(t *testing.T) (*config.Config, *database.Client, func()) {
 	return cfg, client, cleanup
 }
 
-func TestScanAndEnqueue_EmptyInbox(t *testing.T) {
+// enqueueScanSpecs runs the inbox scan and enqueues its specs with the polling origin, the way the
+// scheduler's unnamed entry does. It returns the created batch id and the number of consume tasks that
+// survived dedup, mirroring the counts the scan tests assert.
+func enqueueScanSpecs(ctx context.Context, t *testing.T, cfg *config.Config, client *database.Client, logger *log.Logger) (string, int) {
+	t.Helper()
+	specs, err := ScanInboxSpecs(ctx, cfg, client, logger)
+	if err != nil {
+		t.Fatalf("ScanInboxSpecs: %v", err)
+	}
+	if len(specs) == 0 {
+		return "", 0
+	}
+	spec, err := task.NewBatchSpec(types.Batch.Origin.Polling, "")
+	if err != nil {
+		t.Fatalf("build polling batch spec: %v", err)
+	}
+	result, err := newScanTestEnqueuer(client).EnqueueBatch(ctx, spec, specs)
+	if err != nil {
+		t.Fatalf("EnqueueBatch: %v", err)
+	}
+	created := make(map[string]struct{}, len(result.TaskIDs))
+	for _, id := range result.TaskIDs {
+		created[id] = struct{}{}
+	}
+	consume := 0
+	for _, s := range specs {
+		if s.Type != types.Task.Type.Consume {
+			continue
+		}
+		if _, ok := created[s.TaskID]; ok {
+			consume++
+		}
+	}
+	return result.BatchID, consume
+}
+
+func TestScanInboxSpecs_EmptyInbox(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
-	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
-	if err != nil {
-		t.Fatalf("ScanAndEnqueue: %v", err)
-	}
+	batchID, count := enqueueScanSpecs(context.Background(), t, cfg, client, log.NewDiscardLogger())
 	if batchID != "" {
 		t.Errorf("batchID = %q, want empty", batchID)
 	}
@@ -95,18 +127,14 @@ func TestScanAndEnqueue_EmptyInbox(t *testing.T) {
 	}
 }
 
-func TestScanAndEnqueue_CreatesBatchAndTasks(t *testing.T) {
+func TestScanInboxSpecs_CreatesBatchAndTasks(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "new-doc.pdf")
 	testutil.CreateTestPDF(t, pdfPath, "unique content alpha")
 
-	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
-	if err != nil {
-		t.Fatalf("ScanAndEnqueue: %v", err)
-	}
+	batchID, count := enqueueScanSpecs(context.Background(), t, cfg, client, log.NewDiscardLogger())
 	if batchID == "" {
 		t.Fatal("batchID is empty, want a UUID")
 	}
@@ -172,7 +200,7 @@ func TestScanAndEnqueue_CreatesBatchAndTasks(t *testing.T) {
 	}
 }
 
-func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
+func TestScanInboxSpecs_SkipsDuplicates(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
@@ -205,11 +233,7 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 		t.Fatalf("CreateDocument: %v", err)
 	}
 
-	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
-	if err != nil {
-		t.Fatalf("ScanAndEnqueue: %v", err)
-	}
+	batchID, count := enqueueScanSpecs(context.Background(), t, cfg, client, log.NewDiscardLogger())
 	if batchID != "" {
 		t.Errorf("batchID = %q, want empty (all duplicates)", batchID)
 	}
@@ -228,7 +252,7 @@ func TestScanAndEnqueue_SkipsDuplicates(t *testing.T) {
 	}
 }
 
-func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
+func TestScanInboxSpecs_MixedNewAndDuplicate(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
@@ -265,11 +289,7 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 	newPath := filepath.Join(cfg.Storage.ConsumptionDir, "new-doc.pdf")
 	testutil.CreateTestPDF(t, newPath, "brand new content")
 
-	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
-	if err != nil {
-		t.Fatalf("ScanAndEnqueue: %v", err)
-	}
+	batchID, count := enqueueScanSpecs(context.Background(), t, cfg, client, log.NewDiscardLogger())
 	if batchID == "" {
 		t.Fatal("batchID is empty, want a UUID")
 	}
@@ -296,7 +316,7 @@ func TestScanAndEnqueue_MixedNewAndDuplicate(t *testing.T) {
 	}
 }
 
-func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
+func TestScanInboxSpecs_MultipleFiles(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
@@ -306,11 +326,7 @@ func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
 		testutil.CreateTestPDF(t, pdfPath, "content"+string(rune('a'+i)))
 	}
 
-	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
-	if err != nil {
-		t.Fatalf("ScanAndEnqueue: %v", err)
-	}
+	batchID, count := enqueueScanSpecs(context.Background(), t, cfg, client, log.NewDiscardLogger())
 	if batchID == "" {
 		t.Fatal("batchID is empty")
 	}
@@ -328,7 +344,7 @@ func TestScanAndEnqueue_MultipleFiles(t *testing.T) {
 	}
 }
 
-func TestScanAndEnqueue_PausedBatchesSkip(t *testing.T) {
+func TestScanInboxSpecs_PausedBatchesSkip(t *testing.T) {
 	cfg, client, cleanup := setupScanTest(t)
 	defer cleanup()
 
@@ -344,11 +360,7 @@ func TestScanAndEnqueue_PausedBatchesSkip(t *testing.T) {
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "should-not-be-processed.pdf")
 	testutil.CreateTestPDF(t, pdfPath, "content that should not be scanned")
 
-	logger := log.NewDiscardLogger()
-	batchID, count, err := ScanAndEnqueue(context.Background(), cfg, client, newScanTestEnqueuer(client), logger)
-	if err != nil {
-		t.Fatalf("ScanAndEnqueue: %v", err)
-	}
+	batchID, count := enqueueScanSpecs(context.Background(), t, cfg, client, log.NewDiscardLogger())
 	if batchID != "" {
 		t.Errorf("batchID = %q, want empty (paused batches block scan)", batchID)
 	}

@@ -144,8 +144,6 @@ func Run(c *container.Container, args []string) error {
 	}
 	d.client.Store(client)
 
-	go d.runPollingLoop(ctx)
-
 	d.startNotify(ctx)
 	defer d.stopNotify()
 
@@ -213,7 +211,7 @@ func (d *daemon) tick(ctx context.Context) {
 	client := d.client.Load()
 	enqueuer := task.NewEnqueuer(client, d.catalog)
 
-	d.sched.run(ctx, client.Queries, enqueuer, cfg)
+	d.sched.run(ctx, client, enqueuer, cfg)
 
 	d.reclaimStale(ctx, cfg)
 }
@@ -243,70 +241,4 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 
 	d.stopNotify()
 	d.startNotify(ctx)
-}
-
-func (d *daemon) runPollingLoop(ctx context.Context) {
-	c := d.c
-	var missingTools []config.ExternalTool
-	var lastCfg *config.Config
-
-	for {
-		cfgPtr := c.GetConfig()
-		if cfgPtr != lastCfg {
-			missingTools = config.MissingExternalToolErrors(cfgPtr)
-			lastCfg = cfgPtr
-		}
-
-		pollingCfg := cfgPtr.Consumer.Polling
-		interval := max(time.Duration(pollingCfg.Interval)*time.Minute, time.Minute)
-
-		client := d.client.Load()
-		if pollingCfg.Enabled && config.IsWithinActiveWindows(pollingCfg.Windows) {
-			locked, lockErr := client.Queries.IsLockHeld(ctx, string(types.LockMaintenance))
-			if lockErr != nil {
-				c.GetLogger().Error("", "polling: backup lock check: %v", lockErr)
-			} else if locked > 0 {
-				c.GetLogger().Debug("", "polling: skipped — backup in progress")
-			} else {
-				pollingTick(ctx, c, client, task.NewEnqueuer(client, d.catalog), missingTools)
-			}
-		} else if pollingCfg.Enabled {
-			c.GetLogger().Debug("", "polling: disabled — outside active windows")
-		} else {
-			c.GetLogger().Debug("", "polling: disabled")
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(interval):
-		}
-	}
-}
-
-func pollingTick(ctx context.Context, c *container.Container, client *database.Client, enqueuer *task.Enqueuer, missingTools []config.ExternalTool) {
-	if len(missingTools) > 0 {
-		names := make([]string, len(missingTools))
-		for i, t := range missingTools {
-			names[i] = t.Engine
-		}
-		c.GetLogger().Error("", "polling: skipped — missing external tools: %s", strings.Join(names, ", "))
-		return
-	}
-
-	batchID, enqueued, err := consumption.ScanAndEnqueue(ctx, c.GetConfig(), client, enqueuer, c.GetLogger())
-	if err != nil {
-		c.GetLogger().Error("", "polling: scan and enqueue: %v", err)
-		return
-	}
-	if batchID == "" {
-		c.GetLogger().Debug("", "polling: no new files")
-		return
-	}
-	if enqueued == 0 {
-		c.GetLogger().Info("", "polling: all files were duplicates (batch %s)", batchID)
-		return
-	}
-
-	c.GetLogger().Info("", "polling: batch %s created with %d files", batchID, enqueued)
 }
