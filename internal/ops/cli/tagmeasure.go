@@ -1,16 +1,13 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -47,55 +44,23 @@ func tagMeasureHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	handler := newMeasureHandler(c, client)
+
 	if batchID != "" || execTokenParam != "" {
 		if noWait {
 			return fmt.Errorf("--no-wait applies to the direct run only")
 		}
-		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagMeasure, func(ctx context.Context) (json.RawMessage, error) {
-			return tagMeasurePass(ctx, c)
-		})
+		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagMeasure, handler)
 	}
-	return runTagPassDirect(c, types.Task.Type.TagMeasure, noWait, func(ctx context.Context) (json.RawMessage, error) {
-		return tagMeasurePass(ctx, c)
-	})
+	return runTagPassDirect(c, types.Task.Type.TagMeasure, noWait, handler)
 }
 
-// tagMeasurePass runs one measurement pass and returns its serialized report, the shared body of the
-// direct and batch modes. The batch id never enters the measurement's run keys: the run id stays fresh.
-func tagMeasurePass(ctx context.Context, c *container.Container) (json.RawMessage, error) {
-	client, err := c.GetClient()
-	if err != nil {
-		return nil, fmt.Errorf("database: %w", err)
-	}
-	if err := logTagMeasureStart(ctx, c, client); err != nil {
-		return nil, err
-	}
-	report, err := tags.NewRunner(client, nil).Run(ctx, uuid.New())
-	if err != nil {
-		return nil, fmt.Errorf("tag measure: %w", err)
-	}
-	return marshalTagMeasureReport(c, report)
-}
-
-// logTagMeasureStart records the sweep's opening line: how many tags the store holds before the snapshot
-// is read.
-func logTagMeasureStart(ctx context.Context, c *container.Container, client *database.Client) error {
-	count, err := client.Queries.CountTags(ctx)
-	if err != nil {
-		return fmt.Errorf("count tags: %w", err)
-	}
-	c.GetLogger().Info("", "tag measure run starting: %d tags in store", count)
-	return nil
-}
-
-func marshalTagMeasureReport(c *container.Container, report *tags.Report) (json.RawMessage, error) {
-	raw, err := json.Marshal(report)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tag measure report: %w", err)
-	}
-
-	c.GetLogger().Info("", "tag measure run %s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
-		report.RunID, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
-		report.Operators, report.States, report.Skipped, report.Worklists)
-	return raw, nil
+// newMeasureHandler constructs the measurement handler over the command's measurement runner.
+func newMeasureHandler(c *container.Container, client *database.Client) task.Handler {
+	return tags.NewMeasureTaskHandler(tags.NewRunner(client, nil), c.GetLogger())
 }

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -15,10 +14,6 @@ import (
 
 // tagPassTimeout bounds one tag pass in both modes; the passes are long but finite sweeps.
 const tagPassTimeout = 6 * time.Hour
-
-// tagPass is the action body of one tag verb: it runs the pass and returns its serialized report, which
-// the direct mode prints and the batch mode stores as the task result.
-type tagPass func(ctx context.Context) (json.RawMessage, error)
 
 // resolveTagPassSelection validates the batch selector and the execution token's shape before anything
 // touches the database. A batch-mode invocation must carry the token; a tokenless selector refuses and
@@ -40,22 +35,22 @@ func resolveTagPassSelection(batchID, execToken string) (string, string, error) 
 }
 
 // runTagPassBatch executes one claimed tag batch in this child: the dispatcher claim acquired the maintenance
-// lock, the pass runs in the registered handler, and its report lands on the task row.
-func runTagPassBatch(c *container.Container, batchID, execTokenParam string, taskType types.TaskType, pass tagPass) error {
+// lock, the handler runs in the registered single-type registry, and its report lands on the task row.
+func runTagPassBatch(c *container.Container, batchID, execTokenParam string, taskType types.TaskType, handler task.Handler) error {
 	client, err := c.GetClient()
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
 	store := task.NewStore(client)
 	registry := task.NewRegistry()
-	registry.Register(taskType, tagPassHandler{pass: pass})
+	registry.Register(taskType, handler)
 	_, err = consume.RunClaimedBatch(c, batchID, execTokenParam, store, registry, nil)
 	return err
 }
 
 // runTagPassDirect runs one pass immediately under the type's manual lock declarations: no batch or task
 // rows, the lock and drain the queued run would use, and the report printed for the operator.
-func runTagPassDirect(c *container.Container, taskType types.TaskType, noWait bool, pass tagPass) error {
+func runTagPassDirect(c *container.Container, taskType types.TaskType, noWait bool, handler task.Handler) error {
 	ctx, cancel := context.WithTimeout(context.Background(), tagPassTimeout)
 	defer cancel()
 
@@ -64,27 +59,13 @@ func runTagPassDirect(c *container.Container, taskType types.TaskType, noWait bo
 		return fmt.Errorf("database: %w", err)
 	}
 
-	var raw json.RawMessage
 	policy := task.DirectLockPolicyFor(taskType)
-	err = task.RunDirect(ctx, client, c.GetLogger(), string(taskType), policy, !noWait, nil, func() error {
-		var runErr error
-		raw, runErr = pass(ctx)
-		return runErr
+	return task.RunDirect(ctx, client, c.GetLogger(), string(taskType), policy, !noWait, nil, func() error {
+		raw, err := handler.Handle(ctx, task.Task{})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s\n", raw)
+		return nil
 	})
-	if err != nil {
-		return err
-	}
-	fmt.Printf("%s\n", raw)
-	return nil
-}
-
-// tagPassHandler adapts a tag pass to the task handler the batch-mode registry carries; the returned
-// value is the report the task row keeps.
-type tagPassHandler struct {
-	pass tagPass
-}
-
-// Handle runs the pass and returns its report as the task result.
-func (h tagPassHandler) Handle(ctx context.Context, _ task.Task) (json.RawMessage, error) {
-	return h.pass(ctx)
 }

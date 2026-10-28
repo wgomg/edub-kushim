@@ -190,6 +190,11 @@ enricher:
   #   time: "04:00"              # preferred time of day (HH:MM)
   #   sample_size: 150           # documents sampled per run
 
+  # tag_maintenance:             # scheduled maintenance routine: reconcile -> identity -> audit -> measure
+  #   enabled: false             # disabled by default; idles the individual reconcile/measure/audit schedules
+  #   interval: 7                # days between runs
+  #   time: "02:00"              # preferred time of day (HH:MM)
+
 backup:
   # enabled: true
   # path: /var/backups                  # fallback directory (also used by manual CLI)

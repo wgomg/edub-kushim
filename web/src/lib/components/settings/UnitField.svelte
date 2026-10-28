@@ -17,7 +17,8 @@
 		mono = false,
 		wide = false,
 		advancedOnly = false,
-		autocomplete = 'off'
+		autocomplete = 'off',
+		disabled = false
 	} = $props();
 </script>
 
@@ -36,8 +37,9 @@
 			{placeholder}
 			{spellcheck}
 			{autocomplete}
+			{disabled}
 			bind:value
-			class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {unit
+			class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 {unit
 				? 'pr-12'
 				: ''} {mono ? 'font-mono text-[0.8125rem]' : ''}"
 		/>

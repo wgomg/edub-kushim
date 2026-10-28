@@ -20,9 +20,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// The schedule names scheduled batches carry in batch.schedule. Mirror, thumbnail backfill and the tag
-// passes keep the interim names batches already carry, so their due-ness continues from the last terminal
-// run; backup names are per mode, so each configured mode keeps its own cadence.
+// The schedule names scheduled batches carry in batch.schedule. Mirror, thumbnail backfill, the tag
+// passes and the tag maintenance routine keep the interim names batches already carry, so their due-ness
+// continues from the last terminal run; backup names are per mode, so each configured mode keeps its own
+// cadence.
 const (
 	scheduleMirror            = "mirror"
 	scheduleThumbnailBackfill = "thumbnail-backfill"
@@ -30,6 +31,7 @@ const (
 	scheduleTagMeasure        = "tagmeasure"
 	scheduleTagIdentity       = "tagidentity"
 	scheduleTagAudit          = "tagaudit"
+	scheduleTagMaintenance    = "tagmaintenance"
 
 	backupSchedulePrefix = "backup:"
 )
@@ -62,7 +64,7 @@ func (e schedulerEntry) label() string {
 // It runs on every evaluation, so enabled predicates, timings and producers read the freshly reloaded
 // configuration instead of values captured at daemon start.
 func entriesFor(cfg *config.Config) []schedulerEntry {
-	entries := make([]schedulerEntry, 0, len(cfg.Backup.Schedules)+7)
+	entries := make([]schedulerEntry, 0, len(cfg.Backup.Schedules)+8)
 	if cfg.Backup.Enabled {
 		for _, entry := range cfg.Backup.Schedules {
 			s := entry
@@ -111,9 +113,11 @@ func entriesFor(cfg *config.Config) []schedulerEntry {
 			},
 		},
 		schedulerEntry{
-			name:    scheduleTagReconcile,
-			origin:  types.Batch.Origin.Schedule,
-			enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagReconcile.Enabled },
+			name:   scheduleTagReconcile,
+			origin: types.Batch.Origin.Schedule,
+			enabled: func(cfg *config.Config) bool {
+				return cfg.Enricher.TagReconcile.Enabled && !cfg.Enricher.TagMaintenance.Enabled
+			},
 			timing: func(cfg *config.Config) backup.ScheduleTiming {
 				return backup.ScheduleTiming{Interval: cfg.Enricher.TagReconcile.Interval, Time: cfg.Enricher.TagReconcile.Time}
 			},
@@ -122,9 +126,11 @@ func entriesFor(cfg *config.Config) []schedulerEntry {
 			},
 		},
 		schedulerEntry{
-			name:    scheduleTagMeasure,
-			origin:  types.Batch.Origin.Schedule,
-			enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagMeasure.Enabled },
+			name:   scheduleTagMeasure,
+			origin: types.Batch.Origin.Schedule,
+			enabled: func(cfg *config.Config) bool {
+				return cfg.Enricher.TagMeasure.Enabled && !cfg.Enricher.TagMaintenance.Enabled
+			},
 			timing: func(cfg *config.Config) backup.ScheduleTiming {
 				return backup.ScheduleTiming{Interval: cfg.Enricher.TagMeasure.Interval, Time: cfg.Enricher.TagMeasure.Time}
 			},
@@ -144,14 +150,27 @@ func entriesFor(cfg *config.Config) []schedulerEntry {
 			},
 		},
 		schedulerEntry{
-			name:    scheduleTagAudit,
-			origin:  types.Batch.Origin.Schedule,
-			enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagAudit.Enabled },
+			name:   scheduleTagAudit,
+			origin: types.Batch.Origin.Schedule,
+			enabled: func(cfg *config.Config) bool {
+				return cfg.Enricher.TagAudit.Enabled && !cfg.Enricher.TagMaintenance.Enabled
+			},
 			timing: func(cfg *config.Config) backup.ScheduleTiming {
 				return backup.ScheduleTiming{Interval: cfg.Enricher.TagAudit.Interval, Time: cfg.Enricher.TagAudit.Time}
 			},
 			produce: func(context.Context, *config.Config, *database.Client, *log.Logger) ([]task.TaskSpec, error) {
 				return curation.AuditSpecs(), nil
+			},
+		},
+		schedulerEntry{
+			name:    scheduleTagMaintenance,
+			origin:  types.Batch.Origin.Schedule,
+			enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagMaintenance.Enabled },
+			timing: func(cfg *config.Config) backup.ScheduleTiming {
+				return backup.ScheduleTiming{Interval: cfg.Enricher.TagMaintenance.Interval, Time: cfg.Enricher.TagMaintenance.Time}
+			},
+			produce: func(context.Context, *config.Config, *database.Client, *log.Logger) ([]task.TaskSpec, error) {
+				return curation.MaintenanceSpecs(), nil
 			},
 		},
 	)

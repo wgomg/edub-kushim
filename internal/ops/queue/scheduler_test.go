@@ -43,8 +43,8 @@ func TestScheduleNamesAreUnique(t *testing.T) {
 		}
 		seen[entry.name] = true
 	}
-	if got, want := len(entries), 10; got != want {
-		t.Fatalf("entry count = %d, want %d (three backup modes plus the six fixed schedules and polling)", got, want)
+	if got, want := len(entries), 11; got != want {
+		t.Fatalf("entry count = %d, want %d (three backup modes plus the seven fixed schedules and polling)", got, want)
 	}
 }
 
@@ -94,6 +94,23 @@ func TestScheduleEnabledGates(t *testing.T) {
 		{name: "tag measure flag", schedule: scheduleTagMeasure, mutate: func(c *config.Config) { c.Enricher.TagMeasure.Enabled = true }, want: true},
 		{name: "tag audit flag", schedule: scheduleTagAudit, mutate: func(c *config.Config) { c.Enricher.TagAudit.Enabled = true }, want: true},
 		{name: "tag identity follows the adjudicator", schedule: scheduleTagIdentity, mutate: func(c *config.Config) { c.Enricher.TagAdjudicator.Enabled = true }, want: true},
+		{name: "tag maintenance flag", schedule: scheduleTagMaintenance, mutate: func(c *config.Config) { c.Enricher.TagMaintenance.Enabled = true }, want: true},
+		{name: "reconcile suppressed by the routine", schedule: scheduleTagReconcile, mutate: func(c *config.Config) {
+			c.Enricher.TagReconcile.Enabled = true
+			c.Enricher.TagMaintenance.Enabled = true
+		}, want: false},
+		{name: "measure suppressed by the routine", schedule: scheduleTagMeasure, mutate: func(c *config.Config) {
+			c.Enricher.TagMeasure.Enabled = true
+			c.Enricher.TagMaintenance.Enabled = true
+		}, want: false},
+		{name: "audit suppressed by the routine", schedule: scheduleTagAudit, mutate: func(c *config.Config) {
+			c.Enricher.TagAudit.Enabled = true
+			c.Enricher.TagMaintenance.Enabled = true
+		}, want: false},
+		{name: "identity keeps its cadence under the routine", schedule: scheduleTagIdentity, mutate: func(c *config.Config) {
+			c.Enricher.TagAdjudicator.Enabled = true
+			c.Enricher.TagMaintenance.Enabled = true
+		}, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

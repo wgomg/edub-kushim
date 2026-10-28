@@ -1,14 +1,14 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags/reconcile"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -45,31 +45,31 @@ func tagReconcileHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	handler, err := newReconcileHandler(c, client)
+	if err != nil {
+		return err
+	}
+
 	if batchID != "" || execTokenParam != "" {
 		if noWait {
 			return fmt.Errorf("--no-wait applies to the direct run only")
 		}
-		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagReconcile, func(ctx context.Context) (json.RawMessage, error) {
-			return tagReconcilePass(ctx, c)
-		})
+		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagReconcile, handler)
 	}
-	return runTagPassDirect(c, types.Task.Type.TagReconcile, noWait, func(ctx context.Context) (json.RawMessage, error) {
-		return tagReconcilePass(ctx, c)
-	})
+	return runTagPassDirect(c, types.Task.Type.TagReconcile, noWait, handler)
 }
 
-// tagReconcilePass runs one reconcile pass and returns its serialized report. It is the shared body of the
-// command's direct mode and its batch-mode task handler; the pass owns its no-op gate.
-func tagReconcilePass(ctx context.Context, c *container.Container) (json.RawMessage, error) {
-	client, err := c.GetClient()
-	if err != nil {
-		return nil, fmt.Errorf("database: %w", err)
-	}
+// newReconcileHandler constructs the reconcile handler over the command's reconciler.
+func newReconcileHandler(c *container.Container, client *database.Client) (task.Handler, error) {
 	tagService, err := c.GetTagService()
 	if err != nil {
-		return nil, fmt.Errorf("dispatcher: %w", err)
+		return nil, fmt.Errorf("tag service: %w", err)
 	}
-
 	reconciler := reconcile.NewReconciler(
 		func() *config.Config { return c.GetConfig() },
 		client,
@@ -77,19 +77,5 @@ func tagReconcilePass(ctx context.Context, c *container.Container) (json.RawMess
 		c.GetTagToolsRunner(),
 		c.GetLogger(),
 	)
-
-	report, err := reconciler.Run(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("tag reconcile: %w", err)
-	}
-
-	raw, err := json.Marshal(report)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tag reconcile report: %w", err)
-	}
-	c.GetLogger().Info("", "tag reconcile run: report_only=%t, %d pairs re-checked, %d judged, %d aliases, %d restorations, %d compounds split, %d twin pairs, %d sibling pairs, %d demotions revoked",
-		report.ReportOnly, report.Worklist.Stale+report.Worklist.Unjudged+report.Worklist.Drifted+report.Worklist.Aged,
-		report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, len(report.CompoundSplits), report.Twins.Worklist,
-		report.Siblings.Worklist, report.Demotion.Demoted)
-	return raw, nil
+	return reconcile.NewReconcileTaskHandler(reconciler), nil
 }

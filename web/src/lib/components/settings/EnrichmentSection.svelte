@@ -21,6 +21,7 @@
 	let selectedProviderModels = $derived(
 		llmModels.providers[cfg.enricher.contentanalyzer.llm.provider] ?? []
 	);
+	let tagSchedulesLocked = $derived(cfg.enricher.tag_maintenance?.enabled ?? false);
 
 	function adapterProviders(llm) {
 		return llmModels.adapters[llm?.adapter] ?? [];
@@ -740,6 +741,55 @@
 		</Card>
 
 		<Card
+			title="Maintenance routine"
+			name="tag maintenance routine reconcile identity audit measure schedule"
+			description="Schedules reconciliation, identity resolution, coverage audit and measurement as one routine, in that order."
+		>
+			{#if cfg.enricher.tag_maintenance.enabled && !cfg.enricher.tag_adjudicator?.enabled}
+				<div class="mb-4">
+					<Note variant="warn" title="Tag adjudicator not enabled.">
+						The routine's reconcile and identity steps require the tag adjudicator — enable it on
+						the Tag adjudicator card. Until then those steps stay snapshot-only.
+					</Note>
+				</div>
+			{/if}
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div class="sm:col-span-2">
+					<Switch
+						id="tag-maintenance-enabled"
+						bind:checked={cfg.enricher.tag_maintenance.enabled}
+						label="Schedule the maintenance routine"
+					/>
+				</div>
+				<UnitField
+					id="tag-maintenance-interval"
+					label="Interval"
+					unit="days"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					bind:value={cfg.enricher.tag_maintenance.interval}
+				/>
+				<UnitField
+					id="tag-maintenance-time"
+					label="Preferred time"
+					mono
+					placeholder="02:00"
+					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+					hint="HH:MM, 24-hour."
+					bind:value={cfg.enricher.tag_maintenance.time}
+				/>
+			</div>
+			<div class="mt-4">
+				<Note variant="info">
+					While the routine is enabled, the individual reconciliation, measurement and coverage
+					audit schedules stay idle. Identity still runs on its own daily schedule; the routine's
+					identity step is a catch-up.
+				</Note>
+			</div>
+		</Card>
+
+		<Card
 			title="Tag reconciliation"
 			name="tag reconciliation report rejudge retag"
 			description="Periodically re-checks old tag decisions against the current tag set."
@@ -773,6 +823,7 @@
 					type="number"
 					inputmode="numeric"
 					min="1"
+					disabled={tagSchedulesLocked}
 					bind:value={cfg.enricher.tag_reconcile.interval}
 				/>
 				<UnitField
@@ -782,6 +833,7 @@
 					placeholder="02:00"
 					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
 					hint="HH:MM, 24-hour."
+					disabled={tagSchedulesLocked}
 					bind:value={cfg.enricher.tag_reconcile.time}
 				/>
 				<UnitField
@@ -852,6 +904,7 @@
 					type="number"
 					inputmode="numeric"
 					min="1"
+					disabled={tagSchedulesLocked}
 					bind:value={cfg.enricher.tag_measure.interval}
 				/>
 				<UnitField
@@ -861,6 +914,7 @@
 					placeholder="03:00"
 					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
 					hint="HH:MM, 24-hour."
+					disabled={tagSchedulesLocked}
 					bind:value={cfg.enricher.tag_measure.time}
 				/>
 			</div>
@@ -886,6 +940,7 @@
 					type="number"
 					inputmode="numeric"
 					min="1"
+					disabled={tagSchedulesLocked}
 					bind:value={cfg.enricher.tag_audit.interval}
 				/>
 				<UnitField
@@ -895,6 +950,7 @@
 					placeholder="04:00"
 					pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
 					hint="HH:MM, 24-hour."
+					disabled={tagSchedulesLocked}
 					bind:value={cfg.enricher.tag_audit.time}
 				/>
 				<UnitField

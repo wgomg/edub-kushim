@@ -6,7 +6,7 @@ the process layer is split by role: the verb table and the `kushim` verbs live i
 
 ### Globals
 
-`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `batch`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `llm`, `restore`, `migrate`, `tagmeasure`, `tagreconcile`, `tagidentity`, `tagaudit`. The `consume`, `queue`, and `setup` entries delegate to `consume.Run`, `queue.Run`, and `setup.RunSetup` respectively.
+`commandSets` map with `"cli"` key (CLI commands) and `"server"` key (edub commands: `version`). CLI set contains: `version`, `batch`, `consume`, `search`, `hugot`, `task`, `user`, `setup`, `enrich`, `thumbnails`, `queue`, `storage`, `backup`, `mirror`, `config`, `llm`, `restore`, `migrate`, `tagmeasure`, `tagreconcile`, `tagidentity`, `tagaudit`, `tagmaintenance`. The `consume`, `queue`, and `setup` entries delegate to `consume.Run`, `queue.Run`, and `setup.RunSetup` respectively, and `tagmaintenance` to `internal/ops/tagmaintenance.Run`.
 
 > **Note**: The `edub` binary has its own standalone runner in `cmd/edub/runner.go` that only handles the `version` command (server mode is the default when no command matches).
 
@@ -229,13 +229,14 @@ The daemon's Postgres `LISTEN` goroutine lives in `internal/ops/dispatch/notify.
 
 ### Dispatched maintenance and tag batches
 
-Scheduled `backup`, `mirror` and tag batches are ordinary queued batches the dispatcher claims: the claim acquires the type's holds under the execution token and forks the type's own CLI (`kushim backup --from-batch`, `kushim mirror --from-batch`, `kushim tagreconcile|tagmeasure|tagidentity|tagaudit --from-batch`), which adopts the lease with its child pid, keeps the batch holds fresh across the whole run (lock heartbeat + drain) and stores the pass's report as the task result. Wording per pass:
+Scheduled `backup`, `mirror` and tag batches are ordinary queued batches the dispatcher claims: the claim acquires the type's holds under the execution token and forks the type's own CLI (`kushim backup --from-batch`, `kushim mirror --from-batch`, `kushim tagreconcile|tagmeasure|tagidentity|tagaudit --from-batch`), which adopts the lease with its child pid, keeps the batch holds fresh across the whole run (lock heartbeat + drain) and stores the pass's report as the task result. A batch made only of tag types chained by waiting successors — the maintenance routine's batch — resolves to `kushim tagmaintenance --from-batch` instead, whose child registers all four pass handlers and runs the chain in order. Wording per pass:
 
 - **tagmeasure** — the pass opens on its store-changed flag (`tag_measure_changed` in `system_signal`): with the flag clear and a completed run under the current rule set it prints a zero-work report (`zero_work: true`, no records) and writes nothing; otherwise its opening transaction clears the flag and it sweeps, re-arming the flag if the sweep fails. The batch id never enters the run keys — the run id stays fresh.
 - **tagreconcile** — opens on its store-changed gate plus the work probe set: a clear flag with every probe empty prints `zero_work: true` without the store-wide reads; a failed run re-arms the flag.
 - **tagidentity** — the child resolves pending identity evidence through `admission.IdentityResolver` (criteria judged, same-intent pairs adjudicated, dispositions applied) under `enricher.tag_reconcile.max_rejudge`; a run with the adjudicator off only counts the backlog.
 - **tagaudit** — opens on its store-changed gate (a clear flag skips the store-wide pending-coverage derivation while the sample sweep still draws) and reports sweep, sampled/flagged counts, coverage tallies by class, fills/flags/proposals, judge call counts and pending coverage.
 - **backup / mirror** — the dispatched children run `backup.RunBackup` / `backup.RunMirrorAndRecord` over the payload's mode/path/keep (validated against the configured roots); a 5-minute heartbeat refreshes the batch's locks while the long actions run, so a large mirror never trips the 30-minute staleness window.
+- **tagmaintenance** — the routine child (`internal/ops/tagmaintenance`) registers the four pass handlers over its own catalog (the four constant dedup keys, so the waiting successors activate) and runs the batch's chain in order; a bare `kushim tagmaintenance` runs the same four handlers directly under the manual maintenance hold, creating no batch or task rows. Enqueue is `kushim batch create tagmaintenance`.
 
 ### Structs
 
@@ -299,11 +300,15 @@ The daemon keeps no pools: recurring enqueues are declared in `scheduler.go` as 
 
 ## `tagpass.go` (shared tag-verb plumbing)
 
-All four tag verbs map to the same three-shape contract through the helpers in `tagpass.go`:
+All four tag verbs construct their task handler locally — a verb-specific `newReconcileHandler`,
+`newIdentityHandler`, `newAuditHandler` or `newMeasureHandler` builds the domain runner over the
+container's services and returns the `task.Handler` whose `Handle` runs the pass and returns the
+serialized report (the pass bodies live in the domain packages: `reconcile.NewReconcileTaskHandler`,
+`admission.NewIdentityTaskHandler`/`NewAuditTaskHandler`, `tags.NewMeasureTaskHandler`) — and map to the
+same three-shape contract through the helpers in `tagpass.go`:
 
-- `tagPass(ctx, c) (json.RawMessage, error)` (per verb) — runs one pass over the container's services and returns its serialized report; the report is also marshalled into the task row by the batch-mode handler
-- `runTagPassDirect(c, taskType, noWait, pass)` — the no-flag mode: `task.RunDirect` under the type's manual lock declarations (hold `maintenance`, wait by default, `--no-wait` to fail fast), creating no queue rows, printing the report JSON
-- `runTagPassBatch(c, batchID, execToken, taskType, pass)` — executes one claimed tag batch: builds the store plus the single-type registry whose handler runs the pass and stores the report as the task result, then `consume.RunClaimedBatch`
+- `runTagPassDirect(c, taskType, noWait, handler)` — the no-flag mode: `task.RunDirect` under the type's manual lock declarations (hold `maintenance`, wait by default, `--no-wait` to fail fast), running the handler and printing the report JSON, creating no queue rows
+- `runTagPassBatch(c, batchID, execToken, taskType, handler)` — executes one claimed tag batch: builds the store plus the single-type registry whose handler runs the pass and stores the report as the task result, then `consume.RunClaimedBatch`
 - `resolveTagPassSelection(batchID, execToken)` — validates the batch-mode selector before anything touches the database: a batch-mode invocation requires `--exec-token` (a tokenless refusal points at `kushim batch run`), and a malformed token refuses before anything touches the database
 
 ## `tagidentity.go`

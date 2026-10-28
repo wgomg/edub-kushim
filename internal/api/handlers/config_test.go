@@ -188,6 +188,35 @@ func TestConfigResponseFrom_TagMatcherAndAuditSurfaced(t *testing.T) {
 	}
 }
 
+// TestConfigResponseFrom_TagMaintenanceSurfaced pins the maintenance-routine section the settings UI reads
+// back from GET /config: defaults first and overridden values second, so the card round-trips the
+// operator's schedule instead of re-persisting the defaults on every save.
+func TestConfigResponseFrom_TagMaintenanceSurfaced(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if resp.Enricher.TagMaintenance.Enabled {
+		t.Error("default TagMaintenance.Enabled should be false")
+	}
+	if resp.Enricher.TagMaintenance.Interval != 7 {
+		t.Errorf("default TagMaintenance.Interval = %v, want 7", resp.Enricher.TagMaintenance.Interval)
+	}
+	if resp.Enricher.TagMaintenance.Time != "02:00" {
+		t.Errorf("default TagMaintenance.Time = %q, want 02:00", resp.Enricher.TagMaintenance.Time)
+	}
+
+	cfg.Enricher.TagMaintenance.Enabled = true
+	cfg.Enricher.TagMaintenance.Interval = 3
+	cfg.Enricher.TagMaintenance.Time = "05:15"
+	resp = ConfigResponseFrom(cfg)
+
+	if !resp.Enricher.TagMaintenance.Enabled ||
+		resp.Enricher.TagMaintenance.Interval != 3 ||
+		resp.Enricher.TagMaintenance.Time != "05:15" {
+		t.Errorf("TagMaintenance = %+v, want the overridden values", resp.Enricher.TagMaintenance)
+	}
+}
+
 // TestConfigResponseFrom_OmitsMaxTags pins the removed max_tags field: the settings payload
 // must never carry it again, or the web UI would show a knob the backend no longer reads.
 func TestConfigResponseFrom_OmitsMaxTags(t *testing.T) {

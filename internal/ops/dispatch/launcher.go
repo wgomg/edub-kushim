@@ -40,6 +40,19 @@ var batchExecutorPrecedence = []types.TaskType{
 	types.Task.Type.ThumbBackfill,
 }
 
+// tagGroupTypes lists the tag task types a maintenance batch chains. A batch made only of these types is
+// the routine, whose root work the tagmaintenance command owns; a batch carrying any other type keeps its
+// own resolution.
+var tagGroupTypes = []types.TaskType{
+	types.Task.Type.TagReconcile,
+	types.Task.Type.TagIdentity,
+	types.Task.Type.TagAudit,
+	types.Task.Type.TagMeasure,
+}
+
+// tagGroupExecutor is the command that executes a chained tag maintenance batch.
+var tagGroupExecutor = launchTarget{cli: "tagmaintenance", selector: "--from-batch"}
+
 // resolveLaunchTarget checks that every task type in the batch is dispatchable on host and resolves the
 // task CLI that owns the batch. A type is dispatchable when its definition declares the CLI command and
 // the batch selector and lists the host. A pure batch resolves to its own type's command; a mixed batch
@@ -65,6 +78,10 @@ func resolveLaunchTarget(catalog task.TypeCatalog, batchID string, taskTypes []t
 		resolved[taskType] = def
 	}
 
+	if distinct, ok := tagGroupDistinct(taskTypes); ok && distinct > 1 {
+		return launchTarget{batchID: batchID, cli: tagGroupExecutor.cli, selector: tagGroupExecutor.selector}, nil
+	}
+
 	for _, preferred := range batchExecutorPrecedence {
 		if def, ok := resolved[preferred]; ok {
 			return launchTarget{batchID: batchID, cli: def.CLI, selector: def.BatchSelector}, nil
@@ -80,6 +97,20 @@ func resolveLaunchTarget(catalog task.TypeCatalog, batchID string, taskTypes []t
 		}
 	}
 	return launchTarget{batchID: batchID, cli: first.CLI, selector: first.BatchSelector}, nil
+}
+
+// tagGroupDistinct reports whether every task type in the batch belongs to the tag group and how many
+// distinct ones it carries. A batch mixing any other type is not the routine and keeps its existing
+// resolution.
+func tagGroupDistinct(taskTypes []types.TaskType) (int, bool) {
+	distinct := make(map[types.TaskType]struct{}, len(taskTypes))
+	for _, taskType := range taskTypes {
+		if !slices.Contains(tagGroupTypes, taskType) {
+			return 0, false
+		}
+		distinct[taskType] = struct{}{}
+	}
+	return len(distinct), true
 }
 
 // launchBatch forks the target's task CLI in batch mode with the execution token. A non-nil onExit receives

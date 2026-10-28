@@ -12,6 +12,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/queue"
 	"github.com/wgomg/edub-kushim/internal/ops/setup"
+	"github.com/wgomg/edub-kushim/internal/ops/tagmaintenance"
 	"github.com/wgomg/edub-kushim/internal/version"
 )
 
@@ -136,6 +137,11 @@ var commandSets = map[string]map[string]Command{
 			Name:        "tagaudit",
 			Description: "Audit document coverage against the tag vocabulary, verifying and repairing application recall",
 			Handler:     tagAuditHandler,
+		},
+		"tagmaintenance": {
+			Name:        "tagmaintenance",
+			Description: "Run the tag maintenance routine: reconcile, identity, audit and measure",
+			Handler:     tagmaintenance.Run,
 		},
 	},
 	"server": {

@@ -1136,6 +1136,7 @@ type EnricherConfigResponse struct {
 	TagReconcile    TagReconcileConfigResponse   `json:"tag_reconcile"`
 	TagMeasure      TagMeasureConfigResponse     `json:"tag_measure"`
 	TagAudit        TagAuditConfigResponse       `json:"tag_audit"`
+	TagMaintenance  TagMaintenanceConfigResponse `json:"tag_maintenance"`
 }
 
 // TagQualityConfigResponse is the quality judge's API view.
@@ -1186,6 +1187,13 @@ type TagAuditConfigResponse struct {
 	Interval   float64 `json:"interval"`
 	Time       string  `json:"time"`
 	SampleSize int     `json:"sample_size"`
+}
+
+// TagMaintenanceConfigResponse is the maintenance routine section's API view.
+type TagMaintenanceConfigResponse struct {
+	Enabled  bool    `json:"enabled"`
+	Interval float64 `json:"interval"`
+	Time     string  `json:"time"`
 }
 
 // TextReducerResponse is the reducer section's API view.
@@ -1397,6 +1405,9 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagAudit.Interval = cfg.Enricher.TagAudit.Interval
 	resp.Enricher.TagAudit.Time = cfg.Enricher.TagAudit.Time
 	resp.Enricher.TagAudit.SampleSize = cfg.Enricher.TagAudit.SampleSize
+	resp.Enricher.TagMaintenance.Enabled = cfg.Enricher.TagMaintenance.Enabled
+	resp.Enricher.TagMaintenance.Interval = cfg.Enricher.TagMaintenance.Interval
+	resp.Enricher.TagMaintenance.Time = cfg.Enricher.TagMaintenance.Time
 	resp.Storage.ConsumptionDir = cfg.Storage.ConsumptionDir
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
 	resp.Storage.MigrationMode = cfg.Storage.MigrationMode

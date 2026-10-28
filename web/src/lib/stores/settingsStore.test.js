@@ -290,16 +290,20 @@ describe('settingsStore tag matcher and audit keys', () => {
 		expect(settingsStore.cfg.enricher.tagmatcher.top_n).toBe(15);
 	});
 
-	it('saves top_n and tag_audit sample_size and never max_tags', async () => {
+	it('saves top_n, tag_audit sample_size and the maintenance schedule, never max_tags', async () => {
 		await loadSettings(fullCfg());
 
 		settingsStore.cfg.enricher.tagmatcher.top_n = 42;
 		settingsStore.cfg.enricher.tag_audit.sample_size = 75;
+		settingsStore.cfg.enricher.tag_maintenance.enabled = true;
+		settingsStore.cfg.enricher.tag_maintenance.interval = 3;
 		await settingsStore.applyAll();
 
 		const body = apiMocks.configUpdate.mock.calls[0][0];
 		expect(body['enricher.tagmatcher.top_n']).toBe(42);
 		expect(body['enricher.tag_audit.sample_size']).toBe(75);
+		expect(body['enricher.tag_maintenance.enabled']).toBe(true);
+		expect(body['enricher.tag_maintenance.interval']).toBe(3);
 		expect(body).not.toHaveProperty('enricher.contentanalyzer.max_tags');
 	});
 });

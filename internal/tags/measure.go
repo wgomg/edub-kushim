@@ -3,6 +3,7 @@ package tags
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/log"
+	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 // Runner runs measurement sweeps over the tag store: one Run snapshots the
@@ -29,6 +32,42 @@ func NewRunner(client *database.Client, aliases AliasResolver) *Runner {
 		client: client,
 		reader: NewExtensionReader(aliases),
 	}
+}
+
+// MeasureTaskHandler runs one measurement sweep as a blocking task; the report it returns is stored as the
+// task result.
+type MeasureTaskHandler struct {
+	runner *Runner
+	logger *log.Logger
+}
+
+// NewMeasureTaskHandler wires the handler to the measurement runner and the logger.
+func NewMeasureTaskHandler(runner *Runner, logger *log.Logger) *MeasureTaskHandler {
+	return &MeasureTaskHandler{runner: runner, logger: logger}
+}
+
+// Handle runs the measurement sweep under the maintenance lock the caller holds and returns its serialized
+// report; the sweep writes versioned evidence, so the lock is a precondition.
+func (h *MeasureTaskHandler) Handle(ctx context.Context, _ task.Task) (json.RawMessage, error) {
+	count, err := h.runner.client.Queries.CountTags(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count tags: %w", err)
+	}
+	h.logger.Info("", "tag measure run starting: %d tags in store", count)
+
+	report, err := h.runner.Run(ctx, uuid.New())
+	if err != nil {
+		return nil, fmt.Errorf("tag measure: %w", err)
+	}
+
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tag measure report: %w", err)
+	}
+	h.logger.Info("", "tag measure run %s: snapshot=%s rule_set=%s tags=%d operators=%v states=%v skipped=%v worklists=%+v",
+		report.RunID, report.SnapshotAt.Format(time.RFC3339), report.RuleSetVersion, report.Tags,
+		report.Operators, report.States, report.Skipped, report.Worklists)
+	return raw, nil
 }
 
 // Report is one measurement sweep's serialized summary; a skipped sweep reports ZeroWork.

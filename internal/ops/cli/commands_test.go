@@ -17,7 +17,7 @@ func TestTagCommandsDispatchHelp(t *testing.T) {
 	c, _ := newTestContainer(t)
 	runner := NewCommandRunner(c, "cli")
 
-	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
+	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit", "tagmaintenance"} {
 		if err := runner.ExecuteCommand(name, []string{"--help"}); err != nil {
 			t.Errorf("%s --help: %v", name, err)
 		}
@@ -31,7 +31,7 @@ func TestTagCommandsValidateRunID(t *testing.T) {
 	c, _ := newTestContainer(t)
 	runner := NewCommandRunner(c, "cli")
 
-	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
+	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit", "tagmaintenance"} {
 		err := runner.ExecuteCommand(name, []string{"--run", "not-a-uuid"})
 		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
 			t.Errorf("%s --run: got %v, want an unknown-flag error", name, err)
@@ -73,7 +73,7 @@ database:
 	t.Cleanup(func() { c.Close() })
 
 	runner := NewCommandRunner(c, "cli")
-	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit"} {
+	for _, name := range []string{"tagidentity", "tagreconcile", "tagmeasure", "tagaudit", "tagmaintenance"} {
 		err := runner.ExecuteCommand(name, nil)
 		if err == nil {
 			t.Errorf("%s without flags: want an unreachable-database error, got nil", name)

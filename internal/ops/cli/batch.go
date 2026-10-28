@@ -40,7 +40,7 @@ const batchHelpText = "Usage: kushim batch <subcommand> [args]\n\n" +
 	"  mirror [--path <dir>]\n" +
 	"  enrich <document-id>... | --all | --limit N\n" +
 	"  thumbnails [--from-batch <id> | --document <id>]\n" +
-	"  tagreconcile | tagmeasure | tagidentity | tagaudit\n" +
+	"  tagreconcile | tagmeasure | tagidentity | tagaudit | tagmaintenance\n" +
 	"  migrate-db --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]\n" +
 	"  migrate-storage --storage-dir <dir> [--consumption-dir <dir>]\n\n" +
 	"  Direct commands (for example 'kushim backup') run immediately and create\n" +
@@ -52,7 +52,7 @@ const batchCreateHelpText = "Usage: kushim batch create <task> [args]\n\n" +
 	"  mirror [--path <dir>]\n" +
 	"  enrich <document-id>... | --all | --limit N\n" +
 	"  thumbnails [--from-batch <id> | --document <id>]\n" +
-	"  tagreconcile | tagmeasure | tagidentity | tagaudit\n" +
+	"  tagreconcile | tagmeasure | tagidentity | tagaudit | tagmaintenance\n" +
 	"  migrate-db --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]\n" +
 	"  migrate-storage --storage-dir <dir> [--consumption-dir <dir>]"
 
@@ -107,11 +107,11 @@ func batchCreateHandler(c *container.Container, args []string) error {
 
 	switch taskName {
 	case "consume", "backup", "mirror", "enrich", "thumbnails",
-		"tagreconcile", "tagmeasure", "tagidentity", "tagaudit",
+		"tagreconcile", "tagmeasure", "tagidentity", "tagaudit", "tagmaintenance",
 		"migrate-db", "migrate-storage":
 	default:
 		return fmt.Errorf("unknown task %q; supported: consume, backup, mirror, enrich, thumbnails, "+
-			"tagreconcile, tagmeasure, tagidentity, tagaudit, migrate-db, migrate-storage", taskName)
+			"tagreconcile, tagmeasure, tagidentity, tagaudit, tagmaintenance, migrate-db, migrate-storage", taskName)
 	}
 
 	selection, err := parseCreateSelection(taskName, args[1:])
@@ -239,7 +239,7 @@ func batchCreateHandler(c *container.Container, args []string) error {
 			return fmt.Errorf("build thumbnail backfill tasks: %w", err)
 		}
 
-	case "tagreconcile", "tagmeasure", "tagidentity", "tagaudit":
+	case "tagreconcile", "tagmeasure", "tagidentity", "tagaudit", "tagmaintenance":
 		if rest := flags.NewFlagParser(args[1:]).Rest(); len(rest) > 0 {
 			return fmt.Errorf("%s takes no arguments, got %s", taskName, rest[0])
 		}
@@ -252,6 +252,8 @@ func batchCreateHandler(c *container.Container, args []string) error {
 			tasks = curation.IdentitySpecs()
 		case "tagaudit":
 			tasks = curation.AuditSpecs()
+		case "tagmaintenance":
+			tasks = curation.MaintenanceSpecs()
 		}
 
 	case "migrate-db":

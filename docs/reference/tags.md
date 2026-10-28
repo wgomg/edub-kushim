@@ -122,7 +122,8 @@ The read-only store snapshot over the extension algebra: `AliasResolver`,
   `PlanRegistration`/`CreatePlannedTx`, alias application (`ApplyAliasPlan`),
   `TagIdentity`/`NewTagIdentity`, `TagAudit`/`NewTagAudit` plus `CoverageFlag`,
   and the enqueue-surface spec constructors (`ReconcileSpecs`, `MeasureSpecs`,
-  `IdentitySpecs`, `AuditSpecs`) with `TagReconcileDedupKey`.
+  `IdentitySpecs`, `AuditSpecs`, `MaintenanceSpecs` — the routine's chained
+  reconcile → identity → audit → measure batch) with `TagReconcileDedupKey`.
 - `admission/` — `Adjudicator`/`NewAdjudicator` (canonical suggestions,
   decomposition via `JudgeCompounds` over the substrate reading, deleted-tag
   policy, identity planning, quality gating), `IdentityResolver`/

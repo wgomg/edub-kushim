@@ -56,12 +56,13 @@ The cast of characters:
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
 | task CLIs | `internal/ops/consume/consume.go`, `internal/ops/cli/` (enrich, thumbnails, backup, mirror, migrate and the four tag verbs) | batch mode: one claimed batch through the shared execution library; direct mode: the action now, no queue rows |
 
-The twelve task types (declared in `internal/types`; the task CLI that runs a
+The thirteen task types (declared in `internal/types`; the task CLI that runs a
 type assembles the registry for it — the queue daemon and `kushim batch run`
 fork the type's CLI instead of registering anything):
 `consume`, `enrich`, `thumbnail`,
 `migrate-db`, `migrate-storage`, `backup`, `mirror`,
-`tagreconcile`, `thumbbackfill`, `tagmeasure`, `tagidentity`, `tagaudit`.
+`tagreconcile`, `thumbbackfill`, `tagmeasure`, `tagidentity`, `tagaudit`,
+`tagmaintenance`.
 
 ---
 
@@ -771,6 +772,7 @@ Key formats in use:
 | backup | `backup:<mode>:<UTC date>` (mode defaults to `full`) |
 | mirror | `mirror:<UTC date>` |
 | tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` |
+| maintenance routine | the tag passes' fixed keys: the reconcile root at enqueue, each chained successor at activation |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
 Activation is the only path that puts a key on a waiting successor, and a
@@ -1094,7 +1096,8 @@ heartbeat that refreshes the lock row's heartbeat timestamp every 5 minutes
 itself — the gate never goes stale mid-mirror. The heartbeat is started by the
 runner *before*
 `WaitForTaskDrain` returns, so the drain-wait itself is covered too; the
-backup, tagreconcile, tagmeasure, tagidentity and tagaudit handlers get that
+backup, tagreconcile, tagmeasure, tagidentity, tagaudit and the maintenance
+routine's handlers get that
 sequence — heartbeat, drain, body, settle — from the
 runner (`internal/task/execute.go`). The queued mirror handler is the pure
 `backup.RunMirrorAndRecord` over the tree; the direct `kushim mirror` command
@@ -1153,6 +1156,24 @@ result. It dedups on the fixed key
 dispatches it always — `enricher.tag_reconcile.enabled` gates only the schedule
 that enqueues runs automatically, while `kushim batch create tagreconcile`
 enqueues through the queue the same way.
+
+The **tagmaintenance** routine (`internal/ops/tagmaintenance`) chains the four
+passes into one batch: `curation.MaintenanceSpecs` enqueues the reconcile task
+as the pending root with identity, audit and measure waiting on their
+predecessor, so each pass activates only after the one before it completes and
+measurement always closes the cycle on fresh evidence. A `tagmaintenance` batch
+is claimed with the maintenance lock held, and the `kushim tagmaintenance
+--from-batch` child — the dispatcher resolves any batch made only of tag types
+to it, the way a mixed ingest batch resolves to `consume` — runs the four pass
+handlers in order through its own catalog, whose wiring carries the passes'
+constant dedup keys so the waiting successors activate. A bare `kushim
+tagmaintenance` runs the same four handlers directly under the manual holder
+path, creating no batch or task rows, and `kushim batch create
+tagmaintenance` enqueues the chained batch. The schedule
+(`enricher.tag_maintenance`, weekly at 02:00 by default) idles the individual
+reconcile, measure and audit schedules while it is enabled; the identity pass's
+daily schedule keeps its own cadence — the routine's identity step is a
+catch-up, not the only path to identity.
 
 The three tag passes with a store-changed flag open through `tags.OpenStoreSignal`
 (`internal/tags/store_signal.go`): one committed transaction reads the pass's

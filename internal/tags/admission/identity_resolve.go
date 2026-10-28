@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -42,6 +44,34 @@ func NewIdentityResolver(getConfig func() *config.Config, logger *log.Logger, cl
 		runner:    runner,
 		tag:       tag,
 	}
+}
+
+// IdentityTaskHandler runs one identity resolution pass as a blocking task; the report it returns is
+// stored as the task result.
+type IdentityTaskHandler struct {
+	resolver *IdentityResolver
+}
+
+// NewIdentityTaskHandler wires the handler to the resolver.
+func NewIdentityTaskHandler(resolver *IdentityResolver) *IdentityTaskHandler {
+	return &IdentityTaskHandler{resolver: resolver}
+}
+
+// Handle resolves the pending identity evidence under the maintenance lock the caller holds and returns
+// its serialized report; the pass applies folds and aliases, so the lock is a precondition.
+func (h *IdentityTaskHandler) Handle(ctx context.Context, _ task.Task) (json.RawMessage, error) {
+	report, err := h.resolver.ResolvePending(ctx, h.resolver.getConfig().Enricher.TagReconcile.MaxRejudge)
+	if err != nil {
+		return nil, fmt.Errorf("tag identity: %w", err)
+	}
+
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tag identity report: %w", err)
+	}
+	h.resolver.logger.Info("", "tag identity run: pending=%d resolved=%d folded=%d aliased=%d deferred=%d failed=%d",
+		report.Pending, report.Resolved, report.Folded, report.Aliased, report.Deferred, report.Failed)
+	return raw, nil
 }
 
 // IdentityReport counts what one resolution pass did: pending events it

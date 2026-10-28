@@ -345,6 +345,15 @@ type TagAuditConfig struct {
 	SampleSize int     `mapstructure:"sample_size" yaml:"sample_size" json:"sample_size"`
 }
 
+// TagMaintenanceConfig is the scheduled maintenance routine section: enablement and schedule. While it is
+// enabled the individual reconciliation, measurement and audit schedules stay idle; the daily identity
+// schedule keeps its own cadence.
+type TagMaintenanceConfig struct {
+	Enabled  bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Interval float64 `mapstructure:"interval" yaml:"interval" json:"interval"`
+	Time     string  `mapstructure:"time" yaml:"time" json:"time"`
+}
+
 // EnricherConfig is the enrichment pipeline section: worker count and the
 // tool and judged-step settings.
 type EnricherConfig struct {
@@ -357,6 +366,7 @@ type EnricherConfig struct {
 	TagReconcile    TagReconcileConfig    `mapstructure:"tag_reconcile" yaml:"tag_reconcile" json:"tag_reconcile"`
 	TagMeasure      TagMeasureConfig      `mapstructure:"tag_measure" yaml:"tag_measure" json:"tag_measure"`
 	TagAudit        TagAuditConfig        `mapstructure:"tag_audit" yaml:"tag_audit" json:"tag_audit"`
+	TagMaintenance  TagMaintenanceConfig  `mapstructure:"tag_maintenance" yaml:"tag_maintenance" json:"tag_maintenance"`
 }
 
 // ResolvedAdjudicatorLlm returns the adjudicator's model, falling back to
@@ -738,6 +748,11 @@ func DefaultConfig(configDir string) *Config {
 				Time:       "04:00",
 				SampleSize: 150,
 			},
+			TagMaintenance: TagMaintenanceConfig{
+				Enabled:  false,
+				Interval: 7,
+				Time:     "02:00",
+			},
 		},
 	}
 }
@@ -931,6 +946,18 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.TagAudit.SampleSize <= 0 {
 		cfg.Enricher.TagAudit.SampleSize = 150
+	}
+	if cfg.Enricher.TagMaintenance.Interval <= 0 {
+		cfg.Enricher.TagMaintenance.Interval = 7
+	}
+	if cfg.Enricher.TagMaintenance.Time == "" {
+		cfg.Enricher.TagMaintenance.Time = "02:00"
+	}
+	if _, err := parseHHMM(cfg.Enricher.TagMaintenance.Time, false); err != nil {
+		return fmt.Errorf("enricher.tag_maintenance.time: %w", err)
+	}
+	if cfg.Enricher.TagMaintenance.Enabled && !cfg.Enricher.TagAdjudicator.Enabled {
+		slog.Warn("enricher.tag_maintenance.enabled is set but enricher.tag_adjudicator.enabled is false — the routine's reconcile and identity steps stay snapshot-only")
 	}
 	if cfg.Enricher.TagQuality.Enabled {
 		q := cfg.ResolvedQualityLlm()

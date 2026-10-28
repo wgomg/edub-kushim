@@ -1,15 +1,14 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -46,46 +45,29 @@ func tagAuditHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	handler := newAuditHandler(c, client)
+
 	if batchID != "" || execTokenParam != "" {
 		if noWait {
 			return fmt.Errorf("--no-wait applies to the direct run only")
 		}
-		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagAudit, func(ctx context.Context) (json.RawMessage, error) {
-			return tagAuditPass(ctx, c)
-		})
+		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagAudit, handler)
 	}
-	return runTagPassDirect(c, types.Task.Type.TagAudit, noWait, func(ctx context.Context) (json.RawMessage, error) {
-		return tagAuditPass(ctx, c)
-	})
+	return runTagPassDirect(c, types.Task.Type.TagAudit, noWait, handler)
 }
 
-// tagAuditPass runs one coverage audit and returns its serialized report, the shared body of the direct
-// and batch modes. The run id stays fresh, matching the tagmeasure convention so batch ids never enter the
-// measurement substrate's run keys.
-func tagAuditPass(ctx context.Context, c *container.Container) (json.RawMessage, error) {
-	client, err := c.GetClient()
-	if err != nil {
-		return nil, fmt.Errorf("database: %w", err)
-	}
-
+// newAuditHandler constructs the audit handler over the command's audit runner.
+func newAuditHandler(c *container.Container, client *database.Client) task.Handler {
 	runner := admission.NewAuditRunner(
 		func() *config.Config { return c.GetConfig() },
 		c.GetLogger(),
 		client,
 		c.GetTagToolsRunner(),
 	)
-
-	report, err := runner.Run(ctx, uuid.New())
-	if err != nil {
-		return nil, fmt.Errorf("tag audit: %w", err)
-	}
-
-	c.GetLogger().Info("", "tag audit run %s: sweep=%d sampled=%d flagged=%d fills=%d flags=%d pending_coverage=%d",
-		report.RunID, report.SweepCount, report.Sampled, report.Flagged, report.Fills, report.Flags, report.PendingCoverage)
-
-	raw, err := json.Marshal(report)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tag audit report: %w", err)
-	}
-	return raw, nil
+	return admission.NewAuditTaskHandler(runner)
 }

@@ -8,6 +8,7 @@ package reconcile
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -45,6 +46,36 @@ func NewReconciler(getConfig func() *config.Config, client *database.Client,
 		runner:    runner,
 		logger:    logger,
 	}
+}
+
+// ReconcileTaskHandler runs one scheduled reconcile pass as a blocking task; the report it returns is
+// stored as the task result.
+type ReconcileTaskHandler struct {
+	reconciler *Reconciler
+}
+
+// NewReconcileTaskHandler wires the handler to the reconciler.
+func NewReconcileTaskHandler(reconciler *Reconciler) *ReconcileTaskHandler {
+	return &ReconcileTaskHandler{reconciler: reconciler}
+}
+
+// Handle runs the reconcile pass under the maintenance lock the caller holds and returns its serialized
+// report; the pass mutates stored verdicts and the tag store, so the lock is a precondition.
+func (h *ReconcileTaskHandler) Handle(ctx context.Context, _ task.Task) (json.RawMessage, error) {
+	report, err := h.reconciler.Run(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("tag reconcile: %w", err)
+	}
+
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tag reconcile report: %w", err)
+	}
+	h.reconciler.logger.Info("", "tag reconcile run: report_only=%t, %d pairs re-checked, %d judged, %d aliases, %d restorations, %d compounds split, %d twin pairs, %d sibling pairs, %d demotions revoked",
+		report.ReportOnly, report.Worklist.Stale+report.Worklist.Unjudged+report.Worklist.Drifted+report.Worklist.Aged,
+		report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, len(report.CompoundSplits), report.Twins.Worklist,
+		report.Siblings.Worklist, report.Demotion.Demoted)
+	return raw, nil
 }
 
 // Report is the stored audit of one reconcile run. It is serialized as the task result and parsed by the web

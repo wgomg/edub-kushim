@@ -137,6 +137,12 @@ func TestResolveLaunchTarget(t *testing.T) {
 		types.Task.Type.TagIdentity: {
 			CLI: "tagidentity", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
 		},
+		types.Task.Type.MigrateDB: {
+			CLI: "migrate-db", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
+		},
+		types.Task.Type.MigrateStorage: {
+			CLI: "migrate-storage", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
+		},
 	}
 
 	t.Run("a pure batch resolves to its own command", func(t *testing.T) {
@@ -164,6 +170,21 @@ func TestResolveLaunchTarget(t *testing.T) {
 		testutil.AssertEqual(t, target.cli, "thumbnails", "the shared command")
 	})
 
+	t.Run("a chained tag batch resolves to the routine command", func(t *testing.T) {
+		target, err := resolveLaunchTarget(catalog, batchID,
+			[]types.TaskType{types.Task.Type.TagMeasure, types.Task.Type.TagIdentity}, types.HostQueue)
+		testutil.AssertNoError(t, err, "resolve a chained tag batch")
+		testutil.AssertEqual(t, target.cli, "tagmaintenance", "the routine owns chained tag batches")
+		testutil.AssertEqual(t, target.selector, "--from-batch", "the batch selector")
+	})
+
+	t.Run("a pure tag batch keeps its own command", func(t *testing.T) {
+		target, err := resolveLaunchTarget(catalog, batchID,
+			[]types.TaskType{types.Task.Type.TagMeasure}, types.HostQueue)
+		testutil.AssertNoError(t, err, "resolve a pure tagmeasure batch")
+		testutil.AssertEqual(t, target.cli, "tagmeasure", "the single tag type is not hijacked")
+	})
+
 	t.Run("a batch with no task types is refused", func(t *testing.T) {
 		if _, err := resolveLaunchTarget(catalog, batchID, nil, types.HostQueue); err == nil {
 			t.Fatal("empty type set must be refused")
@@ -186,7 +207,7 @@ func TestResolveLaunchTarget(t *testing.T) {
 
 	t.Run("types outside the precedence list that disagree fail loudly", func(t *testing.T) {
 		_, err := resolveLaunchTarget(catalog, batchID,
-			[]types.TaskType{types.Task.Type.TagMeasure, types.Task.Type.TagIdentity}, types.HostQueue)
+			[]types.TaskType{types.Task.Type.MigrateDB, types.Task.Type.MigrateStorage}, types.HostQueue)
 		if err == nil || !strings.Contains(err.Error(), "disagree") {
 			t.Fatalf("want the disagreement refusal, got %v", err)
 		}

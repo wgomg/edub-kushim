@@ -39,6 +39,7 @@ function ensureAll() {
 	ensureTagReconcileBlock();
 	ensureTagMeasureBlock();
 	ensureTagAuditBlock();
+	ensureTagMaintenanceBlock();
 	ensureTagAdjudicatorBlock();
 	ensureTagQualityBlock();
 	ensureContentAnalyzerTags();
@@ -120,6 +121,13 @@ function ensureTagAuditBlock() {
 	if (!cfg.enricher) cfg.enricher = {};
 	if (cfg.enricher.tag_audit) return;
 	cfg.enricher.tag_audit = { enabled: false, interval: 7, time: '04:00', sample_size: 150 };
+}
+
+function ensureTagMaintenanceBlock() {
+	if (!cfg) return;
+	if (!cfg.enricher) cfg.enricher = {};
+	if (cfg.enricher.tag_maintenance) return;
+	cfg.enricher.tag_maintenance = { enabled: false, interval: 7, time: '02:00' };
 }
 
 function ensureTagAdjudicatorBlock() {
@@ -268,6 +276,9 @@ function bodyFromConfig() {
 		'enricher.tag_audit.interval': Number(cfg.enricher.tag_audit.interval),
 		'enricher.tag_audit.time': cfg.enricher.tag_audit.time,
 		'enricher.tag_audit.sample_size': Number(cfg.enricher.tag_audit.sample_size),
+		'enricher.tag_maintenance.enabled': cfg.enricher.tag_maintenance.enabled,
+		'enricher.tag_maintenance.interval': Number(cfg.enricher.tag_maintenance.interval),
+		'enricher.tag_maintenance.time': cfg.enricher.tag_maintenance.time,
 		'storage.consumption_dir': cfg.storage.consumption_dir,
 		'storage.storage_dir': cfg.storage.storage_dir,
 		'storage.migration_mode': cfg.storage.migration_mode,

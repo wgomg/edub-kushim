@@ -1,14 +1,14 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -45,31 +45,31 @@ func tagIdentityHandler(c *container.Container, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	client, err := c.GetClient()
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	handler, err := newIdentityHandler(c, client)
+	if err != nil {
+		return err
+	}
+
 	if batchID != "" || execTokenParam != "" {
 		if noWait {
 			return fmt.Errorf("--no-wait applies to the direct run only")
 		}
-		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagIdentity, func(ctx context.Context) (json.RawMessage, error) {
-			return tagIdentityPass(ctx, c)
-		})
+		return runTagPassBatch(c, batchID, execTokenParam, types.Task.Type.TagIdentity, handler)
 	}
-	return runTagPassDirect(c, types.Task.Type.TagIdentity, noWait, func(ctx context.Context) (json.RawMessage, error) {
-		return tagIdentityPass(ctx, c)
-	})
+	return runTagPassDirect(c, types.Task.Type.TagIdentity, noWait, handler)
 }
 
-// tagIdentityPass runs one identity resolution pass and returns its serialized report, the shared body of
-// the direct and batch modes. The pass owns its no-op gate.
-func tagIdentityPass(ctx context.Context, c *container.Container) (json.RawMessage, error) {
-	client, err := c.GetClient()
-	if err != nil {
-		return nil, fmt.Errorf("database: %w", err)
-	}
+// newIdentityHandler constructs the identity handler over the command's resolver.
+func newIdentityHandler(c *container.Container, client *database.Client) (task.Handler, error) {
 	tagService, err := c.GetTagService()
 	if err != nil {
-		return nil, fmt.Errorf("dispatcher: %w", err)
+		return nil, fmt.Errorf("tag service: %w", err)
 	}
-
 	resolver := admission.NewIdentityResolver(
 		func() *config.Config { return c.GetConfig() },
 		c.GetLogger(),
@@ -77,17 +77,5 @@ func tagIdentityPass(ctx context.Context, c *container.Container) (json.RawMessa
 		tagService,
 		c.GetTagToolsRunner(),
 	)
-
-	report, err := resolver.ResolvePending(ctx, c.GetConfig().Enricher.TagReconcile.MaxRejudge)
-	if err != nil {
-		return nil, fmt.Errorf("tag identity: %w", err)
-	}
-
-	raw, err := json.Marshal(report)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tag identity report: %w", err)
-	}
-	c.GetLogger().Info("", "tag identity run: pending=%d resolved=%d folded=%d aliased=%d deferred=%d failed=%d",
-		report.Pending, report.Resolved, report.Folded, report.Aliased, report.Deferred, report.Failed)
-	return raw, nil
+	return admission.NewIdentityTaskHandler(resolver), nil
 }

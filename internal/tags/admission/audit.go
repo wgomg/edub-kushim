@@ -17,6 +17,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
+	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
@@ -75,6 +76,35 @@ type AuditRunner struct {
 // NewAuditRunner wires the audit to its config, logger, database, and tools runner.
 func NewAuditRunner(cfg func() *config.Config, logger *log.Logger, client *database.Client, runner *tools.Runner) *AuditRunner {
 	return &AuditRunner{cfg: cfg, logger: logger, client: client, runner: runner}
+}
+
+// AuditTaskHandler runs one coverage audit as a blocking task; the report it returns is stored as the task
+// result.
+type AuditTaskHandler struct {
+	runner *AuditRunner
+}
+
+// NewAuditTaskHandler wires the handler to the audit runner.
+func NewAuditTaskHandler(runner *AuditRunner) *AuditTaskHandler {
+	return &AuditTaskHandler{runner: runner}
+}
+
+// Handle runs the coverage audit under the maintenance lock the caller holds and returns its serialized
+// report; the pass fills gaps and records coverage, so the lock is a precondition.
+func (h *AuditTaskHandler) Handle(ctx context.Context, _ task.Task) (json.RawMessage, error) {
+	report, err := h.runner.Run(ctx, uuid.New())
+	if err != nil {
+		return nil, fmt.Errorf("tag audit: %w", err)
+	}
+
+	h.runner.logger.Info("", "tag audit run %s: sweep=%d sampled=%d flagged=%d fills=%d flags=%d pending_coverage=%d",
+		report.RunID, report.SweepCount, report.Sampled, report.Flagged, report.Fills, report.Flags, report.PendingCoverage)
+
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tag audit report: %w", err)
+	}
+	return raw, nil
 }
 
 // auditDocStats tallies one document's audit outcome.
