@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -82,6 +83,54 @@ func requireTestDSN(t *testing.T) string {
 	return baseDSN
 }
 
+// replaceDSNDatabase returns baseDSN pointing at dbName instead of its current database.
+func replaceDSNDatabase(baseDSN, dbName string) string {
+	u, err := url.Parse(baseDSN)
+	if err != nil {
+		return baseDSN
+	}
+	u.Path = "/" + dbName
+	u.RawPath = ""
+	return u.String()
+}
+
+// nonEmptyTargetDSN provisions a scratch database that holds one table, so the fresh-setup
+// emptiness claim has a target that is non-empty regardless of the state of the shared database
+// behind TEST_DATABASE_URL; the scratch database is dropped when the test ends.
+func nonEmptyTargetDSN(t *testing.T, baseDSN string) string {
+	t.Helper()
+	ctx := context.Background()
+	name := fmt.Sprintf("edub_test_handlers_freshsetup_%d", time.Now().UnixNano())
+
+	admin, err := database.NewPostgresDB(replaceDSNDatabase(baseDSN, "postgres"), database.DefaultMaxOpenConns)
+	if err != nil {
+		t.Fatalf("open admin connection: %v", err)
+	}
+	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
+		admin.Close()
+		t.Fatalf("create scratch database %s: %v", name, err)
+	}
+	admin.Close()
+	t.Cleanup(func() {
+		drop, err := database.NewPostgresDB(replaceDSNDatabase(baseDSN, "postgres"), database.DefaultMaxOpenConns)
+		if err != nil {
+			return
+		}
+		defer drop.Close()
+		_, _ = drop.ExecContext(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+	})
+
+	target, err := database.NewPostgresDB(replaceDSNDatabase(baseDSN, name), database.DefaultMaxOpenConns)
+	if err != nil {
+		t.Fatalf("open scratch database: %v", err)
+	}
+	defer target.Close()
+	if _, err := target.ExecContext(ctx, "CREATE TABLE blocker (id int)"); err != nil {
+		t.Fatalf("create blocker table: %v", err)
+	}
+	return replaceDSNDatabase(baseDSN, name)
+}
+
 func TestPutConfig_FreshSetup_RejectsNonEmptyTargetDatabase(t *testing.T) {
 	baseDSN := requireTestDSN(t)
 	env := newHandlerTestEnv(t)
@@ -96,7 +145,7 @@ func TestPutConfig_FreshSetup_RejectsNonEmptyTargetDatabase(t *testing.T) {
 		return nil, nil, nil
 	}
 
-	body, _ := json.Marshal(freshSetupSettingsBody(t, configDir, baseDSN))
+	body, _ := json.Marshal(freshSetupSettingsBody(t, configDir, nonEmptyTargetDSN(t, baseDSN)))
 	w := rec()
 	r := req(t, "PUT", "/api/v1/config", body)
 	h.PutConfig(w, r)

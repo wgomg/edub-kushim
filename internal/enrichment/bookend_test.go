@@ -39,7 +39,7 @@ func TestLogBatchBookendAggregatesWholeBatch(t *testing.T) {
 		testutil.AssertNoError(t, err, "create task "+taskID)
 		_, err = client.DB().ExecContext(ctx,
 			"UPDATE task SET status = 'completed', result = $1 WHERE task_id = $2",
-			result.String(), taskID,
+			result, taskID,
 		)
 		testutil.AssertNoError(t, err, "complete task "+taskID)
 	}

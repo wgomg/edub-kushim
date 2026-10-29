@@ -23,6 +23,12 @@ export CGO_ENABLED  := 1
 export CGO_CPPFLAGS := -I$(TESS_INCLUDE) -I$(BUILD_DIR)/leptonica/local/include -I$(BUILD_DIR)/libpng/local/include
 export CGO_LDFLAGS  := -L$(TOKENIZERS_DIR)
 
+# Pin every go invocation to the toolchain version declared in go.mod, the exact version actions/setup-go
+# installs in CI and release via go-version-file: GOTOOLCHAIN=auto only ever switches up, so a newer local
+# toolchain would otherwise compile and test against a stdlib that CI never sees.
+GO_MOD_VERSION := $(word 2,$(shell grep '^go ' go.mod))
+export GOTOOLCHAIN := go$(GO_MOD_VERSION)
+
 BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 LDFLAGS      := -s -w -X github.com/wgomg/edub-kushim/internal/version.Commit=$(BUILD_COMMIT) -X github.com/wgomg/edub-kushim/internal/version.Date=$(BUILD_DATE)

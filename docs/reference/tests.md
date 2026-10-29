@@ -38,8 +38,13 @@ run strategy (Go backend + web UI):
 All non-CGo tiers run with `CGO_ENABLED=0` (no Tesseract, MuPDF, or
 Ghostscript required); `make test-cgo` and `make test-cgo-db` run with
 `CGO_ENABLED=1` and need `make build-deps` first. Every invocation goes through
-the Makefile, which exports the `-tags "XLA,ORT"` tags and the CGo environment
-— bare `go test` is not supported.
+the Makefile, which exports the `-tags "XLA,ORT"` tags, the CGo environment and
+the GOTOOLCHAIN setting that pins every go invocation to the toolchain version
+declared in go.mod — the same version the CI and release workflows install via
+`setup-go`, so the matching toolchain module is fetched into the Go module cache
+on first use — bare `go test` is not supported, and to use a different toolchain
+override the variable on the make command line (`make GOTOOLCHAIN=go1.27 test`),
+since the Makefile assignment wins over the process environment.
 
 ### Quick Start
 
@@ -447,6 +452,10 @@ make vuln-cgo      # full call graph, requires make build-deps first
 
 govulncheck exits non-zero on reachable findings, which fails the CI
 `vulncheck` job. Fix findings via `go get <module>@<fixed>` + `go mod tidy`.
+The scan covers the standard library of the pinned toolchain (the version
+declared in go.mod via the Makefile's GOTOOLCHAIN export), so standard-library
+findings are fixed by raising the `go` line in go.mod rather than by upgrading
+the locally installed Go.
 
 ### Test Helpers
 

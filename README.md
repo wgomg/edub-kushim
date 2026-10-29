@@ -284,7 +284,9 @@ make vuln-cgo      # full call graph incl. gosseract/hugot adapters (requires ma
 ```
 
 **Note:** bare `go test` is not supported — the Makefile targets set the `-tags "XLA,ORT"`
- tags and the CGo environment that bare invocations miss. Always use `make test`,
+ tags, the CGo environment, and the GOTOOLCHAIN pin that forces every go invocation to the
+toolchain version declared in `go.mod` (fetched into the Go module cache on first use).
+ Always use `make test`,
  `make test-verbose`, `make test-db`, `make test-backup`, `make test-cgo` (host,
  requires `make build-deps` first), `make test-cgo-db`, `make test-web`,
  `make test-web-e2e`, or the container variants.

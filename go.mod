@@ -1,6 +1,6 @@
 module github.com/wgomg/edub-kushim
 
-go 1.26.8
+go 1.26.10
 
 require (
 	github.com/aaaton/golem/v4 v4.0.2
