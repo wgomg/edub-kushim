@@ -3,4 +3,4 @@
 package version
 
 // Version is the release version, bumped at release time.
-var Version = "3.0.0"
+var Version = "4.0.0"
