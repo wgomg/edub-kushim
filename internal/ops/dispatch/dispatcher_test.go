@@ -211,7 +211,6 @@ func TestDispatchReReadsBudgetPerSweep(t *testing.T) {
 // TestEffectiveBudgetFallback pins the documented fallback: a configured budget below one must not
 // silence dispatch, so a non-positive value enforces the default of two.
 func TestEffectiveBudgetFallback(t *testing.T) {
-	catalog := dispatchCatalog(t)
 	cases := []struct {
 		name       string
 		configured int
@@ -223,10 +222,7 @@ func TestEffectiveBudgetFallback(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			configured := tc.configured
-			d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue,
-				func() int { return configured }, func() {}, nil)
-			testutil.AssertEqual(t, d.effectiveBudget(), tc.want, "effective budget")
+			testutil.AssertEqual(t, EffectiveBudget(tc.configured), tc.want, "effective budget")
 		})
 	}
 }

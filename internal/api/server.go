@@ -407,7 +407,7 @@ func (s *Server) onConfigReload(cfg *config.Config) {
 	}
 
 	s.logger.Info("", "DB config changed, reconnecting...")
-	newDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	newDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db), database.DefaultMaxOpenConns)
 	if err != nil {
 		s.logger.Error("", "failed to connect to new DB: %v — keeping previous configuration", err)
 		s.cfg.Store(oldCfg)

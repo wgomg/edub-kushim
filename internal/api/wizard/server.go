@@ -144,7 +144,7 @@ func (s *Server) initServices(ctx context.Context) (*database.Client, *task.Enqu
 	}
 
 	dsn := database.WithConnectTimeout(config.BuildPostgresDSN(cfg.Db), setupConnectTimeoutSeconds)
-	db, err := database.NewPostgresDB(dsn)
+	db, err := database.NewPostgresDB(dsn, database.DefaultMaxOpenConns)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}

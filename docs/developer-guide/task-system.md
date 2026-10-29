@@ -38,7 +38,9 @@ job queue, no Redis, no message broker. Tasks are rows in the `task` table;
 workers *claim* rows with guarded UPDATEs; a `batch_owner` table holds
 per-batch leases; a daemon (`kushim queue`) watches for queued batches, claims
 each one in a guarded transaction, forks the batch's owning task CLI as
-`<cli> --from-batch <id> --exec-token <token>` (every remaining task type has
+`kushim --executor <cli> --from-batch <id> --exec-token <token>` — the internal
+marker makes the child a connect-only executor, because the launching owner
+bootstrapped the schema before claiming (every remaining task type has
 a batch-mode CLI; the ingest family's children hang from their batch, so a
 mixed batch resolves to `consume`), and reclaims anything that dies.
 
@@ -47,12 +49,12 @@ The cast of characters:
 | Component | Files | Role |
 |---|---|---|
 | `Enqueuer` | `internal/task/enqueue.go` | the single creation path (`EnqueueBatch`/`EnqueueTask`) over `BatchSpec`/`TaskSpec` |
-| `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue and dispatch contract: queued and direct locks, dedup hook, preconditions, batch-mode CLI surface and hosts |
+| `TypeDefinition` | `internal/task/type_definition.go` | one task type's enqueue and dispatch contract: queued and direct locks, dedup hook, preconditions, batch-mode CLI surface and hosts; the file also carries the fork contract's internal `ExecutorFlag` marker |
 | `Registry` | `internal/task/registry.go` | task-type → handler map |
 | `Handler` | `internal/task/handler.go` | pure work function: does the job, returns the JSON result or an error; performs no batch-status write, lock or settle |
-| `Runner` | `internal/task/execute.go` | claims under the batch lease, dispatches, completes/fails and settles; the batch's locks, drain and heartbeat belong to `RunBatch` |
+| `Runner` | `internal/task/execute.go` | claims under the batch lease, dispatches, completes/fails and settles; the batch's locks, drain and heartbeat belong to `RunBatch`, which also sizes the forked execution's pool to the batch it runs |
 | `Owner` / `Heartbeat` | `internal/task/batch.go`, `heartbeat.go` | batch lease management |
-| batch dispatcher / launcher | `internal/ops/dispatch/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the batch's owning task CLI in batch mode; the wizard's setup-time dispatcher runs the migration handlers in-process instead |
+| batch dispatcher / launcher | `internal/ops/dispatch/dispatcher.go`, `launcher.go` | claims queued batches (status, lease and holds in one transaction) and forks the batch's owning task CLI in executor mode under the internal `--executor` marker; the wizard's setup-time dispatcher runs the migration handlers in-process instead |
 | queue daemon | `internal/ops/queue/queue.go` | orchestrates batches |
 | task CLIs | `internal/ops/consume/consume.go`, `internal/ops/cli/` (enrich, thumbnails, backup, mirror, migrate and the four tag verbs) | batch mode: one claimed batch through the shared execution library; direct mode: the action now, no queue rows |
 
@@ -453,9 +455,9 @@ For each claimable candidate the launcher claims it through
 insert the pid-0 lease under a fresh **execution token**, acquire the batch's
 declared holds (verifying only the waits of the holding types; a batch that
 holds nothing claims freely and its tasks gate per claim) — then forks
-`kushim consume --from-batch <id> --exec-token <token>` (or the batch's owning
-CLI — `enrich` for re-enrichment batches, `thumbnails` for the
-thumbnail family, `kushim migrate` for a migration batch, and each
+`kushim --executor consume --from-batch <id> --exec-token <token>` (or the batch's owning
+CLI in executor mode — `enrich` for re-enrichment batches, `thumbnails` for the
+thumbnail family, `kushim --executor migrate` for a migration batch, and each
 maintenance type's own verb for backup, mirror and the four tag passes). A
 batch whose locks are
 busy is refused (`ErrLockBusy`) and the sweep moves on.
@@ -502,8 +504,10 @@ waiting for the batch's next run.
 
 ## 7. The task CLIs and the shared execution library
 
-Every task CLI has a **batch mode** (`--from-batch <id> --exec-token <token>`
-— the dispatcher and `kushim batch run` fork it) and a **direct mode** (no
+Every task CLI has a **batch mode** (`kushim --executor <cli> --from-batch <id>
+--exec-token <token>` — the dispatcher and `kushim batch run` fork it, and the
+internal `--executor` prefix certifies the child as a schema executor that only
+opens its pool) and a **direct mode** (no
 flags: the action runs now, creating no batch or task rows): the ingest
 family (`internal/ops/consume/consume.go`, `internal/ops/cli/enrich.go`,
 `internal/ops/cli/thumbnails.go`), `kushim backup`, `kushim mirror`,
@@ -573,8 +577,16 @@ function:
     with a bounded context, then requeue the batch if the run aborted before
     settling — a released lease is invisible to the reaper, so the child hands
     the batch back to the queue itself (the guarded `processing → queued`
-    write refuses a batch a settle, pause or cancel already finished). The
-    settle and pause transactions release the batch locks themselves.
+     write refuses a batch a settle, pause or cancel already finished). The
+     settle and pause transactions release the batch locks themselves.
+
+The execution's connection pool follows the batch: `RunBatch` sizes the
+process pool's open-connection ceiling to the batch's per-type worker sets
+plus the execution's fixed auxiliary users (`batchAuxConns` — the monitor, the
+two heartbeats and the progress stream), computed once before adoption with
+the same per-type rule the worker loop uses, so the ceiling can never
+undershoot the workers it starts. An in-process run shares its host's pool
+and re-tunes nothing.
 
 A batch may declare follow-up tasks at enqueue time (`task.WithFollowUp`,
 stored as a JSON declaration on the batch row); the settle transaction is when
@@ -633,10 +645,10 @@ Backup and mirror tasks get real batch rows (origin `schedule`, status
 `queued`) so they flow through the batches UI instead of being invisible
 orphans. The queue daemon dispatches them
 like any other batch — the claim acquires the type's holds under the
-execution token and forks `kushim backup --from-batch` or
-`kushim mirror --from-batch`, which adopt the claim's lease with the child's
+execution token and forks `kushim --executor backup --from-batch` or
+`kushim --executor mirror --from-batch`, which adopt the claim's lease with the child's
 pid; migrate-db and migrate-storage batches dispatch the same way through
-`kushim migrate --from-batch`. Only the wizard's setup-time dispatcher runs
+`kushim --executor migrate --from-batch`. Only the wizard's setup-time dispatcher runs
 migrations in-process (a pid-0 lease the hosted run heartbeats), so the
 UI sees a true owner either way.
 
@@ -1141,7 +1153,7 @@ check, evaluated through the enqueue path for the scheduler and for
 
 The **tagmeasure** task (`internal/tags/tagmeasure.go`) is a
 lock-holding task: a `tagmeasure` batch is claimed with the maintenance lock
-held, and its `kushim tagmeasure --from-batch` child adopts the claim's lease,
+held, and its `kushim --executor tagmeasure --from-batch` child adopts the claim's lease,
 keeps the lock fresh across the whole run, and runs the pass's long
 repeatable-read transaction — the pass's report is the task result stored on
 the task row. The pass opens by checking the
@@ -1162,7 +1174,7 @@ measure.
 
 The **tagidentity** task (`internal/tags/admission/tagidentity.go`) follows
 the same shape: a `tagidentity` batch is claimed with the lock held, and the
-`kushim tagidentity --from-batch` child adopts the lease and resolves pending
+`kushim --executor tagidentity --from-batch` child adopts the lease and resolves pending
 identity evidence through `admission.IdentityResolver`, whose report (pending/
 resolved/folded/aliased/deferred/failed) becomes the task result stored on the
 task row. The review surface's reevaluate action, `kushim batch create
@@ -1173,7 +1185,7 @@ claims wait for the next run when the judge is off.
 
 The **tagaudit** task (`internal/tags/admission/tagaudit.go`) follows the same
 shape as `tagmeasure`: a `tagaudit` batch is claimed with the lock held, and
-the `kushim tagaudit --from-batch` child runs the coverage-verification pass
+the `kushim --executor tagaudit --from-batch` child runs the coverage-verification pass
 (`admission.AuditRunner`), whose report (sweep, sampled/flagged counts,
 coverage tallies by class, fills/flags/proposals, judge call counts, pending
 coverage) becomes the task result stored on the task row.
@@ -1183,7 +1195,7 @@ create tagaudit`, and the reevaluate endpoint;
 
 The **tagreconcile** task (`internal/tags/reconcile/tagreconcile.go`) is a
 lock-holding task too: a `tagreconcile` batch is claimed with the maintenance
-lock held, and the `kushim tagreconcile --from-batch` child adopts the claim's
+lock held, and the `kushim --executor tagreconcile --from-batch` child adopts the claim's
 lease, builds the reconciler and runs one pass, storing its report as the task
 result. It dedups on the fixed key
 `tagreconcile`, so an active run blocks the next trigger, and the queue
@@ -1233,7 +1245,7 @@ The **thumbbackfill** task (`internal/documents/consumption/thumbnail.go`'s
 per-document `ThumbnailTaskHandler`) holds its lock at batch level: the
 dispatcher's claim acquires
 `storage` for the whole run after verifying `maintenance` is free, and the
-forked `kushim thumbnails --from-batch` child drains
+forked `kushim --executor thumbnails --from-batch` child drains
 in-flight thumbnail tasks before starting, runs the same 5-minute
 heartbeat across the run, and keeps the hold fresh; its per-task claims verify the maintenance wait but
 skip acquisition (§12, batch-held locks). `ThumbnailBackfill`

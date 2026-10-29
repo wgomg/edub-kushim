@@ -330,7 +330,7 @@ func prepareSetupDatabase(dbCfg config.DatabaseConfig, reset bool, logger *log.L
 	dsn := config.BuildPostgresDSN(dbCfg)
 
 	if reset {
-		db, err := database.NewPostgresDB(dsn)
+		db, err := database.NewPostgresDB(dsn, database.DefaultMaxOpenConns)
 		if err != nil {
 			return nil, fmt.Errorf("open database: %w", err)
 		}
@@ -346,7 +346,7 @@ func prepareSetupDatabase(dbCfg config.DatabaseConfig, reset bool, logger *log.L
 	if err := database.PrepareFreshDatabase(dsn); err != nil {
 		return nil, err
 	}
-	db, err := database.NewPostgresDB(dsn)
+	db, err := database.NewPostgresDB(dsn, database.DefaultMaxOpenConns)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

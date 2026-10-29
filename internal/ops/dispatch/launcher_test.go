@@ -427,3 +427,22 @@ func TestLaunchQueuedBatchClaimsAndForks(t *testing.T) {
 	testutil.AssertNoError(t, ownerErr, "lease present after the failed run")
 	testutil.AssertEqual(t, owner.Pid, int64(0), "the child never adopted; the reaper owns recovery")
 }
+
+// TestIsExecutorVerb pins the marker's verb contract: every command the launcher can fork — a task
+// type's batch-mode CLI and the chained tag-routine executor — is accepted, everything else refused.
+func TestIsExecutorVerb(t *testing.T) {
+	forkable := []string{"consume", "enrich", "thumbnails", "backup", "mirror", "tagreconcile",
+		"tagmeasure", "tagidentity", "tagaudit", "migrate", "tagmaintenance"}
+	for _, verb := range forkable {
+		if !IsExecutorVerb(verb) {
+			t.Errorf("IsExecutorVerb(%q) = false, want true (a forkable command)", verb)
+		}
+	}
+
+	nonForkable := []string{"", "queue", "hugot", "batch", "search", "setup", "kushim consume", "--executor"}
+	for _, verb := range nonForkable {
+		if IsExecutorVerb(verb) {
+			t.Errorf("IsExecutorVerb(%q) = true, want false", verb)
+		}
+	}
+}

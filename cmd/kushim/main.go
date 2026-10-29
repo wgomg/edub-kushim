@@ -19,7 +19,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/cli"
 	"github.com/wgomg/edub-kushim/internal/ops/container"
+	"github.com/wgomg/edub-kushim/internal/ops/dispatch"
 	"github.com/wgomg/edub-kushim/internal/ops/setup"
+	"github.com/wgomg/edub-kushim/internal/task"
 )
 
 func main() {
@@ -29,6 +31,21 @@ func main() {
 
 	commandName := os.Args[1]
 	args := os.Args[2:]
+
+	executor := false
+	if commandName == task.ExecutorFlag {
+		executor = true
+		if len(args) == 0 {
+			cli.PrintUsage()
+		}
+		commandName, args = args[0], args[1:]
+		if !dispatch.IsExecutorVerb(commandName) {
+			_, _ = fmt.Fprintf(os.Stderr,
+				"Error: %s is internal to the batch fork contract and does not apply to %q\n",
+				task.ExecutorFlag, commandName)
+			os.Exit(1)
+		}
+	}
 
 	if commandName == "setup" {
 		startupLogger := log.NewLogger("info")
@@ -200,7 +217,12 @@ func main() {
 	}); err != nil {
 		logger.Error("", "failed to open log file: %v", err)
 	}
-	c := container.NewContainer(cfg, logger)
+	var c *container.Container
+	if executor {
+		c = container.NewBatchExecutor(cfg, logger)
+	} else {
+		c = container.NewContainer(cfg, logger)
+	}
 	defer c.Close()
 
 	runner := cli.NewCommandRunner(c, "cli")

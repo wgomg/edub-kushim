@@ -184,7 +184,7 @@ The `Runner.Next` method uses `errors.As(err, &tErr)` to extract `ReqID` from ha
 
 ## `configtask` (`internal/ops/configtask/configtask.go`)
 
-The migration task handlers live in their own package (`internal/ops/configtask/`) — it hosts the handlers `kushim migrate --from-batch` and the wizard's setup-time dispatcher register, keeping those boundaries free of the domain packages' transitive CGo dependencies.
+The migration task handlers live in their own package (`internal/ops/configtask/`) — it hosts the handlers `kushim --executor migrate --from-batch` and the wizard's setup-time dispatcher register, keeping those boundaries free of the domain packages' transitive CGo dependencies.
 
 ### Constants
 

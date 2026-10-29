@@ -870,13 +870,13 @@ written as versioned evidence records.
 
 ```bash
 kushim tagmeasure                # run the pass now (manual maintenance lock)
-kushim tagmeasure --from-batch <id> --exec-token <id>  # one claimed batch
+kushim --executor tagmeasure --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
 With no flags the command runs the pass immediately under the manual
 maintenance lock and prints the report — it creates no queue rows. To enqueue a
 run instead, use `kushim batch create tagmeasure`; the queue daemon claims it
-and forks `kushim tagmeasure --from-batch <id> --exec-token <token>`, which runs
+and forks `kushim --executor tagmeasure --from-batch <id> --exec-token <token>`, which runs
 the pass in its own process and stores the report on the task row.
 `enricher.tag_measure.enabled` gates only the automatic scheduled enqueuing.
 Setting `enricher.tag_measure.after_enrichment_batch` additionally follows
@@ -911,13 +911,13 @@ latest completed run's report.
 
 ```bash
 kushim tagreconcile                # run the pass now (manual maintenance lock)
-kushim tagreconcile --from-batch <id> --exec-token <id>  # one claimed batch
+kushim --executor tagreconcile --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
 With no flags the command runs the pass immediately under the manual
 maintenance lock — no queue rows. To enqueue a run instead, use
 `kushim batch create tagreconcile`; the queue daemon claims it and forks
-`kushim tagreconcile --from-batch <id> --exec-token <token>`, which runs the
+`kushim --executor tagreconcile --from-batch <id> --exec-token <token>`, which runs the
 pass in its own process and stores the report on the task row.
 
 The pass is a no-op when nothing changed and nothing is due: it reads its
@@ -945,13 +945,13 @@ and claims without a judge answer stay pending for the next run.
 
 ```bash
 kushim tagidentity                 # run the pass now (manual maintenance lock)
-kushim tagidentity --from-batch <id> --exec-token <id>  # one claimed batch
+kushim --executor tagidentity --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
 With no flags the command runs the pass immediately under the manual
 maintenance lock — no queue rows. To enqueue a run instead, use
 `kushim batch create tagidentity`; the queue daemon claims it and forks
-`kushim tagidentity --from-batch <id> --exec-token <token>`, which runs the
+`kushim --executor tagidentity --from-batch <id> --exec-token <token>`, which runs the
 pass in its own process and stores the report on the task row.
 
 The pass also runs on its own daily schedule — a fixed 03:30 cadence with no
@@ -981,14 +981,14 @@ surface in the **Coverage** tab of the tags page.
 
 ```bash
 kushim tagaudit                # run the pass now (manual maintenance lock)
-kushim tagaudit --from-batch <id> --exec-token <id>  # one claimed batch
+kushim --executor tagaudit --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
 With no flags the command runs the pass immediately under the manual
 maintenance lock; the run id only labels the run — the batch id never enters
 the measurement substrate when queued. To enqueue a run instead, use
 `kushim batch create tagaudit`; the queue daemon claims it and forks
-`kushim tagaudit --from-batch <id> --exec-token <token>`, which runs the pass
+`kushim --executor tagaudit --from-batch <id> --exec-token <token>`, which runs the pass
 in its own process and stores the report on the task row. The run requires the
 applicability judge (`enricher.tag_adjudicator`); without it, or when the
 matcher is unavailable, no reading is taken and the documents stay eligible
@@ -1007,7 +1007,7 @@ coverage audit and measurement — as one chained batch, in that order:
 
 ```
 kushim tagmaintenance             # run the routine now (manual maintenance lock)
-kushim tagmaintenance --from-batch <id> --exec-token <id>  # one claimed batch
+kushim --executor tagmaintenance --from-batch <id> --exec-token <id>  # one claimed batch
 ```
 
 The four passes run as waiting successors of their predecessor: reconciliation
@@ -1020,7 +1020,7 @@ retries the routine from its root. With no flags the routine runs immediately
 under the manual maintenance hold, creating no batch or task rows and printing
 each pass's labeled report; the first failed pass stops the routine. To
 schedule it instead, use `kushim batch create tagmaintenance`; the queue daemon
-claims it and forks `kushim tagmaintenance --from-batch <id> --exec-token
+claims it and forks `kushim --executor tagmaintenance --from-batch <id> --exec-token
 <token>`, which runs the chain in its own process and stores each pass's report
 on its task row — the dispatcher routes every tag batch made only of tag types
 to this command.
@@ -1077,12 +1077,12 @@ archive and run `psql -f edub.sql` manually on the remote host.
 
 Run the database or storage migration logic from the CLI, without enqueueing anything. Both subcommands coordinate through the resource locks — `migrate database` refuses while the `maintenance` lock is held, `migrate storage` acquires the `maintenance` and `storage` locks (waiting by default; `--no-wait` exits non-zero) — wait for in-flight tasks to drain, and persist the new settings to `config.yaml` only after the operation succeeds.
 
-The command also has a **batch mode** (`kushim migrate --from-batch <id> --exec-token <token>`, no subcommand): it executes one queued `migrate-db`/`migrate-storage` batch claimed by the dispatcher or `kushim batch run`, registering both migration handlers and running whichever the batch carries. The lease and every settle write stay in the source database — the handler only rewrites `config.yaml` — so the claiming execution's lifecycle is unaffected by the connection switch. The daemon's scheduler enqueues migration batches from the wizard/config UI flows and forks this batch mode; the wizard's setup-time dispatcher runs the same handlers in-process while no daemon exists. Handler-executed migrations are bounded by an execution deadline — 30 minutes for `migrate-db`, 2 hours for `migrate-storage` — so a blocked run fails into the retry path instead of hanging; storage migrations resume naturally after an abort (entries already moved are gone from the source listing, and a re-copy overwrites partial writes). The direct subcommands below run without a deadline.
+The command also has a **batch mode** (`kushim --executor migrate --from-batch <id> --exec-token <token>`, no subcommand): it executes one queued `migrate-db`/`migrate-storage` batch claimed by the dispatcher or `kushim batch run`, registering both migration handlers and running whichever the batch carries. The lease and every settle write stay in the source database — the handler only rewrites `config.yaml` — so the claiming execution's lifecycle is unaffected by the connection switch. The daemon's scheduler enqueues migration batches from the wizard/config UI flows and forks this batch mode; the wizard's setup-time dispatcher runs the same handlers in-process while no daemon exists. Handler-executed migrations are bounded by an execution deadline — 30 minutes for `migrate-db`, 2 hours for `migrate-storage` — so a blocked run fails into the retry path instead of hanging; storage migrations resume naturally after an abort (entries already moved are gone from the source listing, and a re-copy overwrites partial writes). The direct subcommands below run without a deadline.
 
 ```
 kushim migrate database --host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]
 kushim migrate storage --storage-dir <new> [--consumption-dir <new>] [--no-wait]
-kushim migrate --from-batch <id> --exec-token <token>
+kushim --executor migrate --from-batch <id> --exec-token <token>
 ```
 
 #### `kushim migrate database`
@@ -3536,7 +3536,7 @@ Hugot model) happen as direct config updates on the config save, and queued batc
 are claimed and forked by the `kushim queue` daemon. Logs are written to stdout. Graceful shutdown on SIGINT/SIGTERM.
 
 When `POST /api/v1/consume` or `POST /api/v1/consume/upload` is called, the
-server enqueues tasks in the database with `status='queued'`; the `kushim queue` daemon picks up the batch and **forks** `kushim consume --from-batch <id> --exec-token <token>`
+server enqueues tasks in the database with `status='queued'`; the `kushim queue` daemon picks up the batch and **forks** `kushim --executor consume --from-batch <id> --exec-token <token>`
 
 The maximum number of concurrent worker processes is controlled by
 `server.max_concurrent_batches` (default 4). The `kushim queue` daemon enforces

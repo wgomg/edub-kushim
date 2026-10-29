@@ -21,6 +21,11 @@ type LockPolicy struct {
 	WaitsFor []types.LockName
 }
 
+// ExecutorFlag is the reserved argument that a launcher prepends to a forked batch executor's argv.
+// It declares that the child's schema lifecycle belongs to the launcher, so the CLI builds a connect-only
+// container instead of bootstrapping; it is internal to the fork contract and never appears in verb help.
+const ExecutorFlag = "--executor"
+
 // TypeDefinition is the declaration of one task type. It is a composition of concern-specific values,
 // not one struct owning every concern: identity, the queued and direct lock policy, dedup derivation,
 // preconditions, the CLI surface, hosting eligibility and the worker count. Fields are added only by the
@@ -40,7 +45,8 @@ type TypeDefinition struct {
 	// dispatcher refuses its batches.
 	CLI string
 	// BatchSelector is the flag CLI takes the batch id on, such as "--from-batch"; the launcher always
-	// forks CLI BatchSelector <batch-id> --exec-token <token>, so the flag and its value form one contract.
+	// forks ExecutorFlag CLI BatchSelector <batch-id> --exec-token <token>, so the marker, the selector
+	// and the token form one contract.
 	BatchSelector string
 	// Hosts lists the processes allowed to dispatch this type's batches.
 	Hosts []types.Host

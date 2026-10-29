@@ -137,7 +137,7 @@ func TestMigrateDBTask(t *testing.T) {
 	}
 
 	targetDSN := replaceDSNDatabase(baseDSN, targetDBName)
-	targetDB, err := database.NewPostgresDB(targetDSN)
+	targetDB, err := database.NewPostgresDB(targetDSN, database.DefaultMaxOpenConns)
 	if err != nil {
 		t.Fatalf("open target database: %v", err)
 	}
@@ -207,7 +207,7 @@ func replaceDSNDatabase(dsn, dbName string) string {
 func dropTestDatabase(t *testing.T, baseDSN, dbName string) {
 	t.Helper()
 	admin := replaceDSNDatabase(baseDSN, "postgres")
-	adminDB, err := database.NewPostgresDB(admin)
+	adminDB, err := database.NewPostgresDB(admin, database.DefaultMaxOpenConns)
 	if err != nil {
 		return
 	}
@@ -260,7 +260,7 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 	// A database that is not an edub database: has tables, no goose history.
 	foreignName := srcDBName + "_foreign"
 	foreignDSN := replaceDSNDatabase(baseDSN, foreignName)
-	foreignDB, err := database.NewPostgresDB(foreignDSN)
+	foreignDB, err := database.NewPostgresDB(foreignDSN, database.DefaultMaxOpenConns)
 	if err != nil {
 		t.Fatalf("open foreign database: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestMigrateDBTask_RefusesForeignDestination(t *testing.T) {
 	}
 
 	// The foreign database must be untouched.
-	still, err := database.NewPostgresDB(foreignDSN)
+	still, err := database.NewPostgresDB(foreignDSN, database.DefaultMaxOpenConns)
 	if err != nil {
 		t.Fatalf("reopen foreign database: %v", err)
 	}

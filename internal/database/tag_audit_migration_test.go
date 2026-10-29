@@ -17,7 +17,7 @@ func TestMigrationAuditRegisterCarryAndDeletedAtRename(t *testing.T) {
 	release := acquireTestDB(base, name)
 	defer release()
 
-	db, err := NewPostgresDB(replaceDBName(base, name))
+	db, err := NewPostgresDB(replaceDBName(base, name), DefaultMaxOpenConns)
 	if err != nil {
 		t.Fatalf("open a fresh schema database: %v", err)
 	}

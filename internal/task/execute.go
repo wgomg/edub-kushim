@@ -252,6 +252,32 @@ const (
 	batchShutdownTimeout   = 5 * time.Second
 )
 
+// batchAuxConns bounds the non-worker database users inside a forked batch execution, each holding at
+// most one connection at a time: the run goroutine in its monitor role, the lease heartbeat, the held-lock
+// heartbeat (lock-holding batches only) and the progress stream the consume funnel starts; any newly added
+// auxiliary loop belongs here as well.
+const batchAuxConns = 4
+
+// workersForType is the number of workers the execution runs for one task type: the catalog's declared
+// concurrency above one, otherwise one. The worker loop and the pool budget both read it, so the ceiling
+// cannot drift from the workers actually started.
+func workersForType(taskType types.TaskType, catalog TypeCatalog) int {
+	if def, err := catalog.Definition(taskType); err == nil && def.Concurrency > 1 {
+		return def.Concurrency
+	}
+	return 1
+}
+
+// batchConnBudget is the open-connection ceiling one forked execution needs: one connection per worker
+// the worker loop starts for the batch's types plus the execution's fixed auxiliary users.
+func batchConnBudget(taskTypes []types.TaskType, catalog TypeCatalog) int {
+	workers := 0
+	for _, taskType := range taskTypes {
+		workers += workersForType(taskType, catalog)
+	}
+	return workers + batchAuxConns
+}
+
 // BatchRunDeps carries the dependencies of one leased batch execution: the database client and logger,
 // the type catalog that declares per-type worker counts, the store and registry the runner dispatches
 // through, the retry budget entry repair applies, and the host-provided file quarantine hook. The hook
@@ -293,10 +319,12 @@ func adoptPID(deps BatchRunDeps) int {
 // quarantine), keeps the batch's locks fresh and drains their waiters, runs the batch's pending tasks through
 // the registered handlers — one worker set per task type, sized by that type's declared concurrency and
 // settling the batch after every transition — then sweeps failed consume files, settles the batch and
-// releases the lease. A batch paused before or during the run returns Paused without settling. An aborted
-// run — failed entry repair, failed drain, interrupted context or failed settle — releases its heartbeats,
-// lease and locks, then requeues the batch, because releasing the lease removes the reaper's handle on it.
-// A settle refused with tasks still active is logged and left to recovery. The lease is always released.
+// releases the lease. A forked execution also sizes its process's pool to the batch's workers plus its
+// auxiliary loops; an in-process run leaves its host's pool alone. A batch paused before or during the
+// run returns Paused without settling. An aborted run — failed entry repair, failed drain, interrupted
+// context or failed settle — releases its heartbeats, lease and locks, then requeues the batch, because
+// releasing the lease removes the reaper's handle on it. A settle refused with tasks still active is
+// logged and left to recovery. The lease is always released.
 func RunBatch(ctx context.Context, deps BatchRunDeps, batchID string, token uuid.UUID) (BatchRunResult, error) {
 	if deps.Client == nil || deps.Logger == nil || deps.Catalog == nil || deps.Store == nil || deps.Registry == nil {
 		return BatchRunResult{}, fmt.Errorf("run batch %s: incomplete dependencies", batchID)
@@ -326,6 +354,12 @@ func RunBatch(ctx context.Context, deps BatchRunDeps, batchID string, token uuid
 	taskTypes := make([]types.TaskType, 0, len(typesPresent))
 	for _, value := range typesPresent {
 		taskTypes = append(taskTypes, types.TaskType(value))
+	}
+
+	// a forked child owns its process pool, so size it to this batch's workers and auxiliary loops; an
+	// in-process run shares its host's pool and must leave it alone
+	if !deps.InProcess {
+		deps.Client.DB().SetMaxOpenConns(batchConnBudget(taskTypes, deps.Catalog))
 	}
 
 	// the batch's held locks, computed before adoption so the teardown can release them on every path
@@ -409,11 +443,7 @@ func RunBatch(ctx context.Context, deps BatchRunDeps, batchID string, token uuid
 	runner := NewRunner(deps.Store, deps.Registry, deps.Catalog, deps.Logger)
 	var workers sync.WaitGroup
 	for _, taskType := range taskTypes {
-		workersForType := 1
-		if def, lookupErr := deps.Catalog.Definition(taskType); lookupErr == nil && def.Concurrency > 1 {
-			workersForType = def.Concurrency
-		}
-		for range workersForType {
+		for range workersForType(taskType, deps.Catalog) {
 			workers.Go(func() {
 				for {
 					select {

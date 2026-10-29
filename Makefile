@@ -320,6 +320,7 @@ test-cgo-db:
 		./internal/documents/consumption/ \
 		./internal/ops/configtask/ \
 		./internal/ops/cli/ \
+		./internal/ops/container/ \
 		./internal/ops/consume/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \

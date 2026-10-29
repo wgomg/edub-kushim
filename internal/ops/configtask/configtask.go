@@ -189,7 +189,7 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 		return err
 	}
 
-	oldDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	oldDB, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db), database.DefaultMaxOpenConns)
 	if err != nil {
 		return fmt.Errorf("connect to current database: %w", err)
 	}
@@ -228,7 +228,7 @@ func MigrateDatabase(ctx context.Context, logger *log.Logger, p MigrateDBPayload
 		Database: p.Database,
 		SSLMode:  p.SSLMode,
 	})
-	newDB, err := database.NewPostgresDB(database.WithConnectTimeout(newDSN, 10))
+	newDB, err := database.NewPostgresDB(database.WithConnectTimeout(newDSN, 10), database.DefaultMaxOpenConns)
 	if err != nil {
 		return fmt.Errorf("connect to destination database: %w", err)
 	}
@@ -277,7 +277,7 @@ func MigrateStorage(ctx context.Context, logger *log.Logger, p MigrateStoragePay
 
 	// Config may have been updated by a preceding migrate-db task, so the
 	// database connection is read from disk rather than from the payload.
-	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db), database.DefaultMaxOpenConns)
 	if err != nil {
 		return fmt.Errorf("connect to database: %w", err)
 	}

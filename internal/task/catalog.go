@@ -158,6 +158,17 @@ func (c *Catalog) Definition(taskType types.TaskType) (TypeDefinition, error) {
 	return definition, nil
 }
 
+// BatchModeCLI reports whether cli names a task type's batch-mode command. It is the static half of the
+// fork contract: a launcher only prepends ExecutorFlag to a command the resolved definitions own.
+func BatchModeCLI(cli string) bool {
+	for _, static := range staticDefinitions {
+		if static.cli == cli {
+			return true
+		}
+	}
+	return false
+}
+
 // DirectLockPolicyFor returns the lock policy a direct CLI run of the type uses: its declared direct policy
 // when one is set, otherwise the queued lock set. Every call site names a declared type; an undeclared type
 // declares no lock.

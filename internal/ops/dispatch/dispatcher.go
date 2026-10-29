@@ -67,16 +67,17 @@ func NewDispatcher(catalog task.TypeCatalog, logger *log.Logger, host types.Host
 		wake:         wake,
 		inProcess:    inProcess,
 	}
-	d.lastBudget = d.effectiveBudget()
+	d.lastBudget = EffectiveBudget(d.budget())
 	d.logger.Info("", "dispatcher budget: %d on host %s", d.lastBudget, host)
 	return d
 }
 
-// effectiveBudget reports the slot budget the next sweep enforces, applying the fallback for a configured
-// value below one so a zero or negative setting cannot stop dispatch entirely.
-func (d *Dispatcher) effectiveBudget() int {
-	if budget := d.budget(); budget > 0 {
-		return budget
+// EffectiveBudget resolves a configured slot budget to the value a sweep enforces: a configured value
+// below one falls back to two, so a zero or negative setting cannot stop dispatch entirely. The queue
+// daemon reads the same rule when it sizes its pool to the concurrency the budget admits.
+func EffectiveBudget(configured int) int {
+	if configured > 0 {
+		return configured
 	}
 	return 2
 }
@@ -94,7 +95,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, client *database.Client, batc
 	if err != nil {
 		return fmt.Errorf("list queued batches: %w", err)
 	}
-	budget := d.effectiveBudget()
+	budget := EffectiveBudget(d.budget())
 	if budget != d.lastBudget {
 		d.logger.Info("", "dispatcher budget: %d -> %d", d.lastBudget, budget)
 		d.lastBudget = budget

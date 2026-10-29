@@ -53,6 +53,12 @@ var tagGroupTypes = []types.TaskType{
 // tagGroupExecutor is the command that executes a chained tag maintenance batch.
 var tagGroupExecutor = launchTarget{cli: "tagmaintenance", selector: "--from-batch"}
 
+// IsExecutorVerb reports whether verb is a command the launcher forks in executor mode: a task type's
+// batch-mode CLI or the chained tag-routine executor. It is internal to the fork contract.
+func IsExecutorVerb(verb string) bool {
+	return verb == tagGroupExecutor.cli || task.BatchModeCLI(verb)
+}
+
 // resolveLaunchTarget checks that every task type in the batch is dispatchable on host and resolves the
 // task CLI that owns the batch. A type is dispatchable when its definition declares the CLI command and
 // the batch selector and lists the host. A pure batch resolves to its own type's command; a mixed batch
@@ -113,11 +119,13 @@ func tagGroupDistinct(taskTypes []types.TaskType) (int, bool) {
 	return len(distinct), true
 }
 
-// launchBatch forks the target's task CLI in batch mode with the execution token. A non-nil onExit receives
-// the child's exit error from a wait goroutine; nil leaves the waiting to the caller and returns the command
+// launchBatch forks the target's task CLI in executor mode with the execution token; the ExecutorFlag
+// prefix tells the child its schema lifecycle belongs to this launcher. A non-nil onExit receives the
+// child's exit error from a wait goroutine; nil leaves the waiting to the caller and returns the command
 // for it. attachStdio forwards the child's streams to this process, which the interactive launcher uses.
 func launchBatch(target launchTarget, token uuid.UUID, attachStdio bool, onExit func(error)) (*exec.Cmd, error) {
-	cmd := exec.Command(os.Args[0], target.cli, target.selector, target.batchID, "--exec-token", token.String())
+	cmd := exec.Command(os.Args[0], task.ExecutorFlag, target.cli,
+		target.selector, target.batchID, "--exec-token", token.String())
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -176,12 +184,12 @@ func requeueAfterLaunchFailure(ctx context.Context, client *database.Client, log
 	logger.Info("", "batch %s requeued after its launch failed", batchID)
 }
 
-// LaunchQueuedBatch is the manual launcher behind `kushim batch run`: it claims the queued batch, forks
-// its task CLI in batch mode with the execution token and waits for the child, propagating a non-zero exit.
-// Every remaining task type has a batch-mode CLI on the queue host, including the migrations, so the
-// launcher only forks. Only a queued batch with no lease is claimable; a paused batch points at resume, a
-// processing one at its holder (a stale lease is the reaper's), and a terminal one refuses. It performs no
-// slot check, because the dispatcher budget governs automatic dispatch only.
+// LaunchQueuedBatch is the manual launcher behind `kushim batch run`: it claims the queued batch, then
+// forks its task CLI in executor mode with the execution token and waits for the child, propagating the
+// child's non-zero exit. Every remaining task type has a batch-mode CLI on the queue host, including the
+// migrations, so the launcher only forks. Only a queued batch with no lease is claimable; a paused batch
+// points at resume, a processing one at its holder (a stale lease is the reaper's), and a terminal one
+// refuses. It performs no slot check, because the dispatcher budget governs automatic dispatch only.
 func LaunchQueuedBatch(ctx context.Context, client *database.Client, logger *log.Logger, catalog task.TypeCatalog, batchID string) error {
 	batch, err := client.Queries.GetBatch(ctx, batchID)
 	if err != nil {

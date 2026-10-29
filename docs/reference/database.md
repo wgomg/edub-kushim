@@ -4,9 +4,11 @@
 
 ### Functions
 
-`NewPostgresDB(dsn string) (*sql.DB, error)`, `NewClient(db) *Client`
+`Open(dsn string, maxOpen int) (*sql.DB, error)`, `NewPostgresDB(dsn string, maxOpen int) (*sql.DB, error)`, `NewClient(db) *Client`
 
-- `NewPostgresDB` opens a PostgreSQL connection pool via `pgx/stdlib` (25 max open, 5 max idle, 5 min lifetime). Before opening the target database it calls `ensureDatabaseExists` which connects to the `postgres` bootstrap database, checks existence via `pg_database`, and auto-creates the target if missing.
+- `Open` opens a PostgreSQL connection pool via `pgx/stdlib` with the caller's open-connection ceiling (idle capped at `min(5, maxOpen)`, 5 min lifetime) and pings before returning. It creates no database and applies no schema: an existing database is a precondition. The connect-only entry — a forked batch executor uses it because its launcher bootstrapped the schema before claiming, and the pool ceiling is the caller's, sized to what the execution actually runs.
+- `NewPostgresDB` is the bootstrap owner's entry: before opening through `Open` it calls `ensureDatabaseExists`, which connects to the `postgres` bootstrap database, checks existence via `pg_database`, and auto-creates the target if missing. Schema application stays a separate step (`InitializeSchema`).
+- `DefaultMaxOpenConns` (25) is the neutral ceiling for a process with no derived concurrency driver — HTTP servers, one-shot commands, sequential CLI runs and the executor's pre-run window; the queue daemon and a forked executor pass computed ceilings instead.
 - `WithConnectTimeout(dsn, seconds) string` — Appends the `connect_timeout` parameter to a URL-shaped DSN (returned unchanged otherwise).
 - `PrepareFreshDatabase(dsn string) error` — Setup-time database claim: connects to the `postgres` bootstrap database (10s connect timeout), creates the target database when missing, then verifies the target is reachable and accepts it only when it has no tables in any non-system schema; a target holding tables fails with `ErrDatabaseNotEmpty` ("drop it or choose another database name"). Opens no schema — callers run `InitializeSchema` after persisting their configuration. Used by `kushim setup` (wizard and CLI) before any settings are persisted.
 - `NewClient` wraps a `*sql.DB` and an embedded `*Queries` (sqlc-generated). Exposes `BeginTx(ctx, opts)` and `DB()` for direct `*sql.DB` access. All query methods on `*Queries` are promoted to `*Client`.

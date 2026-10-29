@@ -926,17 +926,21 @@ it.
 ### Connection management
 
 `internal/database/connection.go` uses `database/sql` with the pgx driver
-(`sql.Open("pgx", dsn)`) and explicit pool limits:
+(`sql.Open("pgx", dsn)`) and a caller-supplied open-connection ceiling:
 
 ```go
-db.SetMaxOpenConns(25)
-db.SetMaxIdleConns(5)
+db.SetMaxOpenConns(maxOpen)
+db.SetMaxIdleConns(min(5, maxOpen))
 db.SetConnMaxLifetime(5 * time.Minute)
 ```
 
-It also *creates the database if missing* by connecting to the `postgres` admin
-DB and running `CREATE DATABASE` with a quoted, injection-safe identifier
-(`connection.go:36`).
+`Open(dsn, maxOpen)` is the connect-only entry: it opens an existing database
+with the given ceiling and applies no schema — a forked batch executor connects
+through it, with the ceiling sized to the batch it runs. `NewPostgresDB(dsn,
+maxOpen)` additionally *creates the database if missing* by connecting to the
+`postgres` admin DB and running `CREATE DATABASE` with a quoted, injection-safe
+identifier, then opens through `Open`. Only a schema owner applies the schema
+(`InitializeSchema`) after opening.
 
 ### Migrations and seeds
 

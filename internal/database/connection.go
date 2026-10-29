@@ -17,6 +17,11 @@ import (
 // wizard or CLI request instead of hanging it.
 const connectionTimeoutSeconds = 10
 
+// DefaultMaxOpenConns is the open-connection ceiling of a process with no derived concurrency driver:
+// HTTP servers, one-shot commands and sequential CLI runs. Processes that know their driver — the queue
+// daemon and a forked batch executor — pass a computed value to Open instead.
+const DefaultMaxOpenConns = 25
+
 // ErrDatabaseNotEmpty reports a setup target database that already holds tables. Setup only adopts a
 // completely empty database, so the operator can drop it (or pick another name) and retry without risking
 // existing data.
@@ -85,20 +90,17 @@ func WithConnectTimeout(dsn string, seconds int) string {
 	return u.String()
 }
 
-// NewPostgresDB creates the database when it does not exist, opens the
-// pool with the production limits, and pings before returning.
-func NewPostgresDB(dsn string) (*sql.DB, error) {
-	if err := ensureDatabaseExists(dsn); err != nil {
-		return nil, fmt.Errorf("ensure database exists: %w", err)
-	}
-
+// Open opens a pooled handle to an existing database with the given open-connection ceiling and pings
+// it before returning. It neither creates the database nor applies schema; a process that owns the schema
+// lifecycle uses NewPostgresDB instead. The idle cap is the smaller of five and the ceiling.
+func Open(dsn string, maxOpen int) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(min(5, maxOpen))
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
@@ -107,6 +109,15 @@ func NewPostgresDB(dsn string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// NewPostgresDB creates the database when it does not exist, then opens it with the caller's open-connection
+// ceiling and pings it. It does not apply schema: a bootstrap owner calls InitializeSchema next.
+func NewPostgresDB(dsn string, maxOpen int) (*sql.DB, error) {
+	if err := ensureDatabaseExists(dsn); err != nil {
+		return nil, fmt.Errorf("ensure database exists: %w", err)
+	}
+	return Open(dsn, maxOpen)
 }
 
 func ensureDatabaseExists(targetDSN string) error {

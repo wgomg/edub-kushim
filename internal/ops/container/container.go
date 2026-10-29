@@ -20,10 +20,19 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools"
 )
 
+// dbRole selects which side of the schema lifecycle a container's process is on.
+type dbRole int
+
+const (
+	ownSchema dbRole = iota
+	inheritSchema
+)
+
 // Container is the CLI-side holder of the dynamic config pointer and the lazily built shared services.
 type Container struct {
 	cfg            atomic.Pointer[config.Config]
 	logger         *log.Logger
+	role           dbRole
 	db             *sql.DB
 	client         *database.Client
 	engine         *search.Engine
@@ -32,20 +41,32 @@ type Container struct {
 	tagToolsRunner *tools.Runner
 }
 
-// NewContainer builds a container without a database; the DB attaches
-// lazily through GetClient.
+// NewContainer builds a container for a process that owns the schema lifecycle: the DB attaches lazily
+// through GetClient, which creates the database when it is missing and applies migrations, seeders and
+// backfills before returning.
 func NewContainer(cfg *config.Config, logger *log.Logger) *Container {
 	return NewContainerWithDB(cfg, logger, nil)
 }
 
-// NewContainerWithDB builds the container over an existing database
-// connection.
+// NewContainerWithDB builds the container over an existing database connection; an injected handle always
+// bypasses the schema role.
 func NewContainerWithDB(cfg *config.Config, logger *log.Logger, db *sql.DB) *Container {
 	c := &Container{
 		logger: logger,
+		role:   ownSchema,
 		db:     db,
 	}
 	c.cfg.Store(cfg)
+	return c
+}
+
+// NewBatchExecutor builds a container for a forked batch executor. The schema is the launcher's sole
+// responsibility — the claim the child is about to adopt proves a bootstrap owner already ran against
+// this database with the same binary — so its first GetDB only opens a pool and pings: it neither creates
+// the database nor applies migrations, seeders or backfills.
+func NewBatchExecutor(cfg *config.Config, logger *log.Logger) *Container {
+	c := NewContainerWithDB(cfg, logger, nil)
+	c.role = inheritSchema
 	return c
 }
 
@@ -78,22 +99,34 @@ func (c *Container) GetTagService() (*curation.Tag, error) {
 	return c.tag, nil
 }
 
-// GetDB returns the database handle, connecting on first use. The handle
+// GetDB returns the database handle, connecting on first use under the container's role. The handle
 // stays valid across config reloads that keep the same connection.
 func (c *Container) GetDB() (*sql.DB, error) {
 	if c.db == nil {
-		dsn := config.BuildPostgresDSN(c.cfg.Load().Db)
-		db, err := database.NewPostgresDB(dsn)
+		db, err := c.openDB(config.BuildPostgresDSN(c.cfg.Load().Db))
 		if err != nil {
 			return nil, err
-		}
-		if err := database.InitializeSchema(context.Background(), db); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("initialize schema: %w", err)
 		}
 		c.db = db
 	}
 	return c.db, nil
+}
+
+// openDB applies the container's role to a fresh connection: a schema owner creates the database when it
+// is missing and applies the schema, while an executor only opens the pool its launcher bootstrapped.
+func (c *Container) openDB(dsn string) (*sql.DB, error) {
+	if c.role == inheritSchema {
+		return database.Open(dsn, database.DefaultMaxOpenConns)
+	}
+	db, err := database.NewPostgresDB(dsn, database.DefaultMaxOpenConns)
+	if err != nil {
+		return nil, err
+	}
+	if err := database.InitializeSchema(context.Background(), db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize schema: %w", err)
+	}
+	return db, nil
 }
 
 // GetClient returns the query client over the database, building it on
@@ -124,15 +157,12 @@ func (c *Container) InvalidateDB() {
 	c.tagToolsRunner = nil
 }
 
-// ReconnectClient closes the current connection and reopens it from the
-// config, returning the fresh client.
+// ReconnectClient closes the current connection and reopens it from the config, returning the fresh
+// client. It is the schema owner's path: a reconnect re-applies the schema, and executor children run no
+// config watcher, so they never call it.
 func (c *Container) ReconnectClient() (*database.Client, error) {
-	newDB, err := database.NewPostgresDB(config.BuildPostgresDSN(c.cfg.Load().Db))
+	newDB, err := c.openDB(config.BuildPostgresDSN(c.cfg.Load().Db))
 	if err != nil {
-		return nil, err
-	}
-	if err := database.InitializeSchema(context.Background(), newDB); err != nil {
-		newDB.Close()
 		return nil, err
 	}
 	c.InvalidateDB()

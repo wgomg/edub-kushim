@@ -213,3 +213,41 @@ func TestRunBatch_PreAdoptionChecks(t *testing.T) {
 		}
 	})
 }
+
+// TestBatchConnBudget pins the forked executor's pool formula: one worker per catalog-declared
+// concurrency above one, one for types the catalog does not know, plus the fixed auxiliary count.
+func TestBatchConnBudget(t *testing.T) {
+	catalog := budgetCatalog{
+		types.Task.Type.Consume:   {Concurrency: 1},
+		types.Task.Type.Enrich:    {Concurrency: 3},
+		types.Task.Type.Thumbnail: {Concurrency: 0},
+	}
+	cases := []struct {
+		name      string
+		taskTypes []types.TaskType
+		want      int
+	}{
+		{"a type the catalog does not know counts one", []types.TaskType{types.Task.Type.Backup}, 1 + batchAuxConns},
+		{"Concurrency above one contributes its value", []types.TaskType{types.Task.Type.Enrich}, 3 + batchAuxConns},
+		{"Concurrency at or below one counts one", []types.TaskType{types.Task.Type.Consume, types.Task.Type.Thumbnail}, 2 + batchAuxConns},
+		{"mixed types sum their workers", []types.TaskType{types.Task.Type.Consume, types.Task.Type.Enrich, types.Task.Type.Backup}, 5 + batchAuxConns},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.AssertEqual(t, batchConnBudget(tc.taskTypes, catalog), tc.want, "connection budget")
+		})
+	}
+}
+
+// budgetCatalog is a map-backed TypeCatalog: it answers the per-type worker counts the budget test
+// drives and the not-found error the one-worker floor must cover.
+type budgetCatalog map[types.TaskType]TypeDefinition
+
+func (c budgetCatalog) Definition(taskType types.TaskType) (TypeDefinition, error) {
+	def, ok := c[taskType]
+	if !ok {
+		return TypeDefinition{}, fmt.Errorf("unknown task type: %q", taskType)
+	}
+	def.Type = taskType
+	return def, nil
+}

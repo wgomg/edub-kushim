@@ -147,3 +147,24 @@ func TestApplyConfigFailedReconnectKeepsThePreviousTree(t *testing.T) {
 		t.Fatal("the rejected tree must stay pending so the next housekeeping tick retries it")
 	}
 }
+
+// TestQueueConnBudget pins the daemon pool's formula: the effective slot budget (with the below-one
+// fallback the dispatcher enforces) plus the daemon's fixed headroom.
+func TestQueueConnBudget(t *testing.T) {
+	cases := []struct {
+		name       string
+		configured int
+		want       int
+	}{
+		{"a configured budget passes through", 4, 4 + queueAuxConns},
+		{"a zero budget falls back to the dispatcher's two", 0, 2 + queueAuxConns},
+		{"a negative budget falls back to the dispatcher's two", -1, 2 + queueAuxConns},
+		{"a raised budget raises the pool", 10, 10 + queueAuxConns},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Srv: config.ServerConfig{MaxConcurrentBatches: tc.configured}}
+			testutil.AssertEqual(t, queueConnBudget(cfg), tc.want, "daemon pool budget")
+		})
+	}
+}

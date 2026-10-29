@@ -43,7 +43,7 @@ func NewTestDB(t TB) *sql.DB {
 	release := acquireTestDB(baseDSN, dbName)
 
 	testDSN := replaceDBName(baseDSN, dbName)
-	db, err := NewPostgresDB(testDSN)
+	db, err := NewPostgresDB(testDSN, DefaultMaxOpenConns)
 	if err != nil {
 		release()
 		t.Fatalf("failed to open test database: %v", err)

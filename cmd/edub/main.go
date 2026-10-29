@@ -67,7 +67,7 @@ func startServer() {
 	logger.Info("", "Environment: %s", cfg.App.Env)
 	logger.Info("", "Log level: %s", cfg.App.LogLevel)
 
-	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db))
+	db, err := database.NewPostgresDB(config.BuildPostgresDSN(cfg.Db), database.DefaultMaxOpenConns)
 	if err != nil {
 		errLogger := log.NewLogger("error")
 		errLogger.Fatal("Unable to establish database connection:", err)

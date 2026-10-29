@@ -50,6 +50,18 @@ type daemon struct {
 	lastStaleTaskClaim time.Time
 }
 
+// queueAuxConns is the daemon's fixed connection headroom beyond the slot budget: the control loop, the
+// inbox-scan goroutine and a margin of two for the lock-holding children the slot budget does not gate;
+// their exit callbacks are the only children the budget term does not count, because it admits one per
+// in-flight no-holds child.
+const queueAuxConns = 4
+
+// queueConnBudget is the daemon pool's open-connection ceiling: the concurrency its slot budget admits
+// plus the loop and scan users.
+func queueConnBudget(cfg *config.Config) int {
+	return dispatch.EffectiveBudget(cfg.Srv.MaxConcurrentBatches) + queueAuxConns
+}
+
 // Run is the kushim queue verb: it runs the daemon loop until signalled, dispatching queued batches,
 // applying reloaded configuration, scheduling the recurring runs, forking each batch's task-CLI child
 // and reaping stale work.
@@ -146,6 +158,7 @@ func Run(c *container.Container, args []string) error {
 		reloadCh: make(chan struct{}, 1),
 	}
 	d.client.Store(client)
+	d.applyConnBudget(c.GetConfig())
 
 	d.startNotify(ctx)
 	defer d.stopNotify()
@@ -250,6 +263,7 @@ func (d *daemon) stageConfig(cfg *config.Config) {
 func (d *daemon) applyConfig(ctx context.Context, newCfg *config.Config) {
 	oldCfg := d.c.GetConfig()
 	d.c.SetConfig(newCfg)
+	d.applyConnBudget(newCfg)
 	if !config.DatabaseConnectionChanged(oldCfg.Db, newCfg.Db) {
 		d.pendingCfg = nil
 		return
@@ -260,14 +274,25 @@ func (d *daemon) applyConfig(ctx context.Context, newCfg *config.Config) {
 	if err != nil {
 		d.c.GetLogger().Error("", "failed to reconnect to new DB: %v — keeping previous configuration", err)
 		d.c.SetConfig(oldCfg)
+		d.applyConnBudget(oldCfg)
 		d.pendingCfg = newCfg
 		return
 	}
 
 	d.client.Store(newClient)
+	d.applyConnBudget(newCfg)
 	d.batchSvc = service.NewBatch(newClient, newCfg.Consumer.Reclaim.MaxRetries)
 
 	d.stopNotify()
 	d.startNotify(ctx)
 	d.pendingCfg = nil
+}
+
+// applyConnBudget re-derives the daemon pool's ceiling from the configuration tree being applied. It
+// runs at startup and on every applied tree, because max_concurrent_batches is hot-reloadable and the
+// dispatcher's budget supplier already sees edits on the next sweep.
+func (d *daemon) applyConnBudget(cfg *config.Config) {
+	if client := d.client.Load(); client != nil {
+		client.DB().SetMaxOpenConns(queueConnBudget(cfg))
+	}
 }
