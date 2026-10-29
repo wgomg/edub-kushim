@@ -315,7 +315,7 @@ web/                      # SvelteKit SPA frontend (main UI)
 │   │   ├── assets/
 │   │   │   └── favicon.svg
 │   │   ├── stores/
-│   │   │   ├── authStore.js      # Auth state (token/user/role) from localStorage
+│   │   │   ├── authStore.svelte.js  # Auth state (token/user/role from localStorage; authEnabled/authResolved are runes-backed)
 │   │   │   ├── filterStore.js   # Reactive filter state store (setPartial, reset, fromQueryString)
 │   │   │   ├── searchFilter.js  # Query parser, tokenizer, size/date formatting utilities
 │   │   │   ├── confirmStore.svelte.js  # Imperative confirm-dialog promise store

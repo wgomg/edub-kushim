@@ -6,7 +6,7 @@
 	import { escapeHtml } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 	import Card from './Card.svelte';
 	import GroupHead from './GroupHead.svelte';
 	import Switch from './Switch.svelte';

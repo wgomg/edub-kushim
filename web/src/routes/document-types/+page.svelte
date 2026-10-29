@@ -6,7 +6,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 	import { defaultFilter, serializeFilter } from '$lib/stores/searchFilter.js';
 
 	let documentTypes = $state([]);

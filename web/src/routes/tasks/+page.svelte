@@ -8,7 +8,7 @@
 	import { api } from '$lib/api';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 
 	let taskRefreshKey = $state(0);
 	let batchRefreshKey = $state(0);

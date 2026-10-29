@@ -6,7 +6,7 @@
 	import { page } from '$app/stores';
 	import { resolve } from '$app/paths';
 	import { api } from '$lib/api.js';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import UploadModal from '$lib/components/UploadModal.svelte';
@@ -15,8 +15,6 @@
 	let { children } = $props();
 	let missingTools = $state([]);
 	let uploadOpen = $state(false);
-	let authEnabled = $state(true);
-	let configLoaded = $state(false);
 
 	let missingCount = $derived(
 		missingTools.reduce((sum, t) => {
@@ -30,8 +28,8 @@
 
 	$effect(() => {
 		if (
-			configLoaded &&
-			authEnabled &&
+			authStore.authResolved() &&
+			authStore.authEnabled() &&
 			!authStore.isAuthenticated() &&
 			$page.url.pathname !== '/login'
 		) {
@@ -42,9 +40,8 @@
 	onMount(async () => {
 		const bootstrap = await api.config.bootstrap();
 		missingTools = bootstrap?.missing_tools ?? [];
-		authEnabled = bootstrap?.auth_enabled ?? true;
-		authStore.setAuthEnabled(authEnabled);
-		configLoaded = true;
+		authStore.setAuthEnabled(bootstrap?.auth_enabled ?? true);
+		authStore.setAuthResolved(true);
 		if (authStore.isAuthenticated()) {
 			await authStore.refreshMe();
 		}
@@ -91,7 +88,7 @@
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Documents</a
 				>
-				{#if !authEnabled || authStore.isEditor()}
+				{#if !authStore.authEnabled() || authStore.isEditor()}
 					<a
 						href={resolve(`/documents/orphaned`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
@@ -123,21 +120,21 @@
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Document Types</a
 				>
-				{#if !authEnabled || authStore.isAdmin()}
+				{#if !authStore.authEnabled() || authStore.isAdmin()}
 					<a
 						href={resolve(`/logs`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Logs</a
 					>
 				{/if}
-				{#if !authEnabled || authStore.isAdmin()}
+				{#if !authStore.authEnabled() || authStore.isAdmin()}
 					<a
 						href={resolve(`/settings`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Settings</a
 					>
 				{/if}
-				{#if authStore.isAuthenticated() && authEnabled}
+				{#if authStore.isAuthenticated() && authStore.authEnabled()}
 					<a
 						href={resolve(`/profile`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
@@ -155,7 +152,7 @@
 			>
 				<div class="flex-1"></div>
 				{#if authStore.isAuthenticated()}
-					{#if authEnabled}
+					{#if authStore.authEnabled()}
 						<a
 							href={resolve(`/profile`)}
 							class="text-sm text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
@@ -170,7 +167,7 @@
 						Logout
 					</button>
 				{/if}
-				{#if !authEnabled || authStore.isEditor()}
+				{#if !authStore.authEnabled() || authStore.isEditor()}
 					<button
 						onclick={() => (uploadOpen = true)}
 						class="rounded-lg bg-gold-500 px-4 py-2 text-sm font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"

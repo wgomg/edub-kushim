@@ -385,7 +385,7 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   (escaping, size/duration/relative formatting), `filterStore.js`, `toastStore.svelte.js`,
   `confirmStore.svelte.js`.
 - `components` (jsdom + `svelteTesting()` from `@testing-library/svelte/vite` for
-  auto-cleanup) — `authStore.js` and `api.js` (both touch `localStorage` at import
+  auto-cleanup) — `authStore.svelte.js` and `api.js` (both touch `localStorage` at import
   time, so they need the DOM), plus the component tests: `DataTable.svelte` (rows,
   sort refetch, empty/error states, `onTotal` reporting), `FilterPanel.svelte` (filter-store wiring,
   tag autocomplete, failure toast), `UploadModal.svelte` (upload success/error paths),
@@ -412,9 +412,9 @@ so `eslint.config.js` needed no changes. Mocking conventions:
 (`web/playwright.config.js`): the `webServer` runs `npm run build` and then serves
 `build/` via `web/scripts/serve-static.mjs` — a tiny zero-dependency static server
 that falls back to `index.html` for unknown routes, mirroring adapter-static's
-`fallback` behavior in production (SvelteKit's own `vite preview` cannot be used:
-it runs the SSR server, and `authStore.js`'s import-time `localStorage` access 500s
-every route). The three specs (`e2e/login.spec.js`, `documents.spec.js`,
+  `fallback` behavior in production (SvelteKit's own `vite preview` cannot be used:
+  it runs the SSR server, and `authStore.svelte.js`'s import-time `localStorage` access 500s
+  every route). The three specs (`e2e/login.spec.js`, `documents.spec.js`,
 `upload.spec.js`) share `e2e/helpers.js`, which seeds `localStorage` auth via
 `addInitScript` and installs `page.route` mocks for `/api|/wizard|/health` returning
 minimal realistic payloads matching `web/src/lib/api.js` expectations. First run

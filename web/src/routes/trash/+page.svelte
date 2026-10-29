@@ -5,7 +5,7 @@
 	import { escapeHtml, formatSize } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 
 	let selectedRows = $state([]);
 	let refreshKey = $state(0);
@@ -200,7 +200,9 @@ ${actionButton(DELETE_ICON, 'Delete permanently', 'text-parchment-400 hover:text
 	}
 </script>
 
-{#if authStore.authEnabled() && !authStore.isEditor()}
+{#if !authStore.authResolved()}
+	<p class="text-parchment-500">Loading…</p>
+{:else if authStore.authEnabled() && !authStore.isEditor()}
 	<p class="text-parchment-500">You do not have permission to view this page.</p>
 {:else}
 	<div class="space-y-4">

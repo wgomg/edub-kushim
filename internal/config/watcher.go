@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,21 +11,28 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
-// Watcher polls the config file's modification time and reloads the
-// configuration through it, handing the fresh tree to the callback when it
-// actually changed. Invalid YAML logs an error and keeps the previous
-// tree.
+// Watcher polls the config file's content and reloads the configuration through it, handing the fresh
+// tree to the callback when the content actually changed. The content itself is the change signal, so a
+// restored or clock-skewed modification time cannot freeze the loop, and a rewrite with identical bytes
+// does not fire. A change is applied only once two consecutive polls observe the same bytes, so the
+// truncated or partially written file that a non-atomic save briefly leaves on disk is never taken for
+// a configuration. Invalid YAML logs an error and keeps the previous tree, retrying for as long as it
+// stays invalid. The callback receives an applied change once; a callback that can fail must arrange its
+// own redelivery.
 type Watcher struct {
 	configDir string
 	interval  time.Duration
 	onReload  func(*Config)
 	logger    *log.Logger
 
-	mu      sync.Mutex
-	lastMod time.Time
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	mu          sync.Mutex
+	seenSum     [sha256.Size]byte
+	haveSeen    bool
+	appliedSum  [sha256.Size]byte
+	haveApplied bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
 // NewWatcher prepares the reload loop; Start runs it, Stop ends it.
@@ -84,29 +92,33 @@ func (w *Watcher) run() {
 }
 
 func (w *Watcher) check() {
-	configPath := filepath.Join(w.configDir, "config.yaml")
-
-	info, err := os.Stat(configPath)
+	data, err := os.ReadFile(filepath.Join(w.configDir, "config.yaml"))
 	if err != nil {
 		return
 	}
 
+	sum := sha256.Sum256(data)
+
 	w.mu.Lock()
-	lastMod := w.lastMod
+	stable := w.haveSeen && w.seenSum == sum
+	fresh := !w.haveApplied || w.appliedSum != sum
+	w.seenSum = sum
+	w.haveSeen = true
 	w.mu.Unlock()
 
-	if !info.ModTime().After(lastMod) {
+	if !stable || !fresh {
 		return
 	}
 
-	cfg, err := Load(w.configDir)
+	cfg, err := parseConfig(w.configDir, data)
 	if err != nil {
 		w.logger.Error("", "config file changed, but reload failed: %v", err)
 		return
 	}
 
 	w.mu.Lock()
-	w.lastMod = info.ModTime()
+	w.appliedSum = sum
+	w.haveApplied = true
 	w.mu.Unlock()
 
 	w.logger.Info("", "config file changed, reloading...")

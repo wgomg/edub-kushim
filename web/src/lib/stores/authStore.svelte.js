@@ -1,6 +1,7 @@
 let _token = '';
 let _user = null;
-let _authEnabled = true;
+let _authEnabled = $state(true);
+let _authResolved = $state(false);
 
 export function init() {
 	_token = localStorage.getItem('token') || '';
@@ -47,6 +48,12 @@ export function authEnabled() {
 }
 export function setAuthEnabled(v) {
 	_authEnabled = v;
+}
+export function authResolved() {
+	return _authResolved;
+}
+export function setAuthResolved(v) {
+	_authResolved = v;
 }
 export function roleBadgeClass(role) {
 	const colors = {

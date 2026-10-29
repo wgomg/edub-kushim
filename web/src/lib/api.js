@@ -1,4 +1,4 @@
-import { getToken, logout as authLogout } from '$lib/stores/authStore.js';
+import { getToken, logout as authLogout } from '$lib/stores/authStore.svelte.js';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 

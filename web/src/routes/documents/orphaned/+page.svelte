@@ -6,7 +6,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 	import { formatSize } from '$lib/utils/html.js';
 
 	let activeTab = $state($page.url.searchParams.get('tab') || 'orphaned');
@@ -167,7 +167,9 @@
 	}
 </script>
 
-{#if authStore.authEnabled() && !authStore.isEditor()}
+{#if !authStore.authResolved()}
+	<p class="text-parchment-500">Loading…</p>
+{:else if authStore.authEnabled() && !authStore.isEditor()}
 	<p class="text-parchment-500">You do not have permission to view this page.</p>
 {:else}
 	<div class="space-y-4">

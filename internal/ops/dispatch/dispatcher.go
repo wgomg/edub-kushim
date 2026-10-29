@@ -34,39 +34,57 @@ type InProcessRegistration struct {
 // Dispatcher claims queued batches eligible for this host and forks each one's task CLI in batch mode. It
 // is the daemon's only queue claimant: status, lease and holds commit together, and a batch whose locks
 // are busy is skipped without blocking the candidates behind it. Its identity travels on every lease it
-// claims, so the slot budget counts only this process's executions.
+// claims, so the slot budget counts only this process's executions. The budget itself is supplied by a
+// callback the dispatcher evaluates on every sweep, so a process that reloads its configuration enforces
+// an edited value without being re-created.
 type Dispatcher struct {
-	catalog       task.TypeCatalog
-	logger        *log.Logger
-	host          types.Host
-	dispatcherID  uuid.UUID
-	maxConcurrent int
-	failures      *launchBackoff
-	wake          func()
-	inProcess     *InProcessRegistration
-	runs          sync.WaitGroup
+	catalog      task.TypeCatalog
+	logger       *log.Logger
+	host         types.Host
+	dispatcherID uuid.UUID
+	budget       func() int
+	lastBudget   int
+	failures     *launchBackoff
+	wake         func()
+	inProcess    *InProcessRegistration
+	runs         sync.WaitGroup
 }
 
 // NewDispatcher wires the dispatcher to the task catalog and logger of the calling boundary, the host it
-// dispatches for, the batch slot budget and the wake channel poked once a backoff window expires. inProcess
-// names the task types this process executes itself; nil makes the dispatcher fork-only. The dispatcher
-// identity is minted here and lasts for the process lifetime.
-func NewDispatcher(catalog task.TypeCatalog, logger *log.Logger, host types.Host, maxConcurrent int, wake func(), inProcess *InProcessRegistration) *Dispatcher {
-	return &Dispatcher{
-		catalog:       catalog,
-		logger:        logger,
-		host:          host,
-		dispatcherID:  uuid.New(),
-		maxConcurrent: maxConcurrent,
-		failures:      newLaunchBackoff(),
-		wake:          wake,
-		inProcess:     inProcess,
+// dispatches for, the slot budget supplier and the wake channel poked once a backoff window expires. The
+// supplier is read on every sweep, so a value edited at runtime reaches the next dispatch without a
+// restart; a value below one means the default budget of two. inProcess names the task types this process
+// executes itself; nil makes the dispatcher fork-only. The dispatcher identity is minted here and lasts
+// for the process lifetime.
+func NewDispatcher(catalog task.TypeCatalog, logger *log.Logger, host types.Host, budget func() int, wake func(), inProcess *InProcessRegistration) *Dispatcher {
+	d := &Dispatcher{
+		catalog:      catalog,
+		logger:       logger,
+		host:         host,
+		dispatcherID: uuid.New(),
+		budget:       budget,
+		failures:     newLaunchBackoff(),
+		wake:         wake,
+		inProcess:    inProcess,
 	}
+	d.lastBudget = d.effectiveBudget()
+	d.logger.Info("", "dispatcher budget: %d on host %s", d.lastBudget, host)
+	return d
+}
+
+// effectiveBudget reports the slot budget the next sweep enforces, applying the fallback for a configured
+// value below one so a zero or negative setting cannot stop dispatch entirely.
+func (d *Dispatcher) effectiveBudget() int {
+	if budget := d.budget(); budget > 0 {
+		return budget
+	}
+	return 2
 }
 
 // Dispatch claims queued batches eligible for this host. The slot budget limits only batches that acquire no
 // locks: a lock-holding batch is serialized by its locks and is claimed regardless of the budget, so it can
-// never wait behind no-holds work.
+// never wait behind no-holds work. The budget is re-read here, so a configuration reload takes effect on
+// the next sweep, and a changed value is logged once.
 func (d *Dispatcher) Dispatch(ctx context.Context, client *database.Client, batchSvc *service.Batch) error {
 	live, err := batchSvc.CountLiveNoHoldsBatches(ctx, d.dispatcherID)
 	if err != nil {
@@ -76,14 +94,19 @@ func (d *Dispatcher) Dispatch(ctx context.Context, client *database.Client, batc
 	if err != nil {
 		return fmt.Errorf("list queued batches: %w", err)
 	}
-	d.sweep(ctx, client, candidates, live)
+	budget := d.effectiveBudget()
+	if budget != d.lastBudget {
+		d.logger.Info("", "dispatcher budget: %d -> %d", d.lastBudget, budget)
+		d.lastBudget = budget
+	}
+	d.sweep(ctx, client, candidates, live, budget)
 	return nil
 }
 
 // sweep tries the candidates oldest first and claims every one the budget admits. A batch this process
 // executes in-process is claimed and handed to its runner on a goroutine, so the sweep keeps dispatching.
 // A launch failure stops the sweep, so a broken fork does not march through the whole queue in one wake.
-func (d *Dispatcher) sweep(ctx context.Context, client *database.Client, candidates []database.ListQueuedBatchesByAgeRow, live int64) {
+func (d *Dispatcher) sweep(ctx context.Context, client *database.Client, candidates []database.ListQueuedBatchesByAgeRow, live int64, budget int) {
 	now := time.Now()
 	for _, candidate := range candidates {
 		if d.failures.cooling(candidate.BatchID, now) {
@@ -96,7 +119,7 @@ func (d *Dispatcher) sweep(ctx context.Context, client *database.Client, candida
 		holds, waits := batchLockSets(taskTypes)
 
 		if inProcessEligible(d.catalog, d.host, d.inProcess, taskTypes) {
-			if len(holds) == 0 && live >= int64(d.maxConcurrent) {
+			if len(holds) == 0 && live >= int64(budget) {
 				continue
 			}
 			token := uuid.New()
@@ -122,7 +145,7 @@ func (d *Dispatcher) sweep(ctx context.Context, client *database.Client, candida
 			d.logger.Debug("", "batch %s is not dispatchable here: %v", candidate.BatchID, err)
 			continue
 		}
-		if len(holds) == 0 && live >= int64(d.maxConcurrent) {
+		if len(holds) == 0 && live >= int64(budget) {
 			continue
 		}
 		token := uuid.New()

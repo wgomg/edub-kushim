@@ -41,11 +41,18 @@ type daemon struct {
 	notifyCh     chan struct{}
 	dispatcher   *dispatch.Dispatcher
 
+	// reloadCh and stagedCfg carry the config watcher's handoff to the loop, which owns every swap that
+	// applyConfig performs; pendingCfg holds a tree whose database reconnect failed, retried on each tick
+	reloadCh   chan struct{}
+	stagedCfg  atomic.Pointer[config.Config]
+	pendingCfg *config.Config
+
 	lastStaleTaskClaim time.Time
 }
 
 // Run is the kushim queue verb: it runs the daemon loop until signalled, dispatching queued batches,
-// scheduling the recurring runs, forking each batch's task-CLI child and reaping stale work.
+// applying reloaded configuration, scheduling the recurring runs, forking each batch's task-CLI child
+// and reaping stale work.
 func Run(c *container.Container, args []string) error {
 	fp := flags.NewFlagParser(args)
 	if fp.Help("Usage: kushim queue [--bg]") {
@@ -129,18 +136,14 @@ func Run(c *container.Container, args []string) error {
 		return fmt.Errorf("task catalog: %w", err)
 	}
 
-	maxConcurrent := c.GetConfig().Srv.MaxConcurrentBatches
-	if maxConcurrent < 1 {
-		maxConcurrent = 2
-	}
-
-	c.GetLogger().Info("", "queue daemon started (max %d concurrent batches)", maxConcurrent)
+	c.GetLogger().Info("", "queue daemon started")
 
 	d := &daemon{
 		c:        c,
 		catalog:  catalog,
 		sched:    newScheduler(c.GetLogger()),
 		batchSvc: service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries),
+		reloadCh: make(chan struct{}, 1),
 	}
 	d.client.Store(client)
 
@@ -153,7 +156,12 @@ func Run(c *container.Container, args []string) error {
 		default:
 		}
 	}
-	d.dispatcher = dispatch.NewDispatcher(catalog, c.GetLogger(), types.HostQueue, maxConcurrent, wake, nil)
+	budget := func() int { return c.GetConfig().Srv.MaxConcurrentBatches }
+	d.dispatcher = dispatch.NewDispatcher(catalog, c.GetLogger(), types.HostQueue, budget, wake, nil)
+
+	watcher := config.NewWatcher(c.GetConfig().App.ConfigDir, 5*time.Second, d.stageConfig, c.GetLogger())
+	watcher.Start()
+	defer watcher.Stop()
 
 	safetyInterval := 30 * time.Second
 	safetyTimer := time.NewTimer(safetyInterval)
@@ -164,6 +172,11 @@ func Run(c *container.Container, args []string) error {
 
 	for {
 		select {
+		case <-d.reloadCh:
+			if newCfg := d.stagedCfg.Swap(nil); newCfg != nil {
+				d.applyConfig(ctx, newCfg)
+			}
+
 		case <-d.notifyCh:
 			if err := d.dispatcher.Dispatch(ctx, d.client.Load(), d.batchSvc); err != nil {
 				c.GetLogger().Error("", "queue dispatch: %v", err)
@@ -206,7 +219,9 @@ func (d *daemon) stopNotify() {
 }
 
 func (d *daemon) tick(ctx context.Context) {
-	d.reloadConfig(ctx)
+	if d.pendingCfg != nil {
+		d.applyConfig(ctx, d.pendingCfg)
+	}
 	cfg := d.c.GetConfig()
 	client := d.client.Load()
 	enqueuer := task.NewEnqueuer(client, d.catalog)
@@ -216,15 +231,27 @@ func (d *daemon) tick(ctx context.Context) {
 	d.reclaimStale(ctx, cfg)
 }
 
-func (d *daemon) reloadConfig(ctx context.Context) {
-	newCfg, err := config.Load(d.c.GetConfig().App.ConfigDir)
-	if err != nil {
-		d.c.GetLogger().Error("", "config reload: %v", err)
-		return
+// stageConfig is the config watcher's handoff: it parks the freshest tree and pokes the loop, which owns
+// the swap itself. A change that arrives while an earlier one is still staged replaces it, so the loop
+// always applies the newest configuration.
+func (d *daemon) stageConfig(cfg *config.Config) {
+	d.stagedCfg.Store(cfg)
+	select {
+	case d.reloadCh <- struct{}{}:
+	default:
 	}
+}
+
+// applyConfig installs a configuration tree the watcher loaded and applies the effects that outlive the
+// snapshot swap: a database connection change reconnects the client, rebuilds the batch service and
+// restarts the notification listener. It runs on the daemon loop, so a reload can never interleave with a
+// dispatch sweep using the client it replaces. A failed reconnect keeps the previous tree and leaves the
+// new one pending, so the next housekeeping tick retries it.
+func (d *daemon) applyConfig(ctx context.Context, newCfg *config.Config) {
 	oldCfg := d.c.GetConfig()
 	d.c.SetConfig(newCfg)
 	if !config.DatabaseConnectionChanged(oldCfg.Db, newCfg.Db) {
+		d.pendingCfg = nil
 		return
 	}
 
@@ -233,12 +260,14 @@ func (d *daemon) reloadConfig(ctx context.Context) {
 	if err != nil {
 		d.c.GetLogger().Error("", "failed to reconnect to new DB: %v — keeping previous configuration", err)
 		d.c.SetConfig(oldCfg)
+		d.pendingCfg = newCfg
 		return
 	}
 
 	d.client.Store(newClient)
-	d.batchSvc = service.NewBatch(newClient, d.c.GetConfig().Consumer.Reclaim.MaxRetries)
+	d.batchSvc = service.NewBatch(newClient, newCfg.Consumer.Reclaim.MaxRetries)
 
 	d.stopNotify()
 	d.startNotify(ctx)
+	d.pendingCfg = nil
 }

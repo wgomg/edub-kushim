@@ -30,7 +30,7 @@ trust the code, not the doc.
 4. [Svelte 5 reactivity: codebase patterns](#4-svelte-5-reactivity-codebase-patterns)
 5. [Components: conventions](#5-components-conventions)
 6. [Template syntax: conventions](#6-template-syntax-conventions)
-7. [Stores: three eras](#7-stores-three-eras)
+7. [Stores: three styles](#7-stores-three-styles)
 8. [The API layer](#8-the-api-layer)
 9. [Data fetching in pages](#9-data-fetching-in-pages)
 10. [URL state sync](#10-url-state-sync)
@@ -67,8 +67,9 @@ web/                        the main SPA (admin + document management UI)
       tools.js              install hints for missing system tools
       components/           DataTable, Modal, Toast, ConfirmDialog, SearchBar,
                             FilterPanel, UploadModal, dashboard panels
-      stores/               authStore.js, filterStore.js, searchFilter.js,
-                            confirmStore.svelte.js, toastStore.svelte.js
+      stores/               authStore.svelte.js, filterStore.js, searchFilter.js,
+                            confirmStore.svelte.js, toastStore.svelte.js,
+                            settingsStore.svelte.js
       stubs/empty.mjs       Vite alias target (neutralizes Node builtins)
   svelte.config.js          adapter-static + fallback -> SPA mode
   vite.config.js            tailwind plugin, dev proxy, aliases
@@ -114,10 +115,11 @@ The stances that shape every page:
    the few public contracts (e.g. `DataTable.svelte:7-18`). Readability comes
    from discipline: one `$props()` destructure per component, small pure
    helpers in `lib/`.
-4. **Stores come in three flavors that coexist** (§7): plain modules
-   (`authStore.js` — no reactivity), classic Svelte 4 `writable()` stores
-   (`filterStore.js`), and modern module-level `$state` stores
-   (`confirmStore.svelte.js`, `toastStore.svelte.js`).
+4. **Stores divide into two styles** (§7): module-level `$state` runes stores
+   (`.svelte.js` — `authStore.svelte.js`, `confirmStore.svelte.js`,
+   `toastStore.svelte.js`, `settingsStore.svelte.js`) and a classic Svelte 4
+   `writable()` store (`filterStore.js`); pure computation (the search-filter
+   schema, `searchFilter.js`) stays in a plain module.
 5. **All styling is Tailwind v4, CSS-first.** There is no `tailwind.config.js`;
    the palette is declared with `@theme` in CSS (§14). No scoped `<style>`
    blocks, no transitions — motion is Tailwind classes.
@@ -290,36 +292,43 @@ There are **no** class-style components, no `export let` props, no slots, no
 
 ---
 
-## 7. Stores: three eras
+## 7. Stores: three styles
 
 State shared across components lives in `src/lib/stores/`, and all three
 approaches coexist. Which one to use is a judgment call — read the tradeoffs.
 
-### Era 1 — plain module: `authStore.js` (no reactivity)
+### Runes stores: token/state pairs in `.svelte.js` modules
 
-A module with private `let` bindings and getter functions, deliberately *not* a
-Svelte store (`authStore.js:1-23`):
+Module-level `$state` + an exported object with getters. The `.svelte.js`
+extension tells the Svelte compiler to instrument the file, and a `.svelte.js`
+module imported from `api.js` is compiled like any other — nothing in the data
+layer needs to stay off the compiler (`authStore.svelte.js`):
 
 ```js
-let _token = '';
-let _user = null;
+let _authEnabled = $state(true);
+let _authResolved = $state(false);
 
-export function getToken() { return _token; }
-export function isAuthenticated() { return !!_token && !!_user; }
-export function login(token, user) {
-	_token = token;
-	_user = user;
-	localStorage.setItem('token', token);
-	localStorage.setItem('user', JSON.stringify(user));
-}
+export function authEnabled() { return _authEnabled; }
+export function setAuthEnabled(v) { _authEnabled = v; }
+export function authResolved() { return _authResolved; }
+export function setAuthResolved(v) { _authResolved = v; }
 ```
 
-Why: `api.js` imports it (`api.js:1`) and must read the token synchronously
-without dragging the Svelte compiler into the data layer. Reactivity for the UI
-is achieved at the *refresh boundary*: the layout's `$effect` reads
-`authStore.isAuthenticated()` and re-evaluates after login/logout/navigation.
+`_authResolved` is the gate contract: the settings/trash/orphaned "you do not
+have permission" renders only once the bootstrap has answered, so a hard
+refresh shows the pages' loading state instead of a denial (the store write is
+reactive — templates re-render when it lands). `_token` and `_user` stay plain
+variables on purpose: login/logout persist through `localStorage` and the
+navigation change re-renders the page.
 
-### Era 2 — classic writable store: `filterStore.js`
+### Plain module: `searchFilter.js` (pure logic)
+
+The config-module idea survives where there is no state to make reactive: the
+search-filter schema is pure computation — a frozen default, serializers and
+parsers (`searchFilter.js:11`, the `Object.freeze({ ... })` schema stores copy
+but never mutate).
+
+### Classic writable store: `filterStore.js`
 
 Svelte 4-style `writable()` with a thin wrapper API
 (`filterStore.js:4-23`):
@@ -372,7 +381,7 @@ correct before any child instantiates.
 The frozen `defaultFilter` schema lives in `lib/stores/searchFilter.js:11`
 (`Object.freeze({ ... })` — stores copy it, never mutate it).
 
-### Era 3 — runes stores: `confirmStore.svelte.js`, `toastStore.svelte.js`
+### Runes stores in practice: `confirmStore.svelte.js`, `toastStore.svelte.js`, `settingsStore.svelte.js`
 
 Module-level `$state` + an exported object with a getter. The `.svelte.js`
 extension tells the Svelte compiler to instrument the file
@@ -433,9 +442,9 @@ if (!ok) return;
 And toasts are one-liners: `toastStore.success('Document restored')`
 (`trash/+page.svelte:90`).
 
-The **rule of thumb**: runes stores for new cross-component state;
-`filterStore`-style writable stores remain where they already work;
-`authStore`-style plain modules for anything the data layer needs.
+The **rule of thumb**: runes stores for new cross-component state — including
+the token store `api.js` reads; `filterStore`-style writable stores remain
+where they already work; plain modules for pure computation.
 
 ---
 
@@ -682,18 +691,20 @@ export function isEditor() {
 	return getRole() === 'editor' || getRole() === 'admin';
 }
 export function authEnabled() { return _authEnabled; }
+export function authResolved() { return _authResolved; }
 ```
 
 ### Route-level guard
 
-The layout redirects unauthenticated users — an `$effect` that waits for the
-bootstrap call so the first paint doesn't flash-redirect (`+layout.svelte:31-40`):
+The layout redirects unauthenticated users — an `$effect` keyed on the
+bootstrap's resolution, so the first paint doesn't flash-redirect
+(`+layout.svelte`):
 
 ```js
 $effect(() => {
 	if (
-		configLoaded &&
-		authEnabled &&
+		authStore.authResolved() &&
+		authStore.authEnabled() &&
 		!authStore.isAuthenticated() &&
 		$page.url.pathname !== '/login'
 	) {
@@ -702,23 +713,30 @@ $effect(() => {
 });
 ```
 
-`onMount` bootstrap (`+layout.svelte:42-51`) reads `/wizard/bootstrap` to learn
-`auth_enabled` + `missing_tools`, then optionally refreshes the profile.
+`onMount` bootstrap (`+layout.svelte`) reads `/wizard/bootstrap` to learn
+`auth_enabled` + `missing_tools`, publishes both flags to the store, and
+optionally refreshes the profile. §7 explains the flags' roles in the page
+gates below.
 
 ### Page-level gates
 
-Editor-only pages show a permission message (`trash/+page.svelte:203-204`,
-identical in `documents/orphaned/+page.svelte:170-171`):
+Editor-only pages answer the gate only once the bootstrap has resolved — while
+unresolved they render their loading state, so a hard refresh cannot flash the
+denial (`trash/+page.svelte`, identical in `documents/orphaned/+page.svelte`):
 
 ```svelte
-{#if authStore.authEnabled() && !authStore.isEditor()}
+{#if !authStore.authResolved()}
+	<p class="text-parchment-500">Loading…</p>
+{:else if authStore.authEnabled() && !authStore.isEditor()}
 	<p class="text-parchment-500">You do not have permission to view this page.</p>
 {:else}
 	...
 {/if}
 ```
 
-Settings uses `!authStore.isAdmin()` (`settings/+page.svelte:452`).
+Settings answers the same way in its layout's gate chain
+(`settings/+layout.svelte`): `authResolved() && authEnabled() && !isAdmin()`
+first, then the load error and the loading state.
 
 ### Action-level gates
 
@@ -874,7 +892,7 @@ Vitest + `@testing-library/svelte` + Playwright, wired through the Makefile
   `$app/*` — and the stub aliases): `unit` (node env) for pure logic + runes
   stores, `components` (jsdom + `svelteTesting()` from
   `@testing-library/svelte/vite` for auto-cleanup) for anything touching
-  `localStorage` (`authStore.js`, `api.js`) and for component tests.
+   `localStorage` (`authStore.svelte.js`, `api.js`) and for component tests.
 - **Co-located `*.test.js` files** (mirrors Go's `_test.go`), explicit
   `import { describe, it, expect, vi } from 'vitest'` — no globals, so the
   eslint config is untouched.
@@ -883,8 +901,8 @@ Vitest + `@testing-library/svelte` + Playwright, wired through the Makefile
   `fetch` via `vi.stubGlobal` in `api.test.js`.
 - **E2E** (`web/e2e/`): Playwright drives the static build served by
   `scripts/serve-static.mjs` (SPA fallback to `index.html` — `vite preview`
-  can't be used because it runs the SSR server, which 500s on
-  `authStore.js`'s import-time `localStorage` access). `e2e/helpers.js`
+   can't be used because it runs the SSR server, which 500s on
+   `authStore.svelte.js`'s import-time `localStorage` access). `e2e/helpers.js`
   seeds auth into `localStorage` and mocks `/api|/wizard|/health` with
   `page.route`. Requires `npx playwright install chromium` once.
 
@@ -964,9 +982,9 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 | Svelte 5 runes (`$state`, `$derived`, `$effect`) | any page; `web/src/routes/logs/+page.svelte`, `web/src/routes/+page.svelte` |
 | `$props()` with defaults | `web/src/lib/components/DataTable.svelte:37`, `SearchBar.svelte:11` |
 | `children` snippet + `{@render children()}` | `web/src/lib/components/Modal.svelte`, `+layout.svelte:199` |
-| Runes store (module `$state`) | `web/src/lib/stores/confirmStore.svelte.js`, `toastStore.svelte.js` |
+| Runes store (module `$state`) | `web/src/lib/stores/confirmStore.svelte.js`, `toastStore.svelte.js`, `authStore.svelte.js`, `settingsStore.svelte.js` |
 | Classic writable store | `web/src/lib/stores/filterStore.js` |
-| Plain module (no reactivity) | `web/src/lib/stores/authStore.js` |
+| Plain module (pure logic) | `web/src/lib/stores/searchFilter.js` |
 | Fetch wrappers / 401 handling | `web/src/lib/api.js:7-60` |
 | URL ⇄ state sync | `web/src/routes/logs/+page.svelte:28-53`, `documents/+page.svelte:136-162` |
 | AbortController pattern | `web/src/routes/logs/+page.svelte:55-71` |

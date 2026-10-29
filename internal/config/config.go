@@ -765,14 +765,21 @@ func DefaultConfig(configDir string) *Config {
 // validated and clamped sections, deprecated-field conversion. It fails
 // on unreadable files, malformed YAML, or any invalid section.
 func Load(configDir string) (*Config, error) {
+	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	return parseConfig(configDir, data)
+}
+
+// parseConfig builds the configuration tree from bytes already read off disk, so a caller that inspects
+// those bytes and this parse agree on the same snapshot. A missing file arrives as empty data and yields
+// the defaults.
+func parseConfig(configDir string, data []byte) (*Config, error) {
 	cfg := DefaultConfig(configDir)
 
-	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-	} else {
+	if len(data) > 0 {
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("unmarshal config: %w", err)
 		}

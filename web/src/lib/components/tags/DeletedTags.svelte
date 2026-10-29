@@ -4,7 +4,7 @@
 	import { RESTORE_ICON, actionButton } from '$lib/icons.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
 
 	let { refreshKey = 0, onchanged = null } = $props();

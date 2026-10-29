@@ -416,11 +416,18 @@ for {
    (the non-blocking send at `notify.go:68-71`), or lost on reconnect. The
    timer guarantees a poll at least every 30s, and it's **reset on every
    notify** so a busy batch flow doesn't double-poll.
-3. **The 5s housekeeping ticker**: config reload
-   (`c.cfg.Store(newCfg)`), the declarative scheduler
+3. **The 5s housekeeping ticker**: the declarative scheduler
    (`internal/ops/queue/scheduler.go`) — which also drives the inbox polling
    as its unnamed entry — and stale-task reclamation (throttled
-   to `StaleTaskAfter/10` seconds, min 60s).
+   to `StaleTaskAfter/10` seconds, min 60 s). Configuration is no longer on
+   the ticker: it arrives through the shared content-hashed `config.Watcher`
+   (the same mechanism `edub` runs — a change commits only when two
+   consecutive polls read identical bytes, invalid YAML keeps retrying), and
+   the daemon loop applies each staged tree, swapping the container
+   configuration and, when a `migrate-db` task has changed the connection,
+   probing, reconnecting, and restarting the `LISTEN`/`NOTIFY` session — a
+   failed reconnect keeps the previous tree and the apply is retried on the
+   housekeeping tick.
 
 ### The dispatcher and the launcher
 
@@ -1070,8 +1077,9 @@ locks notify `lock_released`, which wakes the daemon's dispatch tick alongside
 `batch_queued`. Every recurring enqueue lives in one declarative table
 (`internal/ops/queue/scheduler.go`): an entry — batch schedule name, batch
 origin, enabled predicate, timing (named entries only), and the producer that
-builds the run's task set — evaluated every tick against the freshly reloaded
-config. Entries are type-blind: a producer returns any task set, chained
+builds the run's task set — evaluated every tick against the configuration
+the daemon runs (watcher-applied, see the wakeup list above). Entries are
+type-blind: a producer returns any task set, chained
 waiting children included, exactly like the ingest producers, and the enqueue
 validates it (dedup hooks for pending tasks, parent links, common holds,
 preconditions); the entry itself carries no task type. The table carries one
@@ -1252,7 +1260,7 @@ mid-run.
 |---|---|---|
 | `consumer.workers` | `1` | worker count for `consume` tasks inside an ingest batch run |
 | `enricher.workers` | `1` | worker count for `enrich` tasks inside a batch run |
-| `srv.max_concurrent_batches` | `4` | the dispatcher's per-process budget for batches that acquire no locks (the lease carries the dispatcher identity; manual runs and other hosts never charge it) |
+| `srv.max_concurrent_batches` | `4` | the dispatcher's per-process budget for batches that acquire no locks (the lease carries the dispatcher identity; manual runs and other hosts never charge it). The budget is a supplier the dispatcher re-reads on every sweep, so edits reach a running daemon's next dispatch; a value below one enforces the fallback of two |
 | `consumer.reclaim.enabled` | `true` | stale sweeps on/off |
 | `consumer.reclaim.max_retries` | `3` | the attempts budget |
 | `consumer.reclaim.stale_task_after` | `600` (s) | processing-staleness cutoff (≥ 60) |

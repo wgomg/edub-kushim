@@ -12,6 +12,8 @@ let loadError = $state('');
 let saving = $state(false);
 let resetting = $state(false);
 let advanced = $state(false);
+let migrationWatch = false;
+let reportedMigrationFailure = '';
 
 let toolStatus = $state([]);
 let statusLoaded = $state(false);
@@ -277,8 +279,7 @@ function bodyFromConfig() {
 		'enricher.tag_measure.enabled': cfg.enricher.tag_measure.enabled,
 		'enricher.tag_measure.interval': Number(cfg.enricher.tag_measure.interval),
 		'enricher.tag_measure.time': cfg.enricher.tag_measure.time,
-		'enricher.tag_measure.after_enrichment_batch':
-			cfg.enricher.tag_measure.after_enrichment_batch,
+		'enricher.tag_measure.after_enrichment_batch': cfg.enricher.tag_measure.after_enrichment_batch,
 		'enricher.tag_audit.enabled': cfg.enricher.tag_audit.enabled,
 		'enricher.tag_audit.interval': Number(cfg.enricher.tag_audit.interval),
 		'enricher.tag_audit.time': cfg.enricher.tag_audit.time,
@@ -399,6 +400,45 @@ async function checkStatus() {
 	if (status) {
 		toolStatus = status.tools ?? [];
 		statusLoaded = true;
+		const failureKey = migrationFailureKey(status.failed_tasks ?? []);
+		const newFailure = failureKey !== '' && failureKey !== reportedMigrationFailure;
+		const reportedFailure = failureKey !== '' && failureKey === reportedMigrationFailure;
+		const pending = status.pending_tasks ?? 0;
+		// a reported failure suppresses re-watching: every settings entry would otherwise repeat it, and
+		// re-polling a failed migration never converges on its own — only a migration retry clears it
+		if ((pending > 0 && !reportedFailure) || newFailure) watchMigration();
+	}
+}
+
+function migrationFailureKey(failed) {
+	return failed.map((f) => `${f.task_id}:${f.error}`).join('|');
+}
+
+async function watchMigration() {
+	if (migrationWatch) return;
+	migrationWatch = true;
+	try {
+		for (let attempt = 0; attempt < 120; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 5000));
+			const status = await api.config.status();
+			if (!status) continue;
+			const failed = status.failed_tasks ?? [];
+			if (failed.length > 0) {
+				reportedMigrationFailure = migrationFailureKey(failed);
+				toastStore.error(
+					`Migration failed: ${failed.map((f) => f.op).join(', ')} — settings kept their previous values.`
+				);
+				return;
+			}
+			if ((status.pending_tasks ?? 0) === 0) {
+				reportedMigrationFailure = '';
+				toastStore.success('Migration applied.');
+				return;
+			}
+		}
+	} finally {
+		migrationWatch = false;
+		if (!isDirty()) await load(true);
 	}
 }
 
@@ -418,8 +458,9 @@ async function loadCatalog() {
 	catalogLoaded = true;
 }
 
-async function load() {
-	if (loading || loaded) return;
+async function load(force = false) {
+	if (loading) return;
+	if (!force && loaded) return;
 	loading = true;
 	loadError = '';
 	try {
@@ -512,6 +553,7 @@ async function applyAll() {
 	const configDirty = isConfigDirty();
 	const hadCatalogOps = catalogOps.length > 0;
 	const failures = [];
+	let deferred = false;
 	try {
 		saving = true;
 		if (configDirty) {
@@ -519,13 +561,25 @@ async function applyAll() {
 			if (!res.ok) {
 				throw new Error(res.data?.error ?? `Saving settings failed (${res.status}).`);
 			}
-			const reloaded = await api.config.get();
-			if (reloaded) {
-				cfg = reloaded;
-				ensureAll();
-				syncMimeCheckboxes();
+			if (res.status === 202) {
+				deferred = true;
+				reportedMigrationFailure = '';
+				snapshotState();
+				toastStore.success(
+					res.data?.message ?? 'Migration queued — settings apply once it completes.'
+				);
+				watchMigration();
+			} else {
+				const reloaded = await api.config.get();
+				if (!reloaded) {
+					toastStore.error('Settings saved, but the refreshed settings could not be read.');
+				} else {
+					cfg = reloaded;
+					ensureAll();
+					syncMimeCheckboxes();
+				}
+				snapshotState();
 			}
-			snapshotState();
 		}
 
 		const remaining = [];
@@ -550,7 +604,7 @@ async function applyAll() {
 		if (failures.length > 0) {
 			const detail = failures.map((failure) => `${failure.label} (${failure.error})`).join('; ');
 			toastStore.error(`Some catalog changes could not be applied: ${detail}. They remain staged.`);
-		} else {
+		} else if (!deferred) {
 			toastStore.success(pendingCount === 0 ? 'All changes applied.' : 'Changes applied.');
 		}
 	} catch (error) {
@@ -695,6 +749,7 @@ function reset() {
 	loadError = '';
 	saving = false;
 	resetting = false;
+	reportedMigrationFailure = '';
 	toolStatus = [];
 	statusLoaded = false;
 	llmModels = { adapters: {}, providers: {} };

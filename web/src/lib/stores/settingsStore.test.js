@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { settingsStore } from './settingsStore.svelte.js';
 
 const apiMocks = vi.hoisted(() => ({
@@ -267,6 +267,118 @@ describe('settingsStore staged changes', () => {
 			to: null
 		});
 		expect(JSON.stringify(changes)).not.toContain('sk-live-secret');
+	});
+});
+
+describe('settingsStore deferred saves', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('keeps the deferred values on screen and reports the queued migration', async () => {
+		vi.useFakeTimers();
+		await loadSettings(fullCfg());
+		apiMocks.configGet.mockClear();
+		apiMocks.configUpdate.mockResolvedValue({
+			ok: true,
+			status: 202,
+			data: {
+				pending_tasks: 1,
+				message: 'migration(s) queued — settings apply once the migration completes'
+			}
+		});
+		apiMocks.configStatus.mockResolvedValue({ tools: [], pending_tasks: 1, failed_tasks: [] });
+
+		settingsStore.cfg.server.port = 4555;
+		await settingsStore.applyAll();
+
+		expect(apiMocks.configGet).not.toHaveBeenCalled();
+		expect(settingsStore.cfg.server.port).toBe(4555);
+		expect(settingsStore.pendingCount).toBe(0);
+		expect(toastMocks.success).toHaveBeenCalledWith(
+			'migration(s) queued — settings apply once the migration completes'
+		);
+		expect(toastMocks.success).not.toHaveBeenCalledWith('All changes applied.');
+
+		apiMocks.configStatus.mockResolvedValue({ tools: [], pending_tasks: 0, failed_tasks: [] });
+		await vi.runAllTimersAsync();
+
+		expect(toastMocks.success).toHaveBeenCalledWith('Migration applied.');
+		expect(apiMocks.configGet).toHaveBeenCalled();
+	});
+
+	it('surfaces a failed migration and reverts to the server configuration', async () => {
+		vi.useFakeTimers();
+		await loadSettings(fullCfg());
+		apiMocks.configGet.mockImplementation(async () => fullCfg());
+		apiMocks.configUpdate.mockResolvedValue({
+			ok: true,
+			status: 202,
+			data: { pending_tasks: 1, message: 'migration(s) queued' }
+		});
+		apiMocks.configStatus.mockResolvedValue({
+			tools: [],
+			pending_tasks: 1,
+			failed_tasks: [{ task_id: 't1', op: 'migrate_db', error: 'boom' }]
+		});
+
+		settingsStore.cfg.server.port = 4556;
+		await settingsStore.applyAll();
+		expect(settingsStore.cfg.server.port).toBe(4556);
+
+		await vi.runAllTimersAsync();
+
+		expect(toastMocks.error).toHaveBeenCalledWith(expect.stringContaining('migrate_db'));
+		expect(toastMocks.error).toHaveBeenCalledWith(expect.stringContaining('previous values'));
+		expect(settingsStore.cfg.server.port).toBe(3000);
+	});
+
+	it('watches pending migrations discovered after a reload', async () => {
+		vi.useFakeTimers();
+		apiMocks.configGet.mockImplementation(async () => fullCfg());
+		apiMocks.configStatus
+			.mockResolvedValue({ tools: [], pending_tasks: 0, failed_tasks: [] })
+			.mockResolvedValueOnce({ tools: [], pending_tasks: 1, failed_tasks: [] });
+
+		await settingsStore.load();
+		await Promise.resolve();
+		await Promise.resolve();
+		await vi.runAllTimersAsync();
+
+		expect(toastMocks.success).toHaveBeenCalledWith('Migration applied.');
+	});
+
+	it('reports a migration failure once across repeated entries', async () => {
+		vi.useFakeTimers();
+		apiMocks.configGet.mockResolvedValue(fullCfg());
+		apiMocks.configStatus.mockResolvedValue({
+			tools: [],
+			pending_tasks: 0,
+			failed_tasks: [{ task_id: 't1', op: 'migrate_db', error: 'boom' }]
+		});
+
+		await settingsStore.load();
+		await Promise.resolve();
+		await Promise.resolve();
+		await vi.runAllTimersAsync();
+		expect(toastMocks.error).toHaveBeenCalledTimes(1);
+
+		await settingsStore.load(true);
+		await Promise.resolve();
+		await vi.runAllTimersAsync();
+
+		expect(toastMocks.error).toHaveBeenCalledTimes(1);
+	});
+
+	it('refetches the configuration only on a forced load', async () => {
+		await loadSettings(fullCfg());
+		apiMocks.configGet.mockClear();
+
+		await settingsStore.load();
+		expect(apiMocks.configGet).not.toHaveBeenCalled();
+
+		await settingsStore.load(true);
+		expect(apiMocks.configGet).toHaveBeenCalledTimes(1);
 	});
 });
 

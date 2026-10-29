@@ -169,15 +169,14 @@ func (s *Server) initServices(ctx context.Context) (*database.Client, *task.Enqu
 	}
 	enqueuer := task.NewEnqueuer(client, catalog)
 
-	maxConcurrent := cfg.Srv.MaxConcurrentBatches
-	if maxConcurrent < 1 {
-		maxConcurrent = 2
-	}
+	// the wizard loads its configuration once and never watches the file, so the budget supplier is the
+	// setup-time snapshot the dispatcher reads on every sweep
+	budget := func() int { return cfg.Srv.MaxConcurrentBatches }
 	s.db = db
 	s.client = client
 	s.batchSvc = service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
 	s.dispatchNotify = make(chan struct{}, 4)
-	s.dispatcher = dispatch.NewDispatcher(catalog, s.logger, types.HostWizard, maxConcurrent, s.wakeDispatcher,
+	s.dispatcher = dispatch.NewDispatcher(catalog, s.logger, types.HostWizard, budget, s.wakeDispatcher,
 		&dispatch.InProcessRegistration{
 			Types: []types.TaskType{types.Task.Type.MigrateDB, types.Task.Type.MigrateStorage},
 			Run: dispatch.InProcessRun(task.BatchRunDeps{

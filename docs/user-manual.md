@@ -3540,7 +3540,9 @@ server enqueues tasks in the database with `status='queued'`; the `kushim queue`
 
 The maximum number of concurrent worker processes is controlled by
 `server.max_concurrent_batches` (default 4). The `kushim queue` daemon enforces
-the limit — additional queued batches wait until a worker slot frees up.
+the limit — additional queued batches wait until a worker slot frees up. The
+daemon re-reads the setting from its configuration on every dispatch sweep, so
+editing the value applies to the running daemon without a restart.
 
 ```bash
 # Check version
@@ -3597,7 +3599,12 @@ operations in order; an operation that fails keeps its entry staged and
 surfaces the server's reason. **Discard All** (with a confirmation dialog)
 restores the saved configuration and reloads the catalog from the server.
 Leaving the site with staged changes triggers the browser's unsaved-changes
-warning.
+warning. Database-connection and storage-directory changes are the exception
+to the direct write: applying them queues their migration task, the edited
+fields stay on screen until the migration completes, and the UI follows the
+migration from the config status endpoint — a failure restores the previous
+values and surfaces the reason (failing migrations retry from the failed-work
+recovery action).
 
 ### Settings header
 

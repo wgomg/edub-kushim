@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { goto } from '$app/navigation';
 import { api } from './api.js';
-import { login, logout, isAuthenticated } from './stores/authStore.js';
+import { login, logout, isAuthenticated } from './stores/authStore.svelte.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/paths', () => ({ resolve: (p) => p }));

@@ -48,7 +48,7 @@ func TestDispatchHonorsBudgetAndSkipsUnknownTypes(t *testing.T) {
 	t.Run("a type the catalog does not define stays queued", func(t *testing.T) {
 		// the vocabulary dropped `config`; a leftover batch of it must never be claimed by any dispatcher
 		seedBatch(t, client, "dispatch-unknown", types.TaskType("config"))
-		d := NewDispatcher(catalog, logger, types.HostQueue, 4, func() {}, nil)
+		d := NewDispatcher(catalog, logger, types.HostQueue, func() int { return 4 }, func() {}, nil)
 		testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch over an unknown-type batch")
 		if !batchIsQueuedWithoutLease(t, client, "dispatch-unknown") {
 			t.Fatal("a batch of an undefined task type must never be claimed")
@@ -56,7 +56,7 @@ func TestDispatchHonorsBudgetAndSkipsUnknownTypes(t *testing.T) {
 	})
 
 	t.Run("a full budget stops the sweep before any no-holds claim", func(t *testing.T) {
-		d := NewDispatcher(catalog, logger, types.HostQueue, 1, func() {}, nil)
+		d := NewDispatcher(catalog, logger, types.HostQueue, func() int { return 1 }, func() {}, nil)
 		seedBatch(t, client, "dispatch-running", types.Task.Type.Consume)
 		if _, err := client.Queries.MarkBatchClaimed(ctx, "dispatch-running"); err != nil {
 			t.Fatalf("mark the filler claimed: %v", err)
@@ -89,7 +89,7 @@ func TestDispatchClaimsHoldingBatchOutsideTheBudget(t *testing.T) {
 	catalog := dispatchCatalog(t)
 	t.Setenv(testChildExitEnv, "7")
 
-	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {}, nil)
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, func() int { return 1 }, func() {}, nil)
 	seedBatch(t, client, "bypass-filler", types.Task.Type.Consume)
 	if _, err := client.Queries.MarkBatchClaimed(ctx, "bypass-filler"); err != nil {
 		t.Fatalf("mark the filler claimed: %v", err)
@@ -134,7 +134,7 @@ func TestDispatchBoundsLaunchFailures(t *testing.T) {
 	// a task type the catalog no longer defines: the dispatcher must skip it instead of claiming it
 	seedBatch(t, client, "dispatch-untouchable", types.TaskType("config"))
 
-	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 1, func() {}, nil)
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, func() int { return 1 }, func() {}, nil)
 	waitRequeued := func(what string) {
 		waitFor(t, what, func() bool { return batchIsQueuedWithoutLease(t, client, batchID) })
 	}
@@ -169,6 +169,68 @@ func TestDispatchBoundsLaunchFailures(t *testing.T) {
 	}
 }
 
+// TestDispatchReReadsBudgetPerSweep pins the live slot budget: the dispatcher consults its supplier on
+// every sweep, so a budget edited at runtime (server.max_concurrent_batches reloaded) is honored by the
+// next dispatch without re-creating the dispatcher.
+func TestDispatchReReadsBudgetPerSweep(t *testing.T) {
+	client, cfg := setupLauncherTest(t)
+	ctx := context.Background()
+	batchSvc := service.NewBatch(client, cfg.Consumer.Reclaim.MaxRetries)
+	catalog := dispatchCatalog(t)
+	logger := testutil.NewTestLogger()
+	t.Setenv(testChildExitEnv, testChildExitCode)
+
+	slots := 1
+	d := NewDispatcher(catalog, logger, types.HostQueue, func() int { return slots }, func() {}, nil)
+
+	seedBatch(t, client, "live-budget-filler", types.Task.Type.Consume)
+	if _, err := client.Queries.MarkBatchClaimed(ctx, "live-budget-filler"); err != nil {
+		t.Fatalf("mark the filler claimed: %v", err)
+	}
+	if _, err := client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+		BatchID: "live-budget-filler", OwnerID: uuid.New().String(), Pid: 999999999,
+		DispatcherID: uuid.NullUUID{UUID: d.dispatcherID, Valid: true},
+	}); err != nil {
+		t.Fatalf("charge the slot to this dispatcher: %v", err)
+	}
+	seedBatch(t, client, "live-budget-waiting", types.Task.Type.Consume)
+
+	testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch at budget one")
+	if !batchIsQueuedWithoutLease(t, client, "live-budget-waiting") {
+		t.Fatal("the one slot is taken: the waiting batch must stay queued")
+	}
+
+	slots = 2
+	testutil.AssertNoError(t, d.Dispatch(ctx, client, batchSvc), "dispatch after the budget was raised")
+
+	waitFor(t, "the waiting batch to be claimed under the raised budget", func() bool {
+		return d.failures.cooling("live-budget-waiting", time.Now())
+	})
+}
+
+// TestEffectiveBudgetFallback pins the documented fallback: a configured budget below one must not
+// silence dispatch, so a non-positive value enforces the default of two.
+func TestEffectiveBudgetFallback(t *testing.T) {
+	catalog := dispatchCatalog(t)
+	cases := []struct {
+		name       string
+		configured int
+		want       int
+	}{
+		{"a positive budget is honored", 3, 3},
+		{"a zero budget falls back to two", 0, 2},
+		{"a negative budget falls back to two", -4, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configured := tc.configured
+			d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue,
+				func() int { return configured }, func() {}, nil)
+			testutil.AssertEqual(t, d.effectiveBudget(), tc.want, "effective budget")
+		})
+	}
+}
+
 // TestChildExitedClassification pins what counts as a launch failure: a child that adopted the
 // lease owns its outcome, a foreign token means the batch moved on, and a clean exit forgets the
 // failure streak.
@@ -176,7 +238,7 @@ func TestChildExitedClassification(t *testing.T) {
 	client, _ := setupLauncherTest(t)
 	ctx := context.Background()
 	catalog := dispatchCatalog(t)
-	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, 4, func() {}, nil)
+	d := NewDispatcher(catalog, testutil.NewTestLogger(), types.HostQueue, func() int { return 4 }, func() {}, nil)
 	exitErr := errors.New("exit status 7")
 
 	t.Run("an adopted lease keeps its batch running", func(t *testing.T) {

@@ -8,8 +8,12 @@ import {
 	isAuthenticated,
 	isAdmin,
 	isEditor,
+	authEnabled,
+	setAuthEnabled,
+	authResolved,
+	setAuthResolved,
 	roleBadgeClass
-} from './authStore.js';
+} from './authStore.svelte.js';
 
 const ADMIN = { username: 'admin', role: 'admin' };
 const EDITOR = { username: 'editor', role: 'editor' };
@@ -72,5 +76,17 @@ describe('authStore', () => {
 		expect(roleBadgeClass('editor')).toBe('bg-gold-500/20 text-gold-400');
 		expect(roleBadgeClass('viewer')).toBe('bg-clay-700/50 text-parchment-400');
 		expect(roleBadgeClass('unknown')).toBe('bg-clay-700/50 text-parchment-400');
+	});
+
+	it('tracks the bootstrap auth flags until they are resolved', () => {
+		setAuthResolved(false);
+		setAuthEnabled(true);
+		expect(authResolved()).toBe(false);
+		expect(authEnabled()).toBe(true);
+
+		setAuthEnabled(false);
+		setAuthResolved(true);
+		expect(authEnabled()).toBe(false);
+		expect(authResolved()).toBe(true);
 	});
 });

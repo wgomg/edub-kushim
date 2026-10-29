@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
 	import { SETTINGS_SECTION_TITLES, SETTINGS_SECTIONS } from '$lib/settingsSections.js';
 	import ChangesTray from '$lib/components/settings/ChangesTray.svelte';
@@ -34,7 +34,7 @@
 
 	onMount(() => {
 		settingsStore.restoreAdvanced();
-		settingsStore.load();
+		settingsStore.load(!settingsStore.isDirty());
 
 		const url = new URL(window.location.href);
 		const tab = url.searchParams.get('tab');
@@ -54,7 +54,7 @@
 	});
 </script>
 
-{#if authStore.authEnabled() && !authStore.isAdmin()}
+{#if authStore.authResolved() && authStore.authEnabled() && !authStore.isAdmin()}
 	<p class="text-parchment-500">You do not have permission to view this page.</p>
 {:else if settingsStore.loadError}
 	<div class="max-w-xl">

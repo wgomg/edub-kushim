@@ -6,7 +6,7 @@
 	import { formatSize, formatNumber } from '$lib/utils/html.js';
 	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.js';
+	import * as authStore from '$lib/stores/authStore.svelte.js';
 	import PdfViewer from '$lib/components/PdfViewer.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	let { params } = $props();

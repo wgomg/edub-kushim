@@ -8,7 +8,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/backup"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/ops/container"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -80,4 +82,68 @@ func findSchedule(entries []schedulerEntry, name string) (schedulerEntry, bool) 
 		}
 	}
 	return schedulerEntry{}, false
+}
+
+// TestStageConfigCoalescesToNewestTree pins the watcher-to-loop handoff: staging replaces a tree the
+// loop has not applied yet, never blocks the watcher, and leaves a single poke for the loop.
+func TestStageConfigCoalescesToNewestTree(t *testing.T) {
+	d := &daemon{reloadCh: make(chan struct{}, 1)}
+
+	first := &config.Config{}
+	second := &config.Config{}
+	d.stageConfig(first)
+	d.stageConfig(second)
+
+	if got := d.stagedCfg.Load(); got != second {
+		t.Fatal("a second staged tree must replace the one the loop has not applied yet")
+	}
+	if n := len(d.reloadCh); n != 1 {
+		t.Fatalf("reloadCh holds %d pokes, want 1 (staging must coalesce)", n)
+	}
+}
+
+// TestApplyConfigWithUnchangedConnectionSwapsTheTree pins the reload's cheap path: without a database
+// connection change the new tree reaches every reader and the pending retry is cleared, while the
+// client, the batch service and the notification listener stay untouched.
+func TestApplyConfigWithUnchangedConnectionSwapsTheTree(t *testing.T) {
+	dbSection := config.DatabaseConfig{Host: "localhost", Port: 5432, Database: "edub", SSLMode: "disable"}
+	c := container.NewContainerWithDB(&config.Config{Db: dbSection}, testutil.NewTestLogger(), nil)
+	d := &daemon{c: c, pendingCfg: &config.Config{}}
+
+	newCfg := &config.Config{Db: dbSection}
+	d.applyConfig(context.Background(), newCfg)
+
+	if got := c.GetConfig(); got != newCfg {
+		t.Fatal("the reloaded tree must reach the container")
+	}
+	if d.pendingCfg != nil {
+		t.Fatal("a successful apply must clear the pending retry")
+	}
+	if d.batchSvc != nil {
+		t.Fatal("an unchanged connection must not rebuild the batch service")
+	}
+	if d.notifyCancel != nil {
+		t.Fatal("an unchanged connection must not restart the notification listener")
+	}
+}
+
+// TestApplyConfigFailedReconnectKeepsThePreviousTree pins the retry contract: a database connection
+// change whose reconnect fails reverts the snapshot and leaves the new tree pending, so the next
+// housekeeping tick retries it instead of the daemon silently running on the old connection.
+func TestApplyConfigFailedReconnectKeepsThePreviousTree(t *testing.T) {
+	oldCfg := &config.Config{Db: config.DatabaseConfig{Host: "localhost", Port: 5432, Database: "edub"}}
+	c := container.NewContainerWithDB(oldCfg, testutil.NewTestLogger(), nil)
+	d := &daemon{c: c}
+
+	changed := &config.Config{Db: config.DatabaseConfig{
+		Host: "127.0.0.1", Port: 1, User: "edub", Password: "edub", Database: "edub", SSLMode: "disable",
+	}}
+	d.applyConfig(context.Background(), changed)
+
+	if got := c.GetConfig(); got != oldCfg {
+		t.Fatal("a failed reconnect must keep the previous configuration tree")
+	}
+	if d.pendingCfg != changed {
+		t.Fatal("the rejected tree must stay pending so the next housekeeping tick retries it")
+	}
 }
