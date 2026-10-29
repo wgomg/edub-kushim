@@ -50,14 +50,14 @@ type daemon struct {
 	lastStaleTaskClaim time.Time
 }
 
-// queueAuxConns is the daemon's fixed connection headroom beyond the slot budget: the control loop, the
-// inbox-scan goroutine and a margin of two for the lock-holding children the slot budget does not gate;
-// their exit callbacks are the only children the budget term does not count, because it admits one per
-// in-flight no-holds child.
-const queueAuxConns = 4
+// queueAuxConns is the daemon's fixed connection headroom beyond the slot budget: the control loop, the two
+// background producer goroutines (the inbox scan and the thumbnail backfill) and a margin of two for the
+// lock-holding children the slot budget does not gate; their exit callbacks are the only children the budget
+// term does not count, because it admits one per in-flight no-holds child.
+const queueAuxConns = 5
 
 // queueConnBudget is the daemon pool's open-connection ceiling: the concurrency its slot budget admits
-// plus the loop and scan users.
+// plus the loop and background-producer users.
 func queueConnBudget(cfg *config.Config) int {
 	return dispatch.EffectiveBudget(cfg.Srv.MaxConcurrentBatches) + queueAuxConns
 }
@@ -153,7 +153,7 @@ func Run(c *container.Container, args []string) error {
 	d := &daemon{
 		c:        c,
 		catalog:  catalog,
-		sched:    newScheduler(c.GetLogger()),
+		sched:    newScheduler(ctx, c.GetLogger()),
 		batchSvc: service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries),
 		reloadCh: make(chan struct{}, 1),
 	}
@@ -256,10 +256,11 @@ func (d *daemon) stageConfig(cfg *config.Config) {
 }
 
 // applyConfig installs a configuration tree the watcher loaded and applies the effects that outlive the
-// snapshot swap: a database connection change reconnects the client, rebuilds the batch service and
+// snapshot swap: a database connection change reconnects the client — draining the scheduler's background
+// producers once the new pool is ready and before the old one closes — rebuilds the batch service and
 // restarts the notification listener. It runs on the daemon loop, so a reload can never interleave with a
-// dispatch sweep using the client it replaces. A failed reconnect keeps the previous tree and leaves the
-// new one pending, so the next housekeeping tick retries it.
+// dispatch sweep using the client it replaces, and the drain cannot race a producer being spawned. A failed
+// reconnect keeps the previous tree and leaves the new one pending, so the next housekeeping tick retries it.
 func (d *daemon) applyConfig(ctx context.Context, newCfg *config.Config) {
 	oldCfg := d.c.GetConfig()
 	d.c.SetConfig(newCfg)
@@ -270,7 +271,10 @@ func (d *daemon) applyConfig(ctx context.Context, newCfg *config.Config) {
 	}
 
 	d.c.GetLogger().Info("", "DB config changed, reconnecting...")
-	newClient, err := d.c.ReconnectClient()
+	// the reconnect opens the new pool before it touches the old one, so a connection that never comes up
+	// leaves the producers working on the healthy old pool alone instead of canceling them on every retry
+	// only once the new pool is ready is the generation drained, right before the old pool closes
+	newClient, err := d.c.ReconnectClient(d.sched.stopBackgroundJobs)
 	if err != nil {
 		d.c.GetLogger().Error("", "failed to reconnect to new DB: %v — keeping previous configuration", err)
 		d.c.SetConfig(oldCfg)

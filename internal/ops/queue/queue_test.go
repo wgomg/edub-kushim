@@ -133,7 +133,7 @@ func TestApplyConfigWithUnchangedConnectionSwapsTheTree(t *testing.T) {
 func TestApplyConfigFailedReconnectKeepsThePreviousTree(t *testing.T) {
 	oldCfg := &config.Config{Db: config.DatabaseConfig{Host: "localhost", Port: 5432, Database: "edub"}}
 	c := container.NewContainerWithDB(oldCfg, testutil.NewTestLogger(), nil)
-	d := &daemon{c: c}
+	d := &daemon{c: c, sched: newScheduler(context.Background(), testutil.NewTestLogger())}
 
 	changed := &config.Config{Db: config.DatabaseConfig{
 		Host: "127.0.0.1", Port: 1, User: "edub", Password: "edub", Database: "edub", SSLMode: "disable",

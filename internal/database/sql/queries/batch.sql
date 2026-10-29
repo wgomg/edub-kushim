@@ -161,11 +161,15 @@ WHERE bo.dispatcher_id = @dispatcher_id::uuid
   );
 
 -- name: ListStaleBatchOwners :many
+-- the reaper pages through the stale leases oldest first, so one housekeeping pass stays bounded and the
+-- remaining owners are recovered on the next tick
 SELECT bo.batch_id, bo.owner_id, bo.pid FROM batch_owner bo
 WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => @stale_after_seconds::int)
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
-            AND t.status IN ('pending', 'processing', 'waiting'));
+            AND t.status IN ('pending', 'processing', 'waiting'))
+ORDER BY bo.last_heartbeat
+LIMIT @max_stale_owners::int;
 
 -- name: GetConsumeTaskPayloadsByIDs :many
 SELECT task_id, payload FROM task

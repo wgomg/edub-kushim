@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -138,7 +139,7 @@ func TestSchedulerDueDerivesFromTerminalBatches(t *testing.T) {
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
 	ctx := context.Background()
-	s := newScheduler(testutil.NewTestLogger())
+	s := newScheduler(context.Background(), testutil.NewTestLogger())
 
 	due, err := s.due(ctx, client.Queries, "due-first", backup.ScheduleTiming{Interval: 7, Time: "02:00"})
 	if err != nil {
@@ -252,7 +253,7 @@ func TestIntervalDue(t *testing.T) {
 		{name: "multi-minute interval pending", interval: 5, last: now.Add(-4 * time.Minute), want: false},
 		{name: "multi-minute interval elapsed", interval: 5, last: now.Add(-5 * time.Minute), want: true},
 	}
-	s := newScheduler(testutil.NewTestLogger())
+	s := newScheduler(context.Background(), testutil.NewTestLogger())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
@@ -299,7 +300,7 @@ func TestFireSkipsUnmetPrecondition(t *testing.T) {
 		},
 	}
 
-	s := newScheduler(testutil.NewTestLogger())
+	s := newScheduler(context.Background(), testutil.NewTestLogger())
 	if err := s.fire(ctx, client, task.NewEnqueuer(client, catalog), &config.Config{}, entry); err != nil {
 		t.Fatalf("fire: an unmet precondition must skip the occurrence, got error: %v", err)
 	}
@@ -325,9 +326,118 @@ func TestFirePropagatesProducerError(t *testing.T) {
 		},
 	}
 
-	s := newScheduler(testutil.NewTestLogger())
+	s := newScheduler(context.Background(), testutil.NewTestLogger())
 	err := s.fire(context.Background(), nil, nil, &config.Config{}, entry)
 	if !errors.Is(err, want) {
 		t.Fatalf("fire error = %v, want it to wrap %v", err, want)
+	}
+}
+
+// TestThumbnailOccurrenceRefusesWhileInFlight pins the thumbnail backfill's overlap guard: its duplicate
+// protection is the active-batch check, which cannot see a batch whose enqueue is still running, so the
+// in-flight flag alone must refuse the next occurrence while one is running.
+func TestThumbnailOccurrenceRefusesWhileInFlight(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	s := newScheduler(context.Background(), testutil.NewTestLogger())
+
+	// a terminal batch well past its interval makes the named entry due
+	_, err := client.DB().ExecContext(ctx,
+		"INSERT INTO batch (id, origin, schedule, status, created_at) VALUES ($1, 'schedule', $2, $3, $4)",
+		"thumb-overlap-terminal", scheduleThumbnailBackfill, "completed",
+		time.Now().UTC().Add(-48*time.Hour))
+	testutil.AssertNoError(t, err, "insert terminal batch")
+
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var invocations atomic.Int32
+	entry := schedulerEntry{
+		name:    scheduleThumbnailBackfill,
+		origin:  types.Batch.Origin.Schedule,
+		enabled: func(*config.Config) bool { return true },
+		timing: func(*config.Config) backup.ScheduleTiming {
+			return backup.ScheduleTiming{Interval: 1, Time: "00:00"}
+		},
+		produce: func(context.Context, *config.Config, *database.Client, *log.Logger) ([]task.TaskSpec, error) {
+			invocations.Add(1)
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-release
+			return nil, nil
+		},
+	}
+	enqueuer := task.NewEnqueuer(client, nil)
+
+	if err := s.evaluate(ctx, client, enqueuer, &config.Config{}, entry); err != nil {
+		t.Fatalf("first evaluate: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first occurrence did not start")
+	}
+
+	if err := s.evaluate(ctx, client, enqueuer, &config.Config{}, entry); err != nil {
+		t.Fatalf("second evaluate: %v", err)
+	}
+	// the running counter is incremented synchronously, so a second spawned job would already be counted
+	if got := s.runningJobs.Load(); got != 1 {
+		t.Fatalf("running jobs = %d, want 1 — the occurrence in flight must be refused", got)
+	}
+
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for (s.backfillInFlight.Load() || s.runningJobs.Load() > 0) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s.backfillInFlight.Load() {
+		t.Fatal("the in-flight flag must clear when the occurrence finishes")
+	}
+	if got := s.runningJobs.Load(); got != 0 {
+		t.Fatalf("running jobs = %d, want 0 after the occurrence finished", got)
+	}
+	if got := invocations.Load(); got != 1 {
+		t.Fatalf("producer ran %d times, want exactly one occurrence", got)
+	}
+}
+
+// TestStopBackgroundJobsCancelsAndRearms pins the reload drain: a running producer observes cancellation and
+// returns, the drain releases its in-flight flag and counter, and a fresh generation is armed so the next
+// occurrence can start.
+func TestStopBackgroundJobsCancelsAndRearms(t *testing.T) {
+	s := newScheduler(context.Background(), testutil.NewTestLogger())
+	oldGeneration := s.jobCtx
+
+	started := make(chan struct{})
+	s.spawnBackground(&s.scanInFlight, "drain-test", func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return nil
+	})
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the producer did not start")
+	}
+
+	s.stopBackgroundJobs()
+
+	if oldGeneration.Err() == nil {
+		t.Fatal("the drained generation must be canceled")
+	}
+	if s.jobCtx.Err() != nil {
+		t.Fatal("stopBackgroundJobs must arm a fresh generation for the next occurrence")
+	}
+	if s.scanInFlight.Load() {
+		t.Fatal("the in-flight flag must clear when the producer returns")
+	}
+	if got := s.runningJobs.Load(); got != 0 {
+		t.Fatalf("running jobs = %d, want 0 after the drain", got)
 	}
 }

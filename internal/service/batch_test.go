@@ -906,7 +906,7 @@ func TestBatch_ListStaleBatchOwners(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err, "backdate heartbeat")
 
-		owners, err := svc.ListStaleBatchOwners(ctx)
+		owners, err := svc.ListStaleBatchOwners(ctx, 100)
 		testutil.AssertNoError(t, err, "list stale")
 		found := false
 		for _, owner := range owners {
@@ -932,7 +932,7 @@ func TestBatch_ListStaleBatchOwners(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create pending task")
 
-		owners, err := svc.ListStaleBatchOwners(ctx)
+		owners, err := svc.ListStaleBatchOwners(ctx, 100)
 		testutil.AssertNoError(t, err, "list stale")
 		for _, owner := range owners {
 			testutil.AssertEqual(t, owner.BatchID != "live-skip", true, "live batch not in stale list")
@@ -961,7 +961,7 @@ func TestBatch_ListStaleBatchOwners(t *testing.T) {
 		)
 		testutil.AssertNoError(t, err, "backdate heartbeat")
 
-		owners, err := svc.ListStaleBatchOwners(ctx)
+		owners, err := svc.ListStaleBatchOwners(ctx, 100)
 		testutil.AssertNoError(t, err, "list stale")
 		for _, owner := range owners {
 			testutil.AssertEqual(t, owner.BatchID != "stale-done", true, "completed batch not in stale list")
@@ -1140,4 +1140,46 @@ func TestBatch_ListQueuedBatchesByAge(t *testing.T) {
 		testutil.AssertNoError(t, err, "list queued")
 		testutil.AssertEqual(t, len(batches), 0, "no queued batches")
 	})
+}
+
+func TestBatch_ListStaleBatchOwners_Page(t *testing.T) {
+	svc, client := newTestBatch(t)
+	ctx := context.Background()
+
+	stale := func(batchID string, age time.Duration) {
+		t.Helper()
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: batchID, Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Processing,
+		})
+		testutil.AssertNoError(t, err, "create batch "+batchID)
+		_, err = client.Queries.TryInsertBatchOwner(ctx, database.TryInsertBatchOwnerParams{
+			BatchID: batchID, OwnerID: "owner-" + batchID, Pid: 10,
+		})
+		testutil.AssertNoError(t, err, "insert owner "+batchID)
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "task-" + batchID, TaskType: "consume", Status: "pending",
+			BatchID: sql.NullString{String: batchID, Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create pending task "+batchID)
+		_, err = client.DB().ExecContext(ctx,
+			"UPDATE batch_owner SET last_heartbeat = $1 WHERE batch_id = $2",
+			time.Now().Add(-age), batchID)
+		testutil.AssertNoError(t, err, "backdate heartbeat "+batchID)
+	}
+
+	stale("page-oldest", 4*time.Minute)
+	stale("page-middle", 3*time.Minute)
+	stale("page-newest", 2*time.Minute)
+
+	owners, err := svc.ListStaleBatchOwners(ctx, 2)
+	testutil.AssertNoError(t, err, "list page")
+	if len(owners) != 2 {
+		t.Fatalf("page has %d owners, want 2 — maxOwners caps one recovery pass", len(owners))
+	}
+	testutil.AssertEqual(t, owners[0].BatchID, "page-oldest", "oldest owner first")
+	testutil.AssertEqual(t, owners[1].BatchID, "page-middle", "second-oldest owner second")
+
+	all, err := svc.ListStaleBatchOwners(ctx, 100)
+	testutil.AssertNoError(t, err, "list with a larger page")
+	testutil.AssertEqual(t, len(all), 3, "a page above the stale count keeps every owner")
 }

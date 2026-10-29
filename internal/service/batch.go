@@ -191,10 +191,14 @@ func (s *Batch) CountLiveNoHoldsBatches(ctx context.Context, dispatcherID uuid.U
 	return count, nil
 }
 
-// ListStaleBatchOwners returns the ownership rows whose heartbeat is
-// older than the stale threshold.
-func (s *Batch) ListStaleBatchOwners(ctx context.Context) ([]database.ListStaleBatchOwnersRow, error) {
-	owners, err := s.queries.ListStaleBatchOwners(ctx, task.LeaseStaleSeconds)
+// ListStaleBatchOwners returns the oldest stale ownership rows that still have work, at most maxOwners of
+// them. It is the reaper's paging entry: one bounded page per recovery pass, with the remainder recovered on
+// the next pass.
+func (s *Batch) ListStaleBatchOwners(ctx context.Context, maxOwners int) ([]database.ListStaleBatchOwnersRow, error) {
+	owners, err := s.queries.ListStaleBatchOwners(ctx, database.ListStaleBatchOwnersParams{
+		StaleAfterSeconds: task.LeaseStaleSeconds,
+		MaxStaleOwners:    int32(maxOwners),
+	})
 	if err != nil {
 		return nil, errs.FromDB(err, "list stale batch owners")
 	}

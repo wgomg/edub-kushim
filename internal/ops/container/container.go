@@ -157,13 +157,19 @@ func (c *Container) InvalidateDB() {
 	c.tagToolsRunner = nil
 }
 
-// ReconnectClient closes the current connection and reopens it from the config, returning the fresh
-// client. It is the schema owner's path: a reconnect re-applies the schema, and executor children run no
-// config watcher, so they never call it.
-func (c *Container) ReconnectClient() (*database.Client, error) {
+// ReconnectClient opens a fresh connection from the config, calls beforeClose once that connection is
+// ready, then closes the current one and returns the fresh client. beforeClose is the caller's chance to
+// quiesce work bound to the old pool: it runs after the new pool opens and before the old one closes, and a
+// nil value skips it. A connection that cannot be opened leaves the current pool and every cached service
+// untouched, returns the error, and does not call beforeClose. It is the schema owner's path: a reconnect
+// re-applies the schema, and executor children run no config watcher, so they never call it.
+func (c *Container) ReconnectClient(beforeClose func()) (*database.Client, error) {
 	newDB, err := c.openDB(config.BuildPostgresDSN(c.cfg.Load().Db))
 	if err != nil {
 		return nil, err
+	}
+	if beforeClose != nil {
+		beforeClose()
 	}
 	c.InvalidateDB()
 	c.db = newDB

@@ -14,6 +14,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 )
 
+// staleOwnerPageLimit bounds one recovery pass so the housekeeping tick cannot stall the daemon loop behind
+// an arbitrarily long stale-owner sweep; the remaining owners are recovered oldest first on the next tick,
+// about thirteen per second. A persistently failing owner keeps occupying a page slot and delays the owners
+// behind it across passes, which is the price of the bound: its own failures are logged per owner.
+const staleOwnerPageLimit = 64
+
 func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
 	if !cfg.Consumer.Reclaim.Enabled {
 		return
@@ -31,7 +37,7 @@ func (d *daemon) reclaimStale(ctx context.Context, cfg *config.Config) {
 }
 
 func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *database.Client, batchSvc *service.Batch, catalog task.TypeCatalog, logger *log.Logger) error {
-	owners, err := batchSvc.ListStaleBatchOwners(ctx)
+	owners, err := batchSvc.ListStaleBatchOwners(ctx, staleOwnerPageLimit)
 	if err != nil {
 		return fmt.Errorf("list stale batch owners: %w", err)
 	}
@@ -102,6 +108,9 @@ func reclaimStaleBatches(ctx context.Context, cfg *config.Config, client *databa
 			}
 			logger.Info("", "stale batch %s reclaimed and requeued", owner.BatchID)
 		}
+	}
+	if len(owners) == staleOwnerPageLimit {
+		logger.Info("", "stale-owner page full (%d handled this pass)", staleOwnerPageLimit)
 	}
 	return nil
 }

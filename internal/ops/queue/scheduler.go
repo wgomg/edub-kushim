@@ -210,28 +210,93 @@ func pollingEntry() schedulerEntry {
 	}
 }
 
+// backgroundDrainTimeout bounds how long a database reload waits for the background producers to stop before
+// it closes the pool they use; backgroundDrainPoll is the interval between liveness checks of that drain.
+const (
+	backgroundDrainTimeout = 5 * time.Second
+	backgroundDrainPoll    = 25 * time.Millisecond
+)
+
 // scheduler is the queue daemon's single recurring-enqueue loop over the declarative entries. It holds the
 // process-boundary logger it reports through, firstDue — the slot a never-run named entry is waiting for, so
 // its first occurrence waits for the next preferred time of day instead of firing on the first evaluation —
 // and lastFire, the last dispatch of the unnamed interval entry, whose cadence the batch table cannot carry
-// because a scan that finds nothing creates no batch. scanInFlight keeps two inbox scans from overlapping:
-// the scan runs on its own goroutine because slow storage I/O must never stall the daemon's dispatch,
-// reclamation or shutdown loop. firstDue and lastFire are touched only by the evaluation loop, never by a
-// scan goroutine. Once a named entry has a terminal batch, due-ness comes from that batch and firstDue is
-// irrelevant.
+// because a scan that finds nothing creates no batch. firstDue and lastFire are touched only by the
+// evaluation loop, never by a background goroutine. Once a named entry has a terminal batch, due-ness comes
+// from that batch and firstDue is irrelevant.
+//
+// Two entries run their occurrence on a background goroutine because their producers are data-dependent: the
+// unnamed inbox scan, whose storage I/O must never stall the daemon's dispatch, reclamation or shutdown loop,
+// and the thumbnail backfill, whose producer pages every document without a thumbnail. scanInFlight and
+// backfillInFlight keep two occurrences of the same entry from overlapping. Background jobs run under the
+// jobCtx generation and are counted in runningJobs, so a database reload can cancel the generation and drain
+// the jobs before it closes the pool they use; spawnBackground and stopBackgroundJobs are therefore called
+// only from the daemon loop.
 type scheduler struct {
-	logger       *log.Logger
-	firstDue     map[string]time.Time
-	lastFire     map[string]time.Time
-	scanInFlight atomic.Bool
+	logger           *log.Logger
+	firstDue         map[string]time.Time
+	lastFire         map[string]time.Time
+	scanInFlight     atomic.Bool
+	backfillInFlight atomic.Bool
+
+	root        context.Context
+	jobCtx      context.Context
+	jobCancel   context.CancelFunc
+	runningJobs atomic.Int64
 }
 
-func newScheduler(logger *log.Logger) *scheduler {
+func newScheduler(root context.Context, logger *log.Logger) *scheduler {
+	jobCtx, jobCancel := context.WithCancel(root)
 	return &scheduler{
-		logger:   logger,
-		firstDue: make(map[string]time.Time),
-		lastFire: make(map[string]time.Time),
+		logger:    logger,
+		firstDue:  make(map[string]time.Time),
+		lastFire:  make(map[string]time.Time),
+		root:      root,
+		jobCtx:    jobCtx,
+		jobCancel: jobCancel,
 	}
+}
+
+// spawnBackground starts one entry's occurrence on its own goroutine under the current job generation, at
+// most one occurrence at a time per in-flight flag: a refused occurrence is logged and not started. A started
+// job is never skipped — the helper owns its fast-abort on a canceled generation and its in-flight flag clear
+// — so a generation canceled between this call and the goroutine running still executes the job to release
+// the flag. The caller is the evaluation loop, which keeps the counter increment safe against a drain.
+func (s *scheduler) spawnBackground(inFlight *atomic.Bool, label string, job func(context.Context) error) {
+	if !inFlight.CompareAndSwap(false, true) {
+		s.logger.Debug("", "%s: previous occurrence still running; skipped", label)
+		return
+	}
+	ctx := s.jobCtx
+	s.runningJobs.Add(1)
+	go func() {
+		defer s.runningJobs.Add(-1)
+		defer inFlight.Store(false)
+		if ctx.Err() != nil {
+			return
+		}
+		if err := job(ctx); err != nil {
+			s.logger.Error("", "%s: %v", label, err)
+		}
+	}()
+}
+
+// stopBackgroundJobs cancels the current job generation and waits, bounded by backgroundDrainTimeout, for the
+// running producers to return, so a caller about to close the connection they use never pulls the pool out
+// from under them. A producer still running at the deadline is logged and left to fail on the closed
+// connection, which is the behavior a reload had before the drain existed. A fresh generation is armed in
+// every case. The caller is the daemon loop, so no spawn can interleave with the drain.
+func (s *scheduler) stopBackgroundJobs() {
+	s.jobCancel()
+	deadline := time.Now().Add(backgroundDrainTimeout)
+	for s.runningJobs.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(backgroundDrainPoll)
+	}
+	if running := s.runningJobs.Load(); running > 0 {
+		s.logger.Error("", "%d background producer(s) still running after %s; proceeding", running,
+			backgroundDrainTimeout)
+	}
+	s.jobCtx, s.jobCancel = context.WithCancel(s.root)
 }
 
 // run evaluates every entry of the current configuration once. A failure in one entry is logged and does
@@ -246,8 +311,11 @@ func (s *scheduler) run(ctx context.Context, client *database.Client, enqueuer *
 
 // evaluate enqueues one entry's occurrence when it is enabled and due. A named entry is idle while a
 // batch of its name is active; the unnamed entry carries no name-keyed state and relies on task dedup
-// keys for overlap. The unnamed entry dispatches asynchronously and refuses a new occurrence while its
-// previous scan is in flight; its dispatch is recorded in lastFire before the in-flight check.
+// keys for overlap. Two entries dispatch asynchronously through spawnBackground: the unnamed inbox scan,
+// which records its dispatch in lastFire before the in-flight check, and the thumbnail backfill, whose
+// data-dependent producer would otherwise run its full document scan on the daemon loop. Both refuse a new
+// occurrence while the previous one is in flight; every other named entry fires inline because its producer
+// builds a fixed task set.
 func (s *scheduler) evaluate(ctx context.Context, client *database.Client, enqueuer *task.Enqueuer, cfg *config.Config, entry schedulerEntry) error {
 	if !entry.enabled(cfg) {
 		return nil
@@ -276,16 +344,19 @@ func (s *scheduler) evaluate(ctx context.Context, client *database.Client, enque
 		// anchor the dispatch before the in-flight check: an occurrence that is refused or fails waits a full
 		// interval instead of retrying on every tick
 		s.lastFire[entry.name] = time.Now()
-		if !s.scanInFlight.CompareAndSwap(false, true) {
-			s.logger.Debug("", "%s: previous scan still running; occurrence skipped", entry.label())
-			return nil
-		}
-		go func() {
-			defer s.scanInFlight.Store(false)
-			if err := s.fire(ctx, client, enqueuer, cfg, entry); err != nil {
-				s.logger.Error("", "%s: %v", entry.label(), err)
-			}
-		}()
+		s.spawnBackground(&s.scanInFlight, entry.label(), func(ctx context.Context) error {
+			return s.fire(ctx, client, enqueuer, cfg, entry)
+		})
+		return nil
+	}
+
+	if entry.name == scheduleThumbnailBackfill {
+		// the producer pages every document without a thumbnail, so the occurrence runs off the loop; the
+		// in-flight flag is the only overlap guard here, because the active-batch check above cannot see a
+		// batch whose enqueue is still running
+		s.spawnBackground(&s.backfillInFlight, entry.label(), func(ctx context.Context) error {
+			return s.fire(ctx, client, enqueuer, cfg, entry)
+		})
 		return nil
 	}
 

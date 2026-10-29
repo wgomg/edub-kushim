@@ -601,7 +601,14 @@ WHERE bo.last_heartbeat < CURRENT_TIMESTAMP - make_interval(secs => $1::int)
 AND EXISTS (SELECT 1 FROM task t
             WHERE t.batch_id = bo.batch_id
             AND t.status IN ('pending', 'processing', 'waiting'))
+ORDER BY bo.last_heartbeat
+LIMIT $2::int
 `
+
+type ListStaleBatchOwnersParams struct {
+	StaleAfterSeconds int32
+	MaxStaleOwners    int32
+}
 
 type ListStaleBatchOwnersRow struct {
 	BatchID string
@@ -609,8 +616,10 @@ type ListStaleBatchOwnersRow struct {
 	Pid     int64
 }
 
-func (q *Queries) ListStaleBatchOwners(ctx context.Context, staleAfterSeconds int32) ([]ListStaleBatchOwnersRow, error) {
-	rows, err := q.db.QueryContext(ctx, listStaleBatchOwners, staleAfterSeconds)
+// the reaper pages through the stale leases oldest first, so one housekeeping pass stays bounded and the
+// remaining owners are recovered on the next tick
+func (q *Queries) ListStaleBatchOwners(ctx context.Context, arg ListStaleBatchOwnersParams) ([]ListStaleBatchOwnersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listStaleBatchOwners, arg.StaleAfterSeconds, arg.MaxStaleOwners)
 	if err != nil {
 		return nil, err
 	}

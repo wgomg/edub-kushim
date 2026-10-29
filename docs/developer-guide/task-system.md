@@ -421,15 +421,24 @@ for {
 3. **The 5s housekeeping ticker**: the declarative scheduler
    (`internal/ops/queue/scheduler.go`) — which also drives the inbox polling
    as its unnamed entry — and stale-task reclamation (throttled
-   to `StaleTaskAfter/10` seconds, min 60 s). Configuration is no longer on
+   to `StaleTaskAfter/10` seconds, min 60 s). The arms stay bounded: the two
+   data-dependent occurrences, the unnamed inbox scan and the thumbnail
+   backfill, run on the scheduler's background goroutines under a
+   cancellation generation the reload drains, and the stale-owner sweep
+   processes a fixed page of the oldest leases per tick. Configuration is
+   no longer on
    the ticker: it arrives through the shared content-hashed `config.Watcher`
    (the same mechanism `edub` runs — a change commits only when two
    consecutive polls read identical bytes, invalid YAML keeps retrying), and
    the daemon loop applies each staged tree, swapping the container
    configuration and, when a `migrate-db` task has changed the connection,
-   probing, reconnecting, and restarting the `LISTEN`/`NOTIFY` session — a
-   failed reconnect keeps the previous tree and the apply is retried on the
-   housekeeping tick.
+    probing and reconnecting — the reconnect opens the new pool first and
+    drains the scheduler's background generation in between, so no producer
+    outlives the pool it uses, and a failed reconnect leaves the running
+    occurrences on the healthy old pool — then restarting the
+    `LISTEN`/`NOTIFY` session; the swap completes only once the new pool
+    opens, and a failed reconnect leaves the previous tree pending for the
+    next housekeeping tick.
 
 ### The dispatcher and the launcher
 
@@ -482,8 +491,10 @@ the budget governs automatic dispatch only.
 
 ### Reclaiming stale batches
 
-`reclaimStaleBatches` runs on the housekeeping ticker: for each owner stale
-> 15s whose batch still has work (`ListStaleBatchOwners`), it **releases the
+`reclaimStaleBatches` runs on the housekeeping ticker: for the oldest page
+of owners stale > 15s whose batch still has work (`ListStaleBatchOwners` —
+a fixed page size per pass, the remainder handled on the next tick), it
+**releases the
 listed ownership row first** — by the row its snapshot described: the
 `(batch_id, owner_id, pid)` triple plus the same staleness re-check
 (`ReleaseStaleBatchOwner`), so an owner that adopted or heartbeated since the
