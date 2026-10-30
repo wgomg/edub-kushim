@@ -518,7 +518,7 @@ func batchListHandler(c *container.Container, args []string) error {
 		return fmt.Errorf("database: %w", err)
 	}
 	svc := service.NewBatch(client, c.GetConfig().Consumer.Reclaim.MaxRetries)
-	batches, err := svc.ListOverviews(context.Background(), "", int32(limit), int32(offset))
+	batches, err := svc.ListOverviews(context.Background(), "", "", int32(limit), int32(offset))
 	if err != nil {
 		return fmt.Errorf("list batches: %w", err)
 	}

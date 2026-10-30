@@ -76,17 +76,23 @@ func (s *Batch) GetOverview(ctx context.Context, batchID string) (*BatchOverview
 	return overviewFromRow(rows[0]), nil
 }
 
-// ListOverviews returns one page of batch aggregate rows, newest first; an empty status means every
-// batch, otherwise the batch status must match.
-func (s *Batch) ListOverviews(ctx context.Context, status string, limit, offset int32) ([]BatchOverview, error) {
+// ListOverviews returns one page of batch aggregate rows, newest first. An empty status means every batch,
+// otherwise the batch status must match; an empty taskStatus means every batch, otherwise the batch must
+// own at least one task in that state.
+func (s *Batch) ListOverviews(ctx context.Context, status, taskStatus string, limit, offset int32) ([]BatchOverview, error) {
 	statusParam := sql.NullString{}
 	if status != "" {
 		statusParam = sql.NullString{String: status, Valid: true}
+	}
+	taskStatusParam := sql.NullString{}
+	if taskStatus != "" {
+		taskStatusParam = sql.NullString{String: taskStatus, Valid: true}
 	}
 
 	rows, err := s.queries.ListBatchOverviews(ctx, database.ListBatchOverviewsParams{
 		StaleAfterSeconds: task.LeaseStaleSeconds,
 		Status:            statusParam,
+		TaskStatus:        taskStatusParam,
 		RowLimit:          limit,
 		RowOffset:         offset,
 	})

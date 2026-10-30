@@ -268,7 +268,7 @@ func TestBatch_ListOverviews(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create completed task")
 
-		overviews, err := svc.ListOverviews(ctx, "", 10, 0)
+		overviews, err := svc.ListOverviews(ctx, "", "", 10, 0)
 		testutil.AssertNoError(t, err, "list overviews")
 		for _, ov := range overviews {
 			if ov.BatchID == "ov-batch" {
@@ -294,7 +294,7 @@ func TestBatch_ListOverviews(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "create task")
 
-		overviews, err := svc.ListOverviews(ctx, "", 10, 0)
+		overviews, err := svc.ListOverviews(ctx, "", "", 10, 0)
 		testutil.AssertNoError(t, err, "list overviews")
 		for _, ov := range overviews {
 			if ov.BatchID == "dur-pending" {
@@ -305,6 +305,37 @@ func TestBatch_ListOverviews(t *testing.T) {
 			}
 		}
 		t.Fatal("batch not found in overviews")
+	})
+
+	t.Run("task status filter keeps only matching batches", func(t *testing.T) {
+		err := client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "ov-task-failed", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
+		})
+		testutil.AssertNoError(t, err, "create batch with failed task")
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "ov-tf-1", TaskType: "consume", Status: "failed",
+			BatchID: sql.NullString{String: "ov-task-failed", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create failed task")
+
+		err = client.Queries.CreateBatch(ctx, database.CreateBatchParams{
+			ID: "ov-task-done", Origin: types.Batch.Origin.CLI, Status: types.Batch.Status.Queued,
+		})
+		testutil.AssertNoError(t, err, "create batch without failed tasks")
+		_, err = client.Queries.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "ov-td-1", TaskType: "consume", Status: "completed",
+			BatchID: sql.NullString{String: "ov-task-done", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create completed task")
+
+		overviews, err := svc.ListOverviews(ctx, "", "failed", 10, 0)
+		testutil.AssertNoError(t, err, "list overviews filtered by task status")
+		seen := map[string]bool{}
+		for _, ov := range overviews {
+			seen[ov.BatchID] = true
+		}
+		testutil.AssertEqual(t, seen["ov-task-failed"], true, "batch owning a failed task included")
+		testutil.AssertEqual(t, seen["ov-task-done"], false, "batch without failed tasks excluded")
 	})
 }
 
@@ -322,7 +353,7 @@ func TestBatch_ListOverviews_IncludesBatch(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "create task")
 
-	overviews, err := svc.ListOverviews(ctx, "", 10, 0)
+	overviews, err := svc.ListOverviews(ctx, "", "", 10, 0)
 	testutil.AssertNoError(t, err, "list overviews")
 	if len(overviews) < 1 {
 		t.Fatal("expected at least 1 overview")

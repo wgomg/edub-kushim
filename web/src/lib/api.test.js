@@ -130,4 +130,14 @@ describe('api', () => {
 		await api.batches.resume('b-2');
 		expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/batches/b-2/resume');
 	});
+
+	it('batches.list sends task_status only when a filter is set', async () => {
+		fetchMock.mockResolvedValue(jsonResponse({ body: { batches: [] } }));
+
+		await api.batches.list('failed', 10, 0);
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/batches?task_status=failed&limit=10&offset=0');
+
+		await api.batches.list();
+		expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/batches?limit=20&offset=0');
+	});
 });

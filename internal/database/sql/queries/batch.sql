@@ -182,7 +182,8 @@ WHERE batch_id = @batch_id AND task_type = 'consume'
 
 -- name: ListBatchOverviews :many
 -- the batch table is the only listing source: the list, the dashboard, the single-batch summary and the CLI
--- read this one aggregate shape, and the orphan flag comes from the single batch_orphaned definition
+-- read this one aggregate shape, and the orphan flag comes from the single batch_orphaned definition; a
+-- non-null task_status keeps only batches owning at least one task in that state
 SELECT
     b.id AS batch_id,
     b.origin,
@@ -222,6 +223,10 @@ LEFT JOIN LATERAL (
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
 WHERE (sqlc.narg('batch_id')::text IS NULL OR b.id = sqlc.narg('batch_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR b.status = sqlc.narg('status')::batch_status)
+  AND (sqlc.narg('task_status')::text IS NULL OR EXISTS (
+    SELECT 1 FROM task ft
+    WHERE ft.batch_id = b.id AND ft.status = sqlc.narg('task_status')::task_status
+  ))
 ORDER BY b.created_at DESC
 LIMIT @row_limit OFFSET @row_offset;
 

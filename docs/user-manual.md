@@ -2491,13 +2491,15 @@ Response `200` — single [TaskResponse](#taskresponse).
 ```
 GET /api/v1/batches
 GET /api/v1/batches?status=queued&limit=10
+GET /api/v1/batches?task_status=failed&limit=10
 ```
 
-| Query param | Default | Description                                             |
-| ----------- | ------- | ------------------------------------------------------- |
-| `status`    | all     | Filter by batch status: `queued`, `processing`, `paused`, `completed`, `failed`, `cancelled` |
-| `limit`     | `20`    | Max results (1–100)                                     |
-| `offset`    | `0`     | Pagination offset                                       |
+| Query param  | Default | Description                                             |
+| ------------ | ------- | ------------------------------------------------------- |
+| `status`     | all     | Filter by batch status: `queued`, `processing`, `paused`, `completed`, `failed`, `cancelled` |
+| `task_status` | all     | Keep only batches owning at least one task in the given task status: `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded`; an unknown value answers `400` |
+| `limit`      | `20`    | Max results (1–100)                                     |
+| `offset`     | `0`     | Pagination offset                                       |
 
 Response `200` — [BatchResponse](#batchresponse) items, newest first:
 

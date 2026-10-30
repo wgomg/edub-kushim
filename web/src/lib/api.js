@@ -208,10 +208,13 @@ export const api = {
 	},
 
 	batches: {
-		list: (limit = 20, offset = 0) =>
-			request(`/api/v1/batches?limit=${limit}&offset=${offset}`).then(
-				(data) => data?.batches ?? []
-			),
+		list: (taskStatus = '', limit = 20, offset = 0) => {
+			const params = new URLSearchParams();
+			if (taskStatus) params.set('task_status', taskStatus);
+			params.set('limit', String(limit));
+			params.set('offset', String(offset));
+			return request(`/api/v1/batches?${params.toString()}`).then((data) => data?.batches ?? []);
+		},
 
 		get: (batchId) => request(`/api/v1/batches/${batchId}`),
 		resume: (batchId, retryFailed = false) =>

@@ -687,6 +687,42 @@ func TestTaskEndpoints(t *testing.T) {
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 	})
 
+	t.Run("list batches filtered by task status", func(t *testing.T) {
+		err := env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "flt-failed-batch", Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued})
+		testutil.AssertNoError(t, err, "create batch with failed task")
+		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "flt-t-failed", TaskType: "consume", Status: "failed",
+			BatchID: sql.NullString{String: "flt-failed-batch", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create failed task")
+
+		err = env.client.CreateBatch(ctx, database.CreateBatchParams{ID: "flt-done-batch", Origin: itypes.Batch.Origin.CLI, Status: itypes.Batch.Status.Queued})
+		testutil.AssertNoError(t, err, "create batch without failed tasks")
+		_, err = env.client.CreateTask(ctx, database.CreateTaskParams{
+			TaskID: "flt-t-done", TaskType: "consume", Status: "completed",
+			BatchID: sql.NullString{String: "flt-done-batch", Valid: true},
+		})
+		testutil.AssertNoError(t, err, "create completed task")
+
+		w := rec()
+		h.ListBatches(w, req(t, "GET", "/api/v1/batches?task_status=failed&limit=10", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+		var resp ListBatchesResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		seen := map[string]bool{}
+		for _, b := range resp.Batches {
+			seen[b.BatchID] = true
+		}
+		testutil.AssertEqual(t, seen["flt-failed-batch"], true, "batch owning a failed task included")
+		testutil.AssertEqual(t, seen["flt-done-batch"], false, "batch without failed tasks excluded")
+	})
+
+	t.Run("list batches rejects invalid task status", func(t *testing.T) {
+		w := rec()
+		h.ListBatches(w, req(t, "GET", "/api/v1/batches?task_status=bogus", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+
 	t.Run("cancel nonexistent batch", func(t *testing.T) {
 		w := rec()
 		r := req(t, "POST", "/api/v1/batches/nonexistent-batch/cancel", nil)

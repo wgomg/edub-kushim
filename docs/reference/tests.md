@@ -53,7 +53,7 @@ make test          # runs all non-CGo tests
 make test-verbose  # same with verbose output
 make test-db       # database-dependent tests (requires TEST_DATABASE_URL)
 make test-cgo      # CGo-gated tests (requires make build-deps first)
-make test-cgo-db   # consumption + ops/configtask + ops/cli + ops/consume + ops/container + ops/queue + enrichment + tags + tags/admission + tags/curation + tags/reconcile + api/handlers with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
+make test-cgo-db   # consumption + ops/configtask + ops/cli + ops/consume + ops/container + ops/dispatch + ops/queue + enrichment + matcher + service + tags + tags/admission + tags/curation + tags/reconcile + api/handlers with CGo + DB (requires make build-deps + TEST_DATABASE_URL)
 make test-one PKG=./internal/errs/   # single package; add RUN=Name to filter
 make test-web      # web/ vitest unit + component tests (no database)
 make test-web-e2e  # web/ Playwright smokes with mocked API (requires npx playwright install chromium first)
@@ -67,7 +67,7 @@ make vuln-cgo      # CGo-enabled variant, full call graph (requires make build-d
 
 - `web` job: lints, runs `npm run test` (vitest), and builds the main SPA (`npm ci && npm run lint && npm run test && npm run build` in `web/`), then runs the E2E smokes (`npx playwright install --with-deps chromium && npm run test:e2e` — the E2E `webServer` builds the SPA itself and serves it with an SPA fallback). Then builds the wizard SPA, stages both with `make stage-web`, and uploads them as the `web-assets` artifact. Staging is required because `internal/static/build` and `internal/api/wizard/static` are gitignored but embedded via `//go:embed` — a fresh checkout has no assets to compile against.
 - `test` job (depends on `web`): downloads `web-assets`, stages it with `make stage-web-artifact`, then runs `make test` and `make test-db` against a postgres:17 service container (`TEST_DATABASE_URL` pointing at `localhost:5432`).
-- `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` (no DB; DB-gated tests in `internal/ops/queue`, `internal/enrichment`, `internal/tags`, `internal/tags/admission` and `internal/tags/reconcile` skip) and `make test-cgo-db` (with DB; those tests actually run) against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/ops/cli`) and the cgo-linked packages (`internal/ops/consume`, consumption under CGo) on every push/PR.
+- `test-cgo` job (depends on `web`): installs the C build prerequisites, builds the C libraries with `make build-deps TOKENIZERS_ARCH=amd64` (cached under `build/` keyed by `hashFiles('Makefile')`), then runs `make test-cgo` (no DB; DB-gated tests in `internal/ops/queue`, `internal/enrichment`, `internal/tags`, `internal/tags/admission` and `internal/tags/reconcile` skip) and `make test-cgo-db` (with DB; those tests actually run, plus `internal/ops/dispatch`'s DB-gated tests and the `internal/service` suite) against the same postgres:17 service container. This surfaces the CGo-only packages (`internal/ops/cli`) and the cgo-linked packages (`internal/ops/consume`, `internal/documents/textextractor`, consumption under CGo) on every push/PR.
 - `vulncheck` job (depends on `web`): stages the `web-assets` artifact, installs govulncheck (pinned `@v1.7.0`), and runs `make vuln`. Like `make test`, it runs with `CGO_ENABLED=0`, so the CGo-gated packages (`cmd/kushim`, `internal/ops/cli`, `internal/ops/queue`) are excluded from the CI scan; `make vuln-cgo` covers them locally.
 
 The `global` ruleset requires the `test` and `web` checks to pass before a PR to `master` can merge.
@@ -104,7 +104,7 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | `internal/documents/consumption` | 29 | Full consumer pipeline via mock runner (file discovery, DB transaction, file movement, duplicate detection), file I/O helpers (get, move, copy, remove, clean up), checksum calculation, orphaned file management, and the shared ingest task-set assembly (`TestIngestTaskSpecsWithoutThumbnails`/`WithThumbnails`: consume first with the file identity fields, parent-linked waiting children, thumbnail toggle) |
 | `internal/documents/converter` | 3 | LibreOffice conversion adapter (`TestLibreOfficeCanHandle` MIME dispatch, `TestLibreOfficeName`, `TestNewLibreOfficeNotFound` without the binary). Not wired into a Makefile tier |
 | `internal/documents/pdfoptimizer` | 1 | Ghostscript PDF optimizer (`TestGhostscript_Optimize_RejectsRelativePath`; skips when `gs` is absent). Not wired into a Makefile tier |
-| `internal/documents/textextractor` | 21 | Text extraction adapters: composite MIME dispatch, unknown MIME, can-handle, name and constructor composition; DOCX/ODT extraction (single/multi paragraph, empty documents, invalid ZIP, missing `document.xml`/`content.xml`); `pdftotext` relative-path rejection. Not wired into a Makefile tier |
+| `internal/documents/textextractor` | 21 | Text extraction adapters: composite MIME dispatch, unknown MIME, can-handle, name and constructor composition; DOCX/ODT extraction (single/multi paragraph, empty documents, invalid ZIP, missing `document.xml`/`content.xml`); `pdftotext` relative-path rejection (the `pdftotext` adapter tests skip when the binary is absent). Runs under `make test-cgo` |
 | `internal/ops/cli` | 31 | Config handler (help/path/validate valid+invalid/get/missing key/set/invalid set/unset/missing key/unset without key/dump/unknown args), parseValue, deleteNestedKey, highlight snippet ANSI markers, the tag commands' dispatch and flag surface (`TestTagCommandsDispatchHelp`, `TestTagCommandsValidateRunID`: a batch-mode invocation requires the execution token and a malformed one is refused, and the removed `--run` alias is rejected as an unknown flag; `TestTagCommandsWithoutFlagsRunDirect`: all five tag verbs (the maintenance routine included) registered and dispatching with a no-flag invocation reaching the direct-run path instead of demanding an execution token), and the `llm` verb (dump/get over the seeded catalogs, string and boolean field sets reaching the catalog files, the in-use and orphan-model unset guards with `--cascade` dropping provider and models together, and `--reset` recovering a mangled catalog), and the batch-create paused-guard refusal (`TestBatchCreateConsumePausedGuard`: refuse with the paused ids while a credit-paused batch exists, proceed once none remains; DB-gated). CGo-gated package: compiles only under `CGO_ENABLED=1` (runs via `make test-cgo` / `make test-cgo-db`) |
 | `internal/ops/consume` | 3 | The executor-token contract (`TestParseExecToken`: an empty or malformed token refused, a dispatcher token adopted unchanged), the `totalFiles` index/count fallback, and the direct-run summary arithmetic (`TestDirectRunSummaryCountsFailedSteps`: an unhashable file counts one failed step with the handler unreached and the successful count never negative; a successful file counts the consume and enrich steps once each — stdout-captured) |
 | `internal/ops/configtask` | 6 | Config migration tasks: DB-gated migrate-db and migrate-storage runs plus the no-op/directory helpers (`TestMigrateDBTask`, `TestMigrateDBTask_RefusesForeignDestination`, `TestMigrateStorageTask`, `TestDirChanged`, `TestMigrateStorage_NoOpReturnsErrNoOp`, `TestHandleMigrateStorage_NoOpReturnsNoOpStatus`) — runs under `make test-cgo-db`, exec'ing `psql` inside the test container |
@@ -115,10 +115,9 @@ The `global` ruleset requires the `test` and `web` checks to pass before a PR to
 | `internal/tags` | 61 | The shared J4 resolution (`TestCanonicalLoser`: a judged direction names the winner, a tie or a deterministic variant falls to `PreferCanonical`) and the single-read journal seam (`TestCompositionReview`: one read returns both the hold and state views, matching the single-view wrappers, and a degraded keep is both a hold and undecided), the measurement read side (`TestDecodeRows`: numbers round-trip as the cuts read them, a malformed payload fails with the row index, the run columns stay zero; `TestLatestWorklists`: an empty journal is absent, only the newest run is derived; `TestSiblingWorklist`: absent before a run, run identity, the container-first pair, and a containment-only snapshot that leaves twins and compound splits underived; `TestReconstructibilityBatch`, DB-gated: the live counts over the judged cover, a house-form spelling resolving to the stored compound, and an unknown compound or part leaving no reading), Identity planning (`HouseForm` house-form cases, `TieBreak`, the deterministic variant-class table (`TestVariantClass`: pinned orthographic suffixes, literal token permutations, and the classes that stay judged — plurals, mixed-language, morphological/function-word inversions, spelling-plus-permutation), `PlanDeterministic` apply/conflict/key-equal/blocked/fold-pending/derivational paths), the rejected-name plan filter (`TestPlan_DropTagNames`: output-name and raw-input matches, evidence dropped by candidate and partner, receiver untouched, empty set no-op), the conservative plural fallback for folds (`TestPluralStrip` rule table; `TestProposedFold_PluralFallback` with its dictionary-membership preconditions pinned), the store-anchored derivational fold proposal (`TestProposedDerivationalFold`: suffix hits, the store-anchor requirement, two hits as ambiguity, multi-token/length/uppercase guards, irregular demonyms excluded), the bounded morphographic proposal (`TestProposedMorphologicalFold`: distance-1/2 hits, the distance-3 cap, two store hits as ambiguity, multi-token/length/uppercase and multi-word-store-key guards), the chained split-seam fold (`TestAnchoredFold`: attested adjective→noun folds (chilean→chile, mexican→mexico, german→germany, political→politics), an orthographic variant folding onto the promoted spelling (labour→labor, single- and multi-token), ambiguity, the no-anchor and multi-token guards, an unattested near-spelling standing unreduced, and an attested base the store lacks), the primary-sense seam rule (`TestAnchoredFold_LiveView`: a multi-base part folds onto its live primary-sense base, a live non-primary base neither attracts nor blocks the fold, the primary base must be live to fold, and a variant anchor folds regardless), the canonical direction (`TestPreferCanonical`: the house form wins over a foreign label in either order, a deterministic variant resolves through the tie-break, and labels the language step cannot separate fall through), the deterministic period class (`TestIsPeriodClass`: the ordinal+unit shape, the house-form precondition, the two-token bound, a plural unit, and non-Latin script), the store-existing skip's state read (`TestCompositionStatesForNames`: StoredName keying incl. the house-form case, a degraded keep reported undecided, stale-version rows invisible, a rowless name absent), and the key-to-name store view (`TestStoreNames`: the first name wins a shared key); extension-algebra readings (mass, overlap coefficients, reconstructibility excess/deficit, part coverage, equality/complement) and set operations; rule-set v1 worklist cuts (twin/sibling/compound bands + gray ranges + both mass floors) and the band classifier's boundaries (`TestClassifyReconstructibility`: the strict split and gray cuts on either ratio, and the insufficient state), the containment pair's direction (`TestDeriveWorklists_SiblingDirection`: the broader tag leads with its own mass whichever operand contains the other, and equal containment keeps operand order); compound shape classification and part derivation (`TestDeriveSegments` fan shapes; `TestGreedyCover` coarsest-cover cases: longest-span and leftmost-bigram wins, a whole-sequence bigram excluded, an uncovered word and gap failing the cover, and the alongside partial cover); the time-designation gate (`TestIsTimeDesignation` shapes and non-shapes, `TestIsTimeDesignationDrop` with the store exemption); the variant-key parity the birth-time scan precomputes (`TestVariantKey`: pinned pairs share a signature, unrelated names — plurals included — share none); the pinned admission rules (`TestDecideAdmission`: fail-count boundaries, judge-defer precedence over counted failures, lone and corroborated deterministic signals; `TestDecidePromotion`: floor boundary, defer/reject never promote; `TestDecideMassDemotion`: the retention floor — zero and below-floor live mass demote, at and above the floor keep standing); the pinned composition rule table (`TestDecideComposition`: every branch, evaluation order and the fail-safe, including the far leg that keeps a judged composition as a relational keep) and the composition promotion hold (`TestCompositionHeldNames`: latest reason per version, version scoping, name normalization, a decided drop holding); evidence-row JSON encoding (nil caveats → `[]`) and operand normalization at the write boundary (`TestEncodeRows_NormalizesOperands`); prefixed-report extraction (`ExtractReport`); DB-gated runner (seeded store → persisted records, report/persisted parity, canceled-context error path) and the DB-gated evidence-derived promotion hold (`TestIdentityHeldNames`: gate rejection, base_form=stand despite a confirming gate, dead anchor, conventional-form exclusion, empty input — both run under `make test-db`), and the opening-gate protocol (`TestOpenStoreSignal`: a set flag reads as changed and clears in one committed step, a clear flag stays clear without another write, a failed run's re-arm returns its cause and sets the flag, and an absent row counts as changed so a gate never skips on missing state — DB-gated, runs under `make test-db`) |
 | `internal/types` | 8 | Registry completeness (all batch origins/task types/statuses declared, validity and parse round-trips, defensive-clone isolation, the closed lock declarations — `LockDeclarationFor`, `HoldsLocks`, `TaskTypesWaitingOn`, `LockHoldingTaskTypes`, `AllLockNames`) |
 
-The conversion, optimization and text-extraction adapter tests
-(`internal/documents/converter`, `internal/documents/pdfoptimizer`,
-`internal/documents/textextractor`) are not wired into any Makefile tier: no
-target invokes them.
+The conversion and optimization adapter tests
+(`internal/documents/converter`, `internal/documents/pdfoptimizer`) are not
+wired into any Makefile tier: no target invokes them.
 
 ---
 
@@ -252,12 +251,12 @@ instructions) instead of requiring `psql` on the host PATH.
 
 ### CGo-dependent tests (`make test-cgo`)
 
-These 417 tests require `CGO_ENABLED=1` to compile because their source files
+These 438 tests require `CGO_ENABLED=1` to compile because their source files
 are tagged `//go:build cgo` (or, for `internal/llm/analyzer`,
 `internal/ops/cli`, `internal/ops/consume`, `internal/ops/queue`,
 `internal/tools`, `internal/enrichment`, `internal/api`,
 `internal/api/wizard`, `internal/ops/container`, `internal/tags`,
-`internal/tags/admission` and
+`internal/tags/admission`, `internal/documents/textextractor` and
 `internal/tags/reconcile`, the packages import or link the cgo-gated adapters).
 Most use only pure-Go code; only the MuPDF tests and the command handlers
 exercise actual CGo function calls.
@@ -272,12 +271,13 @@ make test-cgo-glibc    # podman: kushim-glibc-builder
 make test-cgo-musl     # podman: kushim-musl-builder
 ```
 
-**15 packages, 417 tests:**
+**16 packages, 438 tests:**
 
 | Package | Tests | CGo at runtime? |
 |---------|-------|-----------------|
 | `internal/cgo` | 2 | Yes — MuPDF page render |
 | `internal/documents/ocr` | 9 | No (pure Go, build-tag gated) |
+| `internal/documents/textextractor` | 21 | No (pure Go tests; package links the cgo adapters transitively) |
 | `internal/llm/analyzer` | 97 | No (pure Go tests; package links the cgo adapters transitively) |
 | `internal/matcher` | 18 | No (pure Go, build-tag gated) |
 | `internal/tools` | 28 | No (pure Go tests; package links the cgo adapters transitively) |
@@ -295,6 +295,9 @@ make test-cgo-musl     # podman: kushim-musl-builder
 `internal/ops/cli` is not part of `make test`: the package only compiles with
 CGo (`hugot.go` imports the `//go:build cgo`-gated matcher engine), and
 kushim — the only binary importing it — is always built with CGo.
+`internal/documents/textextractor` likewise runs only in this tier: it is not
+part of `make test`, and its `pdftotext` adapter tests skip when the binary is
+absent.
 `internal/tools` runs in both tiers: `make test` builds it without CGo, and
 `make test-cgo` re-runs it with the cgo adapters linked.
 `internal/llm/analyzer` likewise runs in both tiers: `make test` builds it
@@ -337,6 +340,16 @@ this tier so the DB-gated test exercises PostgreSQL under the cgo-linked build.
 Also runs `internal/ops/consume` (the executor-token, file-count and
 direct-run summary tests — pure Go; the per-batch pool removal left no
 DB-gated test in the package, so nothing here skips).
+
+Also runs `internal/ops/dispatch` (the batch dispatcher's launcher and
+dispatcher tests). Its launcher tests are DB-gated and `t.Skip` when
+`TEST_DATABASE_URL` is unset, so the package is listed in this tier to
+exercise PostgreSQL under the cgo-linked build.
+
+Also runs `internal/service` (the batch read model, the CRUD services and the
+lifecycle ops the API and CLI build on). Its tests are ungated database tests
+requiring `TEST_DATABASE_URL`, so the package is listed only in the DB tier,
+like `internal/api/handlers`.
 
 Also runs `internal/tags/reconcile` (DB-gated reconciler tests — the opening-gate
 contract `TestRunZeroWorkOnQuietStore`, `TestRunFullAfterStoreMutation`,

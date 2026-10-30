@@ -163,7 +163,8 @@ func batchLifecycleError(err error) (status int, message string, handled bool) {
 	}
 }
 
-// ListBatches serves one page of batch overviews, optionally filtered by batch status.
+// ListBatches serves one page of batch overviews, optionally filtered by batch status and by the presence
+// of at least one task in a given task status; an invalid task_status is a client error.
 func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
@@ -175,10 +176,17 @@ func (h *TaskHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	statusFilter := pb.Get("status", "")
+	taskStatusFilter := pb.Get("task_status", "")
+	if taskStatusFilter != "" {
+		if _, err := itypes.ParseTaskStatus(taskStatusFilter); err != nil {
+			http.Error(w, "Invalid task_status", http.StatusBadRequest)
+			return
+		}
+	}
 	limit := pb.GetInt64("limit", 20, 1, 100)
 	offset := pb.GetInt64("offset", 0, 0, 0)
 
-	overviews, err := h.services.Batch.ListOverviews(ctx, statusFilter, int32(limit), int32(offset))
+	overviews, err := h.services.Batch.ListOverviews(ctx, statusFilter, taskStatusFilter, int32(limit), int32(offset))
 	if err != nil {
 		h.logger.Error(reqID, "list batches: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -232,7 +240,7 @@ func (h *TaskHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	reqID := log.ReqIDFrom(ctx)
 
 	items := make([]BatchItem, 0)
-	overviews, err := h.services.Batch.ListOverviews(ctx, "", 10, 0)
+	overviews, err := h.services.Batch.ListOverviews(ctx, "", "", 10, 0)
 	if err != nil {
 		h.logger.Error(reqID, "list batch overviews: %v", err)
 	} else {

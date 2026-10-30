@@ -366,7 +366,6 @@ type SavedSearch struct {
 }
 
 type SystemSignal struct {
-	ID         int16
 	Name       string
 	Type       string
 	Value      string

@@ -442,14 +442,19 @@ LEFT JOIN LATERAL (
 LEFT JOIN batch_owner bo ON bo.batch_id = b.id
 WHERE ($2::text IS NULL OR b.id = $2::text)
   AND ($3::text IS NULL OR b.status = $3::batch_status)
+  AND ($4::text IS NULL OR EXISTS (
+    SELECT 1 FROM task ft
+    WHERE ft.batch_id = b.id AND ft.status = $4::task_status
+  ))
 ORDER BY b.created_at DESC
-LIMIT $5 OFFSET $4
+LIMIT $6 OFFSET $5
 `
 
 type ListBatchOverviewsParams struct {
 	StaleAfterSeconds int32
 	BatchID           sql.NullString
 	Status            sql.NullString
+	TaskStatus        sql.NullString
 	RowOffset         int32
 	RowLimit          int32
 }
@@ -477,12 +482,14 @@ type ListBatchOverviewsRow struct {
 }
 
 // the batch table is the only listing source: the list, the dashboard, the single-batch summary and the CLI
-// read this one aggregate shape, and the orphan flag comes from the single batch_orphaned definition
+// read this one aggregate shape, and the orphan flag comes from the single batch_orphaned definition; a
+// non-null task_status keeps only batches owning at least one task in that state
 func (q *Queries) ListBatchOverviews(ctx context.Context, arg ListBatchOverviewsParams) ([]ListBatchOverviewsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listBatchOverviews,
 		arg.StaleAfterSeconds,
 		arg.BatchID,
 		arg.Status,
+		arg.TaskStatus,
 		arg.RowOffset,
 		arg.RowLimit,
 	)

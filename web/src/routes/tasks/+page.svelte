@@ -1,6 +1,6 @@
 <script>
 	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '$lib/icons.js';
 	import { escapeHtml } from '$lib/utils/html.js';
@@ -15,6 +15,17 @@
 
 	// the statuses ResumeBatch accepts; keep in sync with internal/task/batch.go
 	const RESUMABLE_BATCH_STATUSES = ['failed', 'completed', 'cancelled', 'paused'];
+
+	// the task states the batch filter accepts; keep in sync with the vocabulary in internal/types/registry.go
+	const TASK_STATES = [
+		{ value: 'waiting', label: 'Waiting' },
+		{ value: 'pending', label: 'Pending' },
+		{ value: 'processing', label: 'Processing' },
+		{ value: 'completed', label: 'Completed' },
+		{ value: 'failed', label: 'Failed' },
+		{ value: 'cancelled', label: 'Cancelled' },
+		{ value: 'discarded', label: 'Discarded' }
+	];
 
 	function formatDate(v) {
 		if (!v) return '—';
@@ -234,6 +245,9 @@
 
 	let currentBatch = $state('');
 	let currentStatus = $state('');
+	let currentTaskStatus = $state(
+		new URL(window.location.href).searchParams.get('task_status') || ''
+	);
 
 	page.subscribe(($p) => {
 		currentBatch = $p.url.searchParams.get('batch') || '';
@@ -241,7 +255,16 @@
 	});
 
 	async function fetchBatches({ limit, offset }) {
-		return await api.batches.list(limit, offset);
+		return await api.batches.list(currentTaskStatus, limit, offset);
+	}
+
+	function changeTaskStatus(e) {
+		currentTaskStatus = e.target.value;
+		batchRefreshKey++;
+		const url = new URL(window.location.href);
+		if (currentTaskStatus) url.searchParams.set('task_status', currentTaskStatus);
+		else url.searchParams.delete('task_status');
+		replaceState(resolve(url.pathname + url.search));
 	}
 
 	async function fetchTasks({ limit, offset }) {
@@ -333,13 +356,33 @@
 		/>
 	</div>
 {:else}
-	<DataTable
-		columns={batchColumns}
-		fetch={fetchBatches}
-		onRowClick={viewBatch}
-		title="Batches"
-		keyField="batch_id"
-		refreshKey={batchRefreshKey}
-		urlSync="batches"
-	/>
+	<div class="space-y-4">
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<h2 class="text-2xl font-semibold text-parchment-200">Batches</h2>
+			<label for="batch-task-status" class="flex items-center gap-2 text-sm text-parchment-400">
+				Task state
+				<select
+					id="batch-task-status"
+					name="batch-task-status"
+					value={currentTaskStatus}
+					onchange={changeTaskStatus}
+					class="rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					<option value="">All</option>
+					{#each TASK_STATES as state (state.value)}
+						<option value={state.value}>{state.label}</option>
+					{/each}
+				</select>
+			</label>
+		</div>
+
+		<DataTable
+			columns={batchColumns}
+			fetch={fetchBatches}
+			onRowClick={viewBatch}
+			keyField="batch_id"
+			refreshKey={batchRefreshKey}
+			urlSync="batches"
+		/>
+	</div>
 {/if}

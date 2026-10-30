@@ -328,9 +328,11 @@ test-cgo-db:
 		./internal/ops/cli/ \
 		./internal/ops/container/ \
 		./internal/ops/consume/ \
+		./internal/ops/dispatch/ \
 		./internal/ops/queue/ \
 		./internal/enrichment/ \
 		./internal/matcher/ \
+		./internal/service/ \
 		./internal/tags/ \
 		./internal/tags/admission/ \
 		./internal/tags/curation/ \
@@ -364,6 +366,7 @@ test-cgo:
 	CGO_ENABLED=1 go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/cgo/ \
 		./internal/documents/ocr/ \
+		./internal/documents/textextractor/ \
 		./internal/llm/analyzer/ \
 		./internal/matcher/ \
 		./internal/tools/ \
