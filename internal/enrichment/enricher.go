@@ -886,12 +886,19 @@ func pruneRejectedParts(parts []string, outputs map[string]string, rejected map[
 // needed; the compound is appended to the emitted tags under its stored name. The registration carries no
 // admission decision, so with the quality gate on the compound is born provisional and the reconcile
 // provisional sweep judges it — the sweep, not a second in-run gate call, is the single owner of a
-// provisional tag's rubric.
+// provisional tag's rubric. A compound the plan already aliases onto another name is skipped whole: the
+// alias action moves its documents to the winner, and a fresh registration would resolve onto the row that
+// action deletes.
 func (e *Enricher) applyPartialKeep(plan *tags.Plan, analysis *tools.ContentAnalysisResult, candidate string) {
 	if slices.Contains(analysis.Tags, candidate) {
 		return
 	}
 	name := tags.StoredName(candidate)
+	if slices.ContainsFunc(plan.Aliases, func(a tags.AliasAction) bool {
+		return a.AliasName == name
+	}) {
+		return
+	}
 	plan.Registrations = append(plan.Registrations, tags.Registration{
 		Input:       candidate,
 		Name:        name,

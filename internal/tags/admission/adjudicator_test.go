@@ -2224,6 +2224,62 @@ func TestPlanIdentity_OrthographicVariantResolvesWithoutJudge(t *testing.T) {
 	adjAssertEqual(t, len(plan.Evidence), 0, "a decided pair mints no pending evidence")
 }
 
+// TestPlanIdentity_StoreLoserRegistersAsPairAlias pins the loser-first registration order: a candidate
+// that self-resolves against the store but loses a decided same-intent pair must register as an alias onto
+// the winner, never as an apply onto its own row, because the plan's alias action deletes that row in the
+// same transaction. The ranked band is what pairs the compound with the store name here, mirroring the
+// emission path where the matcher's candidates never cross the suggestion bar.
+func TestPlanIdentity_StoreLoserRegistersAsPairAlias(t *testing.T) {
+	a, _, adj := newTestAdjudicator(t)
+	adj.adjudicateFn = func(_ context.Context, _ []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+		return []analyzer.TagVerdictResult{{
+			Index:     0,
+			Verdict:   types.TagVerdicts.Same,
+			Direction: analyzer.TagDirectionQuery,
+		}}, nil
+	}
+
+	outs, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"military organization", "military"},
+		Ranked:  []matcher.RankResult{{Candidates: []matcher.Candidate{{Tag: "military", Similarity: 0.9}}}},
+		DBNames: map[string]struct{}{"military": {}},
+	}, "")
+
+	var loser *tags.Registration
+	for i := range plan.Registrations {
+		if plan.Registrations[i].Input == "military" {
+			loser = &plan.Registrations[i]
+			break
+		}
+	}
+	if loser == nil {
+		t.Fatalf("no registration for the pair loser: %+v", plan.Registrations)
+	}
+	adjAssertEqual(t, loser.Disposition, tags.DispositionAlias, "the pair loser aliases onto the winner")
+	adjAssertEqual(t, loser.Resolved, "military organization", "the loser resolves onto the pair winner")
+	adjAssertEqual(t, loser.Name, "", "an alias registration carries no own name")
+
+	if len(plan.Aliases) != 1 {
+		t.Fatalf("aliases = %+v, want one action", plan.Aliases)
+	}
+	adjAssertEqual(t, plan.Aliases[0].AliasName, "military", "the store row is the loser")
+	adjAssertEqual(t, plan.Aliases[0].Canonical, "military organization", "the winner is the canonical")
+	adjAssertEqual(t, plan.Aliases[0].RemoveExistingTag, true, "a store name that becomes an alias leaves its row")
+
+	winnerSeen := false
+	for _, out := range outs {
+		if out == "military" {
+			t.Errorf("outputs = %v, want no standalone loser name", outs)
+		}
+		if out == "military organization" {
+			winnerSeen = true
+		}
+	}
+	if !winnerSeen {
+		t.Errorf("outputs = %v, want the pair winner", outs)
+	}
+}
+
 // TestDecomposeTags_TimeDesignationPartDropped pins the derived-parts time gate: an unseeded month is pruned
 // from the fan, so the parts pass never judges the time question and the kept compound applies only the
 // surviving segment alongside — while a month the store already holds is exempt and reaches the parts pass.

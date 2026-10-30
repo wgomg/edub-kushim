@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
+	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -436,4 +437,48 @@ func TestPruneRejectedParts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApplyPartialKeep pins the keep-row re-registration rule: a kept compound whose stored name the
+// plan already aliases onto another tag is skipped whole — it must not re-register, because that
+// registration would resolve onto the row the alias action deletes in the same transaction — while a
+// compound outside the plan's alias actions registers and joins the emitted tags.
+func TestApplyPartialKeep(t *testing.T) {
+	e := &Enricher{}
+
+	t.Run("a compound covered by a plan alias is not re-registered", func(t *testing.T) {
+		plan := &tags.Plan{
+			Aliases: []tags.AliasAction{{AliasName: "military organization", Canonical: "military"}},
+		}
+		analysis := &tools.ContentAnalysisResult{}
+
+		e.applyPartialKeep(plan, analysis, "military organization")
+
+		if len(plan.Registrations) != 0 {
+			t.Errorf("registrations = %+v, want none for a compound the plan aliases", plan.Registrations)
+		}
+		if len(analysis.Tags) != 0 {
+			t.Errorf("emitted tags = %v, want none for a compound the plan aliases", analysis.Tags)
+		}
+	})
+
+	t.Run("a compound outside the plan aliases registers and joins the emitted tags", func(t *testing.T) {
+		plan := &tags.Plan{
+			Aliases: []tags.AliasAction{{AliasName: "unrelated alias", Canonical: "unrelated"}},
+		}
+		analysis := &tools.ContentAnalysisResult{}
+
+		e.applyPartialKeep(plan, analysis, "civil war")
+
+		if len(plan.Registrations) != 1 {
+			t.Fatalf("registrations = %+v, want the compound registered", plan.Registrations)
+		}
+		reg := plan.Registrations[0]
+		if reg.Input != "civil war" || reg.Name != "civil war" || reg.Disposition != tags.DispositionRegister {
+			t.Errorf("registration = %+v, want input and name civil war under a register disposition", reg)
+		}
+		if want := []string{"civil war"}; !slices.Equal(analysis.Tags, want) {
+			t.Errorf("emitted tags = %v, want %v", analysis.Tags, want)
+		}
+	})
 }

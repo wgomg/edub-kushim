@@ -82,9 +82,9 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			cand.resolved = canonical
 			continue
 		}
-		// any key hit resolves, equality included: a store-exact emission
-		// is an application onto its own row, never a fold or shape
-		// candidate, and mints no identity evidence
+		// any key hit resolves, equality included: a store-exact emission resolves onto its own row, never a
+		// fold or shape candidate, mints no identity evidence; the registration rule decides apply or alias
+		// for the resolved name, so a pair loser aliases instead of applying onto its own row
 		if existing, ok := byKey[tags.Key(cand.name)]; ok {
 			cand.resolved = existing
 		}
@@ -326,14 +326,17 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 	var outputs []string
 	for i, cand := range candidates {
 		reg := tags.Registration{Input: cand.input, Disposition: tags.DispositionRegister}
+		// a name that lost a decided same-intent pair registers as an alias onto the pair's winner even when
+		// it also self-resolves against the store, because the registration must never resolve onto the row
+		// the plan's alias action is about to delete in the same transaction
 		switch {
+		case winnerByLoser[cand.name] != "":
+			reg.Disposition = tags.DispositionAlias
+			reg.Resolved = finalWinner(cand.name)
 		case cand.resolved != "":
 			reg.Disposition = tags.DispositionApply
 			reg.Name = cand.name
 			reg.Resolved = cand.resolved
-		case winnerByLoser[cand.name] != "":
-			reg.Disposition = tags.DispositionAlias
-			reg.Resolved = finalWinner(cand.name)
 		default:
 			reg.Name = cand.name
 			reg.Fold = cand.fold
