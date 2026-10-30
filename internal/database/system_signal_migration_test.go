@@ -180,3 +180,71 @@ func TestMigrationStoreChangeRecordNarrowsToThreeFlags(t *testing.T) {
 		t.Error("the narrowed trigger re-seeded tag_identity_changed")
 	}
 }
+
+// TestMigrationSystemSignalDropsSurrogateID pins migration 00058 at head: the surrogate id and its
+// smallint-capped identity sequence are gone — the sequence the store-change trigger's upsert burned
+// three values per vocabulary mutation until it hit 32767 and every tag write failed with SQLSTATE
+// 2200H — while the trigger keeps arming the three flags through the name-keyed upsert alone.
+func TestMigrationSystemSignalDropsSurrogateID(t *testing.T) {
+	ctx := context.Background()
+	base := TestDSN(t)
+	name := "edub_test_" + testPackageDir() + "_signal_drop_id"
+	release := acquireTestDB(base, name)
+	defer release()
+
+	db, err := NewPostgresDB(replaceDBName(base, name), DefaultMaxOpenConns)
+	if err != nil {
+		t.Fatalf("open a fresh schema database: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close schema database: %v", err)
+		}
+	}()
+
+	goose.SetBaseFS(SchemaFS)
+	goose.SetDialect("postgres")
+	if err := goose.Up(db, "sql/schema/migrations"); err != nil {
+		t.Fatalf("apply migrations to head: %v", err)
+	}
+
+	var idColumns int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'system_signal' AND column_name = 'id'`).Scan(&idColumns); err != nil {
+		t.Fatalf("check the system_signal id column: %v", err)
+	}
+	if idColumns != 0 {
+		t.Errorf("system_signal id columns = %d, want 0: 00058 drops the surrogate id", idColumns)
+	}
+
+	var sequences int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM pg_sequences
+		WHERE schemaname = 'public' AND sequencename LIKE 'system_signal%'`).Scan(&sequences); err != nil {
+		t.Fatalf("check for a surviving system_signal sequence: %v", err)
+	}
+	if sequences != 0 {
+		t.Errorf("system_signal sequences = %d, want 0: the capped identity sequence goes with the column", sequences)
+	}
+
+	flags := []string{"tag_measure_changed", "tag_reconcile_changed", "tag_audit_changed"}
+	for _, flag := range flags {
+		if _, err := db.ExecContext(ctx, "UPDATE system_signal SET value = 'false' WHERE name = $1", flag); err != nil {
+			t.Fatalf("clear flag %s: %v", flag, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO tag (name) VALUES ($1)", "post 00058 probe"); err != nil {
+		t.Fatalf("insert a tag under the trigger: %v", err)
+	}
+	for _, flag := range flags {
+		var value string
+		if err := db.QueryRowContext(ctx, "SELECT value FROM system_signal WHERE name = $1", flag).Scan(&value); err != nil {
+			t.Fatalf("read flag %s: %v", flag, err)
+		}
+		if value != "true" {
+			t.Errorf("flag %s = %q after the mutation, want \"true\": the trigger must arm flags without the id column",
+				flag, value)
+		}
+	}
+}
