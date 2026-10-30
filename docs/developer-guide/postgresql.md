@@ -79,14 +79,15 @@ this schema: **database-invented IDs are identity, externally-invented IDs
 are TEXT PKs.**
 
 Shared singleton state — the maintenance lock, the tag-audit sweep counter, and
-the three tag store-changed flags — lives in the `system_signal` table
-(`00041_system_signal.sql`, extended by `00044_tag_store_change_record.sql` and
-narrowed by `00045_drop_tag_identity_changed.sql`) —
-the **signal store** pattern: one row per signal keyed by a unique `name`,
-carrying its value as text plus an optional JSONB `data` object for structured
-fields. Adding a signal is a seed row and its queries, not a new table; the
-lock's use as a gate is covered in §11, and the flags' trigger-owned setting is
-covered in §11's closing note.
+the three tag store-changed flags — lives in the `system_signal` table, the
+**signal store**: one row per signal keyed by a unique `name`, carrying its
+value as text plus an optional JSONB `data` object for structured fields. The
+table has no surrogate id and no sequence: every insert attempt consumes a
+sequence value before the conflict check, and these rows are upserted by
+per-mutation triggers, so an identity column there would count tag mutations,
+not rows — the unique `name` is the only key. Adding a signal is a seed row and
+its queries, not a new table; the lock's use as a gate is covered in §11, and
+the flags' trigger-owned setting is covered in §11's closing note.
 
 ---
 

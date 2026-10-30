@@ -541,6 +541,12 @@ declaration the settle transaction consumes in its terminal write — and the
 `trigger` value to the `batch_origin` enum (Down drops only the column; a
 PostgreSQL enum label cannot be dropped, so the label is left behind and the
 Up's `ADD VALUE IF NOT EXISTS` keeps the migration re-appliable).
+`00058_system_signal_drop_id.sql` drops the `system_signal.id` column — the
+store-change trigger's per-mutation upsert consumes a sequence value for every
+proposed flag row, so a surrogate id here counts tag mutations with a 32767
+smallint ceiling rather than the handful of rows the table ever holds — leaving
+the `name` unique key as the only identifier (Down re-adds the column as an
+identity PK).
 Goose tracks
 which versions have been applied in the `goose_db_version` table.
 
