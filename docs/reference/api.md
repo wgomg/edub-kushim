@@ -604,9 +604,4 @@ mux.Handle("POST /wizard/config/retry", RequireRole(admin...)(configHandler.Retr
 
 ## See Also
 
-- [Search](search.md) — Search engine architecture and structured search
-- [Task System](task-system.md) — Enqueuer and task lifecycle used by the consume handler
-- [Pipeline](pipeline.md) — Consumption and enrichment engines triggered via API
-- [Database](database.md) — Document and task queries used by handlers
-- [Frontend](frontend.md) — SvelteKit SPA that consumes these API endpoints
-- [Config & Utils](config-and-utils.md) — Config setup functions and response types
+- [Frontend](../frontend.md) — SvelteKit SPA that consumes these API endpoints

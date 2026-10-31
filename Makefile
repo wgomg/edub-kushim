@@ -403,3 +403,10 @@ test-cgo-musl:
 		-e CGO_ENABLED=1 \
 		kushim-musl-builder \
 		make test-cgo
+
+# ── Documentation ─────────────────────────────────────────────────────
+# docs-tree regenerates docs/project-tree.md from the tracked directory set;
+# the curated one-line descriptions live in the generator script itself.
+.PHONY: docs-tree
+docs-tree:
+	./scripts/generate-project-tree.sh

@@ -42,7 +42,7 @@ sudo mv kushim_linux_amd64 /usr/local/bin/kushim
 sudo mv edub_linux_amd64 /usr/local/bin/edub
 ```
 
-Use the `_arm64` tarballs on ARM64 hosts. Binaries are built on Ubuntu 24.04 runners against glibc — for other environments, build from source (see `docs/reference/frontend.md`).
+Use the `_arm64` tarballs on ARM64 hosts. Binaries are built on Ubuntu 24.04 runners against glibc — for other environments, build from source (see `docs/frontend.md`).
 
 ### Manual
 

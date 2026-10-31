@@ -179,7 +179,7 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 | ---------------------------------------- | --------------------------------------------- |
 | Understand the design and pipeline       | [Architecture](docs/architecture.md)          |
 | See what's done and what's next          | [Roadmap](docs/roadmap.md)                    |
-| Find a specific package or function      | [Code Reference](docs/reference/overview.md)  |
+| Find a package or its files              | [Project Tree](docs/project-tree.md)          |
 | Full CLI reference and API docs          | [User Manual](docs/user-manual.md)            |
 | Learn how the codebase uses a language or subsystem | [Developer Guides](#developer-guides)  |
 
@@ -345,4 +345,4 @@ Building from source requires compiling four static libraries from source (autom
 - **libtokenizers** (for Hugot Go backend)
 - **ONNX Runtime** — auto-downloaded at runtime when using the ORT backend (default)
 
-See the [overview reference](docs/reference/overview.md) for the full dependency chain.
+See the `build-deps` targets in the [Makefile](Makefile) for the exact versions and pins.

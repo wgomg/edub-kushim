@@ -663,12 +663,8 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 ## See Also
 
 - [Roadmap](roadmap.md) — Implementation status and priority queue
-- [Database Reference](reference/database.md) — Data models, schema, tsvector column, indexes
-- [Tools Reference](reference/tools.md) — Adapter interfaces for enrichment pipeline
-- [Pipeline Reference](reference/pipeline.md) — Consumption and enrichment engine details
-- [Task System Reference](reference/task-system.md) — Enqueue and pool internals
-- [Search Reference](reference/search.md) — Search engine, structured search, autocomplete, query syntax
-- [Testing Reference](reference/tests.md) — Test infrastructure, patterns, and how to run
+- [Testing Reference](tests.md) — Test infrastructure, patterns, and how to run
+- [Project Tree](project-tree.md) — Generated directory map
 
 ## Key Design Decisions
 

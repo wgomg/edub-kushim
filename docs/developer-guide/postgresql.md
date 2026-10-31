@@ -9,7 +9,7 @@ It complements the other docs:
 
 | Document | What it answers |
 |---|---|
-| `docs/reference/database.md` | The schema and query inventory |
+| `internal/database/sql/schema/migrations/` | The schema itself — goose migrations are the source of truth |
 | `golang.md` | The Go side (including the sqlc layer) |
 | `frontend.md` | The SvelteKit side |
 | `task-system.md` | How the schema powers task claims, leases, and dedup |

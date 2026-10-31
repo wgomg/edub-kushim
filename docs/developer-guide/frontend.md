@@ -10,7 +10,7 @@ It complements the other docs:
 
 | Document | What it answers |
 |---|---|
-| `docs/reference/frontend.md` | Per-page/per-file inventory of both SPAs, build targets |
+| `docs/frontend.md` | Route and key-file map of both SPAs, SPA build targets |
 | `golang.md` | The Go side of this repository |
 | `postgresql.md` | The PostgreSQL features behind the schema and queries |
 | `semantic-matching.md`, `algorithms.md`, `cgo.md`, `ocr-pipeline.md`, `task-system.md`, `llm.md` | Topic deep dives (embeddings, TextRank, C wrappers, OCR, task semantics, LLM integration) |
@@ -885,7 +885,7 @@ quotes, no trailing commas, 100 cols, with the svelte and tailwind plugins
 
 Vitest + `@testing-library/svelte` + Playwright, wired through the Makefile
 (`make test-web`, `make test-web-e2e`). Full details in
-[docs/reference/tests.md](../reference/tests.md).
+[docs/tests.md](../tests.md).
 
 - **Two vitest projects** in `web/vite.config.js` (`test.projects`, both
   `extends: true` so they inherit the `sveltekit()` plugin — which resolves

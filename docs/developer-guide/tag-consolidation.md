@@ -348,7 +348,7 @@ The table is deliberately a shared schema object, not a KV cache:
 `TagPairEvidenceStats` aggregates per-pair population overlap and verdict
 counts across both orientations and all policy versions (the reconciler's drift
 scan reads it), and the reconciler's worklist
-scans (§8) all query it. Query reference: [database reference](../reference/database.md).
+scans (§8) all query it. Query reference: the sqlc sources under `internal/database/sql/queries/`.
 
 Migration `00029_tag_identity.sql` adds the two identity objects:
 

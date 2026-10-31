@@ -236,4 +236,4 @@ process; the rest of the system keeps running. Adjust the values to your
 
 - [User Manual](../user-manual.md) — CLI/API reference, full config reference
 - [Architecture](../architecture.md) — matcher server design and process model
-- [Code Reference: tools](../reference/tools.md) — `internal/matcher/hugot.go` internals
+- [Semantic Matching Guide](../developer-guide/semantic-matching.md) — the matcher engine and `internal/matcher/hugot.go` internals

@@ -11,7 +11,7 @@ It complements the other docs:
 |---|---|
 | `architecture.md` | How the system is designed (pipeline, processes, database model) |
 | `user-manual.md` | CLI + API usage |
-| `docs/reference/*` | Per-package code references (database, search, pipeline, task system, tools, tests) |
+| `docs/project-tree.md` | Generated directory map of the whole repository (`make docs-tree`) |
 | `frontend.md` | The SvelteKit/Svelte 5 side of this repository |
 | `postgresql.md` | The PostgreSQL features behind the schema and queries |
 | `semantic-matching.md`, `algorithms.md`, `cgo.md`, `ocr-pipeline.md`, `task-system.md`, `llm.md` | Topic deep dives (embeddings, TextRank, C wrappers, OCR, task semantics, LLM integration) |

@@ -3,9 +3,7 @@
 This guide explains how edub-kushim processes work in the background: the
 task lifecycle, the optimistic claim mechanism, batch ownership with
 heartbeats, the queue daemon, deduplication, reclamation after crashes, and
-the backup gate. It is the *conceptual* companion to
-`docs/reference/task-system.md` (the file inventory): it answers "why can't a
-task be lost or run twice?"
+the backup gate. It answers "why can't a task be lost or run twice?"
 
 Audience: developers touching `internal/task/`, `internal/ops/queue/queue.go`,
 `internal/ops/consume/consume.go`, or the task/batch queries.

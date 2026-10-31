@@ -3,8 +3,10 @@
 Deeper context lives in `docs/`:
 
 - `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status),
-  `user-manual.md` (CLI + API reference), `tags/` (tag subsystem design — entry point:
-  `tags/overview.md`), `research/` (design notes)
+  `user-manual.md` (CLI + API reference), `project-tree.md` (generated directory map — regenerate
+  with `make docs-tree`), `frontend.md` (route and key-file map of both SPAs), `tests.md` (testing
+  reference), `tags/` (tag subsystem design — entry point: `tags/overview.md`), `research/`
+  (design notes), `reference/` (only the API handler inventory remains)
 - Developer guides (language/feature onboarding, in `docs/developer-guide/`):
   - `golang.md` — Go language features as used in this codebase
   - `frontend.md` — SvelteKit/Svelte 5 features as used in `web/` and `web-wizard/`
@@ -15,7 +17,6 @@ Deeper context lives in `docs/`:
   - `ocr-pipeline.md` — OCR engines, searchable-PDF generation
   - `task-system.md` — task lifecycle, batch ownership, queue semantics
   - `llm.md` — LLM integration, prompts, model catalog, the enricher
-- `reference/` (per-package code references — database, search, pipeline, task-system, tools, tests)
 
 ## Build
 
@@ -116,7 +117,7 @@ make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-de
 - CI (`test-cgo` job) builds C deps (cached under `build/`, key includes `hashFiles('Makefile')`)
   and runs `make test-cgo` + `make test-cgo-db` against a `postgres:17` service, with
   `TEST_DATABASE_CONTAINER=postgres`.
-- Full testing reference: `docs/reference/tests.md`.
+- Full testing reference: `docs/tests.md`.
 
 ## Web UI (SvelteKit)
 
