@@ -5,9 +5,7 @@ Research note. Goal: beyond the page-chunking of `tsvector`
 "collection of subunits per parent entity" problem — that could squeeze further retrieval
 performance, with measured gains, effort, and risk for this app. Search and text retrieval
 are first-class features here, so ranking, snippeting, counting, and combined
-text+metadata queries all count against the clock. Roadmap item 407
-(single-store benchmark at 10k–100k+ documents) is the natural home for the numbers this
-note asks for.
+text+metadata queries all count against the clock.
 
 ## Context — measured baseline (live instance, ~42k documents, 2026-09-02)
 
@@ -171,11 +169,7 @@ search, vector…" (verified from the repo README, 2026). Caveats, each potentia
 disqualifying for this project's posture: distributed via a **custom PostgreSQL image**
 (no stock `postgres:17`/`podman run` install path — collides with the deployment model that
 AGENTS.md describes); **AGPL-3.0**; BM25 replaces `ts_rank` ordering (re-tune ranking UX);
-extension adds backup/restore surface (pg_search indexes inside `pg_dump` flows). Verdict:
-**the designated challenger inside roadmap item 407**, benchmarked in a fork exactly so the
-zero-dependency choice stays measured, not doctrinal — at our measured baseline (sub-second
-broad queries pre-chunking), chunked S1/S2 has every chance of being "fast enough", and
-nothing earlier in this note beats that operational story.
+extension adds backup/restore surface (pg_search indexes inside `pg_dump` flows).
 
 ## Ideas checked and killed (completeness)
 
@@ -201,8 +195,6 @@ nothing earlier in this note beats that operational story.
 4. **S3 two-level:** build only if benchmarking S1+S2 shows broad 1–2-term queries still
    dominated by page-row dedup/candidate volume (i.e., residual ≈ #matched_pages > ~10⁵);
    decide with the same rig as 407.
-5. **S7 pg_search:** time-boxed trial in the roadmap-407 fork — the honest way to keep
-   "Postgres-only" as a measured decision rather than an assumption.
 
 Measurement harness to settle all of the above (extend the 42k script): per-scenario
 `EXPLAIN (ANALYZE, BUFFERS)`; `pg_stat_statements` percentiles per query class

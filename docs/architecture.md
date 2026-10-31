@@ -6,15 +6,13 @@
 - **Tool Agnostic**: Adapter pattern; OCR, text extraction, PDF optimization, content analysis,
   and text reduction are all switchable between built‑in adapters and external tools/providers.
   Semantic tag matching uses the same adapter interface with a single concrete
-  implementation (Hugot) — pluggable tag matcher adapters are on the roadmap.
+  implementation (Hugot) — pluggable tag matcher adapters may be featured in the future.
 - **PostgreSQL Target**: SQL and generated Go code target PostgreSQL. SQL files use `$1, $2` placeholders and PostgreSQL DDL (`GENERATED ALWAYS AS IDENTITY`, `JSONB`, `TIMESTAMPTZ`). sqlc engine is `postgresql`. The `kushim setup` wizard, `Bootstrap`, and `NewTestDB` all use `NewPostgresDB`.
 - **Fallback Processing**: Text extraction → OCR → text extraction pattern
 - **Date-based Organization**: Temporal storage structure for scalability
 - **Transaction Safety**: Coordinated database and file operations with rollback
 - **Process Isolation**: The Hugot embedding model runs as a **separate process** (`kushim hugot`), communicating over a Unix domain socket. The API server (`edub`) is pure Go (`CGO_ENABLED=0`) — it enqueues tasks and the `kushim queue` daemon forks workers for document processing; `edub` communicates with the matcher via RPC.
 - **Two Binaries**: **kushim** (CLI document processing + matcher server) and **edub** (REST API server). Static C dependencies (Tesseract, Leptonica, MuPDF) linked only into **kushim**; **edub** is compiled with `CGO_ENABLED=0`.
-
-See [Roadmap](roadmap.md) for the implementation status and upcoming priorities.
 
 ---
 
@@ -662,7 +660,6 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 
 ## See Also
 
-- [Roadmap](roadmap.md) — Implementation status and priority queue
 - [Testing Reference](tests.md) — Test infrastructure, patterns, and how to run
 - [Project Tree](project-tree.md) — Generated directory map
 

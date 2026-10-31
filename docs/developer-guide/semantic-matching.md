@@ -393,5 +393,6 @@ rebuildable data (the migration recreates the empty table and the daemon repopul
 
 - [Consolidation](consolidation.md) — identity decisions over the matcher's candidates
 - [Tag specs](../specs/tags/overview.md) — the normative definition and pipeline
-- [User manual](../user-manual.md) — CLI/API reference, full config reference
+- [CLI](../manual/cli.md) / [API](../manual/api.md) usage and the
+  [configuration reference](../manual/configuration.md)
 - [Architecture](../architecture.md) — matcher server design and process model

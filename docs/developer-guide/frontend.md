@@ -14,7 +14,7 @@ It complements the other docs:
 | `golang.md` | The Go side of this repository |
 | `postgresql.md` | The PostgreSQL features behind the schema and queries |
 | `semantic-matching.md`, `algorithms.md`, `cgo.md`, `ocr-pipeline.md`, `task-system.md`, `llm.md` | Topic deep dives (embeddings, TextRank, C wrappers, OCR, task semantics, LLM integration) |
-| `user-manual.md` | How the product behaves for end users |
+| `manual/web-ui.md` | How the product behaves for end users |
 | **`frontend.md` (this)** | *How Svelte/SvelteKit are used here* |
 
 Everything here describes code that exists today. If a snippet looks wrong,

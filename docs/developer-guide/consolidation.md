@@ -549,5 +549,7 @@ quality band constants are internals; see the
   mechanism specs these mechanics enforce
 - [Semantic matching](semantic-matching.md) — the matcher daemon, embedding store, and
   thresholds
-- [User manual](../user-manual.md) — tag API, full config reference, task types
+- [API guide](../manual/api.md) — tag review workflows;
+  [configuration reference](../manual/configuration.md); [CLI reference](../manual/cli.md)
+  — task types
 - [Architecture](../architecture.md) — pipeline placement and process model

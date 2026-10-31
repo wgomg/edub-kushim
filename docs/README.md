@@ -9,19 +9,20 @@ point-in-time analysis that is never treated as current truth.
 
 | Reading for | Start at |
 |---|---|
-| Using the application (CLI, API, configuration) | [user-manual.md](user-manual.md) |
+| Using the application (CLI, API, Web UI, configuration) | [manual/](manual/README.md) |
 | Understanding the system's design | [architecture.md](architecture.md) |
 | Working on the code (one subsystem at a time) | [developer-guide/](developer-guide/) |
 | What a domain object must be (normative rules) | [specs/tags/overview.md](specs/tags/overview.md) |
 | Why a design decision was made / must not be undone | [adr/README.md](adr/README.md) |
-| What is done and what is next | [roadmap.md](roadmap.md) |
 
 ## The areas
 
 ### User docs
 
-- [user-manual.md](user-manual.md) — how to install, configure, and operate edub-kushim
-  (CLI + API reference).
+`manual/` — how to install, configure, and operate edub-kushim. Entry point:
+[manual/README.md](manual/README.md); topic documents: [cli.md](manual/cli.md),
+[api.md](manual/api.md), [web-ui.md](manual/web-ui.md),
+[configuration.md](manual/configuration.md).
 
 ### Developer guide
 
@@ -50,7 +51,6 @@ never current truth.
 ### Root docs
 
 - [architecture.md](architecture.md) — design and pipeline overview.
-- [roadmap.md](roadmap.md) — implementation status and backlog.
 - [frontend.md](frontend.md) — SPA route and key-file map.
 - [tests.md](tests.md) — testing reference.
 

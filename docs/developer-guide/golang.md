@@ -10,7 +10,7 @@ It complements the other docs:
 | Document | What it answers |
 |---|---|
 | `architecture.md` | How the system is designed (pipeline, processes, database model) |
-| `user-manual.md` | CLI + API usage |
+| `manual/cli.md`, `manual/api.md` | CLI + API usage |
 | `docs/project-tree.md` | Generated directory map of the whole repository (`make docs-tree`) |
 | `frontend.md` | The SvelteKit/Svelte 5 side of this repository |
 | `postgresql.md` | The PostgreSQL features behind the schema and queries |

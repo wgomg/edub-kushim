@@ -86,7 +86,7 @@ podman run -d \
 The `kushim setup` wizard and `edub` server expect these defaults (matching [config.example.yaml](config.example.yaml)):
 
 | Field    | Default value |
-|----------|---------------|
+| -------- | ------------- |
 | Host     | `localhost`   |
 | Port     | `5432`        |
 | User     | `edub`        |
@@ -98,7 +98,7 @@ The setup wizard auto-creates the database if it doesn't exist, so no manual `CR
 
 ```yaml
 database:
-  dsn: "postgres://user:password@host:5432/dbname?sslmode=disable"
+  dsn: 'postgres://user:password@host:5432/dbname?sslmode=disable'
 ```
 
 ### Manual (for development)
@@ -167,12 +167,12 @@ Documents are searchable immediately via PostgreSQL full-text search (tsvector) 
 
 The system runs four cooperating processes:
 
-| Process | Binary | CGo | Role |
-|---------|--------|-----|------|
-| `edub` | edub | No | REST API server, web UI, enqueues tasks |
-| `kushim queue` | kushim | Yes | Queue daemon — consumes queued batches (Postgres LISTEN/NOTIFY + 30s safety timer), forks workers |
-| `kushim consume` (forked) | kushim | Yes | Document processing: extract → OCR → optimize → store |
-| `kushim hugot` | kushim | Yes | Matcher RPC server over Unix socket (Hugot embeddings) |
+| Process                   | Binary | CGo | Role                                                                                              |
+| ------------------------- | ------ | --- | ------------------------------------------------------------------------------------------------- |
+| `edub`                    | edub   | No  | REST API server, web UI, enqueues tasks                                                           |
+| `kushim queue`            | kushim | Yes | Queue daemon — consumes queued batches (Postgres LISTEN/NOTIFY + 30s safety timer), forks workers |
+| `kushim consume` (forked) | kushim | Yes | Document processing: extract → OCR → optimize → store                                             |
+| `kushim hugot`            | kushim | Yes | Matcher RPC server over Unix socket (Hugot embeddings)                                            |
 
 `edub` is pure Go with no C dependencies; every CGo-heavy operation (OCR, PDF manipulation, embeddings) runs in `kushim` subprocesses so a crash in a C library affects only the child, and the matcher is reached over a Unix domain socket. Details: [architecture](docs/architecture.md).
 
@@ -180,33 +180,33 @@ The system runs four cooperating processes:
 
 ## Documentation
 
-| If you want to...                        | Start here                                    |
-| ---------------------------------------- | --------------------------------------------- |
-| Understand the design and pipeline       | [Architecture](docs/architecture.md)          |
-| See what's done and what's next          | [Roadmap](docs/roadmap.md)                    |
-| Find a package or its files              | [Project Tree](docs/project-tree.md)          |
-| Full CLI reference and API docs          | [User Manual](docs/user-manual.md)            |
-| Look up an API endpoint                  | [API Reference](docs/api.md)                  |
-| Understand what a tag is (normative rules) | [Tag specifications](docs/specs/tags/overview.md) |
-| See why a design decision was made       | [Decision records](docs/adr/README.md)        |
-| Learn how the codebase uses a language or subsystem | [Developer Guides](#developer-guides)  |
+| If you want to...                                   | Start here                                        |
+| --------------------------------------------------- | ------------------------------------------------- |
+| Understand the design and pipeline                  | [Architecture](docs/architecture.md)              |
+| Find a package or its files                         | [Project Tree](docs/project-tree.md)              |
+| Full CLI reference                                  | [CLI reference](docs/manual/cli.md)               |
+| API usage: auth, workflows, examples                | [API guide](docs/manual/api.md)                   |
+| Look up an API endpoint                             | [API Reference](docs/api.md)                      |
+| Understand what a tag is (normative rules)          | [Tag specifications](docs/specs/tags/overview.md) |
+| See why a design decision was made                  | [Decision records](docs/adr/README.md)            |
+| Learn how the codebase uses a language or subsystem | [Developer Guides](#developer-guides)             |
 
 ### Developer Guides
 
 New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guide/) explain how each language or subsystem is used here — idioms, conventions, and design decisions, with real, line-referenced examples from the source.
 
-| Guide | What it covers |
-|---|---|
-| [golang.md](docs/developer-guide/golang.md) | How the codebase uses Go — idioms, patterns, and conventions |
-| [frontend.md](docs/developer-guide/frontend.md) | SvelteKit/Svelte 5 (runes) as used in `web/` and `web-wizard/` |
-| [postgresql.md](docs/developer-guide/postgresql.md) | PostgreSQL features as used in the schema and queries |
-| [semantic-matching.md](docs/developer-guide/semantic-matching.md) | Hugot embeddings, tag matching, matcher configuration/sizing, the matcher daemon |
-| [consolidation.md](docs/developer-guide/consolidation.md) | Tag identity, LLM adjudication, quality gate, promotion, scheduled reconciliation |
-| [algorithms.md](docs/developer-guide/algorithms.md) | TextRank summarization, text normalization, token estimation |
-| [cgo.md](docs/developer-guide/cgo.md) | cgo and the C wrapper layer (MuPDF, Tesseract) |
-| [ocr-pipeline.md](docs/developer-guide/ocr-pipeline.md) | OCR engines, searchable-PDF generation |
-| [task-system.md](docs/developer-guide/task-system.md) | Task lifecycle, batch ownership, queue semantics |
-| [llm.md](docs/developer-guide/llm.md) | LLM integration, prompts, model catalog, the enricher |
+| Guide                                                             | What it covers                                                                    |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [golang.md](docs/developer-guide/golang.md)                       | How the codebase uses Go — idioms, patterns, and conventions                      |
+| [frontend.md](docs/developer-guide/frontend.md)                   | SvelteKit/Svelte 5 (runes) as used in `web/` and `web-wizard/`                    |
+| [postgresql.md](docs/developer-guide/postgresql.md)               | PostgreSQL features as used in the schema and queries                             |
+| [semantic-matching.md](docs/developer-guide/semantic-matching.md) | Hugot embeddings, tag matching, matcher configuration/sizing, the matcher daemon  |
+| [consolidation.md](docs/developer-guide/consolidation.md)         | Tag identity, LLM adjudication, quality gate, promotion, scheduled reconciliation |
+| [algorithms.md](docs/developer-guide/algorithms.md)               | TextRank summarization, text normalization, token estimation                      |
+| [cgo.md](docs/developer-guide/cgo.md)                             | cgo and the C wrapper layer (MuPDF, Tesseract)                                    |
+| [ocr-pipeline.md](docs/developer-guide/ocr-pipeline.md)           | OCR engines, searchable-PDF generation                                            |
+| [task-system.md](docs/developer-guide/task-system.md)             | Task lifecycle, batch ownership, queue semantics                                  |
+| [llm.md](docs/developer-guide/llm.md)                             | LLM integration, prompts, model catalog, the enricher                             |
 
 ## Key Features
 
@@ -217,7 +217,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 - **Full-text and structured search** — PostgreSQL tsvector with ranking and snippet highlighting, combined with metadata filters (tags, people, document type, language, date range, file size)
 - **Reliable background processing** — a Postgres-backed task queue with batch tracking, leases, retries, and live progress ([guide](docs/developer-guide/task-system.md))
 - **Fallback LLM provider** — optional second provider/model tried automatically when the primary fails (network, credits, rate limit, malformed response); disabled by default
-- **Backup & restore** — per-mode scheduled SQL-dump backups (`full`/`database`/`documents`) with retention and mode-aware restore ([user manual](docs/user-manual.md))
+- **Backup & restore** — per-mode scheduled SQL-dump backups (`full`/`database`/`documents`) with retention and mode-aware restore ([CLI reference](docs/manual/cli.md#kushim-backup))
 - **Document mirror** — faithful `rsync -a --delete` copy of the storage tree to a local path or remote target, scheduled or manual
 - **Document lifecycle** — dual storage (originals + processed versions), trash with retention and hourly purge, orphaned and errored file management
 - **User accounts & auth** — bcrypt passwords, JWT sessions, API keys, role-based access (admin/editor/viewer)

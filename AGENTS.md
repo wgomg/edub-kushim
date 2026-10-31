@@ -2,8 +2,9 @@
 
 Deeper context lives in `docs/`:
 
-- `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status),
-  `user-manual.md` (CLI + API reference), `project-tree.md` (generated directory map — regenerate
+- `architecture.md` (design, pipeline, process model),
+  `manual/` (user documentation: entry point, CLI, API usage, Web UI, configuration),
+  `project-tree.md` (generated directory map — regenerate
   with `make docs-tree`), `frontend.md` (route and key-file map of both SPAs), `tests.md` (testing
   reference), `specs/tags/` (tag subsystem specifications — entry point: `specs/tags/overview.md`),
   `adr/` (architecture decision records), `research/` (design notes), `api.md` (generated REST API

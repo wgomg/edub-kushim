@@ -1,7 +1,6 @@
 # Deterministic Fast Path to Skip LLM on Recurring Documents
 
-Research for roadmap item 83 (moved to Icebox). Goal: eliminate the per-document LLM
-call for recurring document types (invoices, statements, forms) by matching new
+Goal: eliminate the per-document LLM call for recurring document types (invoices, statements, forms) by matching new
 documents against already-classified ones and inheriting metadata with an acceptable
 degree of reliability.
 
