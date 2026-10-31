@@ -39,10 +39,10 @@ func DeriveParts(name string) []string {
 	return parts
 }
 
-// DeriveSegments returns the decomposition fan of a name: its content words plus every contiguous bigram over
-// them, in order (singles first, then bigrams). For a two-word compound the fan is {w1, w2, w1 w2}; for three
-// content words {w1, w2, w3, w1w2, w2w3}. Callers fan compound-shaped names only (docs/tags/atomicity.md
-// §3.1).
+// DeriveSegments returns the decomposition fan of a name: its content words plus every contiguous
+// bigram over them, in order (singles first, then bigrams). For a two-word compound the fan is
+// {w1, w2, w1 w2}; for three content words {w1, w2, w3, w1w2, w2w3}. Callers fan compound-shaped
+// names only (docs/specs/tags/atomicity.md §3.1).
 func DeriveSegments(name string) []string {
 	content := DeriveParts(name)
 	segments := make([]string, 0, len(content)*2)
@@ -53,15 +53,15 @@ func DeriveSegments(name string) []string {
 	return segments
 }
 
-// GreedyCover returns the coarsest in-order cover of the content words by spans resolve reports usable,
-// choosing the longest span at each position (a contiguous bigram before a single word) and the leftmost
-// among equals. resolve maps a raw span to its applied name and reports whether it counts as a value; the
-// cover holds the applied names. A span covering the whole sequence is never a cover segment — the whole
-// phrase is not a decomposition of itself, so a two-word compound decomposes into its two words or keeps
-// whole. With alongside false it returns nil when no set of usable spans tiles the whole sequence — the
-// decomposition does not exist and the compound keeps whole. With alongside true it skips words no usable
-// span covers and returns the partial cover, the parts a kept compound applies alongside itself
-// (docs/tags/atomicity.md §3.1).
+// GreedyCover returns the coarsest in-order cover of the content words by spans resolve reports
+// usable, choosing the longest span at each position (a contiguous bigram before a single word) and
+// the leftmost among equals. resolve maps a raw span to its applied name and reports whether it counts
+// as a value; the cover holds the applied names. A span covering the whole sequence is never a cover
+// segment — the whole phrase is not a decomposition of itself, so a two-word compound decomposes into
+// its two words or keeps whole. With alongside false it returns nil when no set of usable spans tiles
+// the whole sequence — the decomposition does not exist and the compound keeps whole. With alongside
+// true it skips words no usable span covers and returns the partial cover, the parts a kept compound
+// applies alongside itself (docs/specs/tags/atomicity.md §3.1).
 func GreedyCover(content []string, resolve func(string) (string, bool), alongside bool) []string {
 	cover := make([]string, 0, len(content))
 	for i := 0; i < len(content); {

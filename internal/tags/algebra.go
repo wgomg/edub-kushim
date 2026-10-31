@@ -2,10 +2,10 @@
 // (document-ID sets, readings and their sufficiency states), the atomicity
 // shape classification, the staged admission decision, the derived review
 // worklists, the measurement sweep, and the snapshot view the sweep reads.
-// The subsystem's contracts are specified in docs/tags (entry point:
-// docs/tags/overview.md); the pinned admission rules live in tags/policy,
-// the LLM machinery in tags/admission, the human operations in
-// tags/curation, and the scheduled maintenance in tags/reconcile.
+// The subsystem's contracts are specified in docs/specs/tags (entry point:
+// docs/specs/tags/overview.md); the pinned admission rules live in tags/policy, the LLM machinery in
+// tags/admission, the human operations in tags/curation, and the scheduled maintenance in
+// tags/reconcile.
 package tags
 
 // Set is a set of document IDs, the unit the evidence algebra measures: a

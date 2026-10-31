@@ -1,9 +1,9 @@
 // Package policy is the pinned layer of the tag admission decision: fixed, versioned rules over the
 // matcher's ranked candidates, with no observations and nothing fitted. Per query it classifies the top
 // candidate as an exact identity match or as an ambiguous-band neighbour and records why; it never takes
-// a name from a similarity result — the identity plan owns the outputs it sets. The staged design (pinned
-// rules as the operational layer, fitted refinement only where evidence accumulates) is documented in
-// docs/tags/consolidation.md.
+// a name from a similarity result — the identity plan owns the outputs it sets. The staged design
+// (pinned rules as the operational layer, fitted refinement only where evidence accumulates) is
+// specified in docs/specs/tags/definition.md §6.5.
 package policy
 
 import (

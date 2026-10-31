@@ -429,7 +429,7 @@ func TestAnchoredFold_LiveView(t *testing.T) {
 	}
 }
 
-// TestPreferCanonical pins the birth-time canonical direction (docs/tags/canonical-form-and-identity.md
+// TestPreferCanonical pins the birth-time canonical direction (docs/specs/tags/canonical-form.md §3.3
 // J4): an English house form wins over a non-English label in either order, a deterministic variant class
 // keeps resolving through the lexicographic tie-break because it carries no direction, and two labels the
 // language step cannot separate fall through to the tie-break.

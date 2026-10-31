@@ -8,7 +8,7 @@ import (
 )
 
 // attestedFoldsData is the generated adjective→noun attestation table the split seam folds
-// through (docs/tags/canonical-form-and-identity.md J1): the pertainym relation of WordNet's
+// through (docs/specs/tags/canonical-form.md §3.3 J1): the pertainym relation of WordNet's
 // relational adjectives, extracted by internal/tags/gen_attested_folds.go. Each non-comment line
 // is one `adjective noun` pair; the header carries the source and the WordNet 3.0 notice.
 //

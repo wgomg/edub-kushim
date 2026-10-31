@@ -29,9 +29,9 @@ const auditBatchSize = 40
 // threshold with no operator-meaningful interpretation (the D22-verified band).
 const auditTriggerSimilarity = 0.52
 
-// auditStrongSimilarity is the matcher similarity at or above which a trigger candidate reaches the judge
-// without lexical support. Candidates in [trigger floor, strong) survive only with lexical support
-// (docs/tags/completeness.md §3.3).
+// auditStrongSimilarity is the matcher similarity at or above which a trigger candidate reaches the
+// judge without lexical support. Candidates in [trigger floor, strong) survive only with lexical
+// support (docs/specs/tags/completeness.md §3.3).
 const auditStrongSimilarity = 0.60
 
 // auditCaveatSampled qualifies a coverage measurement whose gap classes are run-scoped over a sample
@@ -790,7 +790,7 @@ func freshVerdict(r analyzer.TagAuditResult, source tags.CoverageSource, model s
 
 // deterministicClass classifies a flagged dimension by the pending classes that need no judge call: a
 // still-whole compound whose cover resolves to it is pending-split, and a carried label recorded as a
-// canonicalization twin is pending-canonicalization (docs/tags/completeness.md §3.4).
+// canonicalization twin is pending-canonicalization (docs/specs/tags/completeness.md §3.4).
 func deterministicClass(dim string, carried []string, view storeView, twins []tags.Twin) (tags.CoverageClass, bool) {
 	for _, c := range carried {
 		if tags.ClassifyShape(c) == tags.ShapeCompound && tags.CoversDimension(c, dim, view.Promoted, view.Live) {
@@ -809,8 +809,8 @@ func deterministicClass(dim string, carried []string, view storeView, twins []ta
 	return "", false
 }
 
-// lexicalSupport reports whether the dimension's content-word stems appear in the document text, the cheap
-// narrowing the weak trigger band requires (docs/tags/completeness.md §3.3).
+// lexicalSupport reports whether the dimension's content-word stems appear in the document text, the
+// cheap narrowing the weak trigger band requires (docs/specs/tags/completeness.md §3.3).
 func lexicalSupport(text, dimension string) bool {
 	lower := strings.ToLower(text)
 	for _, word := range tags.DeriveParts(dimension) {

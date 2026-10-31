@@ -1,39 +1,27 @@
-# Tag atomicity — working specification
+# Tag atomicity
 
-**Status:** Working spec. It operationalizes the definition's atomicity predicate (P4,
-definition §4.3) for multi-word candidates, as the first slice of the measurement
-substrate (D4 in `pipeline-model.md`). Track 1 (the existing store) is the first
-worked slice; Track 2 — birth with no documents yet — is the system's normal operating
-mode, and its zero-data ladder is required, not optional (§3.4, §5 item 7): no
-disposition may depend on observed counts alone. Unqualified § references point into the
-definition
-(`definition-and-faceted-retrieval.md`).
+Operationalizes the definition's atomicity predicate (P4, [definition](definition.md)
+§4.3) for multi-word candidates, as the first slice of the measurement substrate (D4,
+[pipeline](pipeline.md) §5). Prospective-first is a standing requirement: no disposition
+may depend on observed counts alone (definition §4.5); the zero-data ladder in §3.4 is how
+the mechanism operates at birth, not scaffolding. Thresholds and calibration are not
+specified here (definition §8).
 
-**Non-goals:** thresholds and calibration; schema or endpoint design; legacy rows in
-other languages or longer than three words (separate plan).
+## 1. Scope
 
-## 1. Relationship to the corpus
-
-- **Definition** — the authority. P4 defines reconstructibility as
-  `S(c) ≈ ⋂ S(pᵢ)`; §3.6 splits the work between reconstructibility and mass; §5.1
-  states the class verdicts; §8 holds the policies this spec consumes.
-- **`pipeline-model.md`** — the map. S4 produces the composition reading, S5
-  disposes, D4 measures; its §6.3 ranks this slice as the keystone gap, and §7 item 11
-  makes prospective-first operation a standing requirement this mechanism must satisfy.
-- **`canonical-form-and-identity.md`** — the sibling. It decides the form each
-  label takes and when two labels are one value; the adjective folding it specifies is
-  assumed by §3.1.
-- **Existing machinery** — the emission-time decomposition pass and the LLM adjudicator
-  with its cached, versioned verdicts are the precedent this spec extends: the pass
-  covers every compound candidate (two judged passes when the adjudicator is on;
-  conjunction joints split mechanically without a judge) and disposes them through
-  `tags.DecideComposition`, and the reconciler re-uses the conjunction detector for
-  stored tags. This spec supplies the measurement and the decision over those candidates.
+- The **definition** is the authority: P4 defines reconstructibility as
+  `S(c) ≈ ⋂ S(pᵢ)`; §3.6 splits the work between reconstructibility and mass; §5 states
+  the class verdicts; §8 holds the policies this spec consumes.
+- The **pipeline** places this mechanism at S4 (produce the composition reading), S5
+  (dispose), with D4 measuring.
+- **[canonical-form](canonical-form.md)** is the sibling: it decides the form each label
+  takes and when two labels are one value; the adjective folding it specifies is assumed
+  by §3.1 here.
 - **Free text** — tags are search shortcuts for dimensions; named specifics belong to
-  free-text search, which composes with tag filters. A phrase being a fixed name is
-  never by itself a reason to admit it. The unit branch exists for phrases whose parts
-  cannot compose, and admission there means the phrase works as a dimension — not that
-  the name deserves representation.
+  free-text search, which composes with tag filters. A phrase being a fixed name is never
+  by itself a reason to admit it. The unit branch exists for phrases whose parts cannot
+  compose, and admission there means the phrase works as a dimension — not that the name
+  deserves representation.
 
 ## 2. Givens
 
@@ -42,7 +30,7 @@ Already enforced elsewhere; listed so this spec does not restate them:
 - English only; one to three words; facet ownership, place rule and typed contract from
   the generation pipeline.
 - Normalized form: candidates arrive in the store's canonical shape (case folding and
-  the canonical-form policy of `canonical-form-and-identity.md` applied).
+  the canonical-form policy of [canonical-form](canonical-form.md) applied).
 - Single-word candidates carry no composition reading; they are not this spec's subject.
 - Rows in the store that violate the givens (another language, longer than three words)
   are handled by separate cleanup work.
@@ -71,7 +59,7 @@ Already enforced elsewhere; listed so this spec does not restate them:
   (`chilean` → `chile`) is canonicalization work that runs before this step; a time
   designation the store does not hold (a year, decade, month, or unseeded ordinal period
   unit) is dropped, never a segment.
-- A segment that does not exist as a tag is a **missing value** (see “Dispositions”,
+- A segment that does not exist as a tag is a **missing value** (see "Dispositions",
   below).
 
 ### 3.2 Measurements
@@ -92,10 +80,10 @@ Per candidate:
   - **Deficit** `D = ⋂ S(p) \ S(c)`: "the parts meet without the phrase".
 
 All recorded as raw numbers — no thresholds live here. Both leftovers are contaminated by
-application incompleteness in opposite directions (a document may lack a part, or lack
-the candidate, because tagging missed it). That is recorded as a caveat on the evidence,
-not corrected here — the corrective is specified in `completeness.md`; §4.5
-already treats observed extensions as evidence rather than truth.
+application incompleteness in opposite directions (a document may lack a part, or lack the
+candidate, because tagging missed it). That is recorded as a caveat on the evidence, not
+corrected here — the corrective is specified in [completeness](completeness.md); the
+definition already treats observed extensions as evidence rather than truth (§4.5).
 
 ### 3.3 Branch selection
 
@@ -117,10 +105,12 @@ passes → combination branch. If some part fails → unit branch.
   product. Then:
   - **Relational case** — the relation itself recurs as a subject (a family of `X
     violence`-style compounds): keep as its own dimension, under the same dimension
-    checks.
+    checks. A judged composition whose reconstructibility reading places it far from its
+    parts' intersection keeps whole as a relational keep; a cover the store cannot measure
+    falls back to the promoted-parts proxy.
   - Otherwise the phrase is either covered by the parts' intersection (redundant) or too
     specific — **drop**; free text finds it.
-- **Middle** → gray: order test and criteria pass, then review (see “Fallback signals”).
+- **Middle** → gray: order test and criteria pass, then review (see "Fallback signals").
 
 **Step C — unit branch** (some part is not a dimension):
 
@@ -142,10 +132,9 @@ passes → combination branch. If some part fails → unit branch.
   candidate, and they become labels.
 
 In the prospective mode the ladder *is* the procedure: with no observations, part merit
-(§3.3 step A), the order test, and the criteria pass compose the reading, and
-dispositions taken on it are provisional by nature — later measurements confirm or
-revise them. The ladder is not optional scaffolding; it is how the mechanism operates at
-birth.
+(§3.3 step A), the order test, and the criteria pass compose the reading, and dispositions
+taken on it are provisional by nature — later measurements confirm or revise them. The
+ladder is not optional scaffolding; it is how the mechanism operates at birth.
 
 ### 3.5 Dispositions and missing parts
 
@@ -167,12 +156,11 @@ taken; the signals applied (order test, criteria answers); the disposition and i
 reason; the model and criteria versions. Consumers are the composition review (D2), the
 review surfaces, and later the decision layer — it is evidence, not a verdict machine.
 The measurement layer that generalizes this record is specified in
-`extension-algebra.md`.
+[extension-algebra](extension-algebra.md).
 
 ## 4. Worked examples
 
-Behavior references for annotation; the gray rows are where thresholds and review will
-land.
+Behavior references; the gray rows are where review lands.
 
 | Candidate | Parts | Reading | Expected disposition |
 |---|---|---|---|
@@ -184,26 +172,3 @@ land.
 | `cold war` | cold, war | `cold` fails part merit (no standalone subject) | Unit branch: recurs as a subject → keep as a dimension |
 | `social media` | social, media | `social` is not a stable dimension alone; the phrase is specific | Leaning drop — free text covers the specific; keep only if it passes the dimension checks as a broad subject, never because the name is fixed |
 | `ritual violence` | ritual, violence | Both dimensions; the whole is not the plain intersection (relational) | Keep only if the relation recurs as a subject; otherwise split |
-
-## 5. Open items
-
-1. **Thresholds** for tight versus far, and for part-merit counts — calibration's job
-   (definition §8.9); v0 stays conservative with a wide gray band.
-2. **Corpus scope — decided (2026-09-19): global.** All counts are store-wide, and
-   grouping by document metadata stays analysis-time (definition §8.8).
-3. **Part-merit metric** — how coherence ("one subject") and search utility are measured
-   cheaply: counts, LLM booleans, or both.
-4. **Order-test policy** — how many reorderings, exact question wording, and its place in
-   the fallback order.
-5. **Relational-keep detection — settled (2026-10-15).** A judged composition whose
-   substrate reconstructibility reading places it far from its parts' intersection keeps
-   whole as a `relational_keep` (§3.3 step B, §3.4); a cover the store cannot measure
-   falls back to the promoted-parts proxy.
-6. **Missing-part creation** — when a split requires a part that does not exist, how the
-   value is admitted and how documents acquire it (completeness interplay, specified in
-   `completeness.md` §3.4).
-7. **Prospective ladder — required, composition open.** Which signal carries part merit,
-   branch selection, and each disposition with zero documents; how the day-one ladder
-   composes (§3.4) and how its readings are revised as observations accrue.
-8. **Legacy cleanup** — non-English and longer-than-three-word rows (out of scope here,
-   separate plan).

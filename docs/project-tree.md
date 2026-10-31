@@ -17,9 +17,11 @@ edub-kushim/
 │   └── systemd  # systemd unit and target templates
 ├── docker  # container files: glibc and musl builders, deployment entrypoint
 ├── docs  # project documentation
-│   ├── developer-guide  # language and feature onboarding guides (Go, frontend, PostgreSQL, cgo, OCR, tasks, LLM, semantic matching, algorithms)
+│   ├── adr  # architecture decision records
+│   ├── developer-guide  # language and feature onboarding guides (Go, frontend, PostgreSQL, cgo, OCR, tasks, LLM, semantic matching, consolidation, algorithms)
 │   ├── research  # design notes and investigation reports
-│   └── tags  # tag subsystem design, entry point overview.md
+│   └── specs  # living normative specifications
+│       └── tags  # tag subsystem specifications, entry point overview.md
 ├── internal  # Go packages
 │   ├── api  # HTTP server, middleware, permission gates, wizard server, embedded SPA
 │   │   ├── handlers  # one file per resource: handlers with their API DTOs

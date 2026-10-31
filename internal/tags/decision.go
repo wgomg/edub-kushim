@@ -54,10 +54,11 @@ const (
 	ReasonAdmitted     = "admitted"
 )
 
-// The triggers that cost a value its standing (docs/tags/definition-and-faceted-retrieval.md §6.5, §8.4):
-// mass decay below the recurrence floor, or an operator. A verdict-driven demotion records the admission
-// decision's own reason (ReasonCorroborated, ReasonJudgeDefer) and a decided drop the composition reason it
-// was decided under, so a stored reason always names the evidence without a second vocabulary here.
+// The triggers that cost a value its standing (docs/specs/tags/definition.md §6.4, §8): mass decay
+// below the recurrence floor, or an operator. A verdict-driven demotion records the admission
+// decision's own reason (ReasonCorroborated, ReasonJudgeDefer) and a decided drop the composition
+// reason it was decided under, so a stored reason always names the evidence without a second
+// vocabulary here.
 const (
 	DemotionMassDecay = "mass_decay"
 	DemotionOperator  = "operator"
@@ -144,8 +145,8 @@ type CompositionDecision struct {
 }
 
 // DecideComposition disposes of one compound candidate from its features under the pinned rule set of
-// docs/tags/definition-and-faceted-retrieval.md §3.6/§8.2/§8.10 and docs/tags/atomicity.md §3.3–§3.5. No
-// single signal decides, and evaluation order is load-bearing: a fresh-sample disagreement defers first;
+// docs/specs/tags/definition.md §3.6/§8 and docs/specs/tags/atomicity.md §3.3–§3.5. No single signal
+// decides, and evaluation order is load-bearing: a fresh-sample disagreement defers first;
 // an unavailable judge keeps the compound undecided (the persisted reason holds it from promotion until a
 // later verdict); an abstention defers under split_defer; then the parts test selects the branch — all
 // parts dimensional means the combination branch, a failing part means the unit branch — and the compound
@@ -202,11 +203,10 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // reject or defer under the current versions revoke influence, the admission rules unchanged.
 const DecisionRuleSetVersion = "v7"
 
-// RecurrenceFloor is the promotion minimum of
-// docs/tags/definition-and-faceted-retrieval.md §4.3 (P2), in live
-// documents: ten until its calibration exists (operator decision D8,
-// 2026-09-30). Same-batch mass counts — ten documents from one batch
-// remain a systematic proposal, where two are a compression artifact.
+// RecurrenceFloor is the promotion minimum of docs/specs/tags/definition.md §4.3 (P2), in live
+// documents: ten until its calibration exists (operator decision D8, 2026-09-30). Same-batch mass
+// counts — ten documents from one batch remain a systematic proposal, where two are a compression
+// artifact.
 const RecurrenceFloor = 10
 
 // DecidePromotion reports whether an admitted candidate accrues enough

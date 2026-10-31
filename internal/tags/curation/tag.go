@@ -2,7 +2,8 @@
 // creating tags through the deterministic identity plan, renaming, deleting with blocklist bookkeeping,
 // promoting provisional tags, managing deleted-tag records, and keeping the matcher's embedding store
 // in sync with the tags table. It is the single owner of the tag-store invariants; the pipeline side
-// applies its writes through this package; consolidation flows are documented in docs/tags/consolidation.md.
+// applies its writes through this package; consolidation flows are documented in
+// docs/developer-guide/consolidation.md.
 package curation
 
 import (

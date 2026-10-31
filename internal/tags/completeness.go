@@ -1,9 +1,9 @@
 package tags
 
 // CoverageClass is the class a carried (or missing) dimension falls in for coverage accounting
-// (docs/tags/completeness.md §3.4). The classes are counted separately so retrieval-readiness is never
-// overstated: a pending class means the dimension will be carried once a standing operation runs, while a
-// missing one is a gap.
+// (docs/specs/tags/completeness.md §3.4). The classes are counted separately so retrieval-readiness is
+// never overstated: a pending class means the dimension will be carried once a standing operation
+// runs, while a missing one is a gap.
 type CoverageClass string
 
 // The coverage classes: a canonical label attached (aliases resolved), a still-whole compound whose
@@ -99,12 +99,12 @@ func ResolvedBigrams(content, singles []string, liveNames map[string]struct{}) [
 	return out
 }
 
-// ResolvedSegments returns a compound's decomposition segments in their applied store form: its resolved
-// content words plus every accepted bigram, resolved through the shared fold seam (ResolvedContent and
-// ResolvedBigrams). A seeded period does not decompose, so its carrier resolves to nothing. Coverage
-// accounting reads this deterministic resolution; the gate may additionally apply judged phrase-context
-// folds, so a coverage reading is a lower bound on what the gate will emit
-// (docs/tags/atomicity.md §3.1).
+// ResolvedSegments returns a compound's decomposition segments in their applied store form: its
+// resolved content words plus every accepted bigram, resolved through the shared fold seam
+// (ResolvedContent and ResolvedBigrams). A seeded period does not decompose, so its carrier resolves to
+// nothing. Coverage accounting reads this deterministic resolution; the gate may additionally apply
+// judged phrase-context folds, so a coverage reading is a lower bound on what the gate will emit
+// (docs/specs/tags/atomicity.md §3.1).
 func ResolvedSegments(name string, promotedNames map[string]string, liveNames map[string]struct{}) []string {
 	if IsPeriodClass(HouseForm(name)) {
 		// a seeded period does not decompose: the gate keeps it whole and applies no parts, so a period
@@ -121,9 +121,10 @@ func ResolvedSegments(name string, promotedNames map[string]string, liveNames ma
 	return append(out, ResolvedBigrams(content, singles, liveNames)...)
 }
 
-// CoversDimension reports whether a still-whole compound's decomposition segments include one that denotes
-// the dimension — the pending-split coverage reading: the compound will produce the dimension when the
-// standing decomposition or a re-emission materializes its cover (docs/tags/completeness.md §3.4).
+// CoversDimension reports whether a still-whole compound's decomposition segments include one that
+// denotes the dimension — the pending-split coverage reading: the compound will produce the dimension
+// when the standing decomposition or a re-emission materializes its cover
+// (docs/specs/tags/completeness.md §3.4).
 func CoversDimension(compound, dimension string, promotedNames map[string]string, liveNames map[string]struct{}) bool {
 	key := Key(dimension)
 	for _, segment := range ResolvedSegments(compound, promotedNames, liveNames) {
@@ -134,10 +135,10 @@ func CoversDimension(compound, dimension string, promotedNames map[string]string
 	return false
 }
 
-// PendingCoverageSegments returns a compound's resolved segments that are pending coverage: neither a live
-// store value nor carrying a cached parts verdict under the current policy version. It is the durable form
-// of the emission skip path's pending-coverage warning (D35), read over composition evidence
-// (docs/tags/completeness.md §3.4).
+// PendingCoverageSegments returns a compound's resolved segments that are pending coverage: neither a
+// live store value nor carrying a cached parts verdict under the current policy version. It is the
+// durable form of the emission skip path's pending-coverage warning (D35), read over composition
+// evidence (docs/specs/tags/completeness.md §3.4).
 func PendingCoverageSegments(compound string, promotedNames map[string]string, liveNames map[string]struct{}, cached map[string]struct{}) []string {
 	var out []string
 	seen := make(map[string]struct{})
@@ -158,8 +159,9 @@ func PendingCoverageSegments(compound string, promotedNames map[string]string, l
 }
 
 // TwinPartner reports whether a canonicalization worklist records the two names as one pair; the
-// pending-canonicalization reading (docs/tags/completeness.md §3.4) consults it so a carried label that
-// denotes the dimension under the canonicalization rules is counted as pending rather than missing.
+// pending-canonicalization reading (docs/specs/tags/completeness.md §3.4) consults it so a carried
+// label that denotes the dimension under the canonicalization rules is counted as pending rather than
+// missing.
 func TwinPartner(twins []Twin, a, b string) bool {
 	for _, t := range twins {
 		if (t.A == a && t.B == b) || (t.A == b && t.B == a) {

@@ -1,19 +1,15 @@
-// Package admission is the tag admission machinery the enricher delegates
-// to: decomposition decisions on compound tags, pinned-policy verdicts on
-// pair matches, quality judging of novel tags, and identity resolution of
-// candidate names against the store. It returns decisions to the caller;
-// its own writes are the verdict and quality event rows it journals, plus
-// the identity resolver's alias applications through curation. The rules
-// it enforces are pinned in tags/policy; the contracts are specified in
-// docs/tags/consolidation.md.
+// Package admission is the tag admission machinery the enricher delegates to: decomposition decisions
+// on compound tags, pinned-policy verdicts on pair matches, quality judging of novel tags, and identity
+// resolution of candidate names against the store. It returns decisions to the caller; its own writes
+// are the verdict and quality event rows it journals, plus the identity resolver's alias applications
+// through curation. The rules it enforces are pinned in tags/policy; the flows are documented in
+// docs/developer-guide/consolidation.md.
 //
-// It also hosts the completeness coverage audit (AuditRunner and its task
-// handler), a standalone verification pass rather than an admission
-// decision. It lives here because it reads the emission gate's fan
-// resolution and shares the judged-call machinery and event journaling,
-// but it runs to completion instead of returning a decision, and it writes
-// coverage events, the sweep register, and document-tag fills directly.
-// Its contract is specified in docs/tags/completeness.md.
+// It also hosts the completeness coverage audit (AuditRunner and its task handler), a standalone
+// verification pass rather than an admission decision. It lives here because it reads the emission
+// gate's fan resolution and shares the judged-call machinery and event journaling, but it runs to
+// completion instead of returning a decision, and it writes coverage events, the sweep register, and
+// document-tag fills directly. Its contract is specified in docs/specs/tags/completeness.md.
 package admission
 
 import (
@@ -899,9 +895,8 @@ type novelTag struct {
 	haveSim    bool
 }
 
-// features reads the deterministic signals; a missing detail or
-// similarity is absence of evidence, not a failing signal
-// (docs/tags/definition-and-faceted-retrieval.md §6.6).
+// features reads the deterministic signals; a missing detail or similarity is absence of evidence, not
+// a failing signal (docs/specs/tags/definition.md §6.5).
 func (n *novelTag) features() tags.AdmissionFeatures {
 	return tags.AdmissionFeatures{
 		CategoryOther: n.haveDetail && n.category == analyzer.TagCategoryOther,

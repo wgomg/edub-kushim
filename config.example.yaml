@@ -138,7 +138,7 @@ enricher:
     reduce_target_words: 4000
     # max tokens per inference chunk. 4096 (default) caps peak memory
     # (~2-6 GB with BGE-M3); 0 = model's max_position_embeddings (8180 for
-    # BGE-M3) and can OOM small hosts. See docs/tags/10-tag-matcher.md.
+    # BGE-M3) and can OOM small hosts. See docs/developer-guide/semantic-matching.md.
     chunk_size: 4096
     # injection bar for matcher suggestions: only suggestions at or above
     # it reach the emission prompt; 0 = the per-model default (0.52 on BGE-M3).

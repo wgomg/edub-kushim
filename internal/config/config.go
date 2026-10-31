@@ -714,7 +714,7 @@ func DefaultConfig(configDir string) *Config {
 				// (~2.2–2.5 GB idle, ~4–6 GB peak with BGE-M3). The model's
 				// full context (0 = max_position_embeddings, 8180 tokens for
 				// BGE-M3) scales attention memory roughly quadratically and
-				// can OOM small hosts. See docs/tags/10-tag-matcher.md.
+				// can OOM small hosts. See docs/developer-guide/semantic-matching.md.
 				ChunkSize: 4096,
 				Hugot: HugotConfig{
 					Model:       "BAAI/bge-m3",

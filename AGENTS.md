@@ -5,13 +5,15 @@ Deeper context lives in `docs/`:
 - `architecture.md` (design, pipeline, process model), `roadmap.md` (implementation status),
   `user-manual.md` (CLI + API reference), `project-tree.md` (generated directory map — regenerate
   with `make docs-tree`), `frontend.md` (route and key-file map of both SPAs), `tests.md` (testing
-  reference), `tags/` (tag subsystem design — entry point: `tags/overview.md`), `research/`
-  (design notes), `api.md` (generated REST API reference, rendered from the OpenAPI spec)
+  reference), `specs/tags/` (tag subsystem specifications — entry point: `specs/tags/overview.md`),
+  `adr/` (architecture decision records), `research/` (design notes), `api.md` (generated REST API
+  reference, rendered from the OpenAPI spec)
 - Developer guides (language/feature onboarding, in `docs/developer-guide/`):
   - `golang.md` — Go language features as used in this codebase
   - `frontend.md` — SvelteKit/Svelte 5 features as used in `web/` and `web-wizard/`
   - `postgresql.md` — PostgreSQL features as used in the schema and queries
-  - `semantic-matching.md` — Hugot embedding model, tag matching, consolidation, the matcher daemon
+  - `semantic-matching.md` — Hugot embedding model, tag matching, matcher configuration/sizing, the matcher daemon
+  - `consolidation.md` — tag identity, adjudication, quality gate, promotion, reconciliation
   - `algorithms.md` — TextRank summarization, text normalization, token estimation
   - `cgo.md` — cgo and the C wrapper layer (MuPDF, Tesseract)
   - `ocr-pipeline.md` — OCR engines, searchable-PDF generation

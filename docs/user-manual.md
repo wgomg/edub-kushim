@@ -676,8 +676,9 @@ endpoints:
 The matcher must be started before `edub` for full functionality.
 If the matcher is not running, tag CRUD operations still succeed — only the tag embedding cache is not updated (errors are logged) and enrichment falls back to LLM-only tags.
 
-See the [Tag Matcher guide](tags/matcher.md) for configuration, memory, and CPU
-tuning (`chunk_size` is the main memory lever and defaults to a safe 4096 tokens).
+See the [semantic matching guide](developer-guide/semantic-matching.md) for
+configuration, memory, and CPU tuning (`chunk_size` is the main memory lever and defaults
+to a safe 4096 tokens).
 
 ---
 
@@ -3133,7 +3134,7 @@ enricher:
   tagmatcher:
     timeout: 120
     reduce_target_words: 4000 # text reduction before tag matching
-    chunk_size: 4096 # max tokens per inference chunk; 0 = model max (8180 for bge-m3) — see docs/tags/matcher.md
+    chunk_size: 4096 # max tokens per inference chunk; 0 = model max (8180 for bge-m3) — see docs/developer-guide/semantic-matching.md
     top_n: 15 # suggestions above the matcher's injection bar sent to the analyzer (minimum 3)
     hugot:
       model: 'BAAI/bge-m3'
@@ -3210,7 +3211,8 @@ mirror:
 > arena and memory-pattern pre-allocation are also disabled by default
 > (internal `CpuMemArena: false`, `MemPattern: false`) to cap idle RSS instead
 > of retaining ~4–5 GB of peak-inference buffers. See the
-> [Tag Matcher guide](tags/matcher.md) for full memory/CPU tuning.
+> [semantic matching guide](developer-guide/semantic-matching.md) for full memory/CPU
+> tuning.
 
 ### Key sections
 
@@ -3242,7 +3244,7 @@ mirror:
 | `enricher.contentanalyzer.llm.request_delay` | Seconds to sleep after each LLM request (default `1`; `0` = off, max `60`) — for rate-limited providers |
 | `enricher.contentanalyzer.fallbacks` | Ordered list of fallback LLM configs (each `{enabled, llm}` with the same shape as `llm`), tried in order when the primary fails with a provider error — API down/unreachable, credit/rate-limit, malformed response, provider-side timeout. Disabled by default; validated (adapter/provider/model required, request_delay 0–60) only for each `enabled: true` entry |
 | `enricher.contentanalyzer.doc_type_refinement` | Second-pass doc type refinement with head+tail of raw text (enabled, head_words, tail_words) |
-| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see [Tag Matcher guide](tags/matcher.md) for memory/CPU tuning |
+| `enricher.tagmatcher`          | Semantic tag matching via Hugot (embeddings) — see the [semantic matching guide](developer-guide/semantic-matching.md) for memory/CPU tuning |
 | `enricher.tagmatcher.hugot`    | Hugot-specific settings (model, backend)                               |
 | `enricher.tagmatcher.top_n`    | Suggestions the matcher returns above the injection bar (`min_suggestion_similarity`) that reach the analyzer's prompt (default `15`; validation requires `≥ 3`) |
 | `enricher.tag_adjudicator`     | Optional LLM verdicts for the identity gate: `enabled` (default `false`), `timeout` (defaults to `contentanalyzer.timeout` at use time when `0`), `llm` (defaults to `contentanalyzer.llm` at use time when `provider`/`model` are empty — the raw values are preserved in config so the inheritance survives saves). When enabled, proposed folds are confirmed against three criteria (base form, fold preservation, conventional written form) and candidate neighbours are classified `same`/`variant`/`related` with a direction for `same`; verdicts are cached per claim in `tag_identity_event`, `same` aliases the losing name onto the winner, and claims a partial reply leaves without a verdict stay pending — their candidates born provisional — for the identity pass (`kushim tagidentity`, on demand or on its own daily schedule). The same adjudicator also runs the language guard: detected non-English emissions are rewritten to their judged English canonical form (a value returned unchanged is already English) and an uncertain translation is held for review with `reason=language_review` |
@@ -3883,7 +3885,8 @@ MemoryMax=8G    # hard cap: systemd OOM-kills only the matcher
 ```
 
 Adjust the values to your `chunk_size` (see the
-[Tag Matcher guide](tags/matcher.md) for per-configuration peaks).
+[semantic matching guide](developer-guide/semantic-matching.md) for per-configuration
+peaks).
 
 ### Generated vs Template Files
 

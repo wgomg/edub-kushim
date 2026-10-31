@@ -1,8 +1,8 @@
 // Package reconcile is the tag store's scheduled maintenance: it sweeps the recorded verdict evidence
 // for stale, unjudged and drifted pairs, re-ranks and re-adjudicates what changed, and applies or plans
-// alias collapses, keep flips, compound splits and provisional-tag outcomes through the curation surface.
-// It is the scheduled reconciliation flow of docs/tags/consolidation.md, the machine-driven complement
-// of the human worklist review.
+// alias collapses, keep flips, compound splits and provisional-tag outcomes through the curation
+// surface. It is the scheduled reconciliation flow of docs/developer-guide/consolidation.md §9, the
+// machine-driven complement of the human worklist review.
 package reconcile
 
 import (

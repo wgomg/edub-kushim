@@ -154,10 +154,10 @@ const (
 	CompositionReasonPartialParts             = "partial_parts"
 )
 
-// compositionHolds is the single definition of which composition reasons withhold a compound from promotion
-// until review or a criteria-version bump (docs/tags/atomicity.md §3.5): the cross-sample, conflict, and
-// deferred outcomes, the reconstructible and relational named-unit keeps, a degraded keep no judge answered,
-// and a decided drop, which mass must not resurrect.
+// compositionHolds is the single definition of which composition reasons withhold a compound from
+// promotion until review or a criteria-version bump (docs/specs/tags/atomicity.md §3.5): the
+// cross-sample, conflict, and deferred outcomes, the reconstructible and relational named-unit keeps,
+// a degraded keep no judge answered, and a decided drop, which mass must not resurrect.
 func compositionHolds(reason string) bool {
 	switch reason {
 	case CompositionReasonSplitDefer, CompositionReasonConflictingEvidence,
@@ -295,10 +295,9 @@ func newEnglishLemmatizer() *golem.Lemmatizer {
 	return l
 }
 
-// HouseForm applies the house form to a name
-// (docs/tags/canonical-form-and-identity.md §3.2 M1): ordinal words become
-// digits and Roman numerals become digits. Style rewrites are written
-// directly, never proposed.
+// HouseForm applies the house form to a name (docs/specs/tags/canonical-form.md §3.2 M1): ordinal
+// words become digits and Roman numerals become digits. Style rewrites are written directly, never
+// proposed.
 func HouseForm(name string) string {
 	tokens := strings.Fields(name)
 	changed := false
@@ -379,8 +378,7 @@ func renderRoman(n int) string {
 	return sb.String()
 }
 
-// Key is the house-form key equality
-// (docs/tags/canonical-form-and-identity.md §3.2 M3): style variants
+// Key is the house-form key equality (docs/specs/tags/canonical-form.md §3.2 M3): style variants
 // collapse onto one key without judging.
 func Key(name string) string {
 	return HouseForm(name)
@@ -456,9 +454,8 @@ func VariantKey(name string) (orthographic, multiset string) {
 	return orthographicForm(name), strings.Join(tokens, "\x00")
 }
 
-// Signature is a name's lemma and stem signatures
-// (docs/tags/canonical-form-and-identity.md §3.2 M2). They are evidence
-// only; the stemmer's output is never written to the store.
+// Signature is a name's lemma and stem signatures (docs/specs/tags/canonical-form.md §3.2 M2). They
+// are evidence only; the stemmer's output is never written to the store.
 type Signature struct {
 	Lemmas string
 	Stems  string
@@ -635,11 +632,11 @@ func CompositionReview(ctx context.Context, q *database.Queries, names []string,
 // CompositionHeldNames maps each held compound candidate to the reason its latest composition verdict
 // withheld promotion: a deferred split, conflicts between the parts and compound passes, cross-sample
 // disagreement, the reconstructible named-unit gray class, the combination-branch relational keep, or a
-// degraded keep whose judge never answered (no promotion without a decision; docs/tags/atomicity.md
-// §3.5). Only rows carrying criteriaVersion count, so a criteria-version bump clears stale holds. Names
-// are normalized to the store's name recipe (StoredName), matching the journal's keys and the sibling
-// state read. It is one view of CompositionReview. Unheld candidates are absent from the result; empty
-// input returns an empty map.
+// degraded keep whose judge never answered (no promotion without a decision;
+// docs/specs/tags/atomicity.md §3.5). Only rows carrying criteriaVersion count, so a criteria-version
+// bump clears stale holds. Names are normalized to the store's name recipe (StoredName), matching the
+// journal's keys and the sibling state read. It is one view of CompositionReview. Unheld candidates are
+// absent from the result; empty input returns an empty map.
 func CompositionHeldNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, error) {
 	held, _, err := CompositionReview(ctx, q, names, criteriaVersion)
 	return held, err
@@ -736,15 +733,12 @@ func StoreNamesOf(names map[string]struct{}) map[string]string {
 	return StoreNames(list)
 }
 
-// ProposedDerivationalFold proposes the noun base of an adjective through
-// the derivational suffix transforms, or "" when no transform output is a
-// store value. The proposal is store-anchored: a base only exists when the
-// store already holds it, so a confirmed fold always resolves onto that
-// row, and two distinct store hits are ambiguity, not a fold. Irregular
-// demonyms outside the transform set stay; the judging body's gate decides
-// before anything is applied (docs/tags/atomicity.md §3.1,
-// docs/tags/canonical-form-and-identity.md §3.4). storeNames maps
-// Key(storeName) to the store's name.
+// ProposedDerivationalFold proposes the noun base of an adjective through the derivational suffix
+// transforms, or "" when no transform output is a store value. The proposal is store-anchored: a base
+// only exists when the store already holds it, so a confirmed fold always resolves onto that row, and
+// two distinct store hits are ambiguity, not a fold. Irregular demonyms outside the transform set stay;
+// the judging body's gate decides before anything is applied (docs/specs/tags/atomicity.md §3.1,
+// docs/specs/tags/canonical-form.md §3.4). storeNames maps Key(storeName) to the store's name.
 func ProposedDerivationalFold(name string, storeNames map[string]string) string {
 	if len(strings.Fields(name)) != 1 || len(name) < 6 || !isLowerASCII(name) {
 		return ""
@@ -798,16 +792,13 @@ var derivationalSuffixes = []struct{ suffix, replacement string }{
 // proposal allows between a candidate and a single-token store key.
 const morphographicMaxDistance = 2
 
-// ProposedMorphologicalFold proposes a single-token store value reachable
-// from an unrecognized single-token name by at most morphographicMaxDistance
-// edits (mexican→mexico), or "" when none is, when two distinct store
-// values are in reach (ambiguity is not a fold), or when the name is not
-// one lowercase-ASCII token of at least six letters. Store-anchored by
-// construction, exactly like the derivational proposer: a confirmed fold
-// always resolves onto an existing row, and only single-token store keys
-// participate. The judging body's gate decides before anything is applied
-// (docs/tags/atomicity.md §3.1). storeNames maps Key(storeName) to the
-// store's name.
+// ProposedMorphologicalFold proposes a single-token store value reachable from an unrecognized
+// single-token name by at most morphographicMaxDistance edits (mexican→mexico), or "" when none is,
+// when two distinct store values are in reach (ambiguity is not a fold), or when the name is not one
+// lowercase-ASCII token of at least six letters. Store-anchored by construction, exactly like the
+// derivational proposer: a confirmed fold always resolves onto an existing row, and only single-token
+// store keys participate. The judging body's gate decides before anything is applied
+// (docs/specs/tags/atomicity.md §3.1). storeNames maps Key(storeName) to the store's name.
 func ProposedMorphologicalFold(name string, storeNames map[string]string) string {
 	if len(strings.Fields(name)) != 1 || len(name) < 6 || !isLowerASCII(name) {
 		return ""
@@ -830,17 +821,18 @@ func ProposedMorphologicalFold(name string, storeNames map[string]string) string
 // sense-ambiguous: it folds mechanically only onto its primary-sense base (the attestation table's first
 // entry, which preserves WordNet sense order) and only when that base is live — a live non-primary sibling
 // sense no longer attracts the fold, and the residue (primary base not live, another base live) is left to
-// the phrase-context judged path (ResidualFoldAnchors). A part the attestation table does not
-// reach still folds when a promoted store label is a pinned deterministic variant of it (M8 orthographic
-// spelling or literal token permutation), resolved by variantAnchor under the same ambiguity-safe rule. The
-// attestation is the point: a pertainym relator links an adjective and a noun that denote the same thing, so
-// the seam folds only attested relations or pinned variant classes and never infers a fold from bare shape
-// (docs/tags/canonical-form-and-identity.md V2/J1/M8). Shape-based proposals (ProposedDerivationalFold,
-// ProposedMorphologicalFold) still reach the judged identity path's fold gate, which confirms them before
-// use; split-component resolution consults this before per-document filtering, and births never rename
-// through it. promotedNames maps Key(storeName) to the promoted store's name; liveNames is the live store
-// key set the primary-base liveness check reads, which the caller must supply. provisional births are absent
-// from promotedNames and so anchor only through the judged identity path.
+// the phrase-context judged path (ResidualFoldAnchors). A part the attestation table does not reach
+// still folds when a promoted store label is a pinned deterministic variant of it (M8 orthographic
+// spelling or literal token permutation), resolved by variantAnchor under the same ambiguity-safe rule.
+// The attestation is the point: a pertainym relator links an adjective and a noun that denote the same
+// thing, so the seam folds only attested relations or pinned variant classes and never infers a fold
+// from bare shape (docs/specs/tags/canonical-form.md V2/J1/M8). Shape-based proposals
+// (ProposedDerivationalFold, ProposedMorphologicalFold) still reach the judged identity path's fold
+// gate, which confirms them before use; split-component resolution consults this before per-document
+// filtering, and births never rename through it. promotedNames maps Key(storeName) to the promoted
+// store's name; liveNames is the live store key set the primary-base liveness check reads, which the
+// caller must supply. provisional births are absent from promotedNames and so anchor only through the
+// judged identity path.
 func AnchoredFold(name string, promotedNames map[string]string, liveNames map[string]struct{}) string {
 	bases := attestedBases(name)
 	if len(bases) == 0 {
@@ -935,11 +927,11 @@ func tokenCount(s string) int {
 }
 
 // PreferCanonical picks the canonical label of a same-intent pair the judged direction did not separate
-// (docs/tags/canonical-form-and-identity.md §3.3 J4): a pinned deterministic variant class still resolves
+// (docs/specs/tags/canonical-form.md §3.3 J4): a pinned deterministic variant class still resolves
 // through M4, as M8 specifies (the class carries no direction), then the English/house form wins over a
-// non-English one, and only a pair the language step cannot separate falls to the deterministic tie-break
-// (M4). It is the birth-time direction step the alias machinery reads; arrival order and usage never
-// decide.
+// non-English one, and only a pair the language step cannot separate falls to the deterministic
+// tie-break (M4). It is the birth-time direction step the alias machinery reads; arrival order and
+// usage never decide.
 func PreferCanonical(a, b string) string {
 	if a == b {
 		return a
@@ -1116,10 +1108,8 @@ func isLowerASCII(token string) bool {
 	return true
 }
 
-// TieBreak is the deterministic tie-break for labels the direction
-// criteria do not separate
-// (docs/tags/canonical-form-and-identity.md §3.2 M4): the
-// lexicographically smaller name wins.
+// TieBreak is the deterministic tie-break for labels the direction criteria do not separate
+// (docs/specs/tags/canonical-form.md §3.2 M4): the lexicographically smaller name wins.
 func TieBreak(a, b string) string {
 	if a <= b {
 		return a

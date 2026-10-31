@@ -4,7 +4,7 @@ Research note. Survey and synthesis only: mechanisms that could be attached at a
 point of the enrichment pipeline to improve the quality of LLM-generated tags or to
 reliably reject useless ones before they pollute the vocabulary. The motivating
 defect, measured on a production copy of the database (snapshot 2026-09-14), is
-trash-tag proliferation: the tag-consolidation policy rewrite solved wrong merges —
+trash-tag proliferation: the consolidation policy rewrite solved wrong merges —
 97.4% of all tag assignments still ride on the pre-rewrite vocabulary — but the
 re-enrichment pass that followed created 9,144 new tag rows of which 1,333 attach to
 exactly one document and 7,107 to none, while the healthy core (1,410 tags with more

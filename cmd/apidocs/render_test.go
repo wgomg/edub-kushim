@@ -119,7 +119,8 @@ func renderFixture(t *testing.T) string {
 // The CI drift check compares regeneration output byte for byte, so the renderer must never let
 // map iteration order leak into the document.
 func TestRenderSpec_IsByteIdenticalAcrossRuns(t *testing.T) {
-	if renderFixture(t) != renderFixture(t) {
+	first, second := renderFixture(t), renderFixture(t)
+	if first != second {
 		t.Error("two renders of the same spec differ; output is not deterministic")
 	}
 }
