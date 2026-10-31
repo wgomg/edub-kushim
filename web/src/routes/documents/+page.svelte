@@ -1,21 +1,21 @@
 <script>
-	import { goto, replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import DataTable from '$lib/components/DataTable.svelte';
-	import DocumentGrid from '$lib/components/DocumentGrid.svelte';
-	import SearchBar from '$lib/components/SearchBar.svelte';
-	import FilterPanel from '$lib/components/FilterPanel.svelte';
-	import { filterStore } from '$lib/stores/filterStore.js';
-	import { setPersonTypes, serializeFilter } from '$lib/stores/searchFilter.js';
+	import { api } from '#lib/api.js';
+	import DataTable from '#lib/components/DataTable.svelte';
+	import DocumentGrid from '#lib/components/DocumentGrid.svelte';
+	import SearchBar from '#lib/components/SearchBar.svelte';
+	import FilterPanel from '#lib/components/FilterPanel.svelte';
+	import { filterStore } from '#lib/stores/filterStore.js';
+	import { setPersonTypes, serializeFilter } from '#lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
-	import { escapeHtml, formatSize } from '$lib/utils/html.js';
-	import { DOWNLOAD_ICON } from '$lib/icons.js';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
+	import { escapeHtml, formatSize } from '#lib/utils/html.js';
+	import { DOWNLOAD_ICON } from '#lib/icons.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
 
 	let selectedDocs = $state([]);
 
@@ -220,9 +220,11 @@
 			refreshKey++;
 			const q = serializeFilter(f);
 			const sp = new SvelteURLSearchParams(page.url.searchParams);
+
 			if (q) sp.set('q', q);
 			else sp.delete('q');
-			replaceState(resolve(`${page.url.pathname}?${sp.toString()}`));
+
+			goto(resolve(`${page.url.pathname}?${sp.toString()}`), { shallow: true, replace: true });
 		}
 		subscribed = true;
 	});
@@ -394,7 +396,7 @@
 	}
 
 	function view(row) {
-		goto(resolve(`/documents/${row.id}`));
+		goto(resolve(`documents/${row.id}`));
 	}
 </script>
 
@@ -473,7 +475,7 @@
 													<button
 														onclick={() => (batchTagIds = batchTagIds.filter((t) => t !== tid))}
 														class="rounded text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-														aria-label={`Remove tag ${tag.name}`}>&times;</button
+														aria-label={`Remove tag ${tag.name}`}>×</button
 													>
 												</span>
 											{/if}
@@ -634,7 +636,7 @@
 											onclick={() => handleDelete(s.id)}
 											class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 hover:text-red-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 											title="Delete"
-											aria-label="Delete saved search">&times;</button
+											aria-label="Delete saved search">×</button
 										>
 									{/if}
 								</div>

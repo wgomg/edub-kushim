@@ -1,17 +1,17 @@
 <script>
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { filterStore } from '$lib/stores/filterStore.js';
-	import { defaultFilter } from '$lib/stores/searchFilter.js';
+	import { filterStore } from '#lib/stores/filterStore.js';
+	import { defaultFilter } from '#lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { EDIT_ICON, DELETE_ICON, BTN_BASE, actionButton } from '$lib/icons.js';
-	import { escapeHtml } from '$lib/utils/html.js';
-	import DataTable from '$lib/components/DataTable.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import { EDIT_ICON, DELETE_ICON, BTN_BASE, actionButton } from '#lib/icons.js';
+	import { escapeHtml } from '#lib/utils/html.js';
+	import DataTable from '#lib/components/DataTable.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
 
 	let activeTab = $state(new URL(window.location.href).searchParams.get('tab') || 'people');
 
@@ -59,8 +59,12 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	];
 
 	function filterByPerson(row) {
-		filterStore.set({ ...defaultFilter, people: [{ name: row.name, type: 'author' }] });
-		goto(resolve('/documents'));
+		filterStore.set({
+			...defaultFilter,
+			people: [{ name: row.name, type: 'author' }]
+		});
+
+		goto(resolve('documents'));
 	}
 
 	async function fetch({ limit, offset }) {
@@ -190,7 +194,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		activeTab = tab;
 		const url = new URL(window.location.href);
 		url.searchParams.set('tab', tab);
-		goto(resolve(url.pathname + url.search), { replaceState: true, keepFocus: true });
+		goto(resolve(url.pathname + url.search), { replaceState: true, reset: false });
 	}
 
 	async function handleDeletePersonType(pt) {
@@ -262,7 +266,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 						const url = new URL(window.location.href);
 						if (query) url.searchParams.set('q', query);
 						else url.searchParams.delete('q');
-						goto(resolve(url.pathname + url.search), { replaceState: true, keepFocus: true });
+						goto(resolve(url.pathname + url.search), { replaceState: true, reset: false });
 					}}
 					name="people-filter"
 					autocomplete="off"

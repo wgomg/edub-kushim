@@ -1,14 +1,14 @@
 <script>
-	import { page } from '$app/stores';
-	import { goto, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '$lib/icons.js';
-	import { escapeHtml } from '$lib/utils/html.js';
-	import { originBadgeClasses, statusChipClasses } from '$lib/utils/statusChip.js';
-	import { api } from '$lib/api';
-	import DataTable from '$lib/components/DataTable.svelte';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
+	import { RETRY_ICON, RESUME_ICON, CANCEL_ICON, actionButton } from '#lib/icons.js';
+	import { escapeHtml } from '#lib/utils/html.js';
+	import { originBadgeClasses, statusChipClasses } from '#lib/utils/statusChip.js';
+	import { api } from '#lib/api.js';
+	import DataTable from '#lib/components/DataTable.svelte';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
 
 	let taskRefreshKey = $state(0);
 	let batchRefreshKey = $state(0);
@@ -177,7 +177,7 @@
 				const parts = [];
 				if (row.payload_doc_id) {
 					parts.push(
-						`<span class="text-parchment-400 text-xs">document:</span> <a href="${escapeHtml(resolve(`/documents/${row.payload_doc_id}`))}" class="font-mono text-lapis-400 hover:text-lapis-300">${escapeHtml(row.payload_doc_id)}</a>`
+						`<span class="text-parchment-400 text-xs">document:</span> <a href="${escapeHtml(resolve(`documents/${row.payload_doc_id}`))}" class="font-mono text-lapis-400 hover:text-lapis-300">${escapeHtml(row.payload_doc_id)}</a>`
 					);
 				}
 				if (row.file_name) {
@@ -262,9 +262,11 @@
 		currentTaskStatus = e.target.value;
 		batchRefreshKey++;
 		const url = new URL(window.location.href);
+
 		if (currentTaskStatus) url.searchParams.set('task_status', currentTaskStatus);
 		else url.searchParams.delete('task_status');
-		replaceState(resolve(url.pathname + url.search));
+
+		goto(resolve(url.pathname + url.search), { shallow: true, replace: true });
 	}
 
 	async function fetchTasks({ limit, offset }) {
@@ -273,11 +275,11 @@
 	}
 
 	function viewBatch(row) {
-		goto(resolve(`/tasks?batch=${row.batch_id}`));
+		goto(resolve(`tasks?batch=${row.batch_id}`));
 	}
 
 	function viewTask(row) {
-		goto(resolve(`/tasks/${row.task_id}`));
+		goto(resolve(`tasks/${row.task_id}`));
 	}
 
 	function handlePageClick(e) {
@@ -335,11 +337,10 @@
 {#if currentBatch || currentStatus}
 	<div class="space-y-4">
 		<a
-			href={resolve(`/tasks`)}
+			href={resolve(`tasks`)}
 			class="inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
+			>← Back to batches</a
 		>
-			&larr; Back to batches
-		</a>
 
 		<DataTable
 			columns={taskColumns}

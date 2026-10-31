@@ -2,26 +2,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import ModelsSection from './ModelsSection.svelte';
 
-const { confirm, toastSuccess, toastError, replaceState } = vi.hoisted(() => ({
+const { confirm, toastSuccess, toastError, goto } = vi.hoisted(() => ({
 	confirm: vi.fn(),
 	toastSuccess: vi.fn(),
 	toastError: vi.fn(),
-	replaceState: vi.fn()
+	goto: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$app/state', () => ({
 	page: {
-		subscribe(run) {
-			run({ url: new URL('http://localhost/settings/models'), state: {} });
-			return () => {};
-		}
+		url: new URL('http://localhost/settings/models'),
+		state: {}
 	}
 }));
 
-vi.mock('$app/navigation', () => ({ replaceState }));
+vi.mock('$app/navigation', () => ({ goto }));
 
-vi.mock('$lib/stores/confirmStore.svelte.js', () => ({ confirmStore: { confirm } }));
-vi.mock('$lib/stores/toastStore.svelte.js', () => ({
+vi.mock('#lib/stores/confirmStore.svelte.js', () => ({ confirmStore: { confirm } }));
+vi.mock('#lib/stores/toastStore.svelte.js', () => ({
 	toastStore: { success: toastSuccess, error: toastError }
 }));
 

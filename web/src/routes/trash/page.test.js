@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/svelte';
 import TrashPage from './+page.svelte';
-import * as authStore from '$lib/stores/authStore.svelte.js';
+import * as authStore from '#lib/stores/authStore.svelte.js';
 
 const apiMocks = vi.hoisted(() => ({
 	trashList: vi.fn()
 }));
 
-vi.mock('$lib/api', () => ({
+vi.mock('#lib/api.js', () => ({
 	api: {
 		trash: {
 			list: apiMocks.trashList

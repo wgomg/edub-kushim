@@ -15,9 +15,9 @@ const { provisionalList, promoteTag, deleteTag, reevaluateIdentity, confirmMock,
 vi.mock('$app/state', () => ({
 	page: { url: { searchParams: new URLSearchParams(), pathname: '/tags', hash: '' } }
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn(), replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/paths', () => ({ resolve: (p) => p }));
-vi.mock('$lib/api', async (importOriginal) => {
+vi.mock('#lib/api.js', async (importOriginal) => {
 	const actual = await importOriginal();
 	return {
 		api: {
@@ -31,11 +31,11 @@ vi.mock('$lib/api', async (importOriginal) => {
 		encodeCriteria: actual.encodeCriteria
 	};
 });
-vi.mock('$lib/stores/confirmStore.svelte.js', () => ({ confirmStore: { confirm: confirmMock } }));
-vi.mock('$lib/stores/toastStore.svelte.js', () => ({ toastStore: toastMock }));
+vi.mock('#lib/stores/confirmStore.svelte.js', () => ({ confirmStore: { confirm: confirmMock } }));
+vi.mock('#lib/stores/toastStore.svelte.js', () => ({ toastStore: toastMock }));
 
 import { page } from '$app/state';
-import { replaceState } from '$app/navigation';
+import { goto } from '$app/navigation';
 
 const rubric = {
 	subject_matter: true,
@@ -82,7 +82,7 @@ beforeEach(() => {
 	confirmMock.mockReset();
 	toastMock.success.mockReset();
 	toastMock.error.mockReset();
-	replaceState.mockClear();
+	goto.mockClear();
 	page.url.searchParams = new URLSearchParams();
 	page.url.hash = '';
 });
@@ -166,7 +166,10 @@ describe('ProvisionalReview filters and paging', () => {
 				verdict: ''
 			})
 		);
-		expect(replaceState).toHaveBeenLastCalledWith('/tags?prov_criteria=atomic%3Afail#provisional');
+		expect(goto).toHaveBeenLastCalledWith('/tags?prov_criteria=atomic%3Afail#provisional', {
+			shallow: true,
+			replace: true
+		});
 		expect(await screen.findByText('No tags match the current filters.')).toBeTruthy();
 	});
 
@@ -185,7 +188,10 @@ describe('ProvisionalReview filters and paging', () => {
 				verdict: 'none'
 			})
 		);
-		expect(replaceState).toHaveBeenLastCalledWith('/tags?prov_verdict=none');
+		expect(goto).toHaveBeenLastCalledWith('/tags?prov_verdict=none', {
+			shallow: true,
+			replace: true
+		});
 	});
 
 	it('restores filters and page from the URL, dropping invalid entries', async () => {
@@ -233,7 +239,7 @@ describe('ProvisionalReview filters and paging', () => {
 		await screen.findByText('second page tag');
 		expect(provisionalList).toHaveBeenLastCalledWith(50, 50, { criteria: [], verdict: '' });
 		expect(screen.getByRole('button', { name: 'Prev' }).disabled).toBe(false);
-		expect(replaceState).toHaveBeenLastCalledWith('/tags?prov_page=1');
+		expect(goto).toHaveBeenLastCalledWith('/tags?prov_page=1', { shallow: true, replace: true });
 	});
 
 	it('clamps to the last page when a reject empties the current page', async () => {
@@ -258,7 +264,7 @@ describe('ProvisionalReview filters and paging', () => {
 		expect(provisionalList.mock.calls[2][1]).toBe(0);
 		await screen.findByText('sample tag');
 		expect(screen.queryByText('deep page tag')).toBeNull();
-		const lastUrl = replaceState.mock.calls.at(-1)[0];
+		const lastUrl = goto.mock.calls.at(-1)[0];
 		expect(lastUrl).not.toContain('prov_page');
 	});
 

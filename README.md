@@ -232,7 +232,7 @@ New here? Read the [Developer Guides](docs/developer-guide/) first — start wit
 
 - Go 1.26
 - gcc, gcc-c++, make, autotools, git, curl
-- Node.js 24 (use [nvm](https://github.com/nvm-sh/nvm) — `.nvmrc` specifies the version; run `nvm use` before any npm command, never the shell's default Node)
+- Node.js 26 (use [nvm](https://github.com/nvm-sh/nvm) — `.nvmrc` specifies the version; run `nvm use` before any npm command, never the shell's default Node)
 
 ### Build
 

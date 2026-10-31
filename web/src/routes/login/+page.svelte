@@ -1,8 +1,8 @@
 <script>
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
 
 	let username = $state('');
 	let password = $state('');

@@ -1,6 +1,6 @@
 <script>
-	import SystemSection from '$lib/components/settings/SystemSection.svelte';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import SystemSection from '#lib/components/settings/SystemSection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 </script>
 
 <div class="mb-5 max-w-3xl">

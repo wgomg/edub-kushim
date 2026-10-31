@@ -1,4 +1,4 @@
-import { getToken, logout as authLogout } from '$lib/stores/authStore.svelte.js';
+import { getToken, logout as authLogout } from '#lib/stores/authStore.svelte.js';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
@@ -10,7 +10,7 @@ async function handleUnauthorized() {
 	fetch('/api/v1/auth/logout', { method: 'POST' });
 	authLogout();
 	try {
-		await goto(resolve('/login'));
+		await goto(resolve('login'));
 	} finally {
 		_redirecting = false;
 	}

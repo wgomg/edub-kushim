@@ -2,10 +2,10 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 
 	let profile = $state(null);
 	let keyStatus = $state(null);

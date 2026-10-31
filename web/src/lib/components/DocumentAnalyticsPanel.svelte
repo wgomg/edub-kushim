@@ -1,7 +1,7 @@
 <script>
 	import { resolve } from '$app/paths';
-	import { defaultFilter, serializeFilter } from '$lib/stores/searchFilter.js';
-	import { formatNumber } from '$lib/utils/html.js';
+	import { defaultFilter, serializeFilter } from '#lib/stores/searchFilter.js';
+	import { formatNumber } from '#lib/utils/html.js';
 
 	let { analytics = null } = $props();
 

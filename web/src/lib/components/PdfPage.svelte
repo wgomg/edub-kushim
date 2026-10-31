@@ -1,5 +1,5 @@
 <script>
-	import { TextLayer } from '$lib/pdf/pdfjs';
+	import { TextLayer } from '#lib/pdf/pdfjs.js';
 
 	let { pdfPage, placeholderRatio, scale, active, register, onTextLayerReady } = $props();
 

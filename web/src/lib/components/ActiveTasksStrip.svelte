@@ -1,13 +1,13 @@
 <script>
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { formatRelative } from '$lib/utils/html.js';
-	import { statusBandClasses } from '$lib/utils/statusChip.js';
+	import { formatRelative } from '#lib/utils/html.js';
+	import { statusBandClasses } from '#lib/utils/statusChip.js';
 
 	let { tasks = [], count = 0 } = $props();
 
 	function openTask(taskId) {
-		goto(resolve(`/tasks/${taskId}`));
+		goto(resolve(`tasks/${taskId}`));
 	}
 </script>
 
@@ -19,7 +19,7 @@
 		</h2>
 		{#if count > tasks.length}
 			<a
-				href={resolve('/tasks?status=active')}
+				href={resolve('tasks?status=active')}
 				class="text-sm text-gold-500 transition-colors hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			>
 				View all {count} →
@@ -77,7 +77,7 @@
 						<div class="px-3.5 pt-3 pb-3.5">
 							{#if task.payload_doc_id}
 								<a
-									href={resolve(`/documents/${task.payload_doc_id}`)}
+									href={resolve(`documents/${task.payload_doc_id}`)}
 									class="flex items-center gap-1.5 text-sm font-medium text-parchment-100 hover:text-lapis-300 hover:underline hover:decoration-lapis-300/40 hover:underline-offset-[3px]"
 									title={task.payload_doc_id}
 								>
@@ -91,9 +91,10 @@
 										stroke-linejoin="round"
 										aria-hidden="true"
 									>
-										<path d="M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3" />
-										<path d="M9.5 2.5h4v4" />
-										<path d="M13.5 2.5 7.5 8.5" />
+										<path d="M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3"></path>
+
+										<path d="M9.5 2.5h4v4"></path>
+										<path d="M13.5 2.5 7.5 8.5"></path>
 									</svg>
 									<span class="min-w-0 truncate">{task.label}</span>
 								</a>

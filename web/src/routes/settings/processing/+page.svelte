@@ -1,6 +1,6 @@
 <script>
-	import ProcessingSection from '$lib/components/settings/ProcessingSection.svelte';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import ProcessingSection from '#lib/components/settings/ProcessingSection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 </script>
 
 <div class="mb-5 max-w-3xl">

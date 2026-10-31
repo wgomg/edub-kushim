@@ -1,7 +1,7 @@
 <script>
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
-	import { replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 
 	/**
@@ -68,10 +68,12 @@
 	$effect(() => {
 		if (!initialized) {
 			pageSize = defaultPageSize;
+
 			const target =
 				(defaultSortBy && columns.find((c) => c.key === defaultSortBy)) ||
 				columns.find((c) => c.sortable) ||
 				columns[0];
+
 			if (target) sortBy = target.key;
 			if (defaultSortOrder === 'asc') sortOrder = 'asc';
 			if (urlSync) {
@@ -91,7 +93,7 @@
 
 	function syncUrl() {
 		if (!urlSync) return;
-		// transient helper for replaceState; SvelteURLSearchParams not needed here
+		// transient helper to sync the URL with local state; SvelteURLSearchParams is not imported in this file
 		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const sp = new URLSearchParams(page.url.searchParams);
 		const params = [
@@ -104,7 +106,7 @@
 			if (value) sp.set(key, value);
 			else sp.delete(key);
 		}
-		replaceState(resolve(`${page.url.pathname}?${sp.toString()}`));
+		goto(resolve(`${page.url.pathname}?${sp.toString()}`), { shallow: true, replace: true });
 	}
 
 	$effect(() => {
@@ -297,12 +299,12 @@
 										r="10"
 										stroke="currentColor"
 										stroke-width="4"
-									/>
+									></circle>
 									<path
 										class="opacity-75"
 										fill="currentColor"
 										d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-									/>
+									></path>
 								</svg>
 								<span class="ml-2">Loading…</span>
 							</td>

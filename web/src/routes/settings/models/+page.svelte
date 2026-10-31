@@ -1,6 +1,6 @@
 <script>
-	import ModelsSection from '$lib/components/settings/ModelsSection.svelte';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import ModelsSection from '#lib/components/settings/ModelsSection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 
 	let usedBy = $derived.by(() => {
 		const map = {};

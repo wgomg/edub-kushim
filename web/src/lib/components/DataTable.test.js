@@ -5,7 +5,7 @@ import DataTable from './DataTable.svelte';
 vi.mock('$app/state', () => ({
 	page: { url: { searchParams: new URLSearchParams(), pathname: '/documents' } }
 }));
-vi.mock('$app/navigation', () => ({ replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/paths', () => ({ resolve: (p) => p }));
 
 const COLUMNS = [

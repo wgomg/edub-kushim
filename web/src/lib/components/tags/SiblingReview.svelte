@@ -1,7 +1,7 @@
 <script>
-	import { api } from '$lib/api';
-	import DataTable from '$lib/components/DataTable.svelte';
-	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
+	import { api } from '#lib/api.js';
+	import DataTable from '#lib/components/DataTable.svelte';
+	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
 
 	let refreshKey = $state(0);
 	let readingsTotal = $state(null);

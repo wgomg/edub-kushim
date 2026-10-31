@@ -1,12 +1,12 @@
 <script>
-	import { api } from '$lib/api';
-	import DataTable from '$lib/components/DataTable.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import { EDIT_ICON, DELETE_ICON, actionButton } from '$lib/icons.js';
-	import { escapeHtml } from '$lib/utils/html.js';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import DataTable from '#lib/components/DataTable.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import { EDIT_ICON, DELETE_ICON, actionButton } from '#lib/icons.js';
+	import { escapeHtml } from '#lib/utils/html.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
 	import Card from './Card.svelte';
 	import GroupHead from './GroupHead.svelte';
 	import Switch from './Switch.svelte';

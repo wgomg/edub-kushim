@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
-import EnrichmentSection from '$lib/components/settings/EnrichmentSection.svelte';
+import EnrichmentSection from '#lib/components/settings/EnrichmentSection.svelte';
 import ModelsPage from './models/+page.svelte';
-import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 
 const apiMocks = vi.hoisted(() => ({
 	configGet: vi.fn(),
@@ -12,18 +12,16 @@ const apiMocks = vi.hoisted(() => ({
 	catalog: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$app/state', () => ({
 	page: {
-		subscribe(run) {
-			run({ url: new URL('http://localhost/settings/models'), state: {} });
-			return () => {};
-		}
+		url: new URL('http://localhost/settings/models'),
+		state: {}
 	}
 }));
 
-vi.mock('$app/navigation', () => ({ replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
-vi.mock('$lib/api', () => ({
+vi.mock('#lib/api.js', () => ({
 	api: {
 		config: {
 			get: apiMocks.configGet,

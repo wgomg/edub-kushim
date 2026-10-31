@@ -1,8 +1,8 @@
 <script>
-	import { api } from '$lib/api';
-	import { filterStore } from '$lib/stores/filterStore.js';
-	import { getPersonTypes, formatSize } from '$lib/stores/searchFilter.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import { filterStore } from '#lib/stores/filterStore.js';
+	import { getPersonTypes, formatSize } from '#lib/stores/searchFilter.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 
 	let languages = $state([]);
 

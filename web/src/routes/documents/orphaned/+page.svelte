@@ -1,15 +1,15 @@
 <script>
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import { page } from '$app/stores';
+	import { api } from '#lib/api.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
-	import { formatSize } from '$lib/utils/html.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import { formatSize } from '#lib/utils/html.js';
 
-	let activeTab = $state($page.url.searchParams.get('tab') || 'orphaned');
+	let activeTab = $state(page.url.searchParams.get('tab') || 'orphaned');
 
 	let files = $state([]);
 	let loading = $state(true);
@@ -25,7 +25,7 @@
 
 	function switchTab(tab) {
 		activeTab = tab;
-		goto(resolve(`/documents/orphaned?tab=${tab}`), { replaceState: true, keepFocus: true });
+		goto(resolve(`documents/orphaned?tab=${tab}`), { replaceState: true, reset: false });
 	}
 
 	async function loadFiles() {

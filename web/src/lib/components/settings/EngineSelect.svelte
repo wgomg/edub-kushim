@@ -1,5 +1,5 @@
 <script>
-	import { hintsForEngine } from '$lib/tools.js';
+	import { hintsForEngine } from '#lib/tools.js';
 	import Note from './Note.svelte';
 	import StatusBadge from './StatusBadge.svelte';
 

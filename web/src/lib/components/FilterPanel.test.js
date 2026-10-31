@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import FilterPanel from './FilterPanel.svelte';
-import { filterStore } from '$lib/stores/filterStore.js';
-import { toastStore } from '$lib/stores/toastStore.svelte.js';
+import { filterStore } from '#lib/stores/filterStore.js';
+import { toastStore } from '#lib/stores/toastStore.svelte.js';
 
 const apiMocks = vi.hoisted(() => ({
 	documentTypes: vi.fn(),
@@ -12,7 +12,7 @@ const apiMocks = vi.hoisted(() => ({
 	filterLanguages: vi.fn()
 }));
 
-vi.mock('$lib/api', () => ({
+vi.mock('#lib/api.js', () => ({
 	api: {
 		autocomplete: {
 			documentTypes: apiMocks.documentTypes,

@@ -2,13 +2,13 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { page } from '$app/stores';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
-	import { SETTINGS_SECTION_TITLES, SETTINGS_SECTIONS } from '$lib/settingsSections.js';
-	import ChangesTray from '$lib/components/settings/ChangesTray.svelte';
-	import SaveBar from '$lib/components/settings/SaveBar.svelte';
-	import SettingsPalette from '$lib/components/settings/SettingsPalette.svelte';
+	import { page } from '$app/state';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
+	import { SETTINGS_SECTION_TITLES, SETTINGS_SECTIONS } from '#lib/settingsSections.js';
+	import ChangesTray from '#lib/components/settings/ChangesTray.svelte';
+	import SaveBar from '#lib/components/settings/SaveBar.svelte';
+	import SettingsPalette from '#lib/components/settings/SettingsPalette.svelte';
 
 	let { children } = $props();
 
@@ -20,7 +20,7 @@
 	};
 
 	let segment = $derived.by(() => {
-		const parts = $page.url.pathname.split('/').filter(Boolean);
+		const parts = page.url.pathname.split('/').filter(Boolean);
 		return parts[0] === 'settings' ? (parts[1] ?? '') : '';
 	});
 	let title = $derived(SETTINGS_SECTION_TITLES[segment] ?? 'Settings');
@@ -82,7 +82,7 @@
 					>
 				{:else}
 					<a
-						href={resolve('/settings')}
+						href={resolve('settings')}
 						class="text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 					>
 						<span aria-hidden="true">←</span> Settings

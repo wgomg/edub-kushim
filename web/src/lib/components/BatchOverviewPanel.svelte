@@ -1,8 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { formatDuration } from '$lib/utils/html.js';
-	import { originBadgeClasses } from '$lib/utils/statusChip.js';
+	import { formatDuration } from '#lib/utils/html.js';
+	import { originBadgeClasses } from '#lib/utils/statusChip.js';
 
 	let { recentBatches = [] } = $props();
 
@@ -40,6 +40,7 @@
 			{ count: batch.cancelled, class: 'bg-parchment-500' },
 			{ count: batch.discarded, class: 'bg-terracotta-400' }
 		];
+
 		return segments
 			.filter((s) => s.count > 0)
 			.map((s) => ({ width: (s.count / total) * 100, class: s.class }));
@@ -67,7 +68,7 @@
 						<tr class="border-b border-clay-800/50 hover:bg-clay-800/50">
 							<td class="px-4 py-3">
 								<a
-									href={resolve(`/tasks?batch=${batch.batch_id}`)}
+									href={resolve(`tasks?batch=${batch.batch_id}`)}
 									class="font-mono text-xs text-gold-500 hover:text-gold-600"
 								>
 									{truncateId(batch.batch_id)}

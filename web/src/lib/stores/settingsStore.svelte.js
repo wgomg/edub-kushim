@@ -1,5 +1,5 @@
-import { api } from '$lib/api';
-import { toastStore } from '$lib/stores/toastStore.svelte.js';
+import { api } from '#lib/api.js';
+import { toastStore } from '#lib/stores/toastStore.svelte.js';
 
 const ADVANCED_KEY = 'edub.settings.advanced';
 

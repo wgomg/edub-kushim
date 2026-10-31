@@ -2,13 +2,13 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import { formatSize, formatNumber } from '$lib/utils/html.js';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
-	import PdfViewer from '$lib/components/PdfViewer.svelte';
-	import Icon from '$lib/components/Icon.svelte';
+	import { api } from '#lib/api.js';
+	import { formatSize, formatNumber } from '#lib/utils/html.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import PdfViewer from '#lib/components/PdfViewer.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 	let { params } = $props();
 
 	let doc = $state(null);
@@ -104,7 +104,7 @@
 		deleting = true;
 		const res = await fetch(`/api/v1/documents/${params.id}`, { method: 'DELETE' });
 		if (res.ok) {
-			goto(resolve('/documents'));
+			goto(resolve('documents'));
 		} else {
 			deleting = false;
 			toastStore.error(`Failed to delete document: ${res.status} ${res.statusText}`);
@@ -256,11 +256,10 @@
 
 <div class="flex h-full min-h-0 flex-col gap-4">
 	<a
-		href={resolve('/documents')}
+		href={resolve('documents')}
 		class="inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
+		>← Back to documents</a
 	>
-		&larr; Back to documents
-	</a>
 
 	{#if !doc}
 		<p class="text-parchment-500">Loading…</p>
@@ -295,14 +294,14 @@
 		>
 			<div class="h-full min-w-0 overflow-hidden">
 				<PdfViewer
-					url={resolve(`/api/v1/documents/${doc.id}/file`)}
+					url={resolve(`api/v1/documents/${doc.id}/file`)}
 					title={doc.title}
 					rootClass="h-full"
 					scrollClass="flex-1 min-h-0 overflow-y-auto"
 				>
 					{#snippet actions()}
 						<a
-							href={resolve(`/api/v1/documents/${doc.id}/file?download=true`)}
+							href={resolve(`api/v1/documents/${doc.id}/file?download=true`)}
 							download
 							aria-label="Download PDF"
 							title="Download PDF"
@@ -414,7 +413,7 @@
 											<button
 												onclick={() => removeTag(tag.id)}
 												class="text-parchment-400 hover:text-terracotta-400"
-												aria-label={`Remove tag ${tag.name}`}>&times;</button
+												aria-label={`Remove tag ${tag.name}`}>×</button
 											>
 										{/if}
 									</span>
@@ -447,10 +446,8 @@
 												class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {tagHighlight ===
 												i
 													? 'bg-clay-800'
-													: ''}"
+													: ''}">{tag.name}</button
 											>
-												{tag.name}
-											</button>
 										{/each}
 									</div>
 								{/if}
@@ -479,7 +476,7 @@
 											<button
 												onclick={() => removePerson(person.id, person.person_type_id)}
 												class="shrink-0 text-parchment-500 hover:text-terracotta-400"
-												aria-label="Remove person">&times;</button
+												aria-label="Remove person">×</button
 											>
 										{/if}
 									</div>
@@ -512,10 +509,8 @@
 												class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {peopleHighlight ===
 												i
 													? 'bg-clay-800'
-													: ''}"
+													: ''}">{person.name}</button
 											>
-												{person.name}
-											</button>
 										{/each}
 									</div>
 								{/if}
@@ -547,9 +542,9 @@
 					<details open class="rounded-lg border border-clay-800 bg-clay-950">
 						<summary
 							class="cursor-pointer px-4 py-3 text-xs font-medium tracking-wider text-parchment-500 uppercase select-none"
+							>File details</summary
 						>
-							File details
-						</summary>
+
 						<dl class="space-y-1.5 border-t border-clay-800 px-4 py-3 text-sm">
 							<div class="flex justify-between gap-4">
 								<dt class="text-parchment-500">Original type</dt>
@@ -585,9 +580,9 @@
 					<details class="rounded-lg border border-clay-800 bg-clay-950">
 						<summary
 							class="cursor-pointer px-4 py-3 text-xs font-medium tracking-wider text-parchment-500 uppercase select-none"
+							>Checksums</summary
 						>
-							Checksums
-						</summary>
+
 						<div class="space-y-3 border-t border-clay-800 px-4 py-3">
 							<div>
 								<p class="text-xs text-parchment-500">MD5</p>

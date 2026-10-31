@@ -1,5 +1,5 @@
 <script>
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 </script>
 
 {#if confirmStore.pending}

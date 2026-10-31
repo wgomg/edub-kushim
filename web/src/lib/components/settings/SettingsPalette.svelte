@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { fade, fly } from 'svelte/transition';
-	import { SETTINGS_SECTION_BY_ID, SETTINGS_SECTIONS } from '$lib/settingsSections.js';
+	import { SETTINGS_SECTION_BY_ID, SETTINGS_SECTIONS } from '#lib/settingsSections.js';
 
 	let { open = $bindable(false) } = $props();
 

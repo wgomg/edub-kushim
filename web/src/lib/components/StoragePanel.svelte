@@ -1,5 +1,5 @@
 <script>
-	import { formatSize, formatNumber } from '$lib/utils/html.js';
+	import { formatSize, formatNumber } from '#lib/utils/html.js';
 
 	let {
 		originalTypeBreakdown = [],

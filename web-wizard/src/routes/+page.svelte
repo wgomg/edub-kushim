@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
-	import { configApi } from '$lib/api.js';
-	import { hintsForEngine } from '$lib/tools.js';
+	import { configApi } from '#lib/api.js';
+	import { hintsForEngine } from '#lib/tools.js';
 
 	let step = $state(parseInt(new URL(window.location.href).searchParams.get('step') || '1') || 1);
 	let configDir = $state('');

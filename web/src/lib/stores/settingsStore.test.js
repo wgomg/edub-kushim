@@ -18,7 +18,7 @@ const toastMocks = vi.hoisted(() => ({
 	dismiss: vi.fn()
 }));
 
-vi.mock('$lib/api', () => ({
+vi.mock('#lib/api.js', () => ({
 	api: {
 		config: {
 			get: apiMocks.configGet,
@@ -34,7 +34,7 @@ vi.mock('$lib/api', () => ({
 	}
 }));
 
-vi.mock('$lib/stores/toastStore.svelte.js', () => ({ toastStore: toastMocks }));
+vi.mock('#lib/stores/toastStore.svelte.js', () => ({ toastStore: toastMocks }));
 
 const fullCfg = () => ({
 	server: {

@@ -1,5 +1,5 @@
 <script>
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 
 	let { count = 0, saving = false, busy = false, onSave, onRevert } = $props();
 

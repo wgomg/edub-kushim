@@ -7,7 +7,7 @@ const apiMocks = vi.hoisted(() => ({
 	upload: vi.fn()
 }));
 
-vi.mock('$lib/api', () => ({
+vi.mock('#lib/api.js', () => ({
 	api: {
 		consume: { upload: apiMocks.upload },
 		supportedMimeTypes: apiMocks.supportedMimeTypes

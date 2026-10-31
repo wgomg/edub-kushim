@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { resolve } from '$app/paths';
-	import { getDocument } from '$lib/pdf/pdfjs';
+	import { getDocument } from '#lib/pdf/pdfjs.js';
 	import Icon from './Icon.svelte';
 	import PdfPage from './PdfPage.svelte';
 	import './pdf-viewer.css';

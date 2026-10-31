@@ -132,7 +132,7 @@ make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-de
 - Two SPAs: `web/` (main → `internal/static/build/`) and `web-wizard/` (setup wizard →
   `internal/api/wizard/static/`); both embedded via `//go:embed`. CI stages them with
   `make stage-web` (web job) / `make stage-web-artifact` (Go jobs consume the `web-assets` artifact).
-- Node 24 per `.nvmrc`; the Makefile auto-sources nvm. Any npm/npx command must run
+- Node 26 per `.nvmrc`; the Makefile auto-sources nvm. Any npm/npx command must run
   under the `.nvmrc` Node version — run `nvm use` first (verify with `node -v`), never
   the shell's default Node (it rewrites `package-lock.json` with its own version-dependent format).
 - Dev server: `cd web && npm ci && npm run dev` (proxies `/api` to `localhost:3000`)

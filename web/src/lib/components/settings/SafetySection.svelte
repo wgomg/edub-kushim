@@ -1,5 +1,5 @@
 <script>
-	import { hintsForEngine } from '$lib/tools.js';
+	import { hintsForEngine } from '#lib/tools.js';
 	import Card from './Card.svelte';
 	import GroupHead from './GroupHead.svelte';
 	import Note from './Note.svelte';

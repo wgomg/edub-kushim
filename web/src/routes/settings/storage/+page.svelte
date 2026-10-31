@@ -1,6 +1,6 @@
 <script>
-	import StorageSection from '$lib/components/settings/StorageSection.svelte';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import StorageSection from '#lib/components/settings/StorageSection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 </script>
 
 <div class="mb-5 max-w-3xl">

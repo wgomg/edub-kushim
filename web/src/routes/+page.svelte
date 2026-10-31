@@ -1,13 +1,13 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import { formatSize, formatNumber } from '$lib/utils/html.js';
-	import StoragePanel from '$lib/components/StoragePanel.svelte';
-	import BatchOverviewPanel from '$lib/components/BatchOverviewPanel.svelte';
-	import ActiveTasksStrip from '$lib/components/ActiveTasksStrip.svelte';
-	import DocumentAnalyticsPanel from '$lib/components/DocumentAnalyticsPanel.svelte';
-	import ProcessingHealthPanel from '$lib/components/ProcessingHealthPanel.svelte';
+	import { api } from '#lib/api.js';
+	import { formatSize, formatNumber } from '#lib/utils/html.js';
+	import StoragePanel from '#lib/components/StoragePanel.svelte';
+	import BatchOverviewPanel from '#lib/components/BatchOverviewPanel.svelte';
+	import ActiveTasksStrip from '#lib/components/ActiveTasksStrip.svelte';
+	import DocumentAnalyticsPanel from '#lib/components/DocumentAnalyticsPanel.svelte';
+	import ProcessingHealthPanel from '#lib/components/ProcessingHealthPanel.svelte';
 
 	let recentDocs = $state([]);
 	let dashboard = $state();
@@ -201,7 +201,7 @@
 					<div class="min-w-0 space-y-2">
 						{#each col as doc (doc.id)}
 							<a
-								href={resolve(`/documents/${doc.id}`)}
+								href={resolve(`documents/${doc.id}`)}
 								class="block rounded-lg border border-clay-800 bg-clay-900 p-3 transition-colors hover:bg-clay-800"
 							>
 								<p class="truncate text-sm text-parchment-200">{doc.title || 'Untitled'}</p>

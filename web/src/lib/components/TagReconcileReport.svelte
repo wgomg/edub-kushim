@@ -1,5 +1,5 @@
 <script>
-	import { documentsLabel, formatNumber } from '$lib/utils/html.js';
+	import { documentsLabel, formatNumber } from '#lib/utils/html.js';
 	import {
 		affectedDocuments,
 		changedDecisions,
@@ -11,7 +11,7 @@
 		sumReassigned,
 		worklistReasons,
 		worklistTotal
-	} from '$lib/utils/tagReconcile.js';
+	} from '#lib/utils/tagReconcile.js';
 
 	let { report, completedAt } = $props();
 

@@ -1,13 +1,13 @@
 <script>
-	import { api } from '$lib/api';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import {
 		getPersonTypes,
 		PERSON_ANY_TYPE,
 		formatSize,
 		parseDateRange,
 		parseSize
-	} from '$lib/stores/searchFilter.js';
+	} from '#lib/stores/searchFilter.js';
 
 	let {
 		query = '',

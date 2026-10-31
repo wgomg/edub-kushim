@@ -1,6 +1,6 @@
 <script>
 	import { resolve } from '$app/paths';
-	import { formatDuration } from '$lib/utils/html.js';
+	import { formatDuration } from '#lib/utils/html.js';
 
 	let { health = null } = $props();
 
@@ -45,7 +45,7 @@
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-sm text-parchment-500">Active Batches</p>
 				<a
-					href={resolve(`/tasks`)}
+					href={resolve(`tasks`)}
 					class="mt-1 block text-lg font-semibold text-gold-500 hover:text-gold-600"
 				>
 					{health.active_batches}
@@ -60,13 +60,11 @@
 			<div class="rounded-lg border border-clay-800 bg-clay-900 p-4">
 				<p class="text-sm text-parchment-500">Missing Tools</p>
 				<a
-					href={resolve(`/settings/processing`)}
+					href={resolve(`settings/processing`)}
 					class="mt-1 block text-lg font-semibold {missingToolsClass(
 						health.missing_tools
-					)} hover:underline"
+					)} hover:underline">{health.missing_tools}</a
 				>
-					{health.missing_tools}
-				</a>
 			</div>
 		</div>
 	{/if}

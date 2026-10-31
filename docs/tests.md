@@ -339,6 +339,8 @@ make test-cgo
 
 ### Web UI tests (`make test-web` / `make test-web-e2e`)
 
+Both targets source nvm first, so they run under the `.nvmrc` Node version.
+
 **`make test-web`** runs Vitest over two projects defined in `web/vite.config.js`
 (`test.projects`, both `extends: true` so they inherit the `sveltekit()` plugin —
 which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
@@ -365,7 +367,7 @@ so `eslint.config.js` needed no changes. Mocking conventions:
 
 - `$app/*` modules are mocked with `vi.mock` where a unit imports them (`$app/navigation`
   `goto`, `$app/paths` `resolve`, `$app/state` `page`).
-- `$lib/api` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
+- `#lib/api.js` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
   `UploadModal`, `ProvisionalReview`) so no network calls escape.
 - `api.test.js` stubs the global `fetch` (`vi.stubGlobal`) and asserts the Bearer
   header, 401 → logout + redirect, null propagation, `requestRaw` shape, and the

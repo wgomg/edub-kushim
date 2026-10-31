@@ -1,3 +1,4 @@
+import adapter from '@sveltejs/adapter-static';
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { svelteTesting } from '@testing-library/svelte/vite';
@@ -6,13 +7,18 @@ import { defineConfig } from 'vitest/config';
 const stub = new URL('src/lib/stubs/empty.mjs', import.meta.url).pathname;
 
 export default defineConfig({
-	plugins: [tailwindcss(), sveltekit()],
-	resolve: {
-		alias: {
-			child_process: stub,
-			url: stub
-		}
-	},
+	plugins: [
+		tailwindcss(),
+		sveltekit({
+			compilerOptions: {
+				runes: ({ filename }) =>
+					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
+			},
+			adapter: adapter({ fallback: 'index.html' }),
+			appDir: 'app'
+		})
+	],
+	resolve: { alias: { child_process: stub, url: stub } },
 	server: {
 		proxy: {
 			'/api': `http://localhost:${process.env.API_PORT || '3000'}`

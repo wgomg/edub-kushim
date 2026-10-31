@@ -1,5 +1,5 @@
 <script>
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 
 	let toasts = $derived(toastStore.toasts);
 

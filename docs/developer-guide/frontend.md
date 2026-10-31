@@ -71,9 +71,10 @@ web/                        the main SPA (admin + document management UI)
                             confirmStore.svelte.js, toastStore.svelte.js,
                             settingsStore.svelte.js
       stubs/empty.mjs       Vite alias target (neutralizes Node builtins)
-  svelte.config.js          adapter-static + fallback -> SPA mode
-  vite.config.js            tailwind plugin, dev proxy, aliases
-  package.json              Svelte 5 / Kit 2 / Tailwind 4 / Vite 8
+  vite.config.js            sveltekit() plugin options: adapter-static +
+                            fallback (SPA mode), appDir, runes; plus the
+                            tailwind plugin, dev proxy and aliases
+  package.json              Svelte 5 / Kit 3 / Tailwind 4 / Vite 8
 
 web-wizard/                 the setup wizard (one page, six steps)
   src/
@@ -85,7 +86,9 @@ web-wizard/                 the setup wizard (one page, six steps)
 ```
 
 Both SPAs are **static single-page apps**: SvelteKit with
-`@sveltejs/adapter-static` and `fallback: 'index.html'` (`web/svelte.config.js:9`).
+`@sveltejs/adapter-static` and `fallback: 'index.html'`, configured as options
+on the `sveltekit()` Vite plugin (`web/vite.config.js`,
+`web-wizard/vite.config.js`).
 There is no server-side rendering, no Node runtime — the built output is copied
 into the Go binaries:
 
@@ -108,7 +111,8 @@ The stances that shape every page:
    know Svelte 4, translate: `let x = 0` + `$:` → `let x = $state(0)` +
    `$derived`; `on:click` → `onclick` prop; `<slot>` → `{@render children()}`.
 2. **This is SPA mode.** Every route serves `index.html`; routing happens
-   client-side with `goto()` / `<a href>` and the `$page` store. There are no
+   client-side with `goto()` / `<a href>` and the reactive `page` object from
+   `$app/state`. There are no
    `+page.js` load functions anywhere — pages fetch their own data in
    `onMount` (§9).
 3. **It's plain JavaScript, not TypeScript.** `.js`/`.svelte` files, JSDoc for
@@ -146,11 +150,14 @@ let { params } = $props();
   and are used directly: `api.documents.get(params.id)` (`:58`).
 - **No load functions anywhere** (`+page.js`) — pages fetch in `onMount` (§9).
   This is a deliberate SPA-mode decision, not an oversight.
-- **Every internal link/href goes through `resolve('/documents')`**
-  (`$app/paths`) so links respect the app base path (19 uses).
-- `$app/navigation` (`goto`, `replaceState`) handles client-side navigation;
-  `page` is consumed both as an auto-subscribed store (`$page`) and in runes
-  form (`page.url`) — see §10.
+- **Every internal link/href goes through `resolve('documents')`**
+  (`$app/paths`) so links respect the app base path; pathnames carry no
+  leading slash (only route ids start with `/`).
+- **Cross-directory internal imports use `#lib/...`**, resolved by the
+  `imports` map in `package.json` (e.g. `import { api } from '#lib/api.js'`).
+- `$app/navigation` (`goto` for navigation, `replaceState`/`pushState` for
+  shallow history writes) handles client-side navigation; `page` is a reactive
+  object from `$app/state` (`page.url`) — see §10.
 - Per-page head additions use `<svelte:head>` (`+layout.svelte:66` sets the
   favicon).
 
@@ -364,7 +371,7 @@ filterStore.subscribe((f) => {
 	filter = { query: f.query, /* ... */ };
 	if (subscribed) {
 		refreshKey++;
-		// ... write ?q= into the URL via replaceState
+		// ... write ?q= into the URL via a shallow goto
 	}
 	subscribed = true;
 });
@@ -586,8 +593,7 @@ The canonical three-state chain (`logs/+page.svelte:218-237`) gates on
 ## 10. URL state sync
 
 State that should survive reload/share/back-button lives in the query string.
-Three writing styles exist; all read via `$page.url.searchParams` (store form)
-or `page.url.searchParams` (`$app/state` form).
+Three writing styles exist; all read via `page.url.searchParams` (`$app/state`).
 
 ### 1. `$effect` writing back with `goto(..., { replaceState: true })` — logs page
 
@@ -596,7 +602,7 @@ Read once at init, then mirror state into the URL whenever it changes
 
 ```js
 function syncFromURL() {
-	const params = $page.url.searchParams;
+	const params = page.url.searchParams;
 	const tab = params.get('tab');
 	if (tab && tabs.some((t) => t.id === tab)) activeTab = tab;
 	// ... same for lines ...
@@ -604,26 +610,28 @@ function syncFromURL() {
 syncFromURL();
 
 $effect(() => {
-	const search = $page.url.search;
+	const search = page.url.search;
 	const params = new URLSearchParams(search);
 	params.set('tab', activeTab);
 	params.set('lines', String(lines));
 	const qs = params.toString();
-	const current = $page.url.search;
+	const current = page.url.search;
 	if ('?' + qs !== current && current !== qs) {
-		goto(resolve(`/logs?${qs}`), { replaceState: true, noScroll: true });
+		goto(resolve(`logs?${qs}`), { replaceState: true, reset: false });
 	}
 });
 ```
 
-`replaceState: true` keeps it out of history; the equality check avoids
-infinite ping-pong.
+`replaceState: true` keeps it out of history; `reset: false` keeps the current
+scroll position and focus instead of jumping to the top; the equality check
+avoids infinite ping-pong.
 
-### 2. `replaceState` from `$app/navigation` — documents page
+### 2. Shallow `goto(..., { shallow: true, replace: true })` — documents page
 
 The filter store subscription writes `?q=` with the serialized filter
-(`documents/+page.svelte:141-167`; `replaceState(resolve(...))` — see §7 for
-the full pattern). The `?q=` value is a mini-language (`tag:"x"`,
+(`documents/+page.svelte:205-227`; `goto(resolve(\`${page.url.pathname}?${sp}\`),
+{ shallow: true, replace: true })` — see §7 for the full pattern). The `?q=`
+value is a mini-language (`tag:"x"`,
 `type:"scientific paper"`, `created:from..to`, `missing:lang`, `size:>10mb`)
 parsed/serialized by the pure functions in `lib/stores/searchFilter.js` —
 `parseQueryString` / `serializeFilter` — so the URL is the source of truth
@@ -637,13 +645,11 @@ When no SvelteKit navigation is needed, `switchTab` writes the param directly
 (`web-wizard/+page.svelte:30-34`); the settings area redirects the legacy
 `?tab=Users` parameter to `/settings/access` with `goto`
 (`settings/+layout.svelte`), and the Models page syncs its selected provider
-to the `?provider=` parameter with `replaceState`
-(`settings/ModelsSection.svelte`).
+to the `?provider=` parameter with a shallow replacing `goto` that forwards
+`page.state` (`settings/ModelsSection.svelte`).
 
-Also in play: `page.subscribe(($p) => ...)` for reacting to URL changes
-(`tasks/+page.svelte:234-236` reads `?batch=`), and DataTable's own
-`urlSync="dt"` prop, which persists `<prefix>_size/_page/_sort/_order` params
-itself (`DataTable.svelte:92-108`).
+DataTable's own `urlSync="dt"` prop persists `<prefix>_size/_page/_sort/_order`
+params itself (`DataTable.svelte:94`).
 
 ---
 
@@ -706,9 +712,9 @@ $effect(() => {
 		authStore.authResolved() &&
 		authStore.authEnabled() &&
 		!authStore.isAuthenticated() &&
-		$page.url.pathname !== '/login'
+		page.url.pathname !== '/login'
 	) {
-		goto(resolve('/login'));
+		goto(resolve('login'));
 	}
 });
 ```
@@ -856,7 +862,7 @@ classes consistently with the project's generated class set.
 
 ## 15. Build and tooling
 
-**Node 24 is required** (`.npmrc` has `engine-strict=true`); run `nvm use`
+**Node 26 is required** (`.nvmrc`); run `nvm use`
 (`.nvmrc`) before any npm/npx command — never the shell's default Node, which
 rewrites `package-lock.json` with its own version-dependent format.
 
@@ -897,7 +903,7 @@ Vitest + `@testing-library/svelte` + Playwright, wired through the Makefile
   `import { describe, it, expect, vi } from 'vitest'` — no globals, so the
   eslint config is untouched.
 - **Mocking conventions**: `$app/navigation`/`$app/paths`/`$app/state` via
-  `vi.mock`; `$lib/api` via `vi.hoisted` factories in component tests; global
+  `vi.mock`; `#lib/api.js` via `vi.hoisted` factories in component tests; global
   `fetch` via `vi.stubGlobal` in `api.test.js`.
 - **E2E** (`web/e2e/`): Playwright drives the static build served by
   `scripts/serve-static.mjs` (SPA fallback to `index.html` — `vite preview`
@@ -997,7 +1003,7 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 | Wizard step machine | `web-wizard/src/routes/+page.svelte:6,30-34` |
 | Dotted-key config map | `web-wizard/+page.svelte:121-162`, `web/src/routes/settings/+page.svelte:122-240` |
 | Vite aliases / proxy | `web/vite.config.js`, `web-wizard/vite.config.js` |
-| SPA mode config | `web/svelte.config.js` (adapter-static + fallback) |
+| SPA mode config | `web/vite.config.js` (sveltekit() options: adapter-static + fallback) |
 
 ---
 
@@ -1016,13 +1022,15 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 - **Null-coalesce API results** (`data ?? []`) — `request()` returns `null` on
   any failure.
 - **Escape user data in `{@html}` cells** with `escapeHtml` from
-  `$lib/utils/html.js`; icons are safe, data is not.
-- **Keep URL-visible state in the query string** via `replaceState`-style
-  writes, and read it with `$page.url.searchParams` / `page.url.searchParams`.
+  `#lib/utils/html.js`; icons are safe, data is not.
+- **Keep URL-visible state in the query string** via replacing history writes
+  (a shallow `goto` with `replace: true`, or `goto` with `replaceState: true`
+  in an `$effect`), and read it with `page.url.searchParams`.
 - **`gofmt`-equivalent: `npm run format`** (Prettier sorts Tailwind classes
   too) and `npm run lint`.
-- **`nvm use` before any npm command** — `engine-strict=true` refuses other Node
-  versions, and the shell's default Node rewrites `package-lock.json`.
+- **`nvm use` before any npm command** — `.nvmrc` pins the Node version, and
+  the shell's default Node rewrites `package-lock.json`. The Makefile targets
+  source nvm themselves.
 
 ### Gotchas that bit people before
 

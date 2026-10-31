@@ -1,6 +1,6 @@
 <script>
-	import IntakeSection from '$lib/components/settings/IntakeSection.svelte';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import IntakeSection from '#lib/components/settings/IntakeSection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 </script>
 
 <div class="mb-5 max-w-3xl">

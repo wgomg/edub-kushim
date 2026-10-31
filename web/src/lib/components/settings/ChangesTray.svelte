@@ -1,9 +1,9 @@
 ﻿<script>
 	import { onMount } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
-	import { SETTINGS_SECTION_TITLES } from '$lib/settingsSections.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
+	import { SETTINGS_SECTION_TITLES } from '#lib/settingsSections.js';
 
 	let { open = false, onClose = () => {} } = $props();
 

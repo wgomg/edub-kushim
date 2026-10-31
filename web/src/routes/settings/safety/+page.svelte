@@ -1,6 +1,6 @@
 <script>
-	import SafetySection from '$lib/components/settings/SafetySection.svelte';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import SafetySection from '#lib/components/settings/SafetySection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 </script>
 
 <div class="mb-5 max-w-3xl">

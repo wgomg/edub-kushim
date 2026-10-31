@@ -1,9 +1,9 @@
 <script>
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import { formatNumber } from '$lib/utils/html.js';
-	import { affectedDocuments, changedDecisions, worklistTotal } from '$lib/utils/tagReconcile.js';
+	import { api } from '#lib/api.js';
+	import { formatNumber } from '#lib/utils/html.js';
+	import { affectedDocuments, changedDecisions, worklistTotal } from '#lib/utils/tagReconcile.js';
 
 	const stripClass =
 		'mb-4 flex flex-wrap items-center gap-x-3.5 gap-y-2 rounded-lg border border-clay-800 bg-clay-900 px-4 py-2.5 text-[0.8125rem] text-parchment-400';
@@ -62,7 +62,8 @@
 	{:else if status === 'missing'}
 		<p class="text-parchment-500">
 			Tag reconciliation has never run.
-			<a href={resolve('/settings/enrichment')} class={linkClass}>Open settings</a>
+
+			<a href={resolve('settings/enrichment')} class={linkClass}>Open settings</a>
 		</p>
 	{:else if status === 'error'}
 		<p class="text-terracotta-500" role="alert">Failed to load the tag reconciliation report.</p>
@@ -91,6 +92,7 @@
 				{provisionalParts.join(' · ')}
 			</span>
 		{/if}
-		<a href={resolve(`/tasks/${data.task_id}`)} class="{linkClass} text-xs">View full report →</a>
+
+		<a href={resolve(`tasks/${data.task_id}`)} class="{linkClass} text-xs">View full report →</a>
 	{/if}
 </div>

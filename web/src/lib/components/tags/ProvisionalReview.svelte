@@ -1,14 +1,14 @@
 <script>
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api, encodeCriteria } from '$lib/api';
-	import Icon from '$lib/components/Icon.svelte';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import { documentsForTagHref, documentsLabel, formatNumber } from '$lib/utils/html.js';
-	import { demotionLabel } from '$lib/utils/tagReconcile.js';
+	import { api, encodeCriteria } from '#lib/api.js';
+	import Icon from '#lib/components/Icon.svelte';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import { documentsForTagHref, documentsLabel, formatNumber } from '#lib/utils/html.js';
+	import { demotionLabel } from '#lib/utils/tagReconcile.js';
 
 	const PAGE_SIZE = 50;
 
@@ -97,20 +97,23 @@
 	}
 
 	function syncUrl() {
-		// transient helper for replaceState; SvelteURLSearchParams not needed here
+		// transient helper to sync the URL with local state; SvelteURLSearchParams is not imported in this file
 		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const sp = new URLSearchParams(page.url.searchParams);
 		if (offset > 0) sp.set('prov_page', String(offset / PAGE_SIZE));
 		else sp.delete('prov_page');
 
 		const active = encodeCriteria(activeCriteria());
+
 		if (active) sp.set('prov_criteria', active);
 		else sp.delete('prov_criteria');
-
 		if (verdictFilter) sp.set('prov_verdict', verdictFilter);
 		else sp.delete('prov_verdict');
 
-		replaceState(resolve(`${page.url.pathname}?${sp.toString()}${page.url.hash}`));
+		goto(resolve(`${page.url.pathname}?${sp.toString()}${page.url.hash}`), {
+			shallow: true,
+			replace: true
+		});
 	}
 
 	async function load(clamp = true) {

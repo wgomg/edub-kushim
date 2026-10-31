@@ -1,13 +1,13 @@
 <script>
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import { EDIT_ICON, DELETE_ICON, BTN_BASE } from '$lib/icons.js';
-	import Modal from '$lib/components/Modal.svelte';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
-	import { defaultFilter, serializeFilter } from '$lib/stores/searchFilter.js';
+	import { api } from '#lib/api.js';
+	import { EDIT_ICON, DELETE_ICON, BTN_BASE } from '#lib/icons.js';
+	import Modal from '#lib/components/Modal.svelte';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import { defaultFilter, serializeFilter } from '#lib/stores/searchFilter.js';
 
 	let documentTypes = $state([]);
 	let showModal = $state(false);
@@ -127,7 +127,7 @@
 								<!-- keep serializeFilter + encodeURIComponent as-is: the q round-trip depends on quoted multi-word type names surviving the URL unmodified -->
 								<a
 									href={resolve(
-										`/documents?q=${encodeURIComponent(serializeFilter({ ...defaultFilter, documentType: dt.name }))}`
+										`documents?q=${encodeURIComponent(serializeFilter({ ...defaultFilter, documentType: dt.name }))}`
 									)}
 									class="block focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 									>{dt.name}</a

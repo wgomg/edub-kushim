@@ -1,9 +1,9 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
+	import { api } from '#lib/api.js';
 
 	const tabs = [
 		{ id: 'kushim', label: 'Kushim' },
@@ -26,7 +26,7 @@
 	let controller = $state(null);
 
 	function syncFromURL() {
-		const params = $page.url.searchParams;
+		const params = page.url.searchParams;
 		const tab = params.get('tab');
 		if (tab && tabs.some((t) => t.id === tab)) activeTab = tab;
 		const linesParam = params.get('lines');
@@ -39,16 +39,16 @@
 	syncFromURL();
 
 	$effect(() => {
-		const search = $page.url.search;
-		// transient helper for replaceState; SvelteURLSearchParams not needed here
+		const search = page.url.search;
+		// transient helper to sync the URL with local state; SvelteURLSearchParams is not imported in this file
 		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const params = new URLSearchParams(search);
 		params.set('tab', activeTab);
 		params.set('lines', String(lines));
 		const qs = params.toString();
-		const current = $page.url.search;
+		const current = page.url.search;
 		if ('?' + qs !== current && current !== qs) {
-			goto(resolve(`/logs?${qs}`), { replaceState: true, noScroll: true });
+			goto(resolve(`logs?${qs}`), { replaceState: true, reset: false });
 		}
 	});
 

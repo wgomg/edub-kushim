@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import '@scalar/api-reference/style.css';
-	import { api } from '$lib/api.js';
+	import { api } from '#lib/api.js';
 
 	let container = $state();
 	let error = $state('');

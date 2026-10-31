@@ -1,9 +1,9 @@
 <script>
-	import { page } from '$app/stores';
-	import { replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 
 	let {
 		catalog = { providers: [], models: [] },
@@ -22,7 +22,7 @@
 	} = $props();
 
 	let providerQuery = $state('');
-	let selectedProviderName = $state($page.url.searchParams.get('provider'));
+	let selectedProviderName = $state(page.url.searchParams.get('provider'));
 	let panelMode = $state(null);
 	let panelProvider = $state(null);
 	let panelModelId = $state(null);
@@ -118,10 +118,16 @@
 
 	function selectProvider(name) {
 		selectedProviderName = name;
-		const url = new URL($page.url);
+		const url = new URL(page.url);
+
 		if (name) url.searchParams.set('provider', name);
 		else url.searchParams.delete('provider');
-		replaceState(resolve(`${url.pathname}${url.search}`), $page.state);
+
+		goto(resolve(`${url.pathname}${url.search}`), {
+			shallow: true,
+			replace: true,
+			state: page.state
+		});
 	}
 
 	function capsSummary(model) {
@@ -268,10 +274,7 @@
 			onAddModel(body);
 			toastStore.success('Model staged.');
 		} else {
-			onUpdateModel(panelProvider, panelModelId, {
-				...(editModelBase ?? {}),
-				...body
-			});
+			onUpdateModel(panelProvider, panelModelId, { ...(editModelBase ?? {}), ...body });
 			toastStore.success('Model update staged.');
 		}
 		closePanel();
@@ -647,6 +650,7 @@
 				>
 					{panelMode.startsWith('provider') ? 'Catalog · provider' : 'Catalog · model'}
 				</p>
+
 				<h2 id="catalog-panel-title" class="mt-1 text-lg font-semibold text-parchment-200">
 					{panelMode === 'provider-add'
 						? 'Add Provider'
@@ -740,10 +744,11 @@
 							{/if}
 						</div>
 						<div class="field sm:col-span-2">
-							<label for="provider-session" class="text-[0.8125rem] font-medium text-parchment-200"
-								>Session header <span class="font-normal text-parchment-500">(optional)</span
-								></label
-							>
+							<label for="provider-session" class="text-[0.8125rem] font-medium text-parchment-200">
+								Session header
+								<span class="font-normal text-parchment-500">(optional)</span>
+							</label>
+
 							<input
 								id="provider-session"
 								name="session_header"

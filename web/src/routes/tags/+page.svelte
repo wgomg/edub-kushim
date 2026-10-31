@@ -1,22 +1,22 @@
 <script>
 	import { onMount } from 'svelte';
-	import { goto, replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { filterStore } from '$lib/stores/filterStore.js';
-	import { defaultFilter } from '$lib/stores/searchFilter.js';
-	import DataTable from '$lib/components/DataTable.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import TagReconcileStrip from '$lib/components/tags/TagReconcileStrip.svelte';
-	import ProvisionalReview from '$lib/components/tags/ProvisionalReview.svelte';
-	import CoverageReview from '$lib/components/tags/CoverageReview.svelte';
-	import SiblingReview from '$lib/components/tags/SiblingReview.svelte';
-	import DeletedTags from '$lib/components/tags/DeletedTags.svelte';
-	import { EDIT_ICON, DELETE_ICON, DEMOTE_ICON, actionButton } from '$lib/icons.js';
-	import { escapeHtml, formatNumber } from '$lib/utils/html.js';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import { api } from '$lib/api';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
+	import { filterStore } from '#lib/stores/filterStore.js';
+	import { defaultFilter } from '#lib/stores/searchFilter.js';
+	import DataTable from '#lib/components/DataTable.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import TagReconcileStrip from '#lib/components/tags/TagReconcileStrip.svelte';
+	import ProvisionalReview from '#lib/components/tags/ProvisionalReview.svelte';
+	import CoverageReview from '#lib/components/tags/CoverageReview.svelte';
+	import SiblingReview from '#lib/components/tags/SiblingReview.svelte';
+	import DeletedTags from '#lib/components/tags/DeletedTags.svelte';
+	import { EDIT_ICON, DELETE_ICON, DEMOTE_ICON, actionButton } from '#lib/icons.js';
+	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
 
 	const TABS = ['vocabulary', 'provisional', 'coverage', 'siblings', 'deleted'];
 
@@ -24,6 +24,7 @@
 	// stick flush under the topbar instead of leaving a 24px band over the panel
 	const tabStrip =
 		'sticky -top-6 z-20 mb-6 flex items-end gap-1 overflow-x-auto border-b border-clay-800 bg-clay-950 pt-1';
+
 	const tabBase =
 		'-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3.5 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
 	const tabActive = 'border-gold-500 text-parchment-200';
@@ -31,7 +32,6 @@
 		'border-transparent text-parchment-400 hover:bg-clay-900 hover:text-parchment-200';
 	const tabBadge =
 		'rounded-full border border-gold-800 px-1.5 font-mono text-[0.6875rem] font-semibold text-gold-500';
-
 	let showModal = $state(false);
 	let editingTag = $state(null);
 	let formName = $state('');
@@ -45,12 +45,7 @@
 	let counts = $state({ provisional: 0, deleted: 0 });
 
 	const columns = [
-		{
-			key: 'name',
-			label: 'Name',
-			sortable: true,
-			width: '100%'
-		},
+		{ key: 'name', label: 'Name', sortable: true, width: '100%' },
 		{
 			key: 'document_count',
 			label: 'Documents',
@@ -89,7 +84,7 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 	function selectTab(tab) {
 		activeTab = tab;
 		const url = new URL(window.location.href);
-		replaceState(resolve(`${url.pathname}${url.search}#${tab}`));
+		goto(resolve(`${url.pathname}${url.search}#${tab}`), { shallow: true, replace: true });
 	}
 
 	async function refreshCounts() {
@@ -111,7 +106,7 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 
 	function filterByTag(row) {
 		filterStore.set({ ...defaultFilter, tags: [row.name] });
-		goto(resolve('/documents'));
+		goto(resolve('documents'));
 	}
 
 	async function fetchVocabulary({ limit, offset }) {
@@ -316,7 +311,7 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 					else url.searchParams.delete('q');
 					goto(resolve(`${url.pathname}${url.search}${url.hash}`), {
 						replaceState: true,
-						keepFocus: true
+						reset: false
 					});
 				}}
 				autocomplete="off"

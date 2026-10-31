@@ -1,11 +1,11 @@
 <script>
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
-	import { formatRelative } from '$lib/utils/html.js';
-	import { statusChipClasses } from '$lib/utils/statusChip.js';
-	import { toastStore } from '$lib/stores/toastStore.svelte.js';
-	import TagReconcileReport from '$lib/components/TagReconcileReport.svelte';
+	import { api } from '#lib/api.js';
+	import { formatRelative } from '#lib/utils/html.js';
+	import { statusChipClasses } from '#lib/utils/statusChip.js';
+	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import TagReconcileReport from '#lib/components/TagReconcileReport.svelte';
 
 	let { params } = $props();
 
@@ -40,9 +40,8 @@
 	<a
 		href={resolve(task ? `/tasks?batch=${task.batch_id}` : '/tasks')}
 		class="inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
+		>← Back to batch</a
 	>
-		&larr; Back to batch
-	</a>
 
 	{#if loading}
 		<p class="text-parchment-500" aria-live="polite">Loading…</p>
@@ -50,11 +49,10 @@
 		<div class="rounded-lg border border-clay-800 bg-clay-900 p-6 text-center">
 			<p class="text-parchment-500">Task not found</p>
 			<a
-				href={resolve(`/tasks`)}
+				href={resolve(`tasks`)}
 				class="mt-2 inline-flex items-center gap-1 text-sm text-parchment-500 hover:text-parchment-200"
+				>← Back to batches</a
 			>
-				&larr; Back to batches
-			</a>
 		</div>
 	{:else}
 		<div class="flex items-center gap-3">
@@ -80,7 +78,7 @@
 				<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Batch ID</p>
 				<p class="mt-1">
 					<a
-						href={resolve(`/tasks?batch=${task.batch_id}`)}
+						href={resolve(`tasks?batch=${task.batch_id}`)}
 						class="font-mono text-sm text-lapis-400 hover:text-lapis-300"
 					>
 						{task.batch_id}
@@ -98,7 +96,7 @@
 					<p class="text-xs font-medium tracking-wider text-parchment-500 uppercase">Document ID</p>
 					<p class="mt-1">
 						<a
-							href={resolve(`/documents/${task.payload_doc_id}`)}
+							href={resolve(`documents/${task.payload_doc_id}`)}
 							class="font-mono text-sm text-lapis-400 hover:text-lapis-300"
 						>
 							{task.payload_doc_id}

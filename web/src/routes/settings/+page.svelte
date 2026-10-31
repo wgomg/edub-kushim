@@ -1,8 +1,8 @@
 <script>
 	import { resolve } from '$app/paths';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
-	import { SETTINGS_SECTION_BY_ID } from '$lib/settingsSections.js';
-	import OverviewSection from '$lib/components/settings/OverviewSection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
+	import { SETTINGS_SECTION_BY_ID } from '#lib/settingsSections.js';
+	import OverviewSection from '#lib/components/settings/OverviewSection.svelte';
 
 	const TONE_TEXT = {
 		ok: 'text-lapis-300',

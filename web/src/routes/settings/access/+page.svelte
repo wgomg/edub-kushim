@@ -1,6 +1,6 @@
 <script>
-	import AccessSection from '$lib/components/settings/AccessSection.svelte';
-	import { settingsStore } from '$lib/stores/settingsStore.svelte.js';
+	import AccessSection from '#lib/components/settings/AccessSection.svelte';
+	import { settingsStore } from '#lib/stores/settingsStore.svelte.js';
 </script>
 
 <div class="mb-5 max-w-3xl">

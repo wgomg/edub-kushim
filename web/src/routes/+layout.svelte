@@ -1,16 +1,16 @@
 <script>
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
+	import favicon from '#lib/assets/favicon.svg';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api.js';
-	import * as authStore from '$lib/stores/authStore.svelte.js';
-	import Toast from '$lib/components/Toast.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import UploadModal from '$lib/components/UploadModal.svelte';
-	import { confirmStore } from '$lib/stores/confirmStore.svelte.js';
+	import { api } from '#lib/api.js';
+	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import Toast from '#lib/components/Toast.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import UploadModal from '#lib/components/UploadModal.svelte';
+	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 
 	let { children } = $props();
 	let missingTools = $state([]);
@@ -31,9 +31,9 @@
 			authStore.authResolved() &&
 			authStore.authEnabled() &&
 			!authStore.isAuthenticated() &&
-			$page.url.pathname !== '/login'
+			page.url.pathname !== '/login'
 		) {
-			goto(resolve('/login'));
+			goto(resolve('login'));
 		}
 	});
 
@@ -56,13 +56,13 @@
 		if (!ok) return;
 		api.auth.logout();
 		authStore.logout();
-		goto(resolve('/login'));
+		goto(resolve('login'));
 	}
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
-{#if $page.url.pathname !== '/login'}
+{#if page.url.pathname !== '/login'}
 	<a
 		href="#main-content"
 		class="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-clay-900 focus:px-4 focus:py-2 focus:text-parchment-200 focus:ring-2 focus:ring-gold-500 focus:outline-none"
@@ -84,64 +84,65 @@
 					>Dashboard</a
 				>
 				<a
-					href={resolve(`/documents`)}
+					href={resolve(`documents`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Documents</a
 				>
 				{#if !authStore.authEnabled() || authStore.isEditor()}
 					<a
-						href={resolve(`/documents/orphaned`)}
+						href={resolve(`documents/orphaned`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
-						>Orphaned &amp; Errored</a
+						>Orphaned & Errored</a
 					>
+
 					<a
-						href={resolve('/trash')}
+						href={resolve('trash')}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Trash</a
 					>
 				{/if}
 				<a
-					href={resolve(`/tasks`)}
+					href={resolve(`tasks`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Tasks</a
 				>
 				<a
-					href={resolve(`/tags`)}
+					href={resolve(`tags`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Tags</a
 				>
 				<a
-					href={resolve(`/people`)}
+					href={resolve(`people`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>People</a
 				>
 				<a
-					href={resolve(`/document-types`)}
+					href={resolve(`document-types`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Document Types</a
 				>
 				<a
-					href={resolve(`/docs`)}
+					href={resolve(`docs`)}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>API Docs</a
 				>
 				{#if !authStore.authEnabled() || authStore.isAdmin()}
 					<a
-						href={resolve(`/logs`)}
+						href={resolve(`logs`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Logs</a
 					>
 				{/if}
 				{#if !authStore.authEnabled() || authStore.isAdmin()}
 					<a
-						href={resolve(`/settings`)}
+						href={resolve(`settings`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Settings</a
 					>
 				{/if}
 				{#if authStore.isAuthenticated() && authStore.authEnabled()}
 					<a
-						href={resolve(`/profile`)}
+						href={resolve(`profile`)}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 						>Profile</a
 					>
@@ -159,7 +160,7 @@
 				{#if authStore.isAuthenticated()}
 					{#if authStore.authEnabled()}
 						<a
-							href={resolve(`/profile`)}
+							href={resolve(`profile`)}
 							class="text-sm text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							>Profile</a
 						>
@@ -189,7 +190,7 @@
 				>
 					⚠️ {missingCount} required tool(s) not installed — document consumption is paused.
 					<a
-						href={resolve(`/settings/processing`)}
+						href={resolve(`settings/processing`)}
 						class="underline hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 						>Review Settings</a
 					>
@@ -203,6 +204,7 @@
 
 			<Toast />
 			<ConfirmDialog />
+
 			<UploadModal open={uploadOpen} onClose={() => (uploadOpen = false)} />
 		</div>
 	</div>

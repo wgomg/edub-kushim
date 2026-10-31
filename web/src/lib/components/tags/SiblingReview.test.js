@@ -7,9 +7,9 @@ const { siblings } = vi.hoisted(() => ({ siblings: vi.fn() }));
 vi.mock('$app/state', () => ({
 	page: { url: { searchParams: new URLSearchParams(), pathname: '/tags', hash: '' } }
 }));
-vi.mock('$app/navigation', () => ({ replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/paths', () => ({ resolve: (p) => p }));
-vi.mock('$lib/api', () => ({ api: { tags: { siblings } } }));
+vi.mock('#lib/api.js', () => ({ api: { tags: { siblings } } }));
 
 function pair(overrides = {}) {
 	return {

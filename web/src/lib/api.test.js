@@ -66,7 +66,7 @@ describe('api', () => {
 		fetchMock.mockResolvedValue(jsonResponse({ status: 401, ok: false }));
 		expect(await api.documents.get(1)).toBeNull();
 		expect(isAuthenticated()).toBe(false);
-		expect(goto).toHaveBeenCalledWith('/login');
+		expect(goto).toHaveBeenCalledWith('login');
 	});
 
 	it('returns null on non-ok responses', async () => {

@@ -2,9 +2,9 @@
 	import { onMount, untrack } from 'svelte';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import { page } from '$app/state';
-	import { replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { formatSize } from '$lib/utils/html.js';
+	import { formatSize } from '#lib/utils/html.js';
 	/** @type {{
 	 * fetch: (opts: {sortBy:string,sortOrder:string,limit:number,offset:number}) => Promise<{results:Array,total:number}>,
 	 * onRowClick?: Function,
@@ -84,7 +84,7 @@
 			if (value) sp.set(key, value);
 			else sp.delete(key);
 		}
-		replaceState(resolve(`${page.url.pathname}?${sp.toString()}`));
+		goto(resolve(`${page.url.pathname}?${sp.toString()}`), { shallow: true, replace: true });
 	}
 
 	$effect(() => {
@@ -194,7 +194,13 @@
 
 	function escapeHtml(s) {
 		return String(s ?? '').replace(/[&<>"']/g, (c) => {
-			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+			return {
+				'&': '&amp;',
+				'<': '&lt;',
+				'>': '&gt;',
+				'"': '&quot;',
+				"'": '&#39;'
+			}[c];
 		});
 	}
 </script>
@@ -286,7 +292,7 @@
 						: ''}"
 				>
 					<a
-						href={resolve(`/documents/${row[keyField]}`)}
+						href={resolve(`documents/${row[keyField]}`)}
 						class="flex flex-1 flex-col focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none focus-visible:ring-inset"
 						onclick={onRowClick
 							? (e) => {
@@ -326,11 +332,12 @@
 											stroke-linejoin="round"
 											class="text-terracotta-500"
 										>
-											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
-											<path d="M14 2v6h6" />
-											<path d="M9 15h6" />
-											<path d="M9 12h2" />
-											<path d="M9 18h4" />
+											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path>
+
+											<path d="M14 2v6h6"></path>
+											<path d="M9 15h6"></path>
+											<path d="M9 12h2"></path>
+											<path d="M9 18h4"></path>
 										</svg>
 									{:else if row.original_type?.startsWith('image/')}
 										<svg
@@ -346,9 +353,9 @@
 											stroke-linejoin="round"
 											class="text-sage-500"
 										>
-											<rect x="3" y="3" width="18" height="18" rx="2" />
-											<circle cx="9" cy="9" r="2" />
-											<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+											<rect x="3" y="3" width="18" height="18" rx="2"></rect>
+											<circle cx="9" cy="9" r="2"></circle>
+											<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
 										</svg>
 									{:else if row.original_type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || row.original_type === 'application/vnd.oasis.opendocument.text'}
 										<svg
@@ -364,11 +371,12 @@
 											stroke-linejoin="round"
 											class="text-lapis-400"
 										>
-											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
-											<path d="M14 2v6h6" />
-											<path d="M16 13H8" />
-											<path d="M16 17H8" />
-											<path d="M10 9H8" />
+											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path>
+
+											<path d="M14 2v6h6"></path>
+											<path d="M16 13H8"></path>
+											<path d="M16 17H8"></path>
+											<path d="M10 9H8"></path>
 										</svg>
 									{:else}
 										<svg
@@ -384,8 +392,9 @@
 											stroke-linejoin="round"
 											class="text-parchment-500"
 										>
-											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
-											<path d="M14 2v6h6" />
+											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path>
+
+											<path d="M14 2v6h6"></path>
 										</svg>
 									{/if}
 									<span
