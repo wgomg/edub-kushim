@@ -38,6 +38,7 @@
 		"vitest": "^4.1.11"
 	},
 	"dependencies": {
+		"@scalar/api-reference": "^1.76.4",
 		"pdfjs-dist": "^6.3.289"
 	}
 }

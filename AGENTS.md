@@ -6,7 +6,7 @@ Deeper context lives in `docs/`:
   `user-manual.md` (CLI + API reference), `project-tree.md` (generated directory map — regenerate
   with `make docs-tree`), `frontend.md` (route and key-file map of both SPAs), `tests.md` (testing
   reference), `tags/` (tag subsystem design — entry point: `tags/overview.md`), `research/`
-  (design notes), `reference/` (only the API handler inventory remains)
+  (design notes), `api.md` (generated REST API reference, rendered from the OpenAPI spec)
 - Developer guides (language/feature onboarding, in `docs/developer-guide/`):
   - `golang.md` — Go language features as used in this codebase
   - `frontend.md` — SvelteKit/Svelte 5 features as used in `web/` and `web-wizard/`
@@ -74,6 +74,11 @@ kushim queue ── forks: kushim consume --batch <id> (per-batch processing)
 - Schema changes = new goose files in `internal/database/sql/schema/migrations/` — embedded via
   `//go:embed` and applied automatically (`goose.Up`, `goose.WithAllowMissing()`) plus idempotent
   seeders (`seed-tags.sql`, …) on setup/edub startup. Never edit baseline migrations retroactively.
+- API surface changes (routes, handlers, DTOs): `make api-spec` regenerates
+  `internal/api/spec/openapi.yaml` from the code (static analysis by `apispec`, which must be on
+  PATH — CI installs the pinned version), `make api-docs` renders `docs/api.md` from that spec, and
+  both committed artifacts are guarded by `make api-spec-check` in the CI `docs` job. edub serves
+  the spec itself at `GET /api/v1/openapi.yaml`.
 
 ## Testing
 

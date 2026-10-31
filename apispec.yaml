@@ -1,0 +1,110 @@
+# apispec configuration for the edub REST API. The spec is generated from the code, never annotated:
+# apispec statically traces the route registrations in internal/api/server.go into the handlers, and
+# derives paths, parameters, request bodies and response schemas from the Go types.
+
+# Regenerate with `make api-spec` and `make api-docs`; `make api-spec-check` fails when the committed
+# spec or docs/api.md drift from the code.
+
+info:
+  title: edub API
+  description: |
+    REST API of the edub document server: library browsing, search, tags, people,
+    document types, trash, ingestion, task and batch monitoring, users, logs and
+    the settings surface the web UI drives.
+  contact:
+    name: edub-kushim
+    url: https://github.com/wgomg/edub-kushim
+  license:
+    name: AGPL-3.0
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+
+servers:
+  - url: http://localhost:3000
+    description: Local edub server (default port; server.port in the config)
+
+naming:
+  operationId: method-path
+  schemaNames: short
+
+schema:
+  requiredFromJSONTags: true
+  nullableWhenNil: true
+
+# Every route except /health, POST /api/v1/auth/login, POST /api/v1/auth/logout and GET /wizard/bootstrap
+# requires a credential. OpenAPI's document-level security is the conservative direction here: the four
+# public paths are named in the docs/api.md intro instead of being carved out per operation.
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+
+securitySchemes:
+  bearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+  apiKeyAuth:
+    type: apiKey
+    in: header
+    name: Authorization
+
+exclude:
+  # kushim-only packages: cgo-gated code the edub server never serves, and they do not type-check under
+  # CGO_ENABLED=0, which is the environment the analysis runs in.
+  packages:
+    - github.com/wgomg/edub-kushim/internal/ops/cli
+    - github.com/wgomg/edub-kushim/cmd/kushim
+    - github.com/wgomg/edub-kushim/internal/api/wizard
+
+framework:
+  # The bundled net/http route patterns are replaced to add a caller scope: the SPA catch-all lives in
+  # internal/api/handlers/static.go, while every API route is registered from the internal/api package
+  # itself.
+  replaceDefaults: [routePatterns]
+  routePatterns:
+    - callRegex: ^HandleFunc$
+      recvTypeRegex: ^net/http(\.\*ServeMux)?$
+      methodArgIndex: -1
+      handlerArgIndex: 1
+      methodFromPath: true
+      pathFromArg: true
+      handlerFromArg: true
+      callerPkgPatterns:
+        - ^github\.com/wgomg/edub-kushim/internal/api$
+    - callRegex: ^Handle$
+      recvTypeRegex: ^net/http(\.\*ServeMux)?$
+      methodArgIndex: -1
+      handlerArgIndex: 1
+      methodFromPath: true
+      pathFromArg: true
+      handlerFromArg: true
+      callerPkgPatterns:
+        - ^github\.com/wgomg/edub-kushim/internal/api$
+
+  # Query parameters are read through the per-request ParamBag, installed by middleware. The accessors
+  # are ordinary methods, so they need to be named as query readers: argument 0 is always the parameter
+  # name.
+  paramPatterns:
+    - callRegex: ^Get$
+      recvTypeRegex: ^github\.com/wgomg/edub-kushim/internal/api/handlers\.\*?ParamBag$
+      paramIn: query
+      defaultArgIndex: 1
+      typeFromArg: true
+      typeArgIndex: 1
+    - callRegex: ^GetInt(64)?$
+      recvTypeRegex: ^github\.com/wgomg/edub-kushim/internal/api/handlers\.\*?ParamBag$
+      paramIn: query
+      defaultArgIndex: 1
+      typeFromArg: true
+      typeArgIndex: 1
+    - callRegex: ^GetBool$
+      recvTypeRegex: ^github\.com/wgomg/edub-kushim/internal/api/handlers\.\*?ParamBag$
+      paramIn: query
+      defaultArgIndex: 1
+      typeFromArg: true
+      typeArgIndex: 1
+    - callRegex: ^GetStrings$
+      recvTypeRegex: ^github\.com/wgomg/edub-kushim/internal/api/handlers\.\*?ParamBag$
+      paramIn: query
+      multi: true
+      typeFromArg: true
+      typeArgIndex: 0

@@ -9,7 +9,7 @@ behind them.
 
 - **`make test`** — the fast CGO_ENABLED=0 tier, no database required: pure-logic packages across
   the backend (LLM registry and analyzer, configuration, auth, logging, text normalization, task
-  vocabulary, tools runner, mirror helpers, API middleware, flag parser).
+  vocabulary, tools runner, mirror helpers, API middleware, flag parser, the API-docs renderer).
 - **`make test-db`** / **`make test-backup`** — the PostgreSQL-backed suites: database queries,
   search, task system, service layer, API handlers, consumption pipeline, tag measurement.
 - **`make test-cgo`** / **`make test-cgo-db`** — packages that only compile with CGo plus those

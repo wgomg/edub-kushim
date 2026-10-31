@@ -181,6 +181,7 @@ The API server (`edub`) is a pure Go binary with no C dependencies. All CGo-heav
 | See what's done and what's next          | [Roadmap](docs/roadmap.md)                    |
 | Find a package or its files              | [Project Tree](docs/project-tree.md)          |
 | Full CLI reference and API docs          | [User Manual](docs/user-manual.md)            |
+| Look up an API endpoint                  | [API Reference](docs/api.md)                  |
 | Learn how the codebase uses a language or subsystem | [Developer Guides](#developer-guides)  |
 
 ### Developer Guides

@@ -218,6 +218,7 @@ func registerRoutes(
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.HealthHandler(w, r, logger)
 	})
+	mux.Handle("GET /api/v1/openapi.yaml", RequireRole(viewer...)(http.HandlerFunc(ServeOpenAPISpec)))
 
 	authHandler := handlers.NewAuthHandler(services.User, getConfig, logger)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)

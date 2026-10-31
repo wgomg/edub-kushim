@@ -10,6 +10,7 @@ edub-kushim/
 │   └── workflows  # ci.yml (tests, CGo, web, vulncheck) and release.yml
 ├── build  # build root for the static C dependencies (contents gitignored)
 ├── cmd  # binary entry points
+│   ├── apidocs  # renders the committed OpenAPI spec into docs/api.md
 │   ├── edub  # API server and web UI host, CGO_ENABLED=0
 │   └── kushim  # CLI, document processing, matcher and queue daemons, CGo
 ├── deploy  # deployment assets
@@ -17,12 +18,12 @@ edub-kushim/
 ├── docker  # container files: glibc and musl builders, deployment entrypoint
 ├── docs  # project documentation
 │   ├── developer-guide  # language and feature onboarding guides (Go, frontend, PostgreSQL, cgo, OCR, tasks, LLM, semantic matching, algorithms)
-│   ├── reference  # interim: the API handler inventory, pending the generated API docs
 │   ├── research  # design notes and investigation reports
 │   └── tags  # tag subsystem design, entry point overview.md
 ├── internal  # Go packages
 │   ├── api  # HTTP server, middleware, permission gates, wizard server, embedded SPA
 │   │   ├── handlers  # one file per resource: handlers with their API DTOs
+│   │   ├── spec  # generated OpenAPI spec (make api-spec), embedded by edub
 │   │   └── wizard  # setup wizard HTTP server and embedded SPA
 │   ├── auth  # JWT tokens, claims, roles, API key hashing
 │   ├── backup  # backup, restore, scheduling, rsync document mirror
@@ -74,6 +75,7 @@ edub-kushim/
 │   │   └── textreducer  # TextRank summarization
 │   ├── types  # closed task-system vocabulary registry
 │   └── version  # application version
+├── scripts  # repository maintenance scripts
 ├── web  # main SvelteKit SPA, embedded into edub
 └── web-wizard  # setup wizard SPA, embedded into kushim
     └── src  # wizard source
@@ -93,6 +95,7 @@ edub-kushim/
 │   │   │   ├── stubs  # build stubs for optional modules
 │   │   │   └── utils  # formatting, status-chip and tag-report helpers
 │   │   └── routes  # SvelteKit routes
+│   │       ├── docs  # generated API reference rendered by Scalar
 │   │       ├── document-types  # document type management
 │   │       ├── documents  # document list: search, filters, saved searches
 │   │       │   ├── [id]  # document detail: PDF viewer and metadata editor

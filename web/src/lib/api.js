@@ -60,6 +60,21 @@ async function requestRaw(path, opts = {}) {
 	}
 }
 
+async function requestText(path) {
+	try {
+		const res = await fetch(path, withAuth());
+		if (res.status === 401) {
+			handleUnauthorized();
+			return null;
+		}
+		if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+		return await res.text();
+	} catch (err) {
+		console.error(`API ${path}:`, err);
+		return null;
+	}
+}
+
 async function requestStrict(path, opts = {}) {
 	const res = await fetch(path, withAuth(opts));
 	if (res.status === 401) {
@@ -92,6 +107,8 @@ export const api = {
 		});
 	},
 	dashboard: () => request('/api/v1/dashboard'),
+
+	openapiSpec: () => requestText('/api/v1/openapi.yaml'),
 
 	documents: {
 		list: (limit = 50, offset = 0, sortBy = 'created_at', sortOrder = 'desc') =>

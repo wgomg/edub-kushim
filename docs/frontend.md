@@ -26,11 +26,13 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
 | `/trash` | Soft-deleted documents: restore, permanent delete and purge; editor-only. |
 | `/profile` | Self-service profile and API key management (generate, rotate, revoke). |
 | `/logs` | Log viewer with per-daemon tabs, line-count control, auto-refresh and expandable lines. |
+| `/docs` | API reference rendered by Scalar from the server's OpenAPI spec; any authenticated user. |
 
 ## Key files
 
 - **`src/lib/api.js`** — the API client. `request()` returns data or null and handles 401 by
-  clearing the session and redirecting to `/login`; `requestRaw()` returns `{ok, status, data}`.
+  clearing the session and redirecting to `/login`; `requestRaw()` returns `{ok, status, data}`;
+  `requestText()` returns the raw response body (used by the API docs page).
   Every `api.*` group (auth, config, documents, tags, tasks, autocomplete, logs) lives here.
 - **`src/lib/stores/authStore.svelte.js`** — the single source of auth state: token and user in
   `localStorage`, the `authResolved` gate that keeps permission checks from flashing on a hard
@@ -109,5 +111,5 @@ make wizard-build   # npm ci && npm run build, copied to internal/api/wizard/sta
 
 ## See Also
 
-- [API](reference/api.md) — REST API endpoints consumed by the frontend
+- [API](api.md) — generated REST API reference (OpenAPI)
 - [Project Tree](project-tree.md) — where the frontend files live

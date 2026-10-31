@@ -120,6 +120,11 @@
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
 					>Document Types</a
 				>
+				<a
+					href={resolve(`/docs`)}
+					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-parchment-400 hover:bg-clay-800 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 focus-visible:ring-offset-clay-900 focus-visible:outline-none"
+					>API Docs</a
+				>
 				{#if !authStore.authEnabled() || authStore.isAdmin()}
 					<a
 						href={resolve(`/logs`)}

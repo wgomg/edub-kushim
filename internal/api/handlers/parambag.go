@@ -39,7 +39,7 @@ func (pb *ParamBag) Get(key, defaultValue string) string {
 
 // GetInt returns the parsed integer parameter clamped to the bounds.
 func (pb *ParamBag) GetInt(key string, defaultValue, min, max int) int {
-	strVal := pb.Get(key, "")
+	strVal := pb.queryValues[key]
 	if strVal == "" {
 		return defaultValue
 	}
@@ -61,7 +61,7 @@ func (pb *ParamBag) GetInt(key string, defaultValue, min, max int) int {
 
 // GetInt64 returns the parsed int64 parameter clamped to the bounds.
 func (pb *ParamBag) GetInt64(key string, defaultValue, min, max int64) int64 {
-	strVal := pb.Get(key, "")
+	strVal := pb.queryValues[key]
 	if strVal == "" {
 		return defaultValue
 	}
@@ -84,7 +84,7 @@ func (pb *ParamBag) GetInt64(key string, defaultValue, min, max int64) int64 {
 
 // GetBool returns the parsed boolean parameter.
 func (pb *ParamBag) GetBool(key string, defaultValue bool) bool {
-	strVal := pb.Get(key, "")
+	strVal := pb.queryValues[key]
 	if strVal == "" {
 		return defaultValue
 	}
@@ -99,7 +99,7 @@ func (pb *ParamBag) GetBool(key string, defaultValue bool) bool {
 
 // GetStrings returns every value of a repeated parameter.
 func (pb *ParamBag) GetStrings(key string) []string {
-	strVal := pb.Get(key, "")
+	strVal := pb.queryValues[key]
 	if strVal == "" {
 		return nil
 	}

@@ -72,6 +72,26 @@ jobs:
           TEST_DATABASE_URL: postgres://edub:edub@localhost:5432/edub?sslmode=disable
         run: make test-db
 
+  docs:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-assets
+          path: web-assets
+      # apispec loads the packages that embed the SPA dirs, so the assets must be staged before it runs
+      - name: Stage web assets
+        run: make stage-web-artifact
+      - name: Install apispec
+        run: go install github.com/ehabterra/apispec/cmd/apispec@v0.5.11
+      - name: Check the generated API spec and docs
+        run: make api-spec-check
+
   test-cgo:
     needs: web
     runs-on: ubuntu-latest

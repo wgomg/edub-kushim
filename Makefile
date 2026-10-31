@@ -261,6 +261,7 @@ test-short:
 		./internal/auth/ \
 		./internal/api/ \
 		./internal/api/wizard/ \
+		./cmd/apidocs/ \
 		./internal/llm/analyzer/ \
 		./internal/errs/ \
 		./internal/task/ \
@@ -287,6 +288,7 @@ test-verbose:
 		./internal/auth/ \
 		./internal/api/ \
 		./internal/api/wizard/ \
+		./cmd/apidocs/ \
 		./internal/llm/analyzer/ \
 		./internal/errs/ \
 		./internal/task/ \
@@ -410,3 +412,20 @@ test-cgo-musl:
 .PHONY: docs-tree
 docs-tree:
 	./scripts/generate-project-tree.sh
+
+# ── API documentation ─────────────────────────────────────────────────
+# The OpenAPI spec is derived from the code by apispec (static analysis, no annotations) and embedded
+# by edub; docs/api.md is rendered from that spec. Both artifacts are committed, and the check target
+# fails when they drift from source. apispec must be on PATH: the version is pinned where CI installs it.
+EDUB_VERSION := $(shell awk '/^var Version/ {gsub(/"/, "", $$4); print $$4}' internal/version/version.go)
+
+.PHONY: api-spec api-docs api-spec-check
+api-spec:
+	CGO_ENABLED=0 apispec --dir . --config apispec.yaml --api-version $(EDUB_VERSION) \
+		-o internal/api/spec/openapi.yaml
+
+api-docs:
+	go run -tags "XLA,ORT" ./cmd/apidocs --spec internal/api/spec/openapi.yaml --out docs/api.md
+
+api-spec-check: api-spec api-docs
+	git diff --exit-code -- internal/api/spec/openapi.yaml docs/api.md
