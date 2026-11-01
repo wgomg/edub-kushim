@@ -162,15 +162,40 @@ func splitSentences(text string) []string {
 	return sentences
 }
 
+// splitOversizedSentences subdivides any sentence longer than chunkSize words into fixed windows of
+// exactly chunkSize words. Without that subdivision an oversized sentence reaches the chunk packing
+// loop in createChunks as a single chunk that dwarfs the window, and the selection loop has nothing
+// else to choose among: punctuation-free extractions arrive as exactly one such sentence.
+func splitOversizedSentences(sentences []string, chunkSize int) []string {
+	out := make([]string, 0, len(sentences))
+	for _, sentence := range sentences {
+		words := strings.Fields(sentence)
+		if len(words) <= chunkSize {
+			out = append(out, sentence)
+			continue
+		}
+		for len(words) > chunkSize {
+			out = append(out, strings.Join(words[:chunkSize], " "))
+			words = words[chunkSize:]
+		}
+		if len(words) > 0 {
+			out = append(out, strings.Join(words, " "))
+		}
+	}
+	return out
+}
+
 func createChunks(words []string, chunkSize int) []Chunk {
 	rawText := strings.Join(words, " ")
 	sentences := splitSentences(rawText)
+	sentences = splitOversizedSentences(sentences, chunkSize)
 
 	tokenRe := regexp.MustCompile(`[^\p{L}\p{N}]+`)
 
 	var chunks []Chunk
 	var currentWords []string
 	chunkId := 0
+	overlapWords := 0
 
 	for _, sentence := range sentences {
 		sentenceWords := strings.Fields(sentence)
@@ -179,11 +204,12 @@ func createChunks(words []string, chunkSize int) []Chunk {
 		}
 
 		if len(currentWords)+len(sentenceWords) > chunkSize && len(currentWords) > 0 {
-			lastSentence := lastSentenceWords(currentWords)
+			lastSentence := lastSentenceWords(currentWords, overlapWords)
 			chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe))
 			chunkId++
 
 			currentWords = append(lastSentence, sentenceWords...)
+			overlapWords = len(lastSentence)
 		} else {
 			currentWords = append(currentWords, sentenceWords...)
 		}
@@ -231,13 +257,17 @@ func buildChunk(id int, words []string, overlapWords int, tokenRe *regexp.Regexp
 	}
 }
 
-func lastSentenceWords(words []string) []string {
-	for i, w := range slices.Backward(words) {
-		if strings.HasSuffix(w, ".") || strings.HasSuffix(w, "!") || strings.HasSuffix(w, "?") {
+// lastSentenceWords returns the trailing sentence's words without scanning before the overlap carried
+// from the previous chunk: treating that overlap as part of the current sentence would let it compound
+// window after window, chunk after chunk.
+func lastSentenceWords(words []string, overlapWords int) []string {
+	for i := len(words) - 1; i >= overlapWords; i-- {
+		if strings.HasSuffix(words[i], ".") || strings.HasSuffix(words[i], "!") ||
+			strings.HasSuffix(words[i], "?") {
 			return words[i:]
 		}
 	}
-	return words
+	return words[len(words)-1:]
 }
 
 func normalize(i float64, max float64) float64 {

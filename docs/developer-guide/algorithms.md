@@ -69,7 +69,7 @@ algorithm: **TF-IDF weighting** as an additional signal, and a **position
 bias** (documents often put the key content at the start/end), blended into a
 final score; then a **greedy selection** pass that penalizes redundancy.
 
-The whole pipeline, in `Reduce` (`textrank.go:55-125`):
+The whole pipeline, in `Reduce` (`textrank.go:68-139`):
 
 ```go
 cleanedUpContent := cleanUp(content)
@@ -83,14 +83,14 @@ chunks = calculateFinalScore(chunks, TfWeight, GraphWeight, PositionWeight, dete
 ```
 
 Weights are constants at the top of `Reduce`
-(`textrank.go:56-60`): TF 0.4, graph 0.4, position 0.2 — the classic
+(`textrank.go:69-73`): TF 0.4, graph 0.4, position 0.2 — the classic
 "lexical + graph + position" blend.
 
 ---
 
 ## 3. Preprocessing
 
-Before anything else, the text is cleaned (`textrank.go:62-63`):
+Before anything else, the text is cleaned (`textrank.go:75-76`):
 
 ```go
 cleanedUpContent := cleanUp(content)
@@ -107,7 +107,7 @@ standard word tokenizer (simple, language-agnostic, no stemming).
 
 ## 4. Sentence splitting and chunking
 
-`splitSentences` (`textrank.go:131-149`) uses a regex boundary:
+`splitSentences` (`textrank.go:147-163`) uses a regex boundary:
 
 ```go
 var sentenceBreak = regexp.MustCompile(`[.!?]\s+|\n\n`)
@@ -124,30 +124,42 @@ func splitSentences(text string) []string {
 }
 ```
 
-(`endOfPunct := loc[0] + 1` keeps the punctuation attached to its sentence —
-which `lastSentenceWords` relies on later.)
+The `\n\n` alternative never matches: `createChunks` joins the `strings.Fields`
+words with single spaces before splitting, so blank-line-separated text (OCR'd
+lists, tables) is one run-on sentence — which would become a single chunk that
+dwarfs the window and leaves the selection (§9) nothing to choose from.
+`splitOversizedSentences` (`textrank.go:169-186`) therefore cuts any sentence
+longer than `chunkSize` into word windows:
 
-`createChunks` (`textrank.go:151-188`) then packs sentences into chunks of at
-most `chunkSize` words, **carrying the last sentence over** as overlap so a
-sentence is never split across chunks:
+```go
+for len(words) > chunkSize {
+    out = append(out, strings.Join(words[:chunkSize], " "))
+    words = words[chunkSize:]
+}
+```
+
+`createChunks` (`textrank.go:188-228`) packs the sentences into chunks of
+roughly `chunkSize` words, carrying the trailing sentence over as overlap:
 
 ```go
 if len(currentWords)+len(sentenceWords) > chunkSize && len(currentWords) > 0 {
-    lastSentence := lastSentenceWords(currentWords)
+    lastSentence := lastSentenceWords(currentWords, overlapWords)
     chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe))
     chunkId++
     currentWords = append(lastSentence, sentenceWords...)   // overlap
+    overlapWords = len(lastSentence)
 } else {
     currentWords = append(currentWords, sentenceWords...)
 }
 ```
 
-`lastSentenceWords` (`textrank.go:220-228`) scans backward for the first word
-ending in `.`, `!`, or `?` — heuristic, but reliable after `splitSentences`.
-Each chunk records `OverlapWords` (how many words it shares with the previous
-chunk) so the reconstruction step (§10) can avoid duplicating them.
+`lastSentenceWords` (`textrank.go:263-271`) finds that trailing sentence by
+scanning backward for `.`, `!` or `?`, never past the carried overlap (which
+would compound window after window), falling back to the final word when the
+range is punctuation-free (word windows); `OverlapWords` lets the
+reconstruction (§10) drop the duplicates.
 
-Each chunk is tokenized (`buildChunk`, `textrank.go:190-218`): words are split
+Each chunk is tokenized (`buildChunk`, `textrank.go:230-258`): words are split
 on any non-letter/non-digit run
 (`tokenRe := regexp.MustCompile(`[^\p{L}\p{N}]+`)`), and the chunk stores its
 tokens, unique tokens, and a frequency map — all the inputs for TF scoring.
@@ -156,7 +168,7 @@ tokens, unique tokens, and a frequency map — all the inputs for TF scoring.
 
 ## 5. TF-IDF chunk scoring
 
-`tfScores` (`textrank.go:261-302`) treats each chunk as a "document" and the
+`tfScores` (`textrank.go:304-345`) treats each chunk as a "document" and the
 whole text as the corpus — classic TF-IDF, per chunk:
 
 ```go
@@ -172,17 +184,17 @@ chunk.TFScore = totalWeight
 The `+1` smoothing keeps `idf` defined for tokens in every chunk and
 down-weights *stopword-like* tokens that appear everywhere. Document
 frequency counts a token **once per chunk** (`seen` map,
-`textrank.go:266-270`).
+`textrank.go:309-314`).
 
 Scores are then normalized to sum to 1 across chunks
-(`NormalizedTFScore`, `textrank.go:296-299`) so the three score components
+(`NormalizedTFScore`, `textrank.go:339-342`) so the three score components
 are comparable in the blend.
 
 ---
 
 ## 6. The similarity graph and weighted PageRank
 
-`buildGraph` (`textrank.go:304-328`) creates the chunk-similarity graph:
+`buildGraph` (`textrank.go:347-371`) creates the chunk-similarity graph:
 
 ```go
 // self-similarity
@@ -200,30 +212,30 @@ for i := range chunksLength {
 ```
 
 - Similarity is **Jaccard on unique tokens** (`jaccardSimilarity`,
-  `textrank.go:330-351`): `|A ∩ B| / |A ∪ B|`, with an explicit empty/empty
+  `textrank.go:373-394`): `|A ∩ B| / |A ∪ B|`, with an explicit empty/empty
   → 0 guard.
 - The diagonal is 1.0 (self-similarity), which anchors the graph and keeps
   every node with a nonzero outbound sum.
 - Edges with similarity 0 are omitted (adjacency stays 0), so the graph is
   sparse for dissimilar chunks.
 
-`weightedPageRank` (`textrank.go:353-408`) is the iteration, run with
+`weightedPageRank` (`textrank.go:396-451`) is the iteration, run with
 **damping 0.85, max 100 iterations, tolerance 1e-4**
-(`textrank.go:412`): scores start uniform (`1/N`), outgoing weight sums are
+(`textrank.go:406-417`): scores start uniform (`1/N`), outgoing weight sums are
 precomputed, and each iteration recomputes
 `newScores[i] = (1−damping)/N + damping · Σ_j score[j] · (edge[j][i] / outgoingSums[j])`
 — a node's importance flows to its neighbors *proportionally to edge weight*.
 The random jump (`(1-damping)/N`) keeps the chain ergodic. Convergence is
 checked on total absolute change.
 
-`calculateGraphScores` (`textrank.go:410-430`) normalizes the PageRank
+`calculateGraphScores` (`textrank.go:453-473`) normalizes the PageRank
 scores to sum 1 (guarding `sumScores > 0`).
 
 ---
 
 ## 7. Position bias
 
-`detectPositionBias` (`textrank.go:247-259`) picks a bias profile from the
+`detectPositionBias` (`textrank.go:290-302`) picks a bias profile from the
 text's newline density — a cheap proxy for "structured document vs prose":
 
 ```go
@@ -234,7 +246,7 @@ if density > 20 {
 return "cosine"
 ```
 
-`positionScore` (`textrank.go:234-245`) then weights a chunk's normalized
+`positionScore` (`textrank.go:277-288`) then weights a chunk's normalized
 position (`i/len(chunks)`, 0 = start, 1 = end):
 
 - **`"cosine"`** (prose): `0.5 + 0.5·|cos(pos·2π)|` — peaks at the very
@@ -250,7 +262,7 @@ Position scores are normalized to sum 1 before blending.
 
 ## 8. The final score blend
 
-`calculateFinalScore` (`textrank.go:432-456`) combines the three normalized
+`calculateFinalScore` (`textrank.go:475-499`) combines the three normalized
 components with the weights 0.4 / 0.4 / 0.2:
 
 ```go
@@ -260,14 +272,14 @@ chunks[i].FinalScore = (tf_weight * chunks[i].NormalizedTFScore) +
 ```
 
 All three components sum to 1 individually, so `FinalScore` is a proper
-weighted average. `cmpChunk` (`textrank.go:458-460`) sorts chunks by
+weighted average. `cmpChunk` (`textrank.go:501-503`) sorts chunks by
 `FinalScore` descending (`cmp.Compare(b.FinalScore, a.FinalScore)`).
 
 ---
 
 ## 9. Greedy selection with diversity penalty
 
-The selection loop (`textrank.go:75-101`) is a greedy knapsack with an
+The selection loop (`textrank.go:88-114`) is a greedy knapsack with an
 anti-redundancy twist:
 
 ```go
@@ -313,7 +325,7 @@ for len(remainingChunks) > 0 && currentWordCount < targetWordCount {
 ## 10. Reconstruction
 
 `Reduce` reassembles the selected chunks back into text, in original order
-(`textrank.go:103-121`):
+(`textrank.go:116-137`):
 
 ```go
 slices.SortFunc(selectedChunks, func(a, b Chunk) int {
@@ -490,7 +502,7 @@ token estimate is what drives that loop. See
 ## 15. Gotchas
 
 - **`Reduce` returns the original content unchanged** when there are no
-  chunks (`textrank.go:67-69`) — empty input is not an error.
+  chunks (`textrank.go:80-82`) — empty input is not an error.
 - **The first chunk is unconditionally kept** (§9). For documents with
   front-matter noise (copyright pages), that noise is always in the
   reduction.

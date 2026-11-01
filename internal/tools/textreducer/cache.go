@@ -22,7 +22,7 @@ const ReduceChunkSize = 150
 
 // reductionVersion pins the reducer's algorithm — its scoring weights, diversity penalty and text cleanup —
 // the part of the output the cache key cannot derive from the input. Bump it whenever any of them changes.
-const reductionVersion = "v1"
+const reductionVersion = "v2"
 
 // reductionFingerprint identifies the reducer configuration that produced a stored reduction: the algorithm
 // version and the chunk window. The resolved target is not part of it; it keys each cache row instead.

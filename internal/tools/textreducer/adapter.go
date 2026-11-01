@@ -14,9 +14,8 @@ import (
 // TextReducer compresses content toward a target word count, keeping the
 // most salient sentences.
 type TextReducer interface {
-	// Reduce returns content reduced toward targetWordCount words, scoring
-	// word chunks of chunkSize tokens with the configured algorithm. The
-	// context may cancel the ranking work.
+	// Reduce returns content reduced toward targetWordCount words, scoring word chunks of chunkSize tokens
+	// with the configured algorithm; chunkSize must be positive. The context may cancel the ranking work.
 	Reduce(ctx context.Context, content string, chunkSize, targetWordCount int) (*string, error)
 	// Name reports the reducer implementation's identity.
 	Name() string

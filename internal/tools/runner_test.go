@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
+	"github.com/wgomg/edub-kushim/internal/tools/textreducer"
 )
 
 // mockPdfOptimizer records context behavior for each Optimize call.
@@ -941,5 +942,30 @@ func TestReduceContent_NeedsReducerOnlyOverTarget(t *testing.T) {
 	long := strings.Repeat("word ", 300)
 	if _, err := r.ReduceContent(ctx, long, 100); err == nil {
 		t.Error("ReduceContent: content over the target without a configured reducer must return an error")
+	}
+}
+
+func TestReduceContent_OverTargetReduces(t *testing.T) {
+	ctx := context.Background()
+	r := NewRunner(log.NewDiscardLogger(), config.DefaultConfig(t.TempDir()), []string{"textreducer"})
+
+	const target = 2000
+	words := make([]string, 0, 3000)
+	for i := range 3000 {
+		words = append(words, fmt.Sprintf("item%d.", i))
+	}
+	content := strings.Join(words, " ")
+	inputWords := len(strings.Fields(content))
+
+	got, err := r.ReduceContent(ctx, content, target)
+	if err != nil {
+		t.Fatalf("ReduceContent: %v", err)
+	}
+	if got.WordCount >= inputWords {
+		t.Errorf("over-target content was not reduced: %d -> %d words", inputWords, got.WordCount)
+	}
+	if limit := target + 2*textreducer.ReduceChunkSize; got.WordCount > limit {
+		t.Errorf("reduced content is %d words, above the bound %d for target %d",
+			got.WordCount, limit, target)
 	}
 }
