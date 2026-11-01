@@ -5,7 +5,7 @@ info:
     REST API of the edub document server: library browsing, search, tags, people,
     document types, trash, ingestion, task and batch monitoring, users, logs and
     the settings surface the web UI drives.
-  version: 4.0.2
+  version: 4.1.0
   contact:
     name: edub-kushim
     url: https://github.com/wgomg/edub-kushim

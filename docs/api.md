@@ -4,7 +4,7 @@ This reference is generated: the specification is derived from the Go source by 
 and this file is rendered from the specification by `make api-docs`. Do not edit either one by
 hand; change the code and regenerate.
 
-- API version: `4.0.2`
+- API version: `4.1.0`
 - Specification: [`internal/api/spec/openapi.yaml`](../internal/api/spec/openapi.yaml)
 
 REST API of the edub document server: library browsing, search, tags, people, document types, trash, ingestion, task and batch monitoring, users, logs and the settings surface the web UI drives.
