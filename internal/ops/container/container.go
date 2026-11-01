@@ -18,6 +18,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/search"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/tools/textreducer"
 )
 
 // dbRole selects which side of the schema lifecycle a container's process is on.
@@ -191,11 +192,20 @@ func (c *Container) GetMatcherClient() *matcher.MatcherClient {
 	return c.matcherClient
 }
 
-// GetTagToolsRunner returns the text reducer, content analyzer, and tag
-// matcher tools over the matcher client.
+// GetTagToolsRunner returns the text reducer, content analyzer, and tag matcher tools over the matcher
+// client, with reduction caching bound to the database. When the database is unreachable it logs and
+// builds the runner without the cache; the tag pass fails on its own database access anyway.
 func (c *Container) GetTagToolsRunner() *tools.Runner {
 	if c.tagToolsRunner == nil {
-		c.tagToolsRunner = tools.NewRunnerWithMatcher(c.logger, c.cfg.Load(), []string{"textreducer", "contentanalyzer", "tagmatcher"}, c.GetMatcherClient())
+		cfg := c.cfg.Load()
+		var reductionCache *textreducer.ReductionCache
+		client, err := c.GetClient()
+		if err != nil {
+			c.logger.Warn("", "tag tools runner: reduction cache disabled: %v", err)
+		} else {
+			reductionCache = textreducer.NewReductionCache(c.logger, client, cfg)
+		}
+		c.tagToolsRunner = tools.NewRunnerWithMatcher(c.logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, c.GetMatcherClient(), reductionCache)
 	}
 	return c.tagToolsRunner
 }

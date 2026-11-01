@@ -30,6 +30,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
+	"github.com/wgomg/edub-kushim/internal/tools/textreducer"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -60,7 +61,8 @@ type Enricher struct {
 // builds the tools runner (reduction, analysis, matching) and the
 // admission adjudicator from the same parts.
 func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, matcher matcher.Matcher) *Enricher {
-	runner := tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher)
+	runner := tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher,
+		textreducer.NewReductionCache(logger, client, cfg))
 	return &Enricher{
 		config:    cfg,
 		logger:    logger,
@@ -122,10 +124,8 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		e.logger.Info(logId, "finished enrichment %s in %s", document.StoragePath, log.HumanDuration(elapsed))
 	}()
 
-	chunkSize := 150
-
 	report("reduce", "", 0)
-	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
+	llmContent, err := e.runner.ReduceContent(ctx, document.TextContent.String,
 		matcher.TargetWordCount(int(document.WordCount), e.config.Enricher.TextReducer.TargetWords))
 	if err != nil {
 		e.logger.Error(logId, "llm text reduction failed, using raw text: %w", err)
@@ -136,7 +136,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 	}
 
-	tagsContent, err := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize,
+	tagsContent, err := e.runner.ReduceContent(ctx, document.TextContent.String,
 		matcher.TargetWordCount(int(document.WordCount), e.config.Enricher.TagMatcher.ReduceTargetWords))
 	if err != nil {
 		e.logger.Error(logId, "tag text reduction failed, using raw text: %w", err)
@@ -264,7 +264,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 					e.config.Enricher.ContentAnalyzer.Llm.Provider, e.config.Enricher.ContentAnalyzer.Llm.Model, actualTokens, maxTokens),
 			}
 		}
-		reduced, rerr := e.runner.ReduceContent(ctx, document.TextContent.String, chunkSize, newTarget)
+		reduced, rerr := e.runner.ReduceContent(ctx, document.TextContent.String, newTarget)
 		if rerr != nil {
 			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("failed to reduce content: %w", rerr)}
 		}

@@ -531,6 +531,14 @@ type Task struct {
 	ParentTaskID sql.NullString
 }
 
+type TextReduction struct {
+	Fingerprint string
+	InputHash   []byte
+	TargetWords int32
+	ReducedText string
+	CreatedAt   time.Time
+}
+
 type User struct {
 	ID              int64
 	Username        string

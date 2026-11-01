@@ -470,7 +470,7 @@ keeps memory flat for multi-GB files. `ListFilePaths` additionally sorts by
 
 | Algorithm / utility | Caller | Purpose |
 |---|---|---|
-| `TextRank.Reduce` | `tools.Runner.ReduceContent` (`internal/tools/runner.go:311-347`) | shrink text to `target_word_count` before LLM (target 2000) and tag matcher (target 4000) |
+| `TextRank.Reduce` | `tools.Runner.ReduceContent` (`internal/tools/runner.go:503-531`) | shrink text to `target_word_count` before the LLM (`enricher.textreducer.target_words`) and the tag matcher (`enricher.tagmatcher.reduce_target_words`) |
 | `TargetWordCount` | `internal/matcher/client.go:49-55` | negative config = fraction of document; floor 2000 |
 | `NormalizeForDB` | `internal/enrichment/enricher.go:426`, people/curation services | canonical DB keys for dedup/lookup |
 | `estimateTokens` | `analyzer/gates.go` `checkContentTooLarge` | LLM pre-flight budget check |

@@ -511,13 +511,12 @@ func (a *AuditRunner) auditDocument(ctx context.Context, docID, sweep int64, vie
 
 	cfg := a.cfg()
 	judgeModel := cfg.ResolvedAdjudicatorLlm().Model
-	chunkSize := 150
 	llmText := text
-	if r, rerr := a.runner.ReduceContent(ctx, text, chunkSize, matcher.TargetWordCount(int(content.WordCount), cfg.Enricher.TextReducer.TargetWords)); rerr == nil {
+	if r, rerr := a.runner.ReduceContent(ctx, text, matcher.TargetWordCount(int(content.WordCount), cfg.Enricher.TextReducer.TargetWords)); rerr == nil {
 		llmText = r.Text
 	}
 	tagsText := text
-	if r, rerr := a.runner.ReduceContent(ctx, text, chunkSize, matcher.TargetWordCount(int(content.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords)); rerr == nil {
+	if r, rerr := a.runner.ReduceContent(ctx, text, matcher.TargetWordCount(int(content.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords)); rerr == nil {
 		tagsText = r.Text
 	}
 

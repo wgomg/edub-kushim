@@ -59,6 +59,7 @@ type Runner struct {
 	fallbackAnalyzers []analyzer.ContentAnalyzer
 	fallbackMeta      []fallbackMeta
 	textReducer       textreducer.TextReducer
+	reductionCache    *textreducer.ReductionCache
 }
 
 type fallbackMeta struct {
@@ -284,14 +285,15 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 	return r
 }
 
-// NewRunnerWithMatcher is NewRunner plus an explicit Matcher, for callers
-// that already hold the right matcher implementation: the engine in-process
-// in the daemon, or the socket client in the API process.
-func NewRunnerWithMatcher(logger *log.Logger, cfg *config.Config, tools []string, matcher matcher.Matcher) *Runner {
+// NewRunnerWithMatcher is NewRunner plus an explicit Matcher and reduction cache, for callers that already
+// hold the right matcher implementation and the cache bound to their database: the engine in-process in
+// the daemon, or the socket client in the API process. A nil cache disables reduction caching.
+func NewRunnerWithMatcher(logger *log.Logger, cfg *config.Config, tools []string, matcher matcher.Matcher, reductionCache *textreducer.ReductionCache) *Runner {
 	r := NewRunner(logger, cfg, tools)
 	if matcher != nil && slices.Contains(tools, "tagmatcher") {
 		r.tagMatcher = matcher
 	}
+	r.reductionCache = reductionCache
 	return r
 }
 
@@ -493,46 +495,47 @@ func (r *Runner) GenerateThumbnail(ctx context.Context, docId, path, outputPath 
 	}, nil
 }
 
-// ReduceContent compresses content toward targetWordCount words, chunked
-// at chunkSize tokens, with the configured TextRank reducer. Content already
-// at or below the target, or a zero target, is returned unchanged with a
-// nil error; a missing reducer is an error only when reduction was needed.
-func (r *Runner) ReduceContent(ctx context.Context, content string, chunkSize, targetWordCount int) (*TextReducerResult, error) {
-	contentWordCount := len(strings.Fields(content))
-	charWordCount := utf8.RuneCountInString(content)
-
-	result := &TextReducerResult{
-		Text:            content,
-		WordCount:       contentWordCount,
-		CharCount:       charWordCount,
-		TargetWordCount: targetWordCount,
-	}
-
-	if targetWordCount == 0 || contentWordCount < targetWordCount {
+// ReduceContent compresses content toward targetWordCount words in the fixed ReduceChunkSize window with
+// the configured TextRank reducer, so the window and the reduction cache fingerprint cannot drift apart.
+// Content already at or below the target, or a zero target, is returned unchanged with a nil error; a
+// missing reducer is an error only when reduction was needed. A reduction cached at exactly targetWordCount
+// is reused; a miss reduces and stores the result.
+func (r *Runner) ReduceContent(ctx context.Context, content string, targetWordCount int) (*TextReducerResult, error) {
+	result := reducedResult(content, targetWordCount)
+	if targetWordCount == 0 || result.WordCount < targetWordCount {
 		return result, nil
 	}
-
+	if cached, ok := r.reductionCache.GetExact(ctx, content, targetWordCount); ok {
+		return reducedResult(cached, targetWordCount), nil
+	}
 	if r.textReducer == nil {
 		return result, fmt.Errorf("text reducer not configured")
 	}
+	callerCtx := ctx
 	timeout := time.Duration(r.config.Enricher.TextReducer.Timeout) * time.Second
 	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
+		ctx, cancel = context.WithTimeout(callerCtx, timeout)
 		defer cancel()
 	}
 	reducedContent, err := runWithTimeout(ctx, func() (*string, error) {
-		return r.textReducer.Reduce(ctx, content, chunkSize, targetWordCount)
+		return r.textReducer.Reduce(ctx, content, textreducer.ReduceChunkSize, targetWordCount)
 	})
 	if err != nil {
 		return result, fmt.Errorf("text reducer: %w", err)
 	}
+	r.reductionCache.Put(callerCtx, content, targetWordCount, *reducedContent)
+	return reducedResult(*reducedContent, targetWordCount), nil
+}
+
+// reducedResult reports a reduced text with the word and character counts its callers log.
+func reducedResult(text string, targetWordCount int) *TextReducerResult {
 	return &TextReducerResult{
-		Text:            *reducedContent,
-		WordCount:       len(strings.Fields(*reducedContent)),
-		CharCount:       utf8.RuneCountInString(*reducedContent),
+		Text:            text,
+		WordCount:       len(strings.Fields(text)),
+		CharCount:       utf8.RuneCountInString(text),
 		TargetWordCount: targetWordCount,
-	}, nil
+	}
 }
 
 // MatchTags matches a document's reduced text against the stored tag

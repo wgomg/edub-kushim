@@ -234,8 +234,6 @@ var errNoJudgeText = errors.New("no live document text")
 // and records the verdict, so the provisional sweep and the demotion arm judge identically. A name with no
 // live document text yields errNoJudgeText, and any other failure is returned for the caller to count.
 func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, tagID int64, name string) (tags.AdmissionDecision, string, error) {
-	const chunkSize = 150
-
 	docID, err := r.client.FirstDocumentIDForTag(ctx, tagID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -253,7 +251,7 @@ func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, 
 		return tags.AdmissionDecision{}, "", err
 	}
 
-	reduced, err := r.runner.ReduceContent(ctx, doc.TextContent.String, chunkSize,
+	reduced, err := r.runner.ReduceContent(ctx, doc.TextContent.String,
 		matcher.TargetWordCount(int(doc.WordCount), cfg.Enricher.TagMatcher.ReduceTargetWords))
 	if err != nil {
 		r.logger.Error("", "tag reconcile: reduce text for tag %q: %v", name, err)

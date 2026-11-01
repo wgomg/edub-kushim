@@ -308,6 +308,7 @@ test-db:
 		./internal/service/ \
 		./internal/tags/ \
 		./internal/tags/curation/ \
+		./internal/tools/textreducer/ \
 		./internal/api/handlers/ \
 		./internal/ops/dispatch/ \
 		./internal/documents/consumption/

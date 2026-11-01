@@ -105,13 +105,15 @@ document text (thousands of tokens).
 is 10% of the chunk size. `kushim hugot` logs the resolved values on startup
 (`hugot: chunk_size=4096 overlap=409 topN=15 min_sim=0.40`).
 
-### Long-input memoization
+### Input memoization
 
-The chunked path is expensive — two to four inference calls of up to 4096 tokens each —
-and the same long text is embedded more than once in a document's life (the completeness
-audit re-matches the same reduced text later). It is therefore memoized in the
-[text-embedding cache](#10-the-text-embedding-cache); short texts (tag names, rank
-queries) ride the batched path and are never cached.
+Every encode consults the cache before spending inference: a long input's chunked encode
+costs two to four inference calls of up to `enricher.tagmatcher.chunk_size` tokens each,
+a short input one batched call, and the same texts recur — the completeness audit
+re-matches the reduced document text later, daemon starts re-encode the promoted tag
+names, identity ranking re-encodes its query names. All of it is memoized in the
+[text-embedding cache](#10-the-text-embedding-cache), so a repeat input is a single
+indexed read.
 
 ## 6. Matching and ranking
 
@@ -293,11 +295,12 @@ the chunked path.
 
 ## 10. The text-embedding cache
 
-The chunked encode of a long input costs multiple inference calls, and the same long text
-is embedded more than once (the enricher matches at consume time; the completeness audit
-re-matches that same reduced text later). The daemon caches one pooled vector per
-distinct input text in `matcher_text_embedding`, so a re-match is a single indexed read
-plus a cosine rank over the tag vectors instead of a full encoding pass.
+Encoding is not free — a long input's chunked encode costs multiple inference calls, a
+short input one batched call — and the same text is embedded more than once (the
+enricher matches at consume time; the completeness audit re-matches that same reduced
+text later; tag names re-encode at every daemon start). The daemon caches one pooled
+vector per distinct input text in `matcher_text_embedding`, so a re-match is a single
+indexed read plus a cosine rank over the tag vectors instead of an encoding pass.
 
 ### Key and value
 
@@ -318,17 +321,17 @@ dimensions.
 ### Ownership and lifecycle
 
 `matcher.TextEmbeddingCache` owns the table access; the daemon wiring builds it from the
-same DB client `BuildTagCache` runs on. `encodeChunked` consults the cache before
-tokenizing and writes the pooled vector on a miss; `Match` and `Rank` are unchanged,
-which is the load-bearing part: the ranking always runs against the live tag store, so
-only the input vector is memoized and any store change is reflected on the next match
-without cache interaction.
+same DB client `BuildTagCache` runs on. `Encode` consults the cache once per input:
+short misses are batched into one pipeline call and stored, long misses are chunked,
+pooled and stored; `Match` and `Rank` are unchanged, which is the load-bearing part: the
+ranking always runs against the live tag store, so only the input vector is memoized and
+any store change is reflected on the next match without cache interaction.
 
 The table carries a generation marker in `system_signal`. `ClearStaleGeneration` runs
 once at daemon startup: a steady-state start (marker equal to the current fingerprint) is
 a single indexed read; a missing or different marker truncates the table and records the
-new fingerprint. After a stack change every long text re-embeds on demand and the cache
-refills as documents flow through enrichment. Bump `embeddingCacheGeneration`
+new fingerprint. After a stack change every input re-embeds on demand and the cache
+refills as documents and tag traffic flow through the daemon. Bump `embeddingCacheGeneration`
 whenever the embedding runtime changes in a way the fingerprint cannot see — a hugot or
 tokenizer upgrade, a pipeline-options change.
 
@@ -347,7 +350,8 @@ rebuildable data (the migration recreates the empty table and the daemon repopul
    trusted, deletes call `RemoveFromStore`, and a rename re-embeds the new name only when
    the renamed tag was promoted.
 2. **Daemon startup**: `BuildTagCache` seeds the store from the promoted names, so
-   provisional tags stay out across restarts.
+   provisional tags stay out across restarts; a warm start finds those names' vectors
+   already in the text-embedding cache and encodes only the ones it has not seen.
 3. **Enrichment** (`internal/enrichment`): `Runner.MatchTags` before the analysis call
    (matches above the injection bar become `tagSuggestions`; on error or zero matches the
    enricher falls back to the promoted-name list); `Runner.RankTags` after the LLM pass,
@@ -381,9 +385,10 @@ rebuildable data (the migration recreates the empty table and the daemon repopul
   graceful failure, not a panic.
 - **`topN == 0` or an empty store short-circuits** `Match`; a config can no longer
   disable suggestions (`top_n` validates ≥ 3 at load).
-- **Short texts are never cached** — store builds, tag CRUD re-embeds, and identity-rank
-  queries ride the batched short path; only long document texts enter
-  `matcher_text_embedding`.
+- **Short texts are cached too** — store builds, tag CRUD re-embeds and identity-rank
+  queries ride the batched short path, and their vectors land in `matcher_text_embedding`
+  alongside document texts, so a repeat short input (a tag name re-embedded at CRUD or at
+  daemon start) is a cache read, not an inference call.
 - **The ORT memory flags and the three thresholds are derived, not settable** — they live
   in `DefaultConfig` and the per-model derivation switches; a config that sets
   `identity_candidate_similarity: 0` disables candidate generation entirely (the

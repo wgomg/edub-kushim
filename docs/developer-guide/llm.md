@@ -658,13 +658,16 @@ and limits.
 `Enricher.Enrich` (`internal/enrichment/enricher.go:113-641`) is the
 orchestrator. Step by step:
 
-1. **Reduce for the LLM** (`enricher.go:128-137`): `ReduceContent(text, 150,
-   targetWordCount)` — chunk size 150, target from config (2000) or a
-   fraction of the document for negative config values
-   (`matcher.TargetWordCount`, `internal/matcher/client.go:64`, floor 2000). On
-   reduction error, **falls back to raw text** — a broken reducer never blocks
-   analysis.
-2. **Reduce for the tag matcher** (`enricher.go:139-147`): same, target 4000.
+1. **Reduce for the LLM** (`enricher.go:128-137`): `ReduceContent(text,
+   targetWordCount)` — the chunk window is fixed (`textreducer.ReduceChunkSize`, 150),
+   the target comes from `enricher.textreducer.target_words`, or a fraction of the
+   document for negative config values (`matcher.TargetWordCount`,
+   `internal/matcher/client.go:64`, floor 2000). Reduced texts are memoized per
+   (text, target) in the `text_reduction` cache, so a re-enrichment reads instead of
+   re-reducing and a reduction-target change refills the cache on demand. On reduction
+   error, **falls back to raw text** — a broken reducer never blocks analysis.
+2. **Reduce for the tag matcher** (`enricher.go:139-147`): same, target from
+   `enricher.tagmatcher.reduce_target_words`.
 3. **Load context** (`enricher.go:150-199`): document types, people types, all
    tags (unfiltered; the enricher splits the rows into the promoted trust set
    and the all-rows novel set).

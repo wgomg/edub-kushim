@@ -274,9 +274,9 @@ func (h *Hugot) Name() string {
 	return "hugot"
 }
 
-// Encode computes embeddings for a batch of texts. Short texts (≤ chunkSize tokens)
-// are batched into a single pipeline call. Longer texts are encoded individually
-// with overlapping token chunks and mean-pooling.
+// Encode computes embeddings for a batch of texts. Short inputs (≤ chunkSize tokens) with a cached vector
+// return without inferring and the misses are batched into a single pipeline call and stored; longer inputs
+// are matched against the cache once and encoded individually with overlapping token chunks and mean-pooling.
 func (h *Hugot) Encode(ctx context.Context, docId string, texts []string) ([][]float32, error) {
 	if h == nil {
 		return nil, fmt.Errorf("tag matcher not initialized")
@@ -290,13 +290,10 @@ func (h *Hugot) Encode(ctx context.Context, docId string, texts []string) ([][]f
 		return nil, fmt.Errorf("tokenizer not available")
 	}
 
-	type item struct {
-		index int
-		short bool
-	}
-	items := make([]item, len(texts))
+	result := make([][]float32, len(texts))
 	var shortTexts []string
 	shortIdx := make([]int, 0, len(texts))
+	var longIdx []int
 
 	for i, text := range texts {
 		ids, err := h.tokenize(text, tk)
@@ -304,37 +301,41 @@ func (h *Hugot) Encode(ctx context.Context, docId string, texts []string) ([][]f
 			return nil, fmt.Errorf("tokenize %q: %w", text, err)
 		}
 		if len(ids) <= h.chunkSize {
-			items[i] = item{index: i, short: true}
 			shortTexts = append(shortTexts, text)
 			shortIdx = append(shortIdx, i)
 		} else {
-			items[i] = item{index: i, short: false}
+			longIdx = append(longIdx, i)
 		}
 	}
 
-	result := make([][]float32, len(texts))
-
-	// Batch-encode all short texts at once.
-	if len(shortTexts) > 0 {
-		out, err := h.pipeline.RunPipeline(ctx, shortTexts)
+	// serve short hits one at a time so every miss lands in the same pipeline batch
+	var missTexts []string
+	missIdx := make([]int, 0, len(shortTexts))
+	for j, text := range shortTexts {
+		if cached, ok := h.textCache.Get(ctx, text); ok {
+			result[shortIdx[j]] = cached
+			continue
+		}
+		missTexts = append(missTexts, text)
+		missIdx = append(missIdx, shortIdx[j])
+	}
+	if len(missTexts) > 0 {
+		out, err := h.pipeline.RunPipeline(ctx, missTexts)
 		if err != nil {
 			return nil, fmt.Errorf("encode batch: %w", err)
 		}
-		for j, idx := range shortIdx {
-			result[idx] = out.Embeddings[j]
+		for k, idx := range missIdx {
+			result[idx] = out.Embeddings[k]
+			h.textCache.Put(ctx, missTexts[k], out.Embeddings[k])
 		}
 	}
 
-	// Encode long texts individually with chunking.
-	for _, it := range items {
-		if it.short {
-			continue
-		}
-		emb, err := h.encodeChunked(ctx, docId, texts[it.index])
+	for _, idx := range longIdx {
+		emb, err := h.encodeChunked(ctx, docId, texts[idx])
 		if err != nil {
-			return nil, fmt.Errorf("encode %q: %w", texts[it.index], err)
+			return nil, fmt.Errorf("encode %q: %w", texts[idx], err)
 		}
-		result[it.index] = emb
+		result[idx] = emb
 	}
 
 	return result, nil

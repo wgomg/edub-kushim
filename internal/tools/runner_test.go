@@ -924,3 +924,22 @@ func TestNewRunner_ConstructorFailureLogsCauseAndStaysNil(t *testing.T) {
 		t.Errorf("expected a not-configured failure, got %v", err)
 	}
 }
+
+func TestReduceContent_NeedsReducerOnlyOverTarget(t *testing.T) {
+	ctx := context.Background()
+	r := &Runner{config: &config.Config{}, logger: log.NewDiscardLogger()}
+
+	const short = "content that already fits the requested target"
+	got, err := r.ReduceContent(ctx, short, 1000)
+	if err != nil {
+		t.Fatalf("ReduceContent: content under the target must not need a reducer: %v", err)
+	}
+	if got.Text != short {
+		t.Errorf("content under the target changed: got %q", got.Text)
+	}
+
+	long := strings.Repeat("word ", 300)
+	if _, err := r.ReduceContent(ctx, long, 100); err == nil {
+		t.Error("ReduceContent: content over the target without a configured reducer must return an error")
+	}
+}
