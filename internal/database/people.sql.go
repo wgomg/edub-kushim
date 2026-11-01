@@ -22,7 +22,7 @@ func (q *Queries) CountPeople(ctx context.Context) (int64, error) {
 }
 
 const countPeopleByName = `-- name: CountPeopleByName :one
-SELECT COUNT(*) FROM people WHERE name LIKE $1
+SELECT COUNT(*) FROM people WHERE name ILIKE $1
 `
 
 func (q *Queries) CountPeopleByName(ctx context.Context, name string) (int64, error) {
@@ -237,7 +237,7 @@ func (q *Queries) ListPeopleWithDocumentCount(ctx context.Context, arg ListPeopl
 }
 
 const searchPeopleByName = `-- name: SearchPeopleByName :many
-SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name LIKE $1 ORDER BY name ASC LIMIT $2
+SELECT id, name, name_native, normalized_name, created_at FROM people WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2
 `
 
 type SearchPeopleByNameParams struct {
@@ -279,7 +279,7 @@ SELECT p.id, p.name, p.name_native, p.normalized_name, p.created_at, COUNT(dp.do
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
 LEFT JOIN document d ON dp.document_id = d.id AND d.deleted_at IS NULL
-WHERE p.name LIKE $1
+WHERE p.name ILIKE $1
 GROUP BY p.id
 ORDER BY p.name ASC LIMIT $2 OFFSET $3
 `

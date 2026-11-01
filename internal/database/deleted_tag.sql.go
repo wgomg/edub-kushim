@@ -11,7 +11,7 @@ import (
 
 const countDeletedTags = `-- name: CountDeletedTags :one
 SELECT COUNT(*) FROM deleted_tag
-WHERE ($1::text = '' OR name LIKE $1::text || '%')
+WHERE ($1::text = '' OR name ILIKE $1::text || '%')
 `
 
 func (q *Queries) CountDeletedTags(ctx context.Context, namePrefix string) (int64, error) {
@@ -75,7 +75,7 @@ func (q *Queries) ListAllDeletedTags(ctx context.Context) ([]ListAllDeletedTagsR
 
 const listDeletedTags = `-- name: ListDeletedTags :many
 SELECT name, kind, deleted_at FROM deleted_tag
-WHERE ($1::text = '' OR name LIKE $1::text || '%')
+WHERE ($1::text = '' OR name ILIKE $1::text || '%')
 ORDER BY deleted_at DESC
 LIMIT $3 OFFSET $2
 `

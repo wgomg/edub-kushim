@@ -116,7 +116,7 @@ WHERE d.id = $1 AND d.deleted_at IS NULL;
 SELECT id, document_id, title, md5_checksum, sha512_checksum, original_type, file_size, page_count, word_count,
        char_count, language, created_at, modified_at, document_type_id, original_path, storage_path
 FROM document
-WHERE title LIKE $1 AND deleted_at IS NULL
+WHERE title ILIKE $1 AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 

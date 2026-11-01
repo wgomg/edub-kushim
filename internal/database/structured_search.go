@@ -69,11 +69,13 @@ func (b *queryBuilder) add(clause string, args ...any) {
 	b.args = append(b.args, args...)
 }
 
-func (b *queryBuilder) eq(col, val string) {
+// eqFold appends a case-insensitive equality clause for an exact-value filter: the value is compared
+// literally, so LIKE metacharacters in user input have no wildcard meaning; prefix searches keep ILIKE
+func (b *queryBuilder) eqFold(col, val string) {
 	if val == "" {
 		return
 	}
-	b.add(fmt.Sprintf("AND d.%s = $%d", col, b.nextIndex()), val)
+	b.add(fmt.Sprintf("AND lower(d.%s) = lower($%d)", col, b.nextIndex()), val)
 }
 
 func (b *queryBuilder) tagsAnd(names []string) {
@@ -135,8 +137,9 @@ func (b *queryBuilder) dateRange(col string, r *struct{ From, To *string }) {
 	}
 }
 
-// SearchDocumentsStructured runs the filter search, ordering by the
-// filter's sort key.
+// SearchDocumentsStructured runs the filter search, ordering by the filter's sort key. Text filters
+// match case-insensitively: free text through the tsvector index, tag names through their canonical
+// form, and person, type, and language values by literal comparison rather than as LIKE patterns.
 func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFilter) ([]FTSDocumentRow, error) {
 	b := &queryBuilder{}
 
@@ -168,21 +171,21 @@ func (q *Queries) SearchDocumentsStructured(ctx context.Context, filter SearchFi
 		if p.Type == PersonAnyType {
 			b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 				JOIN people pe ON dp.people_id = pe.id
-				WHERE pe.name = $%d)`, nameIdx), p.Name)
+				WHERE lower(pe.name) = lower($%d))`, nameIdx), p.Name)
 			continue
 		}
 		typeIdx := b.nextIndex() + 1
 		b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 			JOIN people pe ON dp.people_id = pe.id
 			JOIN people_type pt ON dp.people_type_id = pt.id
-			WHERE pe.name = $%d AND pt.name = $%d)`, nameIdx, typeIdx), p.Name, p.Type)
+			WHERE lower(pe.name) = lower($%d) AND lower(pt.name) = lower($%d))`, nameIdx, typeIdx), p.Name, p.Type)
 	}
 
 	if filter.DocumentType != "" {
-		b.add(fmt.Sprintf(`AND d.document_type_id = (SELECT id FROM document_type WHERE name = $%d)`, b.nextIndex()), filter.DocumentType)
+		b.add(fmt.Sprintf(`AND d.document_type_id IN (SELECT id FROM document_type WHERE lower(name) = lower($%d))`, b.nextIndex()), filter.DocumentType)
 	}
 
-	b.eq("language", filter.Language)
+	b.eqFold("language", filter.Language)
 	b.dateRange("created_at", filter.DateCreated)
 	b.dateRange("modified_at", filter.DateModified)
 	if filter.FileSize != nil {
@@ -260,21 +263,21 @@ func (q *Queries) CountDocumentsStructured(ctx context.Context, filter SearchFil
 		if p.Type == PersonAnyType {
 			b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 				JOIN people pe ON dp.people_id = pe.id
-				WHERE pe.name = $%d)`, nameIdx), p.Name)
+				WHERE lower(pe.name) = lower($%d))`, nameIdx), p.Name)
 			continue
 		}
 		typeIdx := b.nextIndex() + 1
 		b.add(fmt.Sprintf(`AND d.id IN (SELECT dp.document_id FROM document_people dp
 			JOIN people pe ON dp.people_id = pe.id
 			JOIN people_type pt ON dp.people_type_id = pt.id
-			WHERE pe.name = $%d AND pt.name = $%d)`, nameIdx, typeIdx), p.Name, p.Type)
+			WHERE lower(pe.name) = lower($%d) AND lower(pt.name) = lower($%d))`, nameIdx, typeIdx), p.Name, p.Type)
 	}
 
 	if filter.DocumentType != "" {
-		b.add(fmt.Sprintf(`AND d.document_type_id = (SELECT id FROM document_type WHERE name = $%d)`, b.nextIndex()), filter.DocumentType)
+		b.add(fmt.Sprintf(`AND d.document_type_id IN (SELECT id FROM document_type WHERE lower(name) = lower($%d))`, b.nextIndex()), filter.DocumentType)
 	}
 
-	b.eq("language", filter.Language)
+	b.eqFold("language", filter.Language)
 	b.dateRange("created_at", filter.DateCreated)
 	b.dateRange("modified_at", filter.DateModified)
 	if filter.FileSize != nil {

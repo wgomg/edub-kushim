@@ -906,6 +906,102 @@ func TestStructuredSearchPeopleFilter(t *testing.T) {
 		assertNoError(t, err, "count")
 		assertEqual(t, count, int64(len(searchR)), "count equals search length")
 	})
+
+	t.Run("person name and type filters ignore case", func(t *testing.T) {
+		typed := []struct{ Name, Type string }{{Name: "mArIa", Type: "TEST-Author"}}
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{Limit: 100, People: typed})
+		assertNoError(t, err, "mixed-case typed search")
+		ids := docIDs(results)
+		assertEqual(t, len(results), 1, "typed filter still scopes to one doc")
+		assertEqual(t, ids[docAUUID], true, "author doc matched with mixed-case name and type")
+
+		results, err = q.SearchDocumentsStructured(ctx, SearchFilter{
+			Limit:  100,
+			People: []struct{ Name, Type string }{{Name: "MARIA", Type: PersonAnyType}},
+		})
+		assertNoError(t, err, "mixed-case any-type search")
+		assertEqual(t, len(results), 2, "any-type filter matches both docs")
+	})
+}
+
+func TestStructuredSearchValueFiltersCaseInsensitive(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	articleType, err := q.GetDocumentTypeByName(ctx, "article")
+	assertNoError(t, err, "get seeded article type")
+	seedReportType, err := q.GetDocumentTypeByName(ctx, "report")
+	assertNoError(t, err, "get seeded report type")
+	caseReportType, err := q.CreateDocumentTypeFull(ctx, CreateDocumentTypeFullParams{
+		Name: "Report", Description: "case variant of the seeded report type",
+	})
+	assertNoError(t, err, "create Report type")
+
+	createDoc := func(id string, language string) {
+		t.Helper()
+		_, err := q.CreateDocument(ctx, CreateDocumentParams{
+			DocumentID: id, Title: id + ".pdf",
+			Md5Checksum: "md5-" + id, Sha512Checksum: "sha512-" + id,
+			OriginalType: "application/pdf", FileSize: 1000,
+			OriginalPath: "/tmp/" + id + ".pdf", StoragePath: "/tmp/" + id + "-s.pdf",
+			TextContent: sql.NullString{String: id, Valid: true},
+			PageCount:   1, WordCount: 1, CharCount: 5, Language: language,
+		})
+		assertNoError(t, err, "create "+id)
+	}
+
+	createDoc("ci-article", "eng")
+	createDoc("ci-spanish-report", "spa")
+	createDoc("ci-case-report", "eng")
+
+	setType := func(typeID int64, docIDs ...string) {
+		t.Helper()
+		_, err := q.SetDocumentsDocumentType(ctx, SetDocumentsDocumentTypeParams{
+			DocumentTypeID: typeID, Column2: docIDs,
+		})
+		assertNoError(t, err, "set document type")
+	}
+	setType(articleType.ID, "ci-article")
+	setType(seedReportType.ID, "ci-spanish-report")
+	setType(caseReportType, "ci-case-report")
+
+	docIDsOf := func(results []FTSDocumentRow) map[string]bool {
+		m := map[string]bool{}
+		for _, r := range results {
+			m[r.DocumentID] = true
+		}
+		return m
+	}
+
+	t.Run("document type filter ignores case", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{Limit: 100, DocumentType: "ARTICLE"})
+		assertNoError(t, err, "mixed-case article filter")
+		ids := docIDsOf(results)
+		assertEqual(t, ids["ci-article"], true, "article doc matched")
+		assertEqual(t, ids["ci-spanish-report"], false, "report doc excluded")
+	})
+
+	t.Run("document type filter tolerates case-variant duplicate names", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{Limit: 100, DocumentType: "REPORT"})
+		assertNoError(t, err, "filter matching both report and Report must not error")
+		ids := docIDsOf(results)
+		assertEqual(t, ids["ci-spanish-report"], true, "doc on seeded report matched")
+		assertEqual(t, ids["ci-case-report"], true, "doc on Report matched")
+		count, err := q.CountDocumentsStructured(ctx, SearchFilter{Limit: 100, DocumentType: "REPORT"})
+		assertNoError(t, err, "count with duplicate report types")
+		assertEqual(t, count, int64(len(results)), "count equals search length")
+	})
+
+	t.Run("language filter ignores case", func(t *testing.T) {
+		results, err := q.SearchDocumentsStructured(ctx, SearchFilter{Limit: 100, Language: "ENG"})
+		assertNoError(t, err, "mixed-case language filter")
+		ids := docIDsOf(results)
+		assertEqual(t, ids["ci-article"], true, "eng doc matched")
+		assertEqual(t, ids["ci-case-report"], true, "second eng doc matched")
+		assertEqual(t, ids["ci-spanish-report"], false, "spa doc excluded")
+	})
 }
 
 func TestWithDocumentCountQueries(t *testing.T) {
@@ -1006,6 +1102,88 @@ func TestWithDocumentCountQueries(t *testing.T) {
 		count, err := q.CountPeopleByName(ctx, "%alice%")
 		assertNoError(t, err, "count people by name")
 		assertEqual(t, count >= int64(0), true, "count is non-negative")
+	})
+}
+
+func TestSearchPrefixQueriesCaseInsensitive(t *testing.T) {
+	q, db := NewTestQueries(t)
+	defer db.Close()
+	resetDB(t, q)
+	ctx := context.Background()
+
+	_, err := q.CreatePeople(ctx, CreatePeopleParams{Name: "García", NormalizedName: "garcia"})
+	assertNoError(t, err, "create García")
+	MustCreateTag(t, q, "FinanceTag")
+
+	t.Run("people prefix search and count ignore case", func(t *testing.T) {
+		people, err := q.SearchPeopleByNameWithDocumentCount(ctx, SearchPeopleByNameWithDocumentCountParams{
+			Name: "GARC%", Limit: 10, Offset: 0,
+		})
+		assertNoError(t, err, "search people by mixed-case prefix")
+		assertEqual(t, len(people), 1, "one person matched")
+		assertEqual(t, people[0].Name, "García", "matched person")
+
+		count, err := q.CountPeopleByName(ctx, "GARC%")
+		assertNoError(t, err, "count people by mixed-case prefix")
+		assertEqual(t, count, int64(1), "count agrees with search")
+	})
+
+	t.Run("tag prefix search and count ignore case", func(t *testing.T) {
+		tags, err := q.SearchTagsByNameWithDocumentCount(ctx, SearchTagsByNameWithDocumentCountParams{
+			Name: "FINANCET%", Limit: 10, Offset: 0,
+		})
+		assertNoError(t, err, "search tags by mixed-case prefix")
+		found := false
+		for _, tg := range tags {
+			if tg.Name == "financetag" {
+				found = true
+			}
+		}
+		assertEqual(t, found, true, "created tag matched")
+
+		count, err := q.CountTagsByName(ctx, "FINANCET%")
+		assertNoError(t, err, "count tags by mixed-case prefix")
+		assertEqual(t, count, int64(1), "count agrees with search")
+	})
+
+	t.Run("document type prefix search ignores case", func(t *testing.T) {
+		dts, err := q.SearchDocumentTypeByNameWithDocumentCount(ctx, SearchDocumentTypeByNameWithDocumentCountParams{
+			Name: "%ARTICLE%", Limit: 10,
+		})
+		assertNoError(t, err, "search document types by mixed-case pattern")
+		assertEqual(t, len(dts) > 0, true, "seeded article type matched")
+	})
+
+	t.Run("people type prefix search ignores case", func(t *testing.T) {
+		pts, err := q.SearchPeopleTypeByName(ctx, SearchPeopleTypeByNameParams{Name: "AUTHOR%", Limit: 10})
+		assertNoError(t, err, "search people types by mixed-case prefix")
+		assertEqual(t, len(pts), 1, "one people type matched")
+		assertEqual(t, pts[0].Name, "author", "seeded author type matched")
+	})
+
+	t.Run("deleted tag list and count ignore case", func(t *testing.T) {
+		assertNoError(t, q.UpsertDeletedTag(ctx, UpsertDeletedTagParams{Name: "OldBlockedTag", Kind: "blocked"}), "upsert deleted tag")
+
+		rows, err := q.ListDeletedTags(ctx, ListDeletedTagsParams{NamePrefix: "OLDBLOCKEDTAG", PageLimit: 10, PageOffset: 0})
+		assertNoError(t, err, "list deleted tags by mixed-case prefix")
+		assertEqual(t, len(rows), 1, "one deleted tag matched")
+		assertEqual(t, rows[0].Name, "OldBlockedTag", "matched deleted tag")
+
+		count, err := q.CountDeletedTags(ctx, "OLDBLOCKEDTAG")
+		assertNoError(t, err, "count deleted tags by mixed-case prefix")
+		assertEqual(t, count, int64(1), "count agrees with list")
+	})
+
+	t.Run("no match returns empty results and zero count", func(t *testing.T) {
+		people, err := q.SearchPeopleByNameWithDocumentCount(ctx, SearchPeopleByNameWithDocumentCountParams{
+			Name: "zzzq%", Limit: 10, Offset: 0,
+		})
+		assertNoError(t, err, "search people with unmatched prefix")
+		assertEqual(t, len(people), 0, "no people matched")
+
+		count, err := q.CountPeopleByName(ctx, "zzzq%")
+		assertNoError(t, err, "count people with unmatched prefix")
+		assertEqual(t, count, int64(0), "count is zero")
 	})
 }
 

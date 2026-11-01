@@ -20,7 +20,7 @@ UPDATE people_type SET name = $1, description = $2 WHERE id = $3;
 SELECT * FROM people_type WHERE name = $1;
 
 -- name: SearchPeopleTypeByName :many
-SELECT * FROM people_type WHERE name LIKE $1 ORDER BY name ASC LIMIT $2;
+SELECT * FROM people_type WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2;
 
 -- name: DeletePeopleType :exec
 DELETE FROM people_type WHERE id = $1;

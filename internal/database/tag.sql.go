@@ -112,7 +112,7 @@ func (q *Queries) CountTags(ctx context.Context) (int64, error) {
 }
 
 const countTagsByName = `-- name: CountTagsByName :one
-SELECT COUNT(*) FROM tag WHERE name LIKE $1
+SELECT COUNT(*) FROM tag WHERE name ILIKE $1
 `
 
 func (q *Queries) CountTagsByName(ctx context.Context, name string) (int64, error) {
@@ -934,7 +934,7 @@ func (q *Queries) ProvisionalTagProbe(ctx context.Context, cutoff time.Time) (bo
 }
 
 const searchTagsByName = `-- name: SearchTagsByName :many
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag WHERE name LIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchTagsByNameParams struct {
@@ -980,7 +980,7 @@ const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocument
 SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
-WHERE t.name LIKE $1
+WHERE t.name ILIKE $1
 GROUP BY t.id
 ORDER BY t.name ASC LIMIT $2 OFFSET $3
 `

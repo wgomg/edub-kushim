@@ -602,8 +602,8 @@ The structured search flows through three layers:
 
 2. **`queryBuilder`** (`internal/database/structured_search.go`) — Dynamic SQL composition helper that builds `WHERE` clauses with proper positional parameterization (prevents SQL injection). Key patterns:
    - **Tags**: Subquery via `document_tag JOIN tag WHERE tag.name IN (?,?,...)`
-   - **People**: Two subqueries — one for person name, one for person type — joined on `document_people`
-   - **Document type / language**: Simple `d.col = ?` equality (skipped when empty)
+   - **People**: Two subqueries — one for person name, one for person type — joined on `document_people`, each matching case-insensitively (`lower(name) = lower(?)`)
+   - **Document type / language**: Case-insensitive equality via `lower(col) = lower(?)` (skipped when empty)
    - **Date ranges**: `d.col >= ? AND d.col <= ?` with optional from/to
    - **File size**: `d.file_size >= ? AND d.file_size <= ?`
    - **Sorting**: Whitelisted column names (`title`, `file_size`, `created_at`). When a tsquery is present, defaults to `ts_rank` instead.
@@ -617,14 +617,15 @@ After the database returns rows, the handler batch-fetches tags and people for a
 
 ### Autocomplete System
 
-Four API endpoints support progressive filtering in the UI via prefix-scanned B-tree lookups (no full-text index needed):
+Five API endpoints support progressive filtering in the UI via case-insensitive prefix search — `ILIKE` with the caller appending `%` (no full-text index needed):
 
-| Endpoint                     | Source table    | SQL pattern                       |
-| ---------------------------- | --------------- | --------------------------------- |
-| `GET /api/v1/tags?q=fin`     | `tag`           | `WHERE name LIKE 'fin%' LIMIT 20` |
-| `GET /api/v1/people?q=john`  | `people`        | Same pattern                      |
-| `GET /api/v1/people-types`   | `people_type`   | Full list, no filter              |
-| `GET /api/v1/document-types` | `document_type` | Full list, no filter              |
+| Endpoint                        | Source table    | SQL pattern                        |
+| ------------------------------- | --------------- | ---------------------------------- |
+| `GET /api/v1/tags?q=fin`        | `tag`           | `WHERE name ILIKE 'fin%' LIMIT 50` |
+| `GET /api/v1/people?q=john`     | `people`        | Same pattern                       |
+| `GET /api/v1/people-types?q=`   | `people_type`   | Same pattern                       |
+| `GET /api/v1/document-types?q=` | `document_type` | Same pattern                       |
+| `GET /api/v1/tags/deleted?q=`   | `deleted_tag`   | Same pattern                       |
 
 ### Saved Searches
 

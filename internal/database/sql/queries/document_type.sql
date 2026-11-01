@@ -14,7 +14,7 @@ UPDATE document_type SET name = $1 WHERE id = $2;
 SELECT * FROM document_type WHERE name = $1;
 
 -- name: SearchDocumentTypeByName :many
-SELECT * FROM document_type WHERE name LIKE $1 ORDER BY name ASC LIMIT $2;
+SELECT * FROM document_type WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2;
 
 -- name: CreateDocumentTypeFull :one
 INSERT INTO document_type (name, description) VALUES ($1, $2) RETURNING id;
@@ -39,7 +39,7 @@ ORDER BY dt.created_at DESC LIMIT $1 OFFSET $2;
 SELECT dt.*, COUNT(d.id) AS document_count
 FROM document_type dt
 LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
-WHERE dt.name LIKE $1
+WHERE dt.name ILIKE $1
 GROUP BY dt.id
 ORDER BY dt.name ASC LIMIT $2;
 

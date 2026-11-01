@@ -270,7 +270,7 @@ func (q *Queries) ListDocumentTypesWithDocumentCount(ctx context.Context, arg Li
 }
 
 const searchDocumentTypeByName = `-- name: SearchDocumentTypeByName :many
-SELECT id, name, description, created_at FROM document_type WHERE name LIKE $1 ORDER BY name ASC LIMIT $2
+SELECT id, name, description, created_at FROM document_type WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2
 `
 
 type SearchDocumentTypeByNameParams struct {
@@ -310,7 +310,7 @@ const searchDocumentTypeByNameWithDocumentCount = `-- name: SearchDocumentTypeBy
 SELECT dt.id, dt.name, dt.description, dt.created_at, COUNT(d.id) AS document_count
 FROM document_type dt
 LEFT JOIN document d ON dt.id = d.document_type_id AND d.deleted_at IS NULL
-WHERE dt.name LIKE $1
+WHERE dt.name ILIKE $1
 GROUP BY dt.id
 ORDER BY dt.name ASC LIMIT $2
 `

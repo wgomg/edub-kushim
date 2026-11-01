@@ -30,7 +30,7 @@ SELECT * FROM people WHERE name = $1;
 SELECT * FROM people WHERE normalized_name = $1;
 
 -- name: SearchPeopleByName :many
-SELECT * FROM people WHERE name LIKE $1 ORDER BY name ASC LIMIT $2;
+SELECT * FROM people WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2;
 
 -- name: UpdatePeopleFull :exec
 UPDATE people SET name = $1, name_native = $2, normalized_name = $3 WHERE id = $4;
@@ -47,14 +47,14 @@ ORDER BY p.created_at DESC LIMIT $1 OFFSET $2;
 SELECT COUNT(*) FROM people;
 
 -- name: CountPeopleByName :one
-SELECT COUNT(*) FROM people WHERE name LIKE $1;
+SELECT COUNT(*) FROM people WHERE name ILIKE $1;
 
 -- name: SearchPeopleByNameWithDocumentCount :many
 SELECT p.*, COUNT(dp.document_id) AS document_count
 FROM people p
 LEFT JOIN document_people dp ON p.id = dp.people_id
 LEFT JOIN document d ON dp.document_id = d.id AND d.deleted_at IS NULL
-WHERE p.name LIKE $1
+WHERE p.name ILIKE $1
 GROUP BY p.id
 ORDER BY p.name ASC LIMIT $2 OFFSET $3;
 

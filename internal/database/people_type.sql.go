@@ -163,7 +163,7 @@ func (q *Queries) ListPeopleTypes(ctx context.Context, arg ListPeopleTypesParams
 }
 
 const searchPeopleTypeByName = `-- name: SearchPeopleTypeByName :many
-SELECT id, name, description, created_at FROM people_type WHERE name LIKE $1 ORDER BY name ASC LIMIT $2
+SELECT id, name, description, created_at FROM people_type WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2
 `
 
 type SearchPeopleTypeByNameParams struct {
