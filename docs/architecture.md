@@ -315,9 +315,11 @@ The enrichment pipeline:
    internal `no_anchor_similarity` 0.60 cut). The rubric asks
    `subject_matter`, `not_person`, `atomic` and
    `not_form_genre`, and offers `defer` as an abstention, while a missing or
-   abstained parts verdict defers rather than counting as a failing dimension; the decision admits
-   when nothing fails, defers on a lone failing signal (or the judge's
-   abstention), and rejects on two or more — no single signal decides. Verdicts
+   abstained parts verdict defers rather than counting as a failing dimension; the decision
+   defers on the judge's abstention, admits when nothing fails, defers on a lone failing
+   signal or on a failure set of deterministic signals alone, and rejects when two or more
+   signals fail with at least one judge-owned — subject matter and dimension both failing
+   rejects as `no_dimension` (definition §3.6's drop leg) — no single signal decides. Verdicts
    are cached per `(tag_name, policy_version)` in `tag_quality_event` with the
    recorded outcome, so a re-emitted name resolves without a call; a rejected
    name drops the tag for that document only — its registration and pending

@@ -238,11 +238,13 @@ created (`Adjudicator.ApplyTagQuality`):
   emission's deterministic signals: a typed detail annotated `other`, and a best store
   similarity below the internal no-anchor floor (0.60).
 - **Decision**: the pinned rule set (`tags.DecideAdmission`) defers on the judge's
-  abstention, rejects on two or more failing signals, defers on exactly one (the gray
-  band — no single signal decides), and admits when nothing fails. Rejected names are
-  dropped for that document and never stored — their plan registrations and pending
-  identity evidence are removed before persist. A missing detail or similarity is absence
-  of evidence, not a failing signal.
+  abstention, rejects a candidate judged neither subject matter nor a dimension with reason
+  `no_dimension` (definition §3.6's drop leg), rejects two or more failing signals when at
+  least one is judge-owned, defers on a failure set of deterministic signals alone or on
+  exactly one failing signal (the gray band — no single signal decides), and admits when
+  nothing fails. Rejected names are dropped for that document and never stored — their plan
+  registrations and pending identity evidence are removed before persist. A missing detail
+  or similarity is absence of evidence, not a failing signal.
 - **Judge call**: uncached candidates are judged in temperature-0 LLM calls over batches
   of up to 40 candidates per document; the reduced document text serves the
   `subject_matter` question alone, the other criteria answering on the candidate.

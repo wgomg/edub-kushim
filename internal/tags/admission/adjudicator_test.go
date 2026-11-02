@@ -908,10 +908,10 @@ func TestDecisionFromStored(t *testing.T) {
 	}{
 		{"rubric with no failures admits whatever pass says", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{}, tags.AdmissionAdmit, tags.ReasonAdmitted},
 		{"one failing rubric answer defers whatever pass says", rubric(true, false, true, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonSingleSignal},
-		{"two failing rubric answers reject", rubric(false, false, true, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionReject, tags.ReasonCorroborated},
+		{"two failing rubric answers reject as no_dimension", rubric(false, false, true, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionReject, tags.ReasonNoDimension},
 		{"stored abstention defers", rubric(true, true, true, true, true), false, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonJudgeDefer},
 		{"caller deterministic signal joins the rubric", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true}, tags.AdmissionDefer, tags.ReasonSingleSignal},
-		{"caller deterministic signals corroborate the rubric", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true, NoAnchor: true}, tags.AdmissionReject, tags.ReasonCorroborated},
+		{"caller deterministic signals alone defer the rubric", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true, NoAnchor: true}, tags.AdmissionDefer, tags.ReasonDeterministicOnly},
 		{"legacy rubric maps pass to admit", legacy, true, tags.AdmissionFeatures{}, tags.AdmissionAdmit, reasonLegacyPass},
 		{"legacy rubric maps pass to reject", legacy, false, tags.AdmissionFeatures{}, tags.AdmissionReject, reasonLegacyReject},
 		{"malformed criteria map pass to reject", json.RawMessage("not json"), false, tags.AdmissionFeatures{}, tags.AdmissionReject, reasonLegacyReject},

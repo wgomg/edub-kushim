@@ -792,13 +792,15 @@ for i := range 2 {
     `not_form_genre`, with `defer` as the judge's abstention, while the
     `dimension` verdict is the parts pass's (read from the shared parts cache,
     judged on a miss, and stamped onto the row; a missing or abstained verdict
-    defers); the decision
-    defers on abstention,
-    rejects on two or more failing signals, defers on exactly one (the gray
-    band), and admits when nothing fails. Rejections drop the tag for that
-    document — the registration and its pending identity evidence never reach
-    the store — and log `tagquality[v6]: reject … (reason=corroborated_failures
-    source=judge|cache …)`; defers are kept and logged too, and admitted
+    defers); the decision defers on abstention, rejects a candidate judged
+    neither subject matter nor a dimension as `no_dimension` (definition §3.6's
+    drop leg), rejects two or more failing signals when at least one is
+    judge-owned, defers on a failure set of deterministic signals alone or on
+    exactly one failing signal (the gray band), and admits when nothing fails.
+    Rejections drop the tag for that document — the registration and its pending
+    identity evidence never reach the store — and log `tagquality[v6]: reject …
+    (reason=corroborated_failures|no_dimension source=judge|cache …)`; defers are
+    kept and logged too, and admitted
     candidates journal at DEBUG. Works and places are judged by the ordinary
     dimension criteria, so neither is rejected for being that kind of tag. Fresh verdicts
     record the judging model and the recorded outcome, cache-applied ones a

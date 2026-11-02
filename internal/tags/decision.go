@@ -28,10 +28,9 @@ func (o AdmissionOutcome) String() string {
 	}
 }
 
-// AdmissionFeatures is the evidence the admission decision reads for one
-// candidate: the judge's five answers plus its abstention, and the
-// deterministic signals the emission context supplies. A feature the
-// caller cannot establish stays false and never counts as failing —
+// AdmissionFeatures is the evidence the admission decision reads for one candidate: the four judge answers
+// plus its abstention, the parts pass's stamped dimension verdict, and the deterministic signals the emission
+// context supplies. A feature the caller cannot establish stays false and never counts as failing —
 // absence of evidence is not evidence.
 type AdmissionFeatures struct {
 	SubjectMatter bool
@@ -44,21 +43,22 @@ type AdmissionFeatures struct {
 	NoAnchor      bool
 }
 
-// The reasons an admission decision carries into the logs: a judge
-// abstention, two or more failing signals, one lone failing signal in the
-// gray band, or no failing signal.
+// The reasons an admission decision carries into the logs: a judge abstention, a candidate judged neither
+// subject matter nor a dimension (the definition's drop leg, §3.6), two or more failing signals, a failure
+// set of deterministic signals alone, one lone failing signal in the gray band, or no failing signal.
 const (
-	ReasonJudgeDefer   = "judge_defer"
-	ReasonCorroborated = "corroborated_failures"
-	ReasonSingleSignal = "single_signal"
-	ReasonAdmitted     = "admitted"
+	ReasonJudgeDefer        = "judge_defer"
+	ReasonNoDimension       = "no_dimension"
+	ReasonCorroborated      = "corroborated_failures"
+	ReasonDeterministicOnly = "deterministic_only"
+	ReasonSingleSignal      = "single_signal"
+	ReasonAdmitted          = "admitted"
 )
 
-// The triggers that cost a value its standing (docs/specs/tags/definition.md §6.4, §8): mass decay
-// below the recurrence floor, or an operator. A verdict-driven demotion records the admission
-// decision's own reason (ReasonCorroborated, ReasonJudgeDefer) and a decided drop the composition
-// reason it was decided under, so a stored reason always names the evidence without a second
-// vocabulary here.
+// The triggers that cost a value its standing (docs/specs/tags/definition.md §6.4, §8): mass decay below
+// the recurrence floor, or an operator. A verdict-driven demotion records the admission decision's own
+// reason (one of this package's Reason* constants) and a decided drop the composition reason it was
+// decided under, so a stored reason always names the evidence without a second vocabulary here.
 const (
 	DemotionMassDecay = "mass_decay"
 	DemotionOperator  = "operator"
@@ -72,35 +72,44 @@ type AdmissionDecision struct {
 	Reason  string
 }
 
-// DecideAdmission decides one candidate from its features: evidence, not
-// verdicts — no single signal decides. A judge abstention defers;
-// otherwise two or more failing signals reject (corroborated evidence),
-// exactly one defers to review (the gray band refuses single-signal
-// drops), and none admits. The rule set is pinned and versioned — the
-// quality version pins the judge features behind it — and runs with zero
-// labels.
+// DecideAdmission decides one candidate from its features: evidence, not verdicts — no single signal
+// decides. A judge abstention defers first. A candidate judged neither subject matter nor a dimension is
+// the definition's drop leg and rejects as no_dimension. Otherwise two or more failing signals reject
+// only when at least one is judge-owned (corroborated evidence); a failure set of deterministic signals
+// alone defers as deterministic_only; exactly one failing signal defers to review (the gray band refuses
+// single-signal drops); and none admits. The rule set is pinned and versioned — the quality version pins
+// the judge features behind it — and runs with zero labels.
 func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 	if f.JudgeDefer {
 		return AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonJudgeDefer}
 	}
-	failures := 0
+	judgeFailures := 0
 	for _, failed := range []bool{
 		!f.SubjectMatter,
 		!f.Dimension,
 		!f.NotPerson,
 		!f.Atomic,
 		!f.NotFormGenre,
-		f.CategoryOther,
-		f.NoAnchor,
 	} {
 		if failed {
-			failures++
+			judgeFailures++
 		}
 	}
+	detFailures := 0
+	for _, failed := range []bool{f.CategoryOther, f.NoAnchor} {
+		if failed {
+			detFailures++
+		}
+	}
+	total := judgeFailures + detFailures
 	switch {
-	case failures >= 2:
+	case !f.SubjectMatter && !f.Dimension:
+		return AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonNoDimension}
+	case total >= 2 && judgeFailures >= 1:
 		return AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonCorroborated}
-	case failures == 1:
+	case detFailures >= 2:
+		return AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonDeterministicOnly}
+	case total == 1:
 		return AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal}
 	default:
 		return AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonAdmitted}
@@ -202,8 +211,11 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // rules to the set: a decayed live mass below RecurrenceFloor, a decided no-dimension drop, and a fresh
 // reject or defer under the current versions revoke influence, the admission rules unchanged. v8 adds the
 // retention rules to the set: a current-version decided drop or reject standing past the retention window
-// removes the stored row, the admission and demotion rules unchanged.
-const DecisionRuleSetVersion = "v8"
+// removes the stored row, the admission and demotion rules unchanged. v9 structures the admission rules:
+// a candidate judged neither subject matter nor a dimension rejects with its own no_dimension reason, and
+// a rejection requires at least one judge-owned failing signal — a failure set of deterministic signals
+// alone defers as deterministic_only — the demotion and retention rules unchanged.
+const DecisionRuleSetVersion = "v9"
 
 // RecurrenceFloor is the promotion minimum of docs/specs/tags/definition.md §4.3 (P2), in live
 // documents: ten until its calibration exists (operator decision D8, 2026-09-30). Same-batch mass

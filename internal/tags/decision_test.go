@@ -22,12 +22,23 @@ func TestDecideAdmission(t *testing.T) {
 			f.NotFormGenre = false
 			return f
 		}(), AdmissionDefer, ReasonSingleSignal},
+		{"a lone subject-matter failure defers to review", func() AdmissionFeatures {
+			f := admissible
+			f.SubjectMatter = false
+			return f
+		}(), AdmissionDefer, ReasonSingleSignal},
 		{"two failing rubric answers reject", func() AdmissionFeatures {
 			f := admissible
 			f.Dimension = false
 			f.Atomic = false
 			return f
 		}(), AdmissionReject, ReasonCorroborated},
+		{"a subject-matter and dimension failure reject as no_dimension", func() AdmissionFeatures {
+			f := admissible
+			f.SubjectMatter = false
+			f.Dimension = false
+			return f
+		}(), AdmissionReject, ReasonNoDimension},
 		{"judge abstention defers before counting", func() AdmissionFeatures {
 			f := admissible
 			f.JudgeDefer = true
@@ -40,17 +51,24 @@ func TestDecideAdmission(t *testing.T) {
 			f.Atomic = false
 			return f
 		}(), AdmissionDefer, ReasonJudgeDefer},
+		{"judge abstention wins over the no_dimension rule", func() AdmissionFeatures {
+			f := admissible
+			f.JudgeDefer = true
+			f.SubjectMatter = false
+			f.Dimension = false
+			return f
+		}(), AdmissionDefer, ReasonJudgeDefer},
 		{"a lone deterministic signal defers", func() AdmissionFeatures {
 			f := admissible
 			f.CategoryOther = true
 			return f
 		}(), AdmissionDefer, ReasonSingleSignal},
-		{"two deterministic signals reject", func() AdmissionFeatures {
+		{"two deterministic signals defer to review", func() AdmissionFeatures {
 			f := admissible
 			f.CategoryOther = true
 			f.NoAnchor = true
 			return f
-		}(), AdmissionReject, ReasonCorroborated},
+		}(), AdmissionDefer, ReasonDeterministicOnly},
 		{"judge and deterministic signals corroborate", func() AdmissionFeatures {
 			f := admissible
 			f.SubjectMatter = false
