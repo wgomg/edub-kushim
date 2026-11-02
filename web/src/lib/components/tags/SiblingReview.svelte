@@ -12,7 +12,8 @@
 			key: 'a',
 			label: 'Tag pair',
 			sortable: false,
-			cell: (_v, row) => `${escapeHtml(row.a)} ⊇ ${escapeHtml(row.b)}`
+			cell: (_v, row) =>
+				`${escapeHtml(row.a)} <span class="ui-symbol">⊇</span> ${escapeHtml(row.b)}`
 		},
 		{
 			key: 'containment',

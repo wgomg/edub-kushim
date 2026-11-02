@@ -95,6 +95,7 @@ declare -A description=(
   ["web/src"]="SPA source"
   ["web/src/lib"]="shared SPA modules"
   ["web/src/lib/assets"]="static assets"
+  ["web/src/lib/assets/fonts"]="bundled UI symbol font subset and its license"
   ["web/src/lib/components"]="reusable Svelte components"
   ["web/src/lib/components/settings"]="settings-area section components"
   ["web/src/lib/components/tags"]="tag-review components"

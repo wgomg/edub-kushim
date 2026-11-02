@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -66,12 +66,17 @@
 	let pendingTotal = $state(0);
 	let filterStates = $state({});
 	let verdictFilter = $state('');
+	let query = $state('');
 	let loadSeq = 0;
 
-	let hasFilters = $derived(criteria.some((c) => filterStates[c.key]) || verdictFilter !== '');
+	let hasFilters = $derived(
+		query !== '' || criteria.some((c) => filterStates[c.key]) || verdictFilter !== ''
+	);
 
 	onMount(() => {
 		const sp = page.url.searchParams;
+
+		query = sp.get('prov_q') ?? '';
 
 		const rawPage = sp.get('prov_page') ?? '';
 		if (/^\d+$/.test(rawPage)) offset = parseInt(rawPage, 10) * PAGE_SIZE;
@@ -103,6 +108,9 @@
 		if (offset > 0) sp.set('prov_page', String(offset / PAGE_SIZE));
 		else sp.delete('prov_page');
 
+		if (query) sp.set('prov_q', query);
+		else sp.delete('prov_q');
+
 		const active = encodeCriteria(activeCriteria());
 
 		if (active) sp.set('prov_criteria', active);
@@ -122,7 +130,8 @@
 		error = '';
 		const result = await api.tags.provisionalList(PAGE_SIZE, offset, {
 			criteria: activeCriteria(),
-			verdict: verdictFilter
+			verdict: verdictFilter,
+			q: query
 		});
 		if (seq !== loadSeq) return;
 		if (!result.ok) {
@@ -152,7 +161,17 @@
 		syncUrl();
 	}
 
+	// one load runs the list query, its count and the per-row identity lookups, so keystrokes wait for a
+	// pause instead of firing a full query set per character
+	let queryTimer;
+	function onQueryInput() {
+		clearTimeout(queryTimer);
+		queryTimer = setTimeout(() => onFilterChange(), 300);
+	}
+	onDestroy(() => clearTimeout(queryTimer));
+
 	function clearFilters() {
+		query = '';
 		for (const c of criteria) filterStates[c.key] = '';
 		verdictFilter = '';
 		onFilterChange();
@@ -277,6 +296,20 @@
 			{identityActing ? 'Queueing…' : 'Reevaluate identity'}
 		</button>
 	{/if}
+</div>
+
+<div class="mb-4 flex flex-wrap items-center gap-3">
+	<label for="provisional-filter" class="sr-only">Filter new tags by name</label>
+	<input
+		id="provisional-filter"
+		name="provisional-filter"
+		type="text"
+		bind:value={query}
+		oninput={onQueryInput}
+		autocomplete="off"
+		placeholder="Filter new tags…"
+		class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+	/>
 </div>
 
 <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">

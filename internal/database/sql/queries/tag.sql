@@ -140,6 +140,7 @@ LEFT JOIN LATERAL (
 ) qe ON true
 WHERE t.promoted_at IS NULL
   AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND (@name_prefix::text = '' OR t.name ILIKE @name_prefix::text || '%')
   AND (@subject_matter_state::text = ''
        OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
   AND (@dimension_state::text = ''
@@ -176,6 +177,7 @@ LEFT JOIN LATERAL (
 ) qe ON true
 WHERE t.promoted_at IS NULL
   AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND (@name_prefix::text = '' OR t.name ILIKE @name_prefix::text || '%')
   AND (@subject_matter_state::text = ''
        OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
   AND (@dimension_state::text = ''

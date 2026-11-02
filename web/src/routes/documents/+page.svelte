@@ -9,7 +9,7 @@
 	import FilterPanel from '#lib/components/FilterPanel.svelte';
 	import { filterStore } from '#lib/stores/filterStore.js';
 	import { setPersonTypes, serializeFilter } from '#lib/stores/searchFilter.js';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { escapeHtml, formatSize } from '#lib/utils/html.js';
 	import { DOWNLOAD_ICON } from '#lib/icons.js';
@@ -202,7 +202,10 @@
 	}
 
 	let subscribed = false;
-	filterStore.subscribe((f) => {
+	// the subscription must die with the page: a leaked one serializes this page's filter into whatever
+	// URL is current when another screen sets the store, which polluted the history entry of the tags and
+	// people screens, refilling their search boxes on back navigation
+	const unsubscribeFilter = filterStore.subscribe((f) => {
 		filter = {
 			query: f.query,
 			tags: f.tags,
@@ -228,6 +231,7 @@
 		}
 		subscribed = true;
 	});
+	onDestroy(unsubscribeFilter);
 
 	function handleSearch(partial) {
 		filterStore.setPartial(partial);

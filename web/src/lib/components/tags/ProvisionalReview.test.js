@@ -163,7 +163,8 @@ describe('ProvisionalReview filters and paging', () => {
 		await waitFor(() =>
 			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
 				criteria: [{ key: 'atomic', state: 'fail' }],
-				verdict: ''
+				verdict: '',
+				q: ''
 			})
 		);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_criteria=atomic%3Afail#provisional', {
@@ -185,10 +186,34 @@ describe('ProvisionalReview filters and paging', () => {
 		await waitFor(() =>
 			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
 				criteria: [],
-				verdict: 'none'
+				verdict: 'none',
+				q: ''
 			})
 		);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_verdict=none', {
+			shallow: true,
+			replace: true
+		});
+	});
+
+	it('sends the name query to the API after the debounce and resets paging', async () => {
+		page.url.searchParams = new URLSearchParams('prov_page=1');
+		provisionalList.mockResolvedValue({ ok: true, data: { results: [tag()], total: 51 } });
+		render(ProvisionalReview);
+		await waitFor(() => expect(provisionalList).toHaveBeenCalledWith(50, 50, expect.anything()));
+
+		await fireEvent.input(screen.getByLabelText('Filter new tags by name'), {
+			target: { value: 'politic' }
+		});
+
+		await waitFor(() =>
+			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
+				criteria: [],
+				verdict: '',
+				q: 'politic'
+			})
+		);
+		expect(goto).toHaveBeenLastCalledWith('/tags?prov_q=politic', {
 			shallow: true,
 			replace: true
 		});
@@ -204,7 +229,8 @@ describe('ProvisionalReview filters and paging', () => {
 
 		expect(provisionalList).toHaveBeenLastCalledWith(50, 100, {
 			criteria: [{ key: 'atomic', state: 'fail' }],
-			verdict: 'none'
+			verdict: 'none',
+			q: ''
 		});
 		await waitFor(() => {
 			expect(screen.getByRole('combobox', { name: /atomic/ }).value).toBe('fail');
@@ -237,7 +263,11 @@ describe('ProvisionalReview filters and paging', () => {
 
 		await fireEvent.click(next);
 		await screen.findByText('second page tag');
-		expect(provisionalList).toHaveBeenLastCalledWith(50, 50, { criteria: [], verdict: '' });
+		expect(provisionalList).toHaveBeenLastCalledWith(50, 50, {
+			criteria: [],
+			verdict: '',
+			q: ''
+		});
 		expect(screen.getByRole('button', { name: 'Prev' }).disabled).toBe(false);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_page=1', { shallow: true, replace: true });
 	});

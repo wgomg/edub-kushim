@@ -357,9 +357,13 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   `tags/ProvisionalReview.svelte` (verdict labels: recorded outcome preferred, legacy rubric
   fallback, unjudged names, the identity-hold, split-hold and degraded-reason pills, the
   `not_form_genre` criterion chip; filters
-  and paging: select → API args and `prov_*` URL sync incl. the tab hash, URL round-trip with
+  and paging: select → API args and `prov_*` URL sync incl. the tab hash, the name-search
+  input → `q` argument with paging reset and `prov_q` sync, URL round-trip with
   invalid entries dropped, pager end states, last-page clamp after a reject, and the
-  `pending_identity_total`-driven reevaluate button).
+  `pending_identity_total`-driven reevaluate button),
+  `tags/CoverageReview.svelte` (the flagged document title links to its detail page by public
+  uuid) and `tags/SiblingReview.svelte` (pair rendering with the `.ui-symbol` separator, the
+  gray band, run totals and the empty state).
 
 Test files are co-located next to their sources as `*.test.js` (mirroring Go's
 `_test.go` convention) and import `describe/it/expect/vi` explicitly — no globals,
@@ -368,7 +372,8 @@ so `eslint.config.js` needed no changes. Mocking conventions:
 - `$app/*` modules are mocked with `vi.mock` where a unit imports them (`$app/navigation`
   `goto`, `$app/paths` `resolve`, `$app/state` `page`).
 - `#lib/api.js` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
-  `UploadModal`, `ProvisionalReview`) so no network calls escape.
+  `UploadModal`, `ProvisionalReview`, `SiblingReview`, `CoverageReview`) so no network calls
+  escape.
 - `api.test.js` stubs the global `fetch` (`vi.stubGlobal`) and asserts the Bearer
   header, 401 → logout + redirect, null propagation, `requestRaw` shape, and the
   `supportedMimeTypes` cache.

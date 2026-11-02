@@ -133,11 +133,11 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 	return tags, nil
 }
 
-// ProvisionalFilter narrows the provisional queue by rubric criterion
-// state and verdict class. An empty field leaves that dimension
-// unfiltered; criterion fields otherwise carry 'true', 'false' or
-// 'absent', and Verdict carries 'none', 'admit', 'defer' or 'reject'.
+// ProvisionalFilter narrows the provisional queue by name prefix, rubric criterion state and verdict
+// class. An empty field leaves that dimension unfiltered, while criterion fields otherwise carry the
+// states 'true', 'false' or 'absent'; Verdict carries 'none', 'admit', 'defer' or 'reject'.
 type ProvisionalFilter struct {
+	NamePrefix    string
 	SubjectMatter string
 	Dimension     string
 	NotPerson     string
@@ -152,6 +152,7 @@ type ProvisionalFilter struct {
 func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, limit, offset int32) ([]database.ListProvisionalTagsWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.ListProvisionalTagsWithDocumentCount(ctx, database.ListProvisionalTagsWithDocumentCountParams{
 		PolicyVersion:      analyzer.TagQualityVersion,
+		NamePrefix:         filter.NamePrefix,
 		SubjectMatterState: filter.SubjectMatter,
 		DimensionState:     filter.Dimension,
 		NotPersonState:     filter.NotPerson,
@@ -172,6 +173,7 @@ func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, lim
 func (s *Tag) CountProvisional(ctx context.Context, filter ProvisionalFilter) (int64, error) {
 	count, err := s.client.Queries.CountProvisionalTags(ctx, database.CountProvisionalTagsParams{
 		PolicyVersion:      analyzer.TagQualityVersion,
+		NamePrefix:         filter.NamePrefix,
 		SubjectMatterState: filter.SubjectMatter,
 		DimensionState:     filter.Dimension,
 		NotPersonState:     filter.NotPerson,

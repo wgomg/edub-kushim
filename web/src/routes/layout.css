@@ -1,6 +1,22 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/forms';
 
+/* the ui symbol face: the browser glyph fallback picks fonts whose vertical metrics are pathological
+   in firefox, overflowing the table cells (U+2287 was the first offender); this face pins them to sane
+   metrics — extend the subset and the unicode-range when adding glyphs */
+@font-face {
+	font-family: 'UiSymbols';
+	src: url('../lib/assets/fonts/ui-symbols.woff2') format('woff2');
+	unicode-range: U+2287;
+	font-display: block;
+}
+
+@layer components {
+	.ui-symbol {
+		font-family: 'UiSymbols', sans-serif;
+	}
+}
+
 @theme {
 	--color-clay-50: #f4f0eb;
 	--color-clay-100: #e8e1d9;

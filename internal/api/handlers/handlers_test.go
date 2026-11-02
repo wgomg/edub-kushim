@@ -3080,6 +3080,32 @@ func TestListProvisionalFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("q narrows rows by name prefix", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?q=prov-filter-f", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
+		if !contains(resp.Results, failID) {
+			t.Errorf("q=prov-filter-f must include tag %d", failID)
+		}
+		if contains(resp.Results, unjudgedID) {
+			t.Errorf("q=prov-filter-f must exclude tag %d", unjudgedID)
+		}
+	})
+
+	t.Run("q matches only the prefix, not a substring", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?q=filter-f", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(0), "substring must not match")
+	})
+
 	t.Run("unknown criteria key is rejected", func(t *testing.T) {
 		w := rec()
 		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=bogus:fail", nil))
@@ -3128,6 +3154,94 @@ func TestListProvisionalFilters(t *testing.T) {
 			t.Errorf("pending_identity_total = %d, want %d", resp.PendingIdentityTotal, wantPending)
 		}
 	})
+}
+
+func TestTagListCreatedAt(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+
+	_, err := env.tagSvc.Create(ctx, []string{"created-at-tag"})
+	testutil.AssertNoError(t, err, "create")
+
+	w := rec()
+	h.List(w, req(t, "GET", "/api/v1/tags", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var resp TagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	created := -1
+	for i := range resp.Results {
+		if resp.Results[i].Name == "created-at-tag" {
+			created = i
+		}
+	}
+	if created == -1 {
+		t.Fatal("created tag missing from the list")
+	}
+	if resp.Results[created].CreatedAt == nil {
+		t.Fatal("created_at must be set for a fresh tag")
+	}
+
+	_, err = env.client.DB().ExecContext(ctx, "UPDATE tag SET created_at = NULL WHERE id = $1", resp.Results[created].ID)
+	testutil.AssertNoError(t, err, "null created_at")
+
+	w = rec()
+	h.List(w, req(t, "GET", "/api/v1/tags", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var raw struct {
+		Results []map[string]json.RawMessage `json:"results"`
+	}
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&raw), "decode raw")
+	found := false
+	for _, r := range raw.Results {
+		if string(r["name"]) != `"created-at-tag"` {
+			continue
+		}
+		found = true
+		if _, ok := r["created_at"]; ok {
+			t.Error("created_at must be omitted when the column is null")
+		}
+	}
+	if !found {
+		t.Fatal("created tag missing from the list")
+	}
+}
+
+func TestListAuditFlagsCarriesDocumentUUID(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "audit-uuid-doc")
+	var wantUUID string
+	err := env.client.DB().QueryRowContext(ctx, "SELECT document_id FROM document WHERE id = $1", docID).Scan(&wantUUID)
+	testutil.AssertNoError(t, err, "read document uuid")
+
+	_, err = env.client.Queries.InsertTagCoverageEvent(ctx, database.InsertTagCoverageEventParams{
+		DocumentID:      docID,
+		TagName:         "audit-uuid-tag",
+		Class:           string(tags.CoverageMissing),
+		Source:          string(tags.CoverageSourceTrigger),
+		Verdict:         json.RawMessage("{}"),
+		CriteriaVersion: analyzer.TagQualityVersion,
+		Action:          string(tags.CoverageActionProposal),
+		RuleSetVersion:  "test",
+	})
+	testutil.AssertNoError(t, err, "insert coverage flag")
+
+	w := rec()
+	h.ListAuditFlags(w, req(t, "GET", "/api/v1/tags/audit-flags", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var resp CoverageFlagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	if len(resp.Results) != 1 {
+		t.Fatalf("got %d flags, want 1", len(resp.Results))
+	}
+	testutil.AssertEqual(t, resp.Results[0].DocumentID, docID, "internal document id")
+	testutil.AssertEqual(t, resp.Results[0].DocumentUUID, wantUUID, "public document uuid")
 }
 
 func TestPromoteTag(t *testing.T) {

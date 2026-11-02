@@ -811,7 +811,7 @@ return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-50
 ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-tag': row.id })}`;
 ```
 
-(`tags/+page.svelte:66-73`). Clicks are **delegated**: DataTable's
+(`tags/+page.svelte:73-80`). Clicks are **delegated**: DataTable's
 `onActionClick` handler, or a `<svelte:window onclick>` on the tasks page
 (`tasks/+page.svelte:330`), dispatch on `e.target.closest('[data-...]')`.
 
@@ -834,6 +834,12 @@ palette declared with `@theme`:
 	/* full 11-shade scales for clay, gold, lapis, parchment, terracotta */
 }
 ```
+
+The same file declares the `UiSymbols` `@font-face` — a bundled one-glyph subset
+(`src/lib/assets/fonts/ui-symbols.woff2`, `unicode-range: U+2287`) applied through the
+`.ui-symbol` class, which pins that symbol to sane line metrics instead of whatever font the
+browser's glyph fallback picks (Firefox substitutes one whose vertical metrics overflow
+table cells).
 
 Semantic roles:
 

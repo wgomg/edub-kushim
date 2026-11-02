@@ -60,7 +60,8 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
 - **`src/lib/components/settings/`** — the settings section components plus `ChangesTray.svelte`
   and `SettingsPalette.svelte` (the `/`/`Ctrl+K` command palette).
 - **`src/lib/components/tags/`** — the tag review surfaces: `ProvisionalReview.svelte`,
-  `DeletedTags.svelte`, `SiblingReview.svelte` and `TagReconcileStrip.svelte`.
+  `CoverageReview.svelte`, `DeletedTags.svelte`, `SiblingReview.svelte` and
+  `TagReconcileStrip.svelte`.
 - **`src/lib/components/TagReconcileReport.svelte`** — the full reconciliation report rendered on
   `tagreconcile` task pages.
 - **`src/lib/pdf/`** — the pdf.js loader singleton, the worker wrapper with its polyfills, and the

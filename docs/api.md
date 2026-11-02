@@ -505,6 +505,7 @@ ListProvisional serves the paged provisional tag list with quality verdicts, pen
 
 | Parameter | In | Type | Required | Default |
 |---|---|---|---|---|
+| `q` | query | string | no | "" |
 | `criteria` | query | array of string | no | — |
 | `verdict` | query | string | no | "" |
 | `limit` | query | integer | no | `50` |
@@ -2005,6 +2006,7 @@ CoverageFlagResponse is one open coverage flag as the API shows it.
 | `created_at` | string (date-time) | yes |
 | `document_id` | integer | yes |
 | `document_title` | string | yes |
+| `document_uuid` | string | yes |
 | `id` | integer | yes |
 | `provisional` | boolean | yes |
 | `source` | string | yes |
@@ -2919,6 +2921,7 @@ TagResponse carries a tag on the vocabulary and document surfaces: the vocabular
 
 | Field | Type | Required |
 |---|---|---|
+| `created_at` | string (date-time) | no |
 | `document_count` | integer | yes |
 | `id` | integer | yes |
 | `name` | string | yes |

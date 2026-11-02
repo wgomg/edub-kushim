@@ -170,9 +170,9 @@ The vocabulary workspace with five tabs, deep-linkable by hash (`/tags#provision
 
 | Tab | Contents |
 |---|---|
-| **Vocabulary** | All tags with counts and standing; editors can create, rename and demote from here; `?q=` filters |
-| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote or reject per tag, filterable by criteria and verdict |
-| **Coverage** | Open coverage flags from the audit pass — apply, dismiss, or register a missing name |
+| **Vocabulary** | All tags with counts, creation date and standing; editors can create, rename and demote from here; `?q=` filters |
+| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote or reject per tag, filterable by name, criteria and verdict |
+| **Coverage** | Open coverage flags from the audit pass — titles link to their documents; apply, dismiss, or register a missing name |
 | **Overlap** (siblings) | Near-containment pairs from the latest measurement; `gray` marks the review band |
 | **Deleted** | The blocklist of rejected names, restorable |
 

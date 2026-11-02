@@ -3766,6 +3766,11 @@ paths:
       summary: ListProvisional serves the paged provisional tag list with quality verdicts, pending identity counts, and identity holds.
       operationId: getApiV1TagsProvisional
       parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+            default: ""
         - name: criteria
           in: query
           schema:
@@ -5457,6 +5462,8 @@ components:
           type: integer
         document_title:
           type: string
+        document_uuid:
+          type: string
         id:
           type: integer
         provisional:
@@ -5468,6 +5475,7 @@ components:
       required:
         - id
         - document_id
+        - document_uuid
         - document_title
         - tag_name
         - class
@@ -7147,6 +7155,9 @@ components:
         DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
         operator-owned inventory the demote action must leave alone.
       properties:
+        created_at:
+          type: string
+          format: date-time
         document_count:
           type: integer
         id:

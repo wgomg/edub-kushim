@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -74,7 +75,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, CreatedAt: tagCreatedAt(t.CreatedAt)}
 			}
 		}
 	} else {
@@ -86,7 +87,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, CreatedAt: tagCreatedAt(t.CreatedAt)}
 			}
 		}
 	}
@@ -96,6 +97,17 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, TagListResponse{Results: responses, Total: total})
+}
+
+// tagCreatedAt returns the recording time of a tag row, or nil when the column carries no value: the
+// tag table allows a null created_at, and legacy rows must surface as absent rather than as the zero
+// time.
+func tagCreatedAt(v sql.NullTime) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	created := v.Time
+	return &created
 }
 
 // Create creates one tag from the JSON body.
@@ -335,12 +347,12 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseProvisionalFilter reads the criteria and verdict query parameters
-// into the curation filter. Criteria entries are `key:state` pairs with
-// state `pass`, `fail` or `absent`; unknown keys, unknown states and
-// unknown verdict values are rejected instead of silently ignored.
+// parseProvisionalFilter reads the name, criteria and verdict query parameters into the curation filter.
+// The name is an ILIKE prefix, like the deleted-tag listing; criteria entries are `key:state` pairs with
+// state `pass`, `fail` or `absent`; unknown keys, unknown states and unknown verdict values are rejected
+// instead of silently ignored.
 func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
-	var filter curation.ProvisionalFilter
+	filter := curation.ProvisionalFilter{NamePrefix: pb.Get("q", "")}
 	fields := map[string]*string{
 		"subject_matter": &filter.SubjectMatter,
 		"dimension":      &filter.Dimension,
@@ -547,6 +559,7 @@ func (h *TagHandler) ListAuditFlags(w http.ResponseWriter, r *http.Request) {
 		responses[i] = CoverageFlagResponse{
 			ID:            f.ID,
 			DocumentID:    f.DocumentID,
+			DocumentUUID:  f.DocumentUUID,
 			DocumentTitle: f.DocumentTitle,
 			TagName:       f.TagName,
 			Class:         f.Class,
@@ -758,6 +771,7 @@ type CreateTagRequest struct {
 type CoverageFlagResponse struct {
 	ID            int64     `json:"id"`
 	DocumentID    int64     `json:"document_id"`
+	DocumentUUID  string    `json:"document_uuid"`
 	DocumentTitle string    `json:"document_title"`
 	TagName       string    `json:"tag_name"`
 	Class         string    `json:"class"`

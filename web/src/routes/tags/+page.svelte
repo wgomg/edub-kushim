@@ -23,7 +23,7 @@
 	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip
 	// stick flush under the topbar instead of leaving a 24px band over the panel
 	const tabStrip =
-		'sticky -top-6 z-20 mb-6 flex items-end gap-1 overflow-x-auto border-b border-clay-800 bg-clay-950 pt-1';
+		'sticky -top-6 z-20 mb-6 flex items-end gap-1 overflow-x-auto overflow-y-hidden border-b border-clay-800 bg-clay-950 pt-1';
 
 	const tabBase =
 		'-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3.5 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
@@ -42,7 +42,7 @@
 	let savingTag = $state(false);
 	let activeTab = $state('vocabulary');
 	let vocabularyTotal = $state(null);
-	let counts = $state({ provisional: 0, deleted: 0 });
+	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0 });
 
 	const columns = [
 		{ key: 'name', label: 'Name', sortable: true, width: '100%' },
@@ -52,6 +52,13 @@
 			sortable: true,
 			cell: (v) => String(v ?? 0),
 			width: '100px'
+		},
+		{
+			key: 'created_at',
+			label: 'Created',
+			sortable: false,
+			width: '150px',
+			cell: (v) => (v ? new Date(v).toLocaleDateString() : '')
 		},
 		{
 			key: 'actions',
@@ -88,14 +95,24 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 	}
 
 	async function refreshCounts() {
-		const [provisional, deleted] = await Promise.all([
+		const [provisional, deleted, coverage] = await Promise.all([
 			api.tags.provisionalList(1, 0),
-			api.tags.deletedList({ limit: 1 })
+			api.tags.deletedList({ limit: 1 }),
+			api.tags.auditFlags(1, 0)
 		]);
 		counts = {
+			...counts,
 			provisional: provisional.ok ? (provisional.data?.total ?? 0) : 0,
-			deleted: deleted?.total ?? 0
+			deleted: deleted?.total ?? 0,
+			coverage: coverage?.total ?? 0
 		};
+	}
+
+	// the sibling readings belong to the latest measurement run, so the review actions on this page never
+	// change them; the badge is read once per visit instead of on every counts refresh
+	async function refreshSiblingCount() {
+		const siblings = await api.tags.siblings(1, 0);
+		counts = { ...counts, siblings: siblings?.absent ? 0 : (siblings?.total ?? 0) };
 	}
 
 	function onReviewChanged() {
@@ -210,7 +227,10 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 	onMount(() => {
 		const hash = window.location.hash.slice(1);
 		if (TABS.includes(hash)) activeTab = hash;
-		if (canModerate()) refreshCounts();
+		if (canModerate()) {
+			refreshCounts();
+			refreshSiblingCount();
+		}
 	});
 </script>
 
@@ -280,6 +300,7 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 			class={tabClass('coverage')}
 		>
 			Coverage
+			{#if counts.coverage}<span class={tabBadge}>{formatNumber(counts.coverage)}</span>{/if}
 		</button>
 		<button
 			id="tab-siblings"
@@ -291,6 +312,7 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 			class={tabClass('siblings')}
 		>
 			Overlap
+			{#if counts.siblings}<span class={tabBadge}>{formatNumber(counts.siblings)}</span>{/if}
 		</button>
 	{/if}
 </div>

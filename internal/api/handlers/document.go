@@ -1167,11 +1167,12 @@ type PersonListResponse struct {
 // DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
 // operator-owned inventory the demote action must leave alone.
 type TagResponse struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	DocumentCount int64  `json:"document_count"`
-	Promoted      bool   `json:"promoted"`
-	Seeded        bool   `json:"seeded"`
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	DocumentCount int64      `json:"document_count"`
+	Promoted      bool       `json:"promoted"`
+	Seeded        bool       `json:"seeded"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
 }
 
 // PersonResponse is a person as attached to a document, including the

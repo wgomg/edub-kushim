@@ -58,7 +58,8 @@ ON CONFLICT DO NOTHING;
 -- name: ListOpenTagCoverageFlags :many
 SELECT e.id, e.document_id, e.tag_name, e.class, e.source, e.verdict, e.verdict_model,
        e.text_hash, e.criteria_version, e.action, e.review_outcome, e.provisional,
-       e.rule_set_version, e.created_at, d.title AS document_title
+       e.rule_set_version, e.created_at, d.title AS document_title,
+       d.document_id AS document_uuid
 FROM tag_coverage_event e
 JOIN document d ON d.id = e.document_id
 WHERE e.action IN ('flag', 'proposal') AND e.review_outcome IS NULL

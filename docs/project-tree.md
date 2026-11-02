@@ -91,6 +91,7 @@ edub-kushim/
 │   ├── src  # SPA source
 │   │   ├── lib  # shared SPA modules
 │   │   │   ├── assets  # static assets
+│   │   │   │   └── fonts  # bundled UI symbol font subset and its license
 │   │   │   ├── components  # reusable Svelte components
 │   │   │   │   ├── settings  # settings-area section components
 │   │   │   │   └── tags  # tag-review components

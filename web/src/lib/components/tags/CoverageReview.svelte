@@ -26,8 +26,15 @@
 		'text-parchment-400 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
 
 	const columns = [
-		{ key: 'document_title', label: 'Document', sortable: false, width: '45%' },
-		{ key: 'tag_name', label: 'Dimension', sortable: false },
+		{
+			key: 'document_title',
+			label: 'Document',
+			sortable: false,
+			width: '45%',
+			cell: (v, row) =>
+				`<a href="/documents/${escapeHtml(row.document_uuid)}" class="underline decoration-parchment-500/30 underline-offset-2 hover:text-gold-500">${escapeHtml(v ?? '')}</a>`
+		},
+		{ key: 'tag_name', label: 'Tag', sortable: false },
 		{ key: 'class', label: 'Class', sortable: false, width: '170px' },
 		{ key: 'source', label: 'Source', sortable: false, width: '110px' },
 		{
@@ -108,6 +115,7 @@
 		if (result.ok) {
 			toastStore.success(`Dismissed "${tagName}"`);
 			refreshKey++;
+			if (onchanged) onchanged();
 		} else {
 			toastStore.error('Failed to dismiss the coverage flag');
 		}
@@ -142,6 +150,26 @@
 	Documents the coverage audit flagged for a missing tag. Apply adds the tag to the document;
 	Dismiss records that it does not apply.
 </p>
+
+<dl class="mb-4 max-w-3xl space-y-1 text-[0.8125rem] text-parchment-500">
+	<div>
+		<dt class="inline font-medium text-parchment-400">Class</dt>
+		<dd class="inline">
+			— <span class="font-medium text-parchment-300">missing</span>: the audit judged the tag
+			applies, but it is not in the vocabulary yet, so “Create value” registers it provisionally.
+			<span class="font-medium text-parchment-300">gray</span>: the audit could not decide and left
+			it for review, so “Apply” attaches it or “Dismiss” records that it does not apply.
+		</dd>
+	</div>
+	<div>
+		<dt class="inline font-medium text-parchment-400">Source</dt>
+		<dd class="inline">
+			— <span class="font-medium text-parchment-300">trigger</span>: the semantic matcher’s strong
+			band proposed the tag. <span class="font-medium text-parchment-300">lexical</span>: a weaker
+			matcher hit confirmed by a literal text match.
+		</dd>
+	</div>
+</dl>
 
 <DataTable
 	{columns}

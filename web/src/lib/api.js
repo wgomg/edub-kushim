@@ -288,8 +288,9 @@ export const api = {
 		restoreDeleted: (name) =>
 			requestRaw(`/api/v1/tags/deleted/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 		reconcileReport: () => requestRaw('/api/v1/tags/reconciliation/report'),
-		provisionalList: (limit = 50, offset = 0, { criteria = [], verdict = '' } = {}) => {
+		provisionalList: (limit = 50, offset = 0, { criteria = [], verdict = '', q = '' } = {}) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+			if (q) params.set('q', q);
 			if (criteria.length) params.set('criteria', encodeCriteria(criteria));
 			if (verdict) params.set('verdict', verdict);
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);

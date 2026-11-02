@@ -259,6 +259,8 @@ always work.
      splits on commas, so repeated `criteria=` keys silently keep only the first. Unknown keys
      or states answer `400 Invalid criteria filter`.
    - `verdict=none|admit|defer|reject` (unknown values → `400`).
+   - `q=prefix` — case-insensitive prefix match on the tag name (absent or empty lists
+     everything); combines with `criteria` and `verdict`.
 
 2. **Decide**: `POST /api/v1/tags/{id}/promote` → `204` (already promoted → `409`). Rejecting
    uses `DELETE /api/v1/tags/{id}`, which blocklists the name. `POST /api/v1/tags/{id}/demote`

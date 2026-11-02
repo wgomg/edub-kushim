@@ -31,7 +31,10 @@ describe('SiblingReview', () => {
 
 		render(SiblingReview);
 
-		expect(await screen.findByText('broad topic ⊇ narrow topic')).toBeTruthy();
+		const cell = await screen.findByText(
+			(_content, element) => element?.textContent === 'broad topic ⊇ narrow topic'
+		);
+		expect(cell.querySelector('.ui-symbol')?.textContent).toBe('⊇');
 		expect(screen.getByText('90%')).toBeTruthy();
 		expect(screen.getByText('9 · 4')).toBeTruthy();
 		expect(screen.getByText('For reference')).toBeTruthy();

@@ -34,6 +34,7 @@ func NewTagAudit(queries *database.Queries, enqueuer *task.Enqueuer) *TagAudit {
 type CoverageFlag struct {
 	ID            int64
 	DocumentID    int64
+	DocumentUUID  string
 	DocumentTitle string
 	TagName       string
 	Class         string
@@ -84,6 +85,7 @@ func (s *TagAudit) ListFlags(ctx context.Context, limit, offset int32) ([]Covera
 		flags[i] = CoverageFlag{
 			ID:            r.ID,
 			DocumentID:    r.DocumentID,
+			DocumentUUID:  r.DocumentUuid,
 			DocumentTitle: r.DocumentTitle,
 			TagName:       r.TagName,
 			Class:         r.Class,
