@@ -144,9 +144,11 @@ influence, reversible) · **drop** · **review**.
 - A split implies its parts exist or are created: when a part does not exist as a tag,
   the disposition includes admitting it as a value — vocabulary repair. A split whose
   parts cannot survive (below the mass floor) degrades to drop.
-- **Ambiguity routes to review, not reject.** Rejection is terminal here (blocklist, no
-  rebirth), and the gray cases are exactly the label supply the later decision layer
-  needs. Reject only the clear drops.
+- **Ambiguity routes to review, not reject.** A reject suppresses rebirth while its
+  criteria version is current — the versioned verdict cache drops the name on re-emission,
+  and a criteria-version bump re-judges it — while a stored decided drop demotes and is
+  removed after the retention window (definition §8 item 11). The gray cases are exactly
+  the label supply the later decision layer needs. Reject only the clear drops.
 
 ### 3.6 Evidence record
 

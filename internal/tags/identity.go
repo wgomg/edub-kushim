@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aaaton/golem/v4"
 	"github.com/aaaton/golem/v4/dicts/en"
@@ -609,6 +610,7 @@ func CompositionReview(ctx context.Context, q *database.Queries, names []string,
 	}
 
 	rows, err := q.LatestCompositionReasonsForNames(ctx, database.LatestCompositionReasonsForNamesParams{
+		DegradedReason:  CompositionReasonJudgeUnavailable,
 		CriteriaVersion: criteriaVersion,
 		Candidates:      normalized,
 	})
@@ -624,6 +626,7 @@ func CompositionReview(ctx context.Context, q *database.Queries, names []string,
 		states[row.Candidate] = CompositionState{
 			Disposition: CompositionDisposition(row.Disposition),
 			Decided:     row.Reason != CompositionReasonJudgeUnavailable,
+			DecidedAt:   row.DecidedAt,
 		}
 	}
 	return held, states, nil
@@ -643,12 +646,16 @@ func CompositionHeldNames(ctx context.Context, q *database.Queries, names []stri
 }
 
 // CompositionState is one compound candidate's latest persisted composition state under a criteria
-// version: the disposition and whether the row is a decision at all. Decided is false exactly for a
-// degraded keep (judge_unavailable) — the compound pass never answered, so the row is evidence that
-// judgment is still owed, not a verdict to replay.
+// version: the disposition, whether the row is a decision at all, and when the current-version record
+// first stood. Decided is false exactly for a degraded keep (judge_unavailable) — the compound pass never
+// answered, so the row is evidence that judgment is still owed, not a verdict to replay. DecidedAt is the
+// earliest row under the criteria version that carries a decision, falling back to the first row for a
+// degraded-only candidate, so re-emissions never refresh it and a criteria bump starts a fresh instant;
+// retention reads it as the age of the decision.
 type CompositionState struct {
 	Disposition CompositionDisposition
 	Decided     bool
+	DecidedAt   time.Time
 }
 
 // CompositionStatesForNames returns each named candidate's latest composition state under

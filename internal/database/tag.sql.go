@@ -16,7 +16,11 @@ import (
 const clearOrphanTagMarks = `-- name: ClearOrphanTagMarks :execrows
 UPDATE tag t SET orphaned_since = NULL
 WHERE t.orphaned_since IS NOT NULL
-  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  )
 `
 
 func (q *Queries) ClearOrphanTagMarks(ctx context.Context) (int64, error) {
@@ -141,12 +145,48 @@ DELETE FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < $1::timestamptz
   AND NOT t.seeded
-  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  )
 RETURNING t.name
 `
 
 func (q *Queries) DeleteOrphanTags(ctx context.Context, orphanedBefore time.Time) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, deleteOrphanTags, orphanedBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteRetentionTags = `-- name: DeleteRetentionTags :many
+DELETE FROM tag t
+WHERE t.id = ANY($1::bigint[])
+  AND NOT t.seeded
+  AND t.promoted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
+RETURNING t.name
+`
+
+func (q *Queries) DeleteRetentionTags(ctx context.Context, tagIds []int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, deleteRetentionTags, pq.Array(tagIds))
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +437,11 @@ SELECT t.name FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < $1::timestamptz
   AND NOT t.seeded
-  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  )
 ORDER BY t.name
 `
 
@@ -630,6 +674,45 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 	return items, nil
 }
 
+const listRetentionCandidates = `-- name: ListRetentionCandidates :many
+SELECT t.id, t.name, t.created_at
+FROM tag t
+WHERE t.promoted_at IS NULL
+  AND NOT t.seeded
+  AND t.created_at < $1::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
+ORDER BY t.created_at
+`
+
+type ListRetentionCandidatesRow struct {
+	ID        int64
+	Name      string
+	CreatedAt sql.NullTime
+}
+
+func (q *Queries) ListRetentionCandidates(ctx context.Context, cutoff time.Time) ([]ListRetentionCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRetentionCandidates, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRetentionCandidatesRow
+	for rows.Next() {
+		var i ListRetentionCandidatesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStoreTagKeys = `-- name: ListStoreTagKeys :many
 SELECT name AS key FROM tag
 UNION
@@ -834,7 +917,11 @@ const markOrphanTags = `-- name: MarkOrphanTags :execrows
 UPDATE tag t SET orphaned_since = now()
 WHERE t.orphaned_since IS NULL
   AND NOT t.seeded
-  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  )
 `
 
 func (q *Queries) MarkOrphanTags(ctx context.Context) (int64, error) {
@@ -851,7 +938,11 @@ SELECT EXISTS (
     WHERE t.orphaned_since IS NOT NULL
       AND t.orphaned_since < $1::timestamptz
       AND NOT t.seeded
-      AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM document_tag dt
+          JOIN document d ON d.id = dt.document_id
+          WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+      )
 )
 `
 
@@ -928,6 +1019,23 @@ SELECT EXISTS (
 
 func (q *Queries) ProvisionalTagProbe(ctx context.Context, cutoff time.Time) (bool, error) {
 	row := q.db.QueryRowContext(ctx, provisionalTagProbe, cutoff)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const retentionTagProbe = `-- name: RetentionTagProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NULL
+      AND NOT t.seeded
+      AND t.created_at < $1::timestamptz
+      AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
+)
+`
+
+func (q *Queries) RetentionTagProbe(ctx context.Context, cutoff time.Time) (bool, error) {
+	row := q.db.QueryRowContext(ctx, retentionTagProbe, cutoff)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

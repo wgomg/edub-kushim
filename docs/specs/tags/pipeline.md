@@ -160,8 +160,9 @@ and non-stationary.
 
 Birth keeps the born-on-first-emission property: the label is attached and searchable
 immediately, but carries no influence until promoted. Promotion requires admission
-evidence; demotion revokes influence without deleting existence; a rejected name enters
-the blocklist and cannot be reborn (definition §6.4, §7). Detailed in §4 below.
+evidence; demotion revokes influence without deleting existence; a rejected name does not
+return while its rejecting criteria version is current, and a decided non-value is removed
+after its retention window (definition §6.4, §8 item 11). Detailed in §4 below.
 
 ### S7 — Vocabulary services
 
@@ -214,7 +215,7 @@ stateDiagram-v2
     Provisional --> Promoted : promotion — admission evidence; influence granted
     Promoted --> Demoted : demotion — influence revoked
     Demoted --> Promoted : re-admission
-    Provisional --> Blocked : reject — name must never return
+    Provisional --> Blocked : operator ban — name must never return
     Blocked --> [*]
     note right of Demoted : existence retained, influence revoked
 ```
@@ -226,6 +227,11 @@ stateDiagram-v2
 - The demotion policy is decided (definition §8): supersession and the scheduled
   rule-reapplication sweep revoke influence only — existence and assignments stay, and
   history remains auditable.
+- Retention (definition §8 item 11) removes a stored row the current rules have decided
+  is not a value once its decision has stood past the retention window; a value with no
+  live extension is removed by the dead-tag sweep instead. Neither captures the name in
+  the blocklist — rebirth is suppressed by the versioned verdict cache until a
+  criteria-version bump re-judges it.
 
 ## 5. Standing duties
 

@@ -176,8 +176,9 @@ enricher:
   #   time: "02:00"              # preferred time of day (HH:MM)
   #   max_rejudge: 200           # max pairs re-evaluated per run
   #   max_retag: 1000            # max documents re-pointed per run
-  #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
+  #   dead_tag_grace_days: 7     # days a tag must stay without live documents before the sweep removes it
   #   provisional_grace_days: 30 # days a provisional (quarantined) tag may stay unreviewed before the sweep re-checks it
+  #   retention_days: 90         # days a decided non-value must stand before the sweep deletes the row
 
   # tag_measure:                 # scheduled tag extension measurement (versioned evidence records)
   #   enabled: false             # disabled by default

@@ -874,6 +874,16 @@
 					hint="Provisional (quarantined) tags older than this many days are swept during reconciliation."
 					bind:value={cfg.enricher.tag_reconcile.provisional_grace_days}
 				/>
+				<UnitField
+					id="tag-reconcile-retention"
+					label="Decided tag retention period"
+					unit="days"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					hint="Tags the current rules have decided are not values are removed once the decision is this many days old."
+					bind:value={cfg.enricher.tag_reconcile.retention_days}
+				/>
 			</div>
 			<div class="mt-4">
 				<Note variant="info">

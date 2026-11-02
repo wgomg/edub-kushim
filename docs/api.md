@@ -2900,6 +2900,7 @@ TagReconcileConfigResponse is the reconcile section's API view.
 | `max_retag` | integer | yes |
 | `provisional_grace_days` | integer | yes |
 | `report_only` | boolean | yes |
+| `retention_days` | integer | yes |
 | `time` | string | yes |
 
 ### TagReconcileReportResponse

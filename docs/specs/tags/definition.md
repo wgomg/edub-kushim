@@ -396,7 +396,7 @@ Two consequences a pure admission policy would miss:
 | User votes | recurrence across documents | A regularity signal, not a preference signal; human use is not a vote (§6.2). |
 | Moderator admission | judge verdict + promotion gate + review queue | The standard must be the definition's (dimension status), not the inherited dictionary standard (§2.3). |
 | Moderator aliasing | the identity pipeline and the sweep's alias disposition | Standing work, not incident response (§6.3). |
-| Moderator bans | deleted-tag blocklist | A rejected name cannot be reborn. |
+| Moderator bans | deleted-tag blocklist | An operator-banned name cannot be reborn. |
 | Tagging guidelines | the generation prompt and typed contract | The definition's language ("dimension", "decompose compounds") belongs in the guidelines the proposer reads. |
 | Approved vocabulary | the promoted tag store | Store membership is the system's notion of "accepted." |
 | Vocabulary fluidity | promotion, demotion, and aliasing | Influence is revisable: promotion and demotion move a value into and out of the store, and same-intent losers alias onto the canonical (§6.4). |
@@ -454,6 +454,13 @@ that a wrongly born tag is *permanent pollution* splits in two:
 **demotion** is quarantine applied later, and promotion is not one-way. The demotion
 policy (§8): supersession and the scheduled rule-reapplication sweep revoke influence
 only, with assignments and history intact.
+
+The exception is retention (§8 item 11): a stored name the current rules have decided is
+not a value — a decided no-dimension drop or a decided admission reject — loses its row
+once that decision has stood past the retention window, assignments included. Rebirth
+suppression rides the versioned verdict cache, not the blocklist: the name does not return
+while its rejecting criteria version is current, and a criteria-version bump re-opens
+judgment. Demotion remains the influence-only path for everything else.
 
 ### 6.5 Decision layer: features, not verdicts
 
@@ -521,7 +528,8 @@ What stays locked — the definition is compatible with these quality-control pr
 sharpens them:
 
 - **Mirror-image asymmetry** (wrongly rejected good tags self-heal; wrongly born trash
-  pollutes): still true for dimensions; §6.4 relaxes only the permanence of *influence*.
+  pollutes): still true for dimensions; §6.4 relaxes the permanence of *influence*, and of
+  *existence* only for names the current rules have decided are not values (§8 item 11).
 - **No curated lists**: the definition adds no lists; `chile` vs `chilean` is decided by
   extension analysis, not by a gazetteer.
 - **Filter over samples, never self-rewrite**: unchanged.
@@ -596,6 +604,16 @@ The questions the definition leaves to policy, and their decided answers:
     re-validation on extractor changes, and label hygiene attach to that refinement. The
     no-logprob-dependence principle constrains which signals may be depended on, not which
     may be observed.
+11. **Retention — removal of non-values.** Two criteria decide when a stored row goes
+    (§6.4): no live extension is not a value at all (§4.3 P2) — the dead-tag sweep
+    removes it after the dead-tag grace window — and a value the current rules have
+    decided is not a value (a decided drop `no_dimension`/`part_rejected`, or an
+    admission reject under the current criteria versions) is removed after its decision
+    has stood for the retention window (pinned default 90 days; item 9 owns the number).
+    Neither removal captures the name in the blocklist. Seeded values, identity-held
+    names, alias targets, deferrals, admit-below-floor pending candidates and sub-floor
+    demoted values never remove; promoted rows demote first (item 4); absence of evidence
+    never acts.
 
 ## 9. Operative statements
 

@@ -6,7 +6,8 @@ ON CONFLICT (tag_name, policy_version) WHERE verdict_model IS NOT NULL DO NOTHIN
 
 -- name: LatestTagQualityEventsForNames :many
 SELECT DISTINCT ON (tag_name)
-       tag_name, criteria, pass, outcome, verdict_model, policy_version, verdict_at
+       tag_name, criteria, pass, outcome, verdict_model, policy_version, verdict_at,
+       (MIN(verdict_at) OVER (PARTITION BY tag_name))::timestamptz AS first_verdict_at
 FROM tag_quality_event
 WHERE policy_version = @policy_version
   AND tag_name = ANY(@tag_names::text[])

@@ -49,7 +49,8 @@ func (q *Queries) InsertTagQualityEvent(ctx context.Context, arg InsertTagQualit
 
 const latestTagQualityEventsForNames = `-- name: LatestTagQualityEventsForNames :many
 SELECT DISTINCT ON (tag_name)
-       tag_name, criteria, pass, outcome, verdict_model, policy_version, verdict_at
+       tag_name, criteria, pass, outcome, verdict_model, policy_version, verdict_at,
+       (MIN(verdict_at) OVER (PARTITION BY tag_name))::timestamptz AS first_verdict_at
 FROM tag_quality_event
 WHERE policy_version = $1
   AND tag_name = ANY($2::text[])
@@ -62,13 +63,14 @@ type LatestTagQualityEventsForNamesParams struct {
 }
 
 type LatestTagQualityEventsForNamesRow struct {
-	TagName       string
-	Criteria      json.RawMessage
-	Pass          bool
-	Outcome       sql.NullString
-	VerdictModel  sql.NullString
-	PolicyVersion string
-	VerdictAt     time.Time
+	TagName        string
+	Criteria       json.RawMessage
+	Pass           bool
+	Outcome        sql.NullString
+	VerdictModel   sql.NullString
+	PolicyVersion  string
+	VerdictAt      time.Time
+	FirstVerdictAt time.Time
 }
 
 func (q *Queries) LatestTagQualityEventsForNames(ctx context.Context, arg LatestTagQualityEventsForNamesParams) ([]LatestTagQualityEventsForNamesRow, error) {
@@ -88,6 +90,7 @@ func (q *Queries) LatestTagQualityEventsForNames(ctx context.Context, arg Latest
 			&i.VerdictModel,
 			&i.PolicyVersion,
 			&i.VerdictAt,
+			&i.FirstVerdictAt,
 		); err != nil {
 			return nil, err
 		}

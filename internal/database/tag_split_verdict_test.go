@@ -207,6 +207,7 @@ func TestSplitVerdictQueries(t *testing.T) {
 	seedComposition("cold war", "named_unit", "split-v1", now)
 
 	reasons, err := q.LatestCompositionReasonsForNames(ctx, LatestCompositionReasonsForNamesParams{
+		DegradedReason:  "judge_unavailable",
 		CriteriaVersion: "split-v2",
 		Candidates:      []string{"russian history", "cold war"},
 	})

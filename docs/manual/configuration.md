@@ -146,8 +146,10 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
   same timeout/LLM inheritance; the judge model should differ from the generator's).
 - `tag_reconcile` — scheduled re-adjudication: `enabled` (`false`), `report_only`
   (`true` — the first run is always report-only), `interval` (days, `7`), `time`
-  (`02:00`), `max_rejudge` (`200`), `max_retag` (`1000`), `dead_tag_grace_days` (`7`),
-  `provisional_grace_days` (`30`).
+  (`02:00`), `max_rejudge` (`200`), `max_retag` (`1000`), `dead_tag_grace_days` (`7` —
+  days without a live document before the sweep removes the tag; assignments on trashed
+  documents do not count), `provisional_grace_days` (`30`), `retention_days` (`90` —
+  days a decided non-value must stand before the sweep removes it).
 - `tag_measure` — `enabled` (`false`), `interval` (days, `7`), `time` (`03:00`),
   `after_enrichment_batch` (`false` — additionally measure after every consume/enrich batch
   settles).

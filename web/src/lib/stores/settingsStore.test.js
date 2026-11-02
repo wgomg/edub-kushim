@@ -105,7 +105,8 @@ const fullCfg = () => ({
 			max_rejudge: 250,
 			max_retag: 2000,
 			dead_tag_grace_days: 14,
-			provisional_grace_days: 30
+			provisional_grace_days: 30,
+			retention_days: 90
 		}
 	},
 	storage: {

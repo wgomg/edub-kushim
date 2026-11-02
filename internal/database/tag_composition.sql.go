@@ -99,14 +99,20 @@ func (q *Queries) LatestCompositionEventsForNames(ctx context.Context, candidate
 }
 
 const latestCompositionReasonsForNames = `-- name: LatestCompositionReasonsForNames :many
-SELECT DISTINCT ON (candidate) candidate, disposition, reason
+SELECT DISTINCT ON (candidate)
+       candidate, disposition, reason,
+       COALESCE(
+           MIN(created_at) FILTER (WHERE reason <> $1::text) OVER (PARTITION BY candidate),
+           MIN(created_at) OVER (PARTITION BY candidate)
+       )::timestamptz AS decided_at
 FROM tag_composition_event
-WHERE criteria_version = $1
-  AND candidate = ANY($2::text[])
+WHERE criteria_version = $2
+  AND candidate = ANY($3::text[])
 ORDER BY candidate, created_at DESC
 `
 
 type LatestCompositionReasonsForNamesParams struct {
+	DegradedReason  string
 	CriteriaVersion string
 	Candidates      []string
 }
@@ -115,10 +121,11 @@ type LatestCompositionReasonsForNamesRow struct {
 	Candidate   string
 	Disposition string
 	Reason      string
+	DecidedAt   time.Time
 }
 
 func (q *Queries) LatestCompositionReasonsForNames(ctx context.Context, arg LatestCompositionReasonsForNamesParams) ([]LatestCompositionReasonsForNamesRow, error) {
-	rows, err := q.db.QueryContext(ctx, latestCompositionReasonsForNames, arg.CriteriaVersion, pq.Array(arg.Candidates))
+	rows, err := q.db.QueryContext(ctx, latestCompositionReasonsForNames, arg.DegradedReason, arg.CriteriaVersion, pq.Array(arg.Candidates))
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +133,12 @@ func (q *Queries) LatestCompositionReasonsForNames(ctx context.Context, arg Late
 	var items []LatestCompositionReasonsForNamesRow
 	for rows.Next() {
 		var i LatestCompositionReasonsForNamesRow
-		if err := rows.Scan(&i.Candidate, &i.Disposition, &i.Reason); err != nil {
+		if err := rows.Scan(
+			&i.Candidate,
+			&i.Disposition,
+			&i.Reason,
+			&i.DecidedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

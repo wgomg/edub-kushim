@@ -200,8 +200,10 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // unchanged. v6 rides the quality-v6 generation: the not_person_place_work feature becomes not_person,
 // the place and work components leaving the rubric, the combination rules unchanged. v7 adds the demotion
 // rules to the set: a decayed live mass below RecurrenceFloor, a decided no-dimension drop, and a fresh
-// reject or defer under the current versions revoke influence, the admission rules unchanged.
-const DecisionRuleSetVersion = "v7"
+// reject or defer under the current versions revoke influence, the admission rules unchanged. v8 adds the
+// retention rules to the set: a current-version decided drop or reject standing past the retention window
+// removes the stored row, the admission and demotion rules unchanged.
+const DecisionRuleSetVersion = "v8"
 
 // RecurrenceFloor is the promotion minimum of docs/specs/tags/definition.md §4.3 (P2), in live
 // documents: ten until its calibration exists (operator decision D8, 2026-09-30). Same-batch mass
@@ -223,4 +225,25 @@ func DecidePromotion(outcome AdmissionOutcome, liveMass int64) bool {
 // promotion paths.
 func DecideMassDemotion(liveMass int64) bool {
 	return liveMass < RecurrenceFloor
+}
+
+// RetentionFeatures is the evidence the retention rule reads for one stored row: whether the current
+// criteria version has decided it names no dimension or failed admission, whether review holds it, whether
+// the orphan sweep owns it because its live extension is empty, and whether the decision has stood past
+// the retention window. The decision features default false, so absence of a decision never removes;
+// IdentityHeld is the caller's hold read and must be established before the rule runs.
+type RetentionFeatures struct {
+	DecidedDrop   bool
+	RejectStamped bool
+	IdentityHeld  bool
+	LiveMassZero  bool
+	DecisionOld   bool
+}
+
+// DecideRetention reports whether a stored row may be removed: only a current-version decided drop or
+// admission reject whose decision has stood past the retention window, with no identity hold and live mass
+// above zero. A row with an empty live extension belongs to the orphan sweep, and a held or undecided row
+// stays for review — absence of evidence never removes (docs/specs/tags/definition.md §6.4).
+func DecideRetention(f RetentionFeatures) bool {
+	return (f.DecidedDrop || f.RejectStamped) && !f.IdentityHeld && !f.LiveMassZero && f.DecisionOld
 }

@@ -109,7 +109,8 @@ const fullCfg = () => ({
 			time: '03:30',
 			max_rejudge: 250,
 			max_retag: 2000,
-			dead_tag_grace_days: 14
+			dead_tag_grace_days: 14,
+			retention_days: 90
 		}
 	},
 	storage: {

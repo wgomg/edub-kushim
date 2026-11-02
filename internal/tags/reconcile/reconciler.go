@@ -108,6 +108,9 @@ type Report struct {
 	Siblings              SiblingCounts        `json:"siblings"`
 	Measurement           *MeasurementRun      `json:"measurement,omitempty"`
 	Provisional           ProvisionalCounts    `json:"provisional"`
+	Retention             RetentionCounts      `json:"retention"`
+	Removed               []RetentionEntry     `json:"removed,omitempty"`
+	PlannedRemovals       []RetentionEntry     `json:"planned_removals,omitempty"`
 }
 
 // SiblingCounts tallies the containment worklist for the run report: how many pairs want a human's eye and
@@ -152,6 +155,23 @@ type ProvisionalCounts struct {
 	NoJudge    int `json:"no_judge"`
 	Skipped    int `json:"skipped"`
 	Failed     int `json:"failed"`
+}
+
+// RetentionCounts tallies the retention arm's work: the candidates older than the retention window, the
+// names it left for review, the rows the orphan sweep owns, and the removals it planned or applied.
+type RetentionCounts struct {
+	Worklist int `json:"worklist"`
+	Held     int `json:"held"`
+	ZeroLive int `json:"zero_live"`
+	Removed  int `json:"removed"`
+	Failed   int `json:"failed"`
+}
+
+// RetentionEntry names a removed value and the current-version evidence that decided it, or, in a report-only
+// run, one that would be removed.
+type RetentionEntry struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // WorklistCounts sizes each arm the run fetched before any cap: the four pair re-check categories, the
@@ -380,6 +400,7 @@ func (r *Reconciler) run(ctx context.Context, progress task.ProgressFunc) (Repor
 	r.sweepTwins(ctx, cfg, &report, pairKeys)
 	r.sweepPromotedTags(ctx, cfg, &report)
 	r.sweepOrphanTags(ctx, cfg, &report)
+	r.sweepRetentionTags(ctx, cfg, &report)
 	r.sweepProvisionalTags(ctx, cfg, &report)
 	r.logSummary(report)
 
@@ -401,15 +422,17 @@ func (r *Reconciler) logSummary(report Report) {
 				created++
 			}
 		}
-		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d stored compounds would split; %d twin pairs proposed (%d would alias); %d sibling pairs for review; %d demotions would revoke influence (%d below the floor, %d decided drops, %d re-judged); %d skipped, %d over cap",
+		r.logger.Info("", "tag reconcile: done (report-only, nothing changed) — %d pairs re-checked, %d judged; %d aliases and %d restorations planned (%d documents would move, %d tags would be created); %d stored compounds would split; %d twin pairs proposed (%d would alias); %d sibling pairs for review; %d demotions would revoke influence (%d below the floor, %d decided drops, %d re-judged); %d removals planned (%d held, %d owned by the orphan sweep); %d skipped, %d over cap",
 			checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, created, len(report.PlannedCompoundSplits), report.Twins.Worklist, report.Twins.Planned, report.Siblings.Worklist,
-			report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged, skipped, report.Capped)
+			report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged,
+			report.Retention.Removed, report.Retention.Held, report.Retention.ZeroLive, skipped, report.Capped)
 		return
 	}
 	documents := sumReassigned(report.Aliases) + sumReassigned(report.RetagEntries)
-	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d stored compounds split; %d twin pairs proposed (%d aliased); %d sibling pairs for review; %d demotions revoked influence (%d below the floor, %d decided drops, %d re-judged), %d held for review; %d skipped, %d over cap",
+	r.logger.Info("", "tag reconcile: done — %d pairs re-checked, %d judged; %d aliases and %d restorations applied (%d documents re-pointed); %d stored compounds split; %d twin pairs proposed (%d aliased); %d sibling pairs for review; %d demotions revoked influence (%d below the floor, %d decided drops, %d re-judged), %d held for review; %d decided non-values removed (%d held, %d owned by the orphan sweep); %d skipped, %d over cap",
 		checked, report.Judged, report.Flips.ToAlias, report.Flips.ToKeep, documents, len(report.CompoundSplits), report.Twins.Worklist, report.Twins.Mechanical, report.Siblings.Worklist,
-		report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged, report.Demotion.Held, skipped, report.Capped)
+		report.Demotion.Demoted, report.Demotion.MassDecay, report.Demotion.NoDimension, report.Demotion.Rejudged, report.Demotion.Held,
+		report.Retention.Removed, report.Retention.Held, report.Retention.ZeroLive, skipped, report.Capped)
 }
 
 func sumReassigned(entries []PairEntry) int64 {

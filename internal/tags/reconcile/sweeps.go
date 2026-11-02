@@ -82,6 +82,156 @@ func sampleNamesSuffix(names []string) string {
 	return ": " + strings.Join(names, ", ")
 }
 
+type retentionEntry struct {
+	id     int64
+	name   string
+	reason string
+}
+
+// sweepRetentionTags removes stored rows the current rules have decided are not values: a decided drop
+// under the current split criteria, or a reject under the current quality criteria, once the decision has
+// stood for the retention window. Seeded values, identity-held names (review owns the hold), alias targets
+// and rows with an empty live extension stay — the orphan sweep in this same run owns the last, and a
+// promoted decided drop demotes through the demotion arm first. Nothing is written to the deleted-tag
+// blocklist: a removed name re-proposed after the sweep is suppressed by the versioned verdict cache until
+// a criteria bump re-opens judgment (docs/specs/tags/definition.md §6.4).
+func (r *Reconciler) sweepRetentionTags(ctx context.Context, cfg *config.Config, report *Report) {
+	windowDays := cfg.Enricher.TagReconcile.RetentionDays
+	cutoff := time.Now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+
+	worklist, err := r.client.ListRetentionCandidates(ctx, cutoff)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: list retention candidates: %v", err)
+		return
+	}
+	report.Retention.Worklist = len(worklist)
+	if len(worklist) == 0 {
+		return
+	}
+
+	ids := make([]int64, len(worklist))
+	names := make([]string, len(worklist))
+	for i, t := range worklist {
+		ids[i] = t.ID
+		names[i] = t.Name
+	}
+
+	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: retention identity hold lookup: %v", err)
+		return
+	}
+	compositionHeld, states, err := tags.CompositionReview(ctx, r.client.Queries, names, analyzer.TagSplitVersion)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: retention composition lookup: %v", err)
+		return
+	}
+	events, err := r.tag.LatestQualityEventsForNames(ctx, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: retention verdict lookup: %v", err)
+		return
+	}
+	verdicts := make(map[string]database.LatestTagQualityEventsForNamesRow, len(events))
+	for _, e := range events {
+		verdicts[e.TagName] = e
+	}
+	liveCounts, err := tags.NewStore(r.client.Queries).LiveMass(ctx, ids)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: retention live mass lookup: %v", err)
+		return
+	}
+
+	var planned []retentionEntry
+	for _, t := range worklist {
+		key := tags.StoredName(t.Name)
+
+		state := states[key]
+		drop := state.Decided && state.Disposition == tags.CompositionDrop
+		reject := false
+		var decidedAt time.Time
+		reason := ""
+		if drop {
+			decidedAt = state.DecidedAt
+			reason = compositionHeld[key]
+		}
+		if row, ok := verdicts[t.Name]; ok {
+			decision := admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
+			if decision.Outcome == tags.AdmissionReject {
+				reject = true
+				if decidedAt.IsZero() || row.FirstVerdictAt.Before(decidedAt) {
+					decidedAt = row.FirstVerdictAt
+					reason = decision.Reason
+				}
+			}
+		}
+		if !drop && !reject {
+			continue
+		}
+
+		_, identityHeld := held[t.Name]
+		features := tags.RetentionFeatures{
+			DecidedDrop:   drop,
+			RejectStamped: reject,
+			IdentityHeld:  identityHeld,
+			LiveMassZero:  liveCounts[t.ID] == 0,
+			DecisionOld:   !decidedAt.After(cutoff),
+		}
+		if tags.DecideRetention(features) {
+			planned = append(planned, retentionEntry{id: t.ID, name: t.Name, reason: reason})
+			continue
+		}
+		switch {
+		case features.IdentityHeld:
+			report.Retention.Held++
+		case features.LiveMassZero:
+			report.Retention.ZeroLive++
+		}
+	}
+
+	budget := cfg.Enricher.TagReconcile.MaxRejudge
+	if len(planned) > budget {
+		report.Capped += len(planned) - budget
+		planned = planned[:budget]
+	}
+	if len(planned) == 0 {
+		return
+	}
+
+	if report.ReportOnly {
+		report.Retention.Removed = len(planned)
+		names := make([]string, len(planned))
+		for i, e := range planned {
+			report.PlannedRemovals = append(report.PlannedRemovals, RetentionEntry{Name: e.name, Reason: e.reason})
+			names[i] = e.name
+		}
+		r.logger.Info("", "tag reconcile (report-only): would remove %d decided non-values past the %d-day retention window%s",
+			len(planned), windowDays, sampleNamesSuffix(names))
+		return
+	}
+
+	removeIDs := make([]int64, len(planned))
+	reasons := make(map[string]string, len(planned))
+	for i, e := range planned {
+		removeIDs[i] = e.id
+		reasons[e.name] = e.reason
+	}
+	deleted, err := r.client.DeleteRetentionTags(ctx, removeIDs)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: delete retention tags: %v", err)
+		report.Retention.Failed += len(removeIDs)
+		return
+	}
+	report.Retention.Removed = len(deleted)
+	for _, name := range deleted {
+		report.Removed = append(report.Removed, RetentionEntry{Name: name, Reason: reasons[name]})
+	}
+	if err := r.tag.RemoveFromStore(ctx, deleted); err != nil {
+		r.logger.Error("", "tag reconcile: remove retention tags from store: %v", err)
+	}
+	r.logger.Info("", "tag reconcile: removed %d decided non-values past the %d-day retention window (rule_set=decision-%s)%s",
+		len(deleted), windowDays, tags.DecisionRuleSetVersion, sampleNamesSuffix(deleted))
+}
+
 type provisionalEntry struct {
 	id   int64
 	name string
@@ -163,7 +313,8 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 	var rejudge []*provisionalEntry
 	for _, t := range worklist {
 		if assignedCounts[t.ID] == 0 {
-			// the orphan sweep in this same run owns zero-assignment rows
+			// the orphan sweep in this same run owns rows without a live assignment; a trashed-only row still
+			// owes a rejudge and skips there
 			report.Provisional.ZeroAssign++
 			continue
 		}

@@ -313,9 +313,9 @@ type TagQualityConfig struct {
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
-// TagReconcileConfig is the scheduled reconciliation section:
-// enablement, report-only mode, schedule, per-run caps, and the grace
-// periods of dead and provisional tags.
+// TagReconcileConfig is the scheduled reconciliation section: enablement, report-only mode, schedule,
+// per-run caps, and the grace periods of dead and provisional tags plus the retention window of decided
+// non-values.
 type TagReconcileConfig struct {
 	Enabled              bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	ReportOnly           bool    `mapstructure:"report_only" yaml:"report_only" json:"report_only"`
@@ -325,6 +325,7 @@ type TagReconcileConfig struct {
 	MaxRetag             int     `mapstructure:"max_retag" yaml:"max_retag" json:"max_retag"`
 	DeadTagGraceDays     int     `mapstructure:"dead_tag_grace_days" yaml:"dead_tag_grace_days" json:"dead_tag_grace_days"`
 	ProvisionalGraceDays int     `mapstructure:"provisional_grace_days" yaml:"provisional_grace_days" json:"provisional_grace_days"`
+	RetentionDays        int     `mapstructure:"retention_days" yaml:"retention_days" json:"retention_days"`
 }
 
 // TagMeasureConfig is the measurement section: enablement and schedule for the standalone run, plus whether
@@ -738,6 +739,7 @@ func DefaultConfig(configDir string) *Config {
 				MaxRetag:             1000,
 				DeadTagGraceDays:     7,
 				ProvisionalGraceDays: 30,
+				RetentionDays:        90,
 			},
 			TagMeasure: TagMeasureConfig{
 				Enabled:              false,
@@ -926,6 +928,9 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.TagReconcile.ProvisionalGraceDays <= 0 {
 		cfg.Enricher.TagReconcile.ProvisionalGraceDays = 30
+	}
+	if cfg.Enricher.TagReconcile.RetentionDays <= 0 {
+		cfg.Enricher.TagReconcile.RetentionDays = 90
 	}
 	if cfg.Enricher.TagReconcile.Time == "" {
 		cfg.Enricher.TagReconcile.Time = "02:00"

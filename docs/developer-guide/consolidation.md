@@ -387,7 +387,8 @@ then withdraws the alias, re-creates the query tag, and re-points only those doc
 
 **Flips and caps**: `max_rejudge` pairs and `max_retag` documents per run; the provisional
 re-judge and the twin arm share `max_rejudge`, the compound scan and the twin aliases
-share `max_retag`, and the demotion arm's revocations draw on its re-judgment bound. The
+share `max_retag`, the demotion arm's revocations draw on its re-judgment bound, and
+retention removals are capped by `max_rejudge` too. The
 first run is always **report-only** — it takes no store action regardless of the
 `report_only` flag (the sweep's own judgment evidence still persists, so the compound
 scan can resume from cache). A failed hold, alias, settled, or mass lookup aborts the
@@ -399,7 +400,9 @@ re-derives as admit plus ≥10 live documents promotes the name with no judge ca
 and reject verdicts stay queued for review; verdict-less names are re-judged one at a
 time (the tag's first live document, reduced with the tag-matcher arithmetic, one retry
 on failure) and promoted when admitted. Zero-assignment rows are only counted — the
-orphan sweep owns them.
+orphan sweep owns them; rows whose assignments all sit on trashed documents re-judge to
+no live text, count as skipped, and the orphan sweep removes them once the window
+elapses.
 
 **Demotion** — the same run withdraws the standing of promoted values the current rules
 no longer back: live mass below the promotion floor (`mass_decay`), or a stale verdict
@@ -409,12 +412,23 @@ composition-held names, a missing judge, and a failed lookup leave the value pro
 Each demotion goes through `Tag.Demote`, which clears `promoted_at`, records the reason,
 and removes the name from the embedding store.
 
-**Dead-tag hygiene** — the same run sweeps zero-assignment tags: a tag whose
+**Dead-tag hygiene** — the same run sweeps tags with no live document: a tag whose
 `orphaned_since` mark is older than `dead_tag_grace_days` (default 7) is deleted and
 removed from the embedding store, and every assignment path clears the mark so the window
-tracks real last usage. Seeded values are exempt. Names blocked by an operator are
-skipped by the keep-flip path (and dropped by enrichment), so they cannot be resurrected
-outside the restore flow.
+tracks real last usage — assignments on trashed documents do not count, so a tag whose
+documents all sit in the trash ages out the same way. Seeded values are exempt. Names
+blocked by an operator are skipped by the keep-flip path (and dropped by enrichment), so
+they cannot be resurrected outside the restore flow.
+
+**Retention** — the same run removes rows the current rules have decided are not values:
+a decided composition drop (`no_dimension`, `part_rejected`) or an admission reject under
+the current criteria versions whose decision has stood for `retention_days` (default 90).
+Seeded values, identity-held names, alias targets, promoted rows (which demote first), and
+rows with no live document never remove; the window anchors on the first current-version
+decision, so re-emissions do not reset it. Removal deletes the row and its assignments
+and writes nothing to the deleted-tag blocklist: a re-proposed name stays suppressed by
+the versioned verdict cache until a criteria-version bump re-judges it. Removals are
+bounded by `max_rejudge` per run.
 
 **Identity evidence** — the reconcile does not resolve identity claims itself: the twin
 arm inserts pending `same_intent` evidence and the separate scheduled `tagidentity` pass
@@ -426,7 +440,9 @@ each claim once, so the twin arm and the identity pass converge on whichever run
 **Report** — each run persists a full JSON report as its task result: worklist counts per
 category, judged/confirmed, flips by direction, aliases with reassignment counts, compound
 splits, twin counts and the consumed measurement run, skip reasons, the provisional-sweep
-counts, and the demotion block with per-trigger counts and named entries. Served by
+counts, the demotion block with per-trigger counts and named entries, and the retention
+block (removed and planned entries with their evidence reasons, plus held and
+orphan-owned counts). Served by
 `GET /api/v1/tags/reconciliation/report` and the task's `result` field; the web UI
 renders it on the task detail page and as a status strip on the tags page. With the
 adjudicator disabled, runs log the worklist snapshot and complete without LLM calls; the

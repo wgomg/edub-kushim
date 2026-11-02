@@ -904,9 +904,13 @@ func TestCompositionStatesForNames(t *testing.T) {
 		t.Errorf("states = %v, want exactly %v", states, want)
 	}
 	for name, state := range want {
-		if got := states[name]; got != state {
+		got := states[name]
+		if got.Disposition != state.Disposition || got.Decided != state.Decided {
 			t.Errorf("states[%q] = {Disposition:%q Decided:%t}, want {Disposition:%q Decided:%t}",
 				name, got.Disposition, got.Decided, state.Disposition, state.Decided)
+		}
+		if got.DecidedAt.IsZero() {
+			t.Errorf("states[%q] carries no decision instant", name)
 		}
 	}
 	if _, ok := states["unjudged"]; ok {
@@ -1047,11 +1051,11 @@ func TestCompositionReview(t *testing.T) {
 	if held["degraded"] != CompositionReasonJudgeUnavailable {
 		t.Errorf("held[degraded] = %q, want the degraded-keep hold", held["degraded"])
 	}
-	if got, want := states["degraded"], (CompositionState{Disposition: CompositionKeep, Decided: false}); got != want {
-		t.Errorf("states[degraded] = %+v, want %+v: judgment is still owed", got, want)
+	if got := states["degraded"]; got.Disposition != CompositionKeep || got.Decided {
+		t.Errorf("states[degraded] = %+v, want a keep with judgment still owed", got)
 	}
-	if got, want := states["decideddrop"], (CompositionState{Disposition: CompositionDrop, Decided: true}); got != want {
-		t.Errorf("states[decideddrop] = %+v, want %+v", got, want)
+	if got := states["decideddrop"]; got.Disposition != CompositionDrop || !got.Decided {
+		t.Errorf("states[decideddrop] = %+v, want a decided drop", got)
 	}
 	if _, ok := states["unjudged"]; ok {
 		t.Errorf("states[unjudged] = %v, a compound with no row must stay absent", states["unjudged"])

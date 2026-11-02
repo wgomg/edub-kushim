@@ -104,12 +104,20 @@ DELETE FROM tag WHERE id = $1;
 UPDATE tag t SET orphaned_since = now()
 WHERE t.orphaned_since IS NULL
   AND NOT t.seeded
-  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id);
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  );
 
 -- name: ClearOrphanTagMarks :execrows
 UPDATE tag t SET orphaned_since = NULL
 WHERE t.orphaned_since IS NOT NULL
-  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id);
+  AND EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  );
 
 -- name: ClearOrphanTagMarksByTagIDs :exec
 UPDATE tag SET orphaned_since = NULL
@@ -209,7 +217,11 @@ SELECT t.name FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < @orphaned_before::timestamptz
   AND NOT t.seeded
-  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  )
 ORDER BY t.name;
 
 -- name: DeleteOrphanTags :many
@@ -217,7 +229,28 @@ DELETE FROM tag t
 WHERE t.orphaned_since IS NOT NULL
   AND t.orphaned_since < @orphaned_before::timestamptz
   AND NOT t.seeded
-  AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM document_tag dt
+      JOIN document d ON d.id = dt.document_id
+      WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+  )
+RETURNING t.name;
+
+-- name: ListRetentionCandidates :many
+SELECT t.id, t.name, t.created_at
+FROM tag t
+WHERE t.promoted_at IS NULL
+  AND NOT t.seeded
+  AND t.created_at < @cutoff::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
+ORDER BY t.created_at;
+
+-- name: DeleteRetentionTags :many
+DELETE FROM tag t
+WHERE t.id = ANY(@tag_ids::bigint[])
+  AND NOT t.seeded
+  AND t.promoted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
 RETURNING t.name;
 
 -- the reconcile opening gate's probes: each answers whether its arm's work set is non-empty, mirroring the
@@ -234,7 +267,20 @@ SELECT EXISTS (
     WHERE t.orphaned_since IS NOT NULL
       AND t.orphaned_since < @orphaned_before::timestamptz
       AND NOT t.seeded
-      AND NOT EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM document_tag dt
+          JOIN document d ON d.id = dt.document_id
+          WHERE dt.tag_id = t.id AND d.deleted_at IS NULL
+      )
+);
+
+-- name: RetentionTagProbe :one
+SELECT EXISTS (
+    SELECT 1 FROM tag t
+    WHERE t.promoted_at IS NULL
+      AND NOT t.seeded
+      AND t.created_at < @cutoff::timestamptz
+      AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
 );
 
 -- name: ProvisionalTagProbe :one

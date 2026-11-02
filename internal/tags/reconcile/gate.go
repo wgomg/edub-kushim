@@ -13,10 +13,10 @@ import (
 )
 
 // hasDueWork answers whether any reconcile arm has work this pass. The evidence categories carry time-driven
-// work (aged verdicts) and capped remainders that a clear signal does not cover, the grace sweeps carry
-// windows that elapse without a mutation, the compound and twin worklists stand until their work is applied,
-// and the bootstrap log ingest can owe work the evidence does not hold. Every probe is a superset of its
-// arm's work set: a false positive costs a full pass, a false negative would skip real work.
+// work (aged verdicts) and capped remainders that a clear signal does not cover, the grace and retention
+// sweeps carry windows that elapse without a mutation, the compound and twin worklists stand until their
+// work is applied, and the bootstrap log ingest can owe work the evidence does not hold. Every probe is a
+// superset of its arm's work set: a false positive costs a full pass, a false negative would skip real work.
 func (r *Reconciler) hasDueWork(ctx context.Context, cfg *config.Config) (bool, error) {
 	q := r.client.Queries
 
@@ -98,6 +98,14 @@ func (r *Reconciler) hasDueWork(ctx context.Context, cfg *config.Config) (bool, 
 		return false, fmt.Errorf("probe orphaned tags: %w", err)
 	}
 	if orphans {
+		return true, nil
+	}
+
+	retention, err := q.RetentionTagProbe(ctx, time.Now().Add(-graceWindow(cfg.Enricher.TagReconcile.RetentionDays)))
+	if err != nil {
+		return false, fmt.Errorf("probe retention candidates: %w", err)
+	}
+	if retention {
 		return true, nil
 	}
 

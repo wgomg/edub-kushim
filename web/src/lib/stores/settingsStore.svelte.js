@@ -107,7 +107,8 @@ function ensureTagReconcileBlock() {
 		max_rejudge: 200,
 		max_retag: 1000,
 		dead_tag_grace_days: 7,
-		provisional_grace_days: 30
+		provisional_grace_days: 30,
+		retention_days: 90
 	};
 }
 
@@ -276,6 +277,7 @@ function bodyFromConfig() {
 		'enricher.tag_reconcile.provisional_grace_days': Number(
 			cfg.enricher.tag_reconcile.provisional_grace_days
 		),
+		'enricher.tag_reconcile.retention_days': Number(cfg.enricher.tag_reconcile.retention_days),
 		'enricher.tag_measure.enabled': cfg.enricher.tag_measure.enabled,
 		'enricher.tag_measure.interval': Number(cfg.enricher.tag_measure.interval),
 		'enricher.tag_measure.time': cfg.enricher.tag_measure.time,

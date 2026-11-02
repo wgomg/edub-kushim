@@ -1172,6 +1172,7 @@ type TagReconcileConfigResponse struct {
 	MaxRetag             int     `json:"max_retag"`
 	DeadTagGraceDays     int     `json:"dead_tag_grace_days"`
 	ProvisionalGraceDays int     `json:"provisional_grace_days"`
+	RetentionDays        int     `json:"retention_days"`
 }
 
 // TagMeasureConfigResponse is the measure section's API view.
@@ -1399,6 +1400,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagReconcile.MaxRetag = cfg.Enricher.TagReconcile.MaxRetag
 	resp.Enricher.TagReconcile.DeadTagGraceDays = cfg.Enricher.TagReconcile.DeadTagGraceDays
 	resp.Enricher.TagReconcile.ProvisionalGraceDays = cfg.Enricher.TagReconcile.ProvisionalGraceDays
+	resp.Enricher.TagReconcile.RetentionDays = cfg.Enricher.TagReconcile.RetentionDays
 	resp.Enricher.TagMeasure.Enabled = cfg.Enricher.TagMeasure.Enabled
 	resp.Enricher.TagMeasure.Interval = cfg.Enricher.TagMeasure.Interval
 	resp.Enricher.TagMeasure.Time = cfg.Enricher.TagMeasure.Time
