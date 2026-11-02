@@ -243,16 +243,11 @@
 		}
 	];
 
-	let currentBatch = $state('');
-	let currentStatus = $state('');
+	let currentBatch = $derived(page.url.searchParams.get('batch') || '');
+	let currentStatus = $derived(page.url.searchParams.get('status') || '');
 	let currentTaskStatus = $state(
 		new URL(window.location.href).searchParams.get('task_status') || ''
 	);
-
-	page.subscribe(($p) => {
-		currentBatch = $p.url.searchParams.get('batch') || '';
-		currentStatus = $p.url.searchParams.get('status') || '';
-	});
 
 	async function fetchBatches({ limit, offset }) {
 		return await api.batches.list(currentTaskStatus, limit, offset);

@@ -283,7 +283,7 @@ There are **no** class-style components, no `export let` props, no slots, no
   static icon markup. The contract is documented at the call site — *callers
   must `escapeHtml` user data first* (§13).
 - **`<svelte:window>`** — document-level event listener for delegated clicks
-  on `data-*` action buttons (`tasks/+page.svelte:304`).
+  on `data-*` action buttons (`tasks/+page.svelte:330`).
 - **`bind:` inventory**: `bind:value` for inputs (≈45 sites; works deep into
   `$state` objects: `bind:value={cfg.server.host}`, `IntakeSection.svelte:35`,
   and inside `{#each}` loops), `bind:checked` for checkboxes
@@ -756,7 +756,7 @@ The dual condition "auth off OR editor+" is the standard idiom
 ```
 
 Inside DataTable cell builders, actions return `''` for viewers
-(`tasks/+page.svelte:223`): `if (authStore.authEnabled() && !authStore.isEditor()) return '';`.
+(`tasks/+page.svelte:139,237`): `if (authStore.authEnabled() && !authStore.isEditor()) return '';`.
 The sidebar hides nav links per role (`+layout.svelte:71-74,103-112`), and the
 profile page guards itself in `onMount` (`profile/+page.svelte:20-26`).
 
@@ -813,7 +813,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 
 (`tags/+page.svelte:66-73`). Clicks are **delegated**: DataTable's
 `onActionClick` handler, or a `<svelte:window onclick>` on the tasks page
-(`tasks/+page.svelte:304`), dispatch on `e.target.closest('[data-...]')`.
+(`tasks/+page.svelte:330`), dispatch on `e.target.closest('[data-...]')`.
 
 ---
 
