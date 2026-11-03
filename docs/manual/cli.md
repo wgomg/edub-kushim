@@ -33,6 +33,7 @@ The task and batch status vocabulary used throughout is defined in
 | `kushim tagmeasure` | Measure the tag store into versioned evidence records |
 | `kushim tagidentity` | Adjudicate pending tag-identity claims |
 | `kushim tagaudit` | Audit document coverage against the vocabulary |
+| `kushim tagrejudge` | Re-run one judge over one stored tag (queued by the review queue) |
 | `kushim tagmaintenance` | The full routine: reconcile → identity → audit → measure |
 | `kushim config` | View and edit `config.yaml` values (git-style get/set) |
 | `kushim llm` | View and edit the provider and model catalogs |
@@ -405,10 +406,12 @@ thumbnail children activate as their consume parents complete.
 
 ## Tag passes
 
-All five passes run two ways: **directly now** (manual `maintenance` hold, no queue rows, a
-printed report) or **queued** via `kushim batch create <verb>`, which the daemon forks in batch
-mode and whose report lands on the task row. The `--executor … --from-batch … --exec-token …`
-form is the [dispatcher's contract](#batch-mode-the-dispatchers-contract), not a user surface.
+The tag passes maintain the vocabulary described in [tags.md](tags.md): the badges, holds and review
+actions of the New tags queue come from the evidence these passes write. All five passes run two
+ways: **directly now** (manual `maintenance` hold, no queue rows, a printed report) or **queued** via
+`kushim batch create <verb>`, which the daemon forks in batch mode and whose report lands on the task
+row. The `--executor … --from-batch … --exec-token …` form is the
+[dispatcher's contract](#batch-mode-the-dispatchers-contract), not a user surface.
 
 ### `kushim tagmeasure`
 
@@ -482,6 +485,19 @@ kushim batch create tagaudit    # enqueue for the daemon
 The run requires the applicability judge (`enricher.tag_adjudicator`); without it, or when the
 matcher is unavailable, no reading is taken and documents stay eligible for the next run.
 Scheduling (`enricher.tag_audit`) is disabled by default and gates only automatic enqueuing.
+
+### `kushim tagrejudge`
+
+Re-run one judge over one stored tag — the quality judge from the value's first live document, or
+the composition judge over the compound — refreshing the verdict or hold the New tags queue shows.
+The task payload names the tag and the scope, and the review queue's **Re-judge** and **Judge now**
+actions enqueue it; there is no direct form and no `kushim batch create` variant.
+
+```bash
+kushim tagrejudge --from-batch <id> --exec-token <id>   # dispatcher contract
+```
+
+Each tag and scope has at most one live task: a repeated click collapses into the queued one.
 
 ### `kushim tagmaintenance`
 
@@ -731,7 +747,7 @@ kushim task list --type enrich --limit 50
 |---|---|---|
 | `--batch` | all | Filter by batch UUID |
 | `--status` | all | `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded`, or `active` (pending/processing/waiting) |
-| `--type` | all | `consume`, `enrich`, `thumbnail`, `thumbbackfill`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `tagmaintenance`, `migrate-db`, `migrate-storage` |
+| `--type` | all | `consume`, `enrich`, `thumbnail`, `thumbbackfill`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `tagrejudge`, `tagmaintenance`, `migrate-db`, `migrate-storage` |
 | `--limit` | `20` | Max results (1–100) |
 | `--offset` | `0` | Pagination offset |
 

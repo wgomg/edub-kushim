@@ -138,6 +138,11 @@ var commandSets = map[string]map[string]Command{
 			Description: "Audit document coverage against the tag vocabulary, verifying and repairing application recall",
 			Handler:     tagAuditHandler,
 		},
+		"tagrejudge": {
+			Name:        "tagrejudge",
+			Description: "Re-run one judge over one stored tag, refreshing the review queue's evidence",
+			Handler:     tagRejudgeHandler,
+		},
 		"tagmaintenance": {
 			Name:        "tagmaintenance",
 			Description: "Run the tag maintenance routine: reconcile, identity, audit and measure",

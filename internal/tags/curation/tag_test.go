@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -962,4 +963,109 @@ func TestListSiblings(t *testing.T) {
 	testutil.AssertEqual(t, snapshot.Readings[0].Containment, 0.7, "the contained ratio is carried")
 	testutil.AssertEqual(t, snapshot.Readings[0].MassA, int64(6), "the container's mass follows its name")
 	testutil.AssertEqual(t, snapshot.Readings[1].Gray, false, "the firm pair follows")
+}
+
+// TestTag_Fold pins the operator fold: the loser's documents move onto the canonical value, the loser
+// row disappears, and the alias table records the collapse. A fold that cannot apply leaves the store
+// untouched instead of half-merging it.
+func TestTag_Fold(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	t.Run("folds the loser onto the canonical value", func(t *testing.T) {
+		canonicalID := database.MustCreateTag(t, client.Queries, "fold canonical value")
+		loserID := database.MustCreateTag(t, client.Queries, "fold loser value")
+		docID := database.CreateUniqueDocument(t, client.Queries, "fold loser doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, loserID)
+
+		status, reassigned, err := svc.Fold(ctx, "fold loser value", "fold canonical value")
+		testutil.AssertNoError(t, err, "fold")
+		testutil.AssertEqual(t, status, types.FoldApplied, "status")
+		testutil.AssertEqual(t, reassigned, int64(1), "documents re-pointed")
+
+		if _, err := client.Queries.GetTagByName(ctx, "fold loser value"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the loser row should be gone, got err %v", err)
+		}
+		alias, err := client.Queries.GetTagAliasByName(ctx, "fold loser value")
+		testutil.AssertNoError(t, err, "alias row")
+		testutil.AssertEqual(t, alias.CanonicalTagID, canonicalID, "the alias points at the winner")
+
+		var assigned int64
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT tag_id FROM document_tag WHERE document_id = $1", docID).Scan(&assigned),
+			"read the document's tag")
+		testutil.AssertEqual(t, assigned, canonicalID, "the document moved onto the winner")
+	})
+
+	t.Run("an unknown loser reports not found", func(t *testing.T) {
+		status, _, err := svc.Fold(ctx, "ghost loser value", "fold canonical value")
+		testutil.AssertNoError(t, err, "fold")
+		testutil.AssertEqual(t, status, types.FoldNotFound, "status")
+	})
+
+	t.Run("a missing canonical leaves the loser untouched", func(t *testing.T) {
+		database.MustCreateTag(t, client.Queries, "fold orphan value")
+
+		status, _, err := svc.Fold(ctx, "fold orphan value", "fold ghost value")
+		testutil.AssertNoError(t, err, "fold")
+		testutil.AssertEqual(t, status, types.FoldNotApplied, "status")
+
+		if _, err := client.Queries.GetTagByName(ctx, "fold orphan value"); err != nil {
+			t.Errorf("the loser must survive a fold with no target: %v", err)
+		}
+	})
+
+	t.Run("identical names are not applied", func(t *testing.T) {
+		status, _, err := svc.Fold(ctx, "fold same value", "fold same value")
+		testutil.AssertNoError(t, err, "fold")
+		testutil.AssertEqual(t, status, types.FoldNotApplied, "status")
+	})
+}
+
+// TestTag_Retire pins the soft delete: the row goes, the name stays eligible for enrichment, and a
+// promoted value is refused so standing is only ever dropped through Demote.
+func TestTag_Retire(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	t.Run("removes a provisional value without blocklisting the name", func(t *testing.T) {
+		id := database.MustCreateTag(t, client.Queries, "retire provisional value")
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		status, err := svc.Retire(ctx, id)
+		testutil.AssertNoError(t, err, "retire")
+		testutil.AssertEqual(t, status, types.RetireRetired, "status")
+
+		if _, err := client.Queries.GetTagByName(ctx, "retire provisional value"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the row should be gone, got err %v", err)
+		}
+		var blocked int
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT count(*) FROM deleted_tag WHERE name = $1", "retire provisional value").Scan(&blocked),
+			"count blocklist rows")
+		testutil.AssertEqual(t, blocked, 0, "the name must stay eligible for enrichment")
+	})
+
+	t.Run("refuses a promoted value", func(t *testing.T) {
+		id := database.MustCreateTag(t, client.Queries, "retire promoted value")
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set standing")
+
+		status, err := svc.Retire(ctx, id)
+		testutil.AssertNoError(t, err, "retire")
+		testutil.AssertEqual(t, status, types.RetirePromoted, "status")
+
+		if _, err := client.Queries.GetTagByName(ctx, "retire promoted value"); err != nil {
+			t.Errorf("a promoted value must survive a retire: %v", err)
+		}
+	})
+
+	t.Run("reports a missing value", func(t *testing.T) {
+		status, err := svc.Retire(ctx, 999999)
+		testutil.AssertNoError(t, err, "retire")
+		testutil.AssertEqual(t, status, types.RetireNotFound, "status")
+	})
 }

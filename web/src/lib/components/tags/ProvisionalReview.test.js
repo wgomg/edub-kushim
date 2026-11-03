@@ -1,16 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import ProvisionalReview from './ProvisionalReview.svelte';
 
-const { provisionalList, promoteTag, deleteTag, reevaluateIdentity, confirmMock, toastMock } =
-	vi.hoisted(() => ({
-		provisionalList: vi.fn(),
-		promoteTag: vi.fn(),
-		deleteTag: vi.fn(),
-		reevaluateIdentity: vi.fn(),
-		confirmMock: vi.fn(),
-		toastMock: { success: vi.fn(), error: vi.fn() }
-	}));
+const {
+	provisionalList,
+	promoteTag,
+	deleteTag,
+	reevaluateIdentity,
+	foldTag,
+	compositionDecision,
+	retireTag,
+	rejudgeTag,
+	updateTag,
+	confirmMock,
+	toastMock
+} = vi.hoisted(() => ({
+	provisionalList: vi.fn(),
+	promoteTag: vi.fn(),
+	deleteTag: vi.fn(),
+	reevaluateIdentity: vi.fn(),
+	foldTag: vi.fn(),
+	compositionDecision: vi.fn(),
+	retireTag: vi.fn(),
+	rejudgeTag: vi.fn(),
+	updateTag: vi.fn(),
+	confirmMock: vi.fn(),
+	toastMock: { success: vi.fn(), error: vi.fn() }
+}));
 
 vi.mock('$app/state', () => ({
 	page: { url: { searchParams: new URLSearchParams(), pathname: '/tags', hash: '' } }
@@ -25,7 +41,12 @@ vi.mock('#lib/api.js', async (importOriginal) => {
 				provisionalList,
 				promote: promoteTag,
 				delete: deleteTag,
-				reevaluateIdentity
+				reevaluateIdentity,
+				fold: foldTag,
+				compositionDecision,
+				retire: retireTag,
+				rejudge: rejudgeTag,
+				update: updateTag
 			}
 		},
 		encodeCriteria: actual.encodeCriteria
@@ -79,7 +100,13 @@ beforeEach(() => {
 	promoteTag.mockReset();
 	deleteTag.mockReset();
 	reevaluateIdentity.mockReset();
+	foldTag.mockReset();
+	compositionDecision.mockReset();
+	retireTag.mockReset();
+	rejudgeTag.mockReset();
+	updateTag.mockReset();
 	confirmMock.mockReset();
+	confirmMock.mockResolvedValue(true);
 	toastMock.success.mockReset();
 	toastMock.error.mockReset();
 	goto.mockClear();
@@ -144,8 +171,14 @@ describe('ProvisionalReview verdict labels', () => {
 		expect(screen.queryByText(/composition →/)).toBeNull();
 	});
 
-	it('renders the not publishing format criterion when a verdict is present', async () => {
-		await renderLabel(tag({ verdict: verdict() }), /not publishing format/);
+	it('collapses the rubric to the failing criteria and the score', async () => {
+		await renderLabel(
+			tag({ verdict: verdict({ criteria: { ...rubric, dimension: false } }) }),
+			'rubric 4/5'
+		);
+		expect(screen.getByText(/dimension\s*✗/)).toBeTruthy();
+		expect(within(screen.getByRole('listitem')).queryByText(/not publishing format/)).toBeNull();
+		expect(within(screen.getByRole('listitem')).queryByText(/defer\s*[✗—]/)).toBeNull();
 	});
 });
 
@@ -318,5 +351,156 @@ describe('ProvisionalReview filters and paging', () => {
 		await screen.findByText('sample tag');
 
 		expect(screen.queryByRole('button', { name: /Reevaluate identity/ })).toBeNull();
+	});
+});
+
+describe('ProvisionalReview review actions', () => {
+	async function renderEntry(overrides = {}) {
+		provisionalList.mockResolvedValue({
+			ok: true,
+			data: { results: [tag(overrides)], total: 1 }
+		});
+		render(ProvisionalReview);
+		await screen.findByText('sample tag');
+	}
+
+	it('offers both fold directions for an identity hold', async () => {
+		await renderEntry({ identity_hold: 'politics' });
+
+		expect(await screen.findByRole('button', { name: /Fold into/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Make canonical' })).toBeTruthy();
+	});
+
+	it('folds the tag into the held value after confirming', async () => {
+		foldTag.mockResolvedValue({ ok: true, status: 200 });
+		await renderEntry({ identity_hold: 'politics' });
+
+		await fireEvent.click(screen.getByRole('button', { name: /Fold into/ }));
+
+		await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(foldTag).toHaveBeenCalledWith('sample tag', 'politics'));
+	});
+
+	it('offers split and keep for an undecided split hold', async () => {
+		await renderEntry({ composition_hold: 'split_defer', composition_action: 'undecided' });
+
+		expect(await screen.findByRole('button', { name: /Split now/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Keep whole' })).toBeTruthy();
+	});
+
+	it('opens the parts editor instead of splitting immediately', async () => {
+		await renderEntry({ composition_hold: 'split_defer', composition_action: 'undecided' });
+
+		await fireEvent.click(await screen.findByRole('button', { name: /Split now/ }));
+
+		expect(await screen.findByRole('dialog', { name: 'Split compound' })).toBeTruthy();
+		expect(compositionDecision).not.toHaveBeenCalled();
+	});
+
+	it('offers apply-parts alongside keep only when a keep hold carries parts', async () => {
+		await renderEntry({
+			composition_hold: 'named_unit_reconstructible',
+			composition_action: 'keep',
+			composition_parts: ['part a']
+		});
+
+		expect(await screen.findByRole('button', { name: 'Apply parts alongside' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Keep whole' })).toBeTruthy();
+	});
+
+	it('offers no inline composition action for a decided drop', async () => {
+		await renderEntry({ composition_hold: 'no_dimension', composition_action: 'drop' });
+
+		expect(await screen.findByRole('button', { name: 'Retire' })).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /Split now/ })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Keep whole' })).toBeNull();
+	});
+
+	it('queues a composition re-judge for a degraded hold', async () => {
+		rejudgeTag.mockResolvedValue({ ok: true, status: 200 });
+		await renderEntry({ composition_hold: 'judge_unavailable', composition_action: 'degraded' });
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Re-judge' }));
+
+		await waitFor(() => expect(rejudgeTag).toHaveBeenCalledWith(1, 'composition'));
+	});
+
+	it('always offers approve, reject, retire and rename', async () => {
+		await renderEntry();
+
+		expect(await screen.findByRole('button', { name: 'Approve' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Reject' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Retire' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Rename' })).toBeTruthy();
+	});
+
+	it('offers a labelled help button in the queue header', async () => {
+		await renderEntry();
+
+		expect(screen.getByRole('button', { name: 'Help' })).toBeTruthy();
+	});
+
+	it('offers judge now only while the tag carries no verdict', async () => {
+		await renderEntry();
+		expect(await screen.findByRole('button', { name: 'Judge now' })).toBeTruthy();
+	});
+
+	it('hides judge now once a verdict exists', async () => {
+		await renderEntry({ verdict: verdict() });
+
+		expect(await screen.findByRole('button', { name: 'judge rejected' })).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Judge now' })).toBeNull();
+	});
+
+	it('promotes the tag when approved', async () => {
+		promoteTag.mockResolvedValue({ ok: true, status: 200 });
+		await renderEntry();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+		await waitFor(() => expect(promoteTag).toHaveBeenCalledWith(1));
+	});
+
+	it('retires the tag after confirming', async () => {
+		retireTag.mockResolvedValue({ ok: true, status: 200 });
+		await renderEntry();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Retire' }));
+
+		await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(retireTag).toHaveBeenCalledWith(1));
+	});
+
+	it('renames the tag from the queue', async () => {
+		updateTag.mockResolvedValue({ ok: true, status: 200 });
+		await renderEntry();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Rename tag' });
+		expect(dialog).toBeTruthy();
+
+		await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'renamed tag' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+		await waitFor(() => expect(updateTag).toHaveBeenCalledWith(1, 'renamed tag'));
+	});
+
+	// skipped: TagReviewHelp.svelte's $effect calls target.scrollIntoView, which jsdom does not
+	// implement, so opening the drawer throws under the test environment (reported for a decision
+	// on the component call or a setup polyfill)
+	it.skip('opens the tag review guide from a badge', async () => {
+		await renderEntry({ identity_hold: 'politics' });
+
+		await fireEvent.click(await screen.findByRole('button', { name: /identity hold/ }));
+
+		expect(await screen.findByRole('dialog', { name: 'Tag review guide' })).toBeTruthy();
+	});
+
+	it.skip('opens the tag review guide from the queue header', async () => {
+		await renderEntry();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+
+		expect(await screen.findByRole('dialog', { name: 'Tag review guide' })).toBeTruthy();
 	});
 });

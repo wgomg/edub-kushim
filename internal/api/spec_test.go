@@ -26,6 +26,7 @@ func openAPITestMux() *http.ServeMux {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 }
 

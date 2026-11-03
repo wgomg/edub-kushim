@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -16,6 +17,11 @@ import (
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+// maxCompositionParts bounds one operator split or keep: every part becomes a tag row, an embedding,
+// and a component-document fan-out, so the request-side limit keeps one call proportional to a
+// realistic decomposition.
+const maxCompositionParts = 64
 
 func isMatcherUnavailable(err error) bool {
 	if err == nil {
@@ -31,18 +37,19 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 }
 
 // TagHandler is the tag API: CRUD, provisional promotion and its quality verdicts, deleted-tag records,
-// the identity reevaluation trigger, and the completeness audit trigger and coverage review surface,
-// backed by curation.
+// the identity reevaluation trigger, the completeness audit trigger and coverage review surface, the
+// operator's fold and composition decisions, retirement, and on-demand re-judging, backed by curation.
 type TagHandler struct {
 	tag      *curation.Tag
 	identity *curation.TagIdentity
 	audit    *curation.TagAudit
+	rejudge  *curation.TagRejudge
 	logger   *log.Logger
 }
 
 // NewTagHandler wires the tag handler to the curation services.
-func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, audit *curation.TagAudit, logger *log.Logger) *TagHandler {
-	return &TagHandler{tag: tag, identity: identity, audit: audit, logger: logger}
+func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, audit *curation.TagAudit, rejudge *curation.TagRejudge, logger *log.Logger) *TagHandler {
+	return &TagHandler{tag: tag, identity: identity, audit: audit, rejudge: rejudge, logger: logger}
 }
 
 // List serves the paged tag listing with a name-prefix search and
@@ -313,9 +320,20 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, h.logger, reqID, "provisional tag composition events", err)
 			return
 		}
-		compositionReasons := make(map[string]string, len(compositionEvents))
+		compositionByCandidate := make(map[string]compositionView, len(compositionEvents))
 		for _, e := range compositionEvents {
-			compositionReasons[e.Candidate] = e.Reason
+			var parts []string
+			if len(e.Parts) > 0 {
+				if err := json.Unmarshal(e.Parts, &parts); err != nil {
+					h.logger.Warn("", "provisional tag composition parts for %q: %v", e.Candidate, err)
+					parts = nil
+				}
+			}
+			compositionByCandidate[e.Candidate] = compositionView{
+				Reason: e.Reason,
+				Action: tags.CompositionActionFor(tags.CompositionDisposition(e.Disposition), e.Reason),
+				Parts:  parts,
+			}
 		}
 		for i, t := range rows {
 			responses[i] = ProvisionalTagResponse{
@@ -323,12 +341,16 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				Name:          t.Name,
 				DocumentCount: t.DocumentCount,
 				// the list query coalesces created_at, so the value is always present
-				CreatedAt:         t.CreatedAt.Time,
-				PendingIdentity:   pending[t.Name],
-				IdentityHold:      held[t.Name],
-				CompositionHold:   compositionHeld[t.Name],
-				CompositionReason: compositionReasons[t.Name],
-				DemotedReason:     t.DemotedReason.String,
+				CreatedAt:       t.CreatedAt.Time,
+				PendingIdentity: pending[t.Name],
+				IdentityHold:    held[t.Name],
+				CompositionHold: compositionHeld[t.Name],
+				DemotedReason:   t.DemotedReason.String,
+			}
+			if composition, ok := compositionByCandidate[t.Name]; ok {
+				responses[i].CompositionReason = composition.Reason
+				responses[i].CompositionAction = composition.Action
+				responses[i].CompositionParts = composition.Parts
 			}
 			if t.DemotedAt.Valid {
 				demotedAt := t.DemotedAt.Time
@@ -439,6 +461,179 @@ func (h *TagHandler) DemoteTag(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Tag not found", http.StatusNotFound)
 	}
+}
+
+// FoldTag folds one tag name onto another at an operator's request, overriding a refused identity
+// fold: the alias name's documents move onto the canonical value and the alias name leaves the store.
+func (h *TagHandler) FoldTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	var req FoldTagRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	alias := stripTags(strings.TrimSpace(req.Alias))
+	canonical := stripTags(strings.TrimSpace(req.Canonical))
+	if alias == "" || canonical == "" {
+		http.Error(w, "Both names are required", http.StatusBadRequest)
+		return
+	}
+
+	status, _, err := h.tag.Fold(ctx, alias, canonical)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "fold tag", err)
+		return
+	}
+
+	switch status {
+	case types.FoldApplied:
+		w.WriteHeader(http.StatusNoContent)
+	case types.FoldNotFound:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	default:
+		http.Error(w, "Fold did not apply", http.StatusConflict)
+	}
+}
+
+// CompositionDecision applies an operator's split or keep decision over one provisional compound.
+func (h *TagHandler) CompositionDecision(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var req CompositionDecisionRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.Parts) > maxCompositionParts {
+		http.Error(w, "Too many components", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.tag.ApplyCompositionDecision(ctx, id, strings.TrimSpace(req.Disposition), req.Parts)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "apply composition decision", err)
+		return
+	}
+
+	switch status {
+	case types.CompositionApplied:
+		w.WriteHeader(http.StatusNoContent)
+	case types.CompositionNotFound:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	case types.CompositionNotProvisional:
+		http.Error(w, "Tag is already promoted", http.StatusConflict)
+	case types.CompositionConflict:
+		http.Error(w, "Tag changed while the decision was applied", http.StatusConflict)
+	default:
+		http.Error(w, "Invalid composition decision", http.StatusBadRequest)
+	}
+}
+
+// RetireTag removes one provisional tag without blocklisting its name.
+func (h *TagHandler) RetireTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.tag.Retire(ctx, id)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "retire tag", err)
+		return
+	}
+
+	switch status {
+	case types.RetireRetired:
+		w.WriteHeader(http.StatusNoContent)
+	case types.RetireNotFound:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	default:
+		http.Error(w, "Use demote for a promoted tag", http.StatusConflict)
+	}
+}
+
+// RejudgeTag enqueues one on-demand re-judge of a tag's quality verdict or its composition verdict.
+func (h *TagHandler) RejudgeTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var req RejudgeTagRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	scope := tags.RejudgeScope(strings.TrimSpace(req.Scope))
+	if !scope.Valid() {
+		http.Error(w, "Invalid re-judge scope", http.StatusBadRequest)
+		return
+	}
+
+	tag, err := h.tag.Get(ctx, id)
+	if err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			http.Error(w, "Tag not found", http.StatusNotFound)
+			return
+		}
+		writeServiceError(w, h.logger, reqID, "load tag for re-judge", err)
+		return
+	}
+	switch scope {
+	case tags.RejudgeScopeComposition:
+		if tags.ClassifyShape(tag.Name) != tags.ShapeCompound {
+			http.Error(w, "Tag is not a compound", http.StatusConflict)
+			return
+		}
+	case tags.RejudgeScopeQuality:
+		verdicts, err := h.tag.LatestQualityEventsForNames(ctx, []string{tag.Name})
+		if err != nil {
+			writeServiceError(w, h.logger, reqID, "tag re-judge verdict", err)
+			return
+		}
+		if len(verdicts) > 0 {
+			http.Error(w, "Tag already carries a current verdict", http.StatusConflict)
+			return
+		}
+	}
+
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	batchID, alreadyQueued, err := h.rejudge.Enqueue(ctx, spec, id, scope)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "enqueue tag rejudge", err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"batch_id":       batchID,
+		"already_queued": alreadyQueued,
+	})
 }
 
 // ReevaluateIdentity enqueues a fresh identity sweep for the vocabulary.
@@ -749,8 +944,19 @@ type ProvisionalTagResponse struct {
 	IdentityHold      string                 `json:"identity_hold,omitempty"`
 	CompositionHold   string                 `json:"composition_hold,omitempty"`
 	CompositionReason string                 `json:"composition_reason,omitempty"`
+	CompositionAction tags.CompositionAction `json:"composition_action,omitempty"`
+	CompositionParts  []string               `json:"composition_parts,omitempty"`
 	DemotedAt         *time.Time             `json:"demoted_at,omitempty"`
 	DemotedReason     string                 `json:"demoted_reason,omitempty"`
+}
+
+// compositionView is one candidate's latest composition journal row as the queue reads it: the
+// recorded reason, the action class derived from it, and the parts a split or an apply-alongside keep
+// carries.
+type compositionView struct {
+	Reason string
+	Action tags.CompositionAction
+	Parts  []string
 }
 
 // ProvisionalTagListResponse is one page of provisional tags: the
@@ -765,6 +971,25 @@ type ProvisionalTagListResponse struct {
 // CreateTagRequest is the body of POST /api/v1/tags.
 type CreateTagRequest struct {
 	Name string `json:"name"`
+}
+
+// FoldTagRequest is the body of POST /api/v1/tags/fold: the name that folds away and the canonical
+// value it folds onto.
+type FoldTagRequest struct {
+	Alias     string `json:"alias"`
+	Canonical string `json:"canonical"`
+}
+
+// CompositionDecisionRequest is the body of POST /api/v1/tags/{id}/composition: the disposition and,
+// for a split or an apply-alongside keep, the parts.
+type CompositionDecisionRequest struct {
+	Disposition string   `json:"disposition"`
+	Parts       []string `json:"parts"`
+}
+
+// RejudgeTagRequest is the body of POST /api/v1/tags/{id}/rejudge: which judge to re-run.
+type RejudgeTagRequest struct {
+	Scope string `json:"scope"`
 }
 
 // CoverageFlagResponse is one open coverage flag as the API shows it.

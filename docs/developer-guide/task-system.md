@@ -18,7 +18,7 @@ runs in forked CLI commands).
 | `internal/ops/dispatch` | The dispatcher and launcher. One queue claimant per daemon; forks one executor per batch. |
 | `internal/ops/queue` | The `kushim queue` daemon: notify loop, declarative scheduler, reclamation. |
 | `internal/ops/consume` | The ingest batch executor (`RunClaimedBatch`), the shared batch-mode entry, and the consume CLI. |
-| `internal/ops/cli` | The batch-mode CLIs: enrich, thumbnails, backup, mirror, migrate, and the four tag passes. |
+| `internal/ops/cli` | The batch-mode CLIs: enrich, thumbnails, backup, mirror, migrate, the four tag passes, and `tagrejudge`. |
 | `internal/types` | The closed vocabulary: task types, statuses, lock names, per-type declarations, the batch enum. |
 
 Two processes matter: the **launcher** claims a batch, inserts its lease, acquires its
@@ -313,7 +313,9 @@ Every task CLI has a **batch mode** (`kushim --executor <cli> --from-batch <id>
 and a **direct mode** (no flags: the action runs now, creating no batch or task rows):
 the ingest family (`internal/ops/consume`, `internal/ops/cli/enrich.go`,
 `internal/ops/cli/thumbnails.go`), `kushim backup`, `kushim mirror`, `kushim migrate`
-and the four tag passes (`internal/ops/cli/tag*.go`). One execution settles the whole
+and the four tag passes (`internal/ops/cli/tag*.go`). `kushim tagrejudge`
+(`internal/ops/cli/tagrejudge.go`) has no direct mode: its payload names the tag and the scope, so
+it is reached only through a queued re-judge. One execution settles the whole
 batch, so a mixed ingest batch forks `consume` and runs every type in its batch through
 the shared library; a migration batch forks `kushim migrate --from-batch`, which
 registers both migration handlers and runs whichever the batch carries — its lease and
@@ -558,6 +560,7 @@ Key formats in use:
 | backup | `backup:<mode>:<UTC date>` (mode defaults to `full`) |
 | mirror | `mirror:<UTC date>` |
 | tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` |
+| tagrejudge | payload-derived: `tagrejudge:<tag_id>:<scope>` (one live re-judge per tag and scope) |
 | maintenance routine | the tag passes' fixed keys: the reconcile root at enqueue, each chained successor at activation |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
@@ -718,9 +721,10 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
   batch-held locks promptly; the window is the manual holder's only mechanism).
 - `task.RunBatch` owns the lock-holding lifecycle: it starts the heartbeat and the drain
   for a batch whose types declare holds (§6) and dispatches pure handlers from its
-  worker sets. The backup handler and the four tag passes are work functions under it;
-  the `migrate-db` and `migrate-storage` handlers drain nothing themselves (the run has
-  drained), and the work happens after claim and before settle.
+  worker sets. The backup handler and the tag task handlers — the four passes and
+  `tagrejudge` — are work functions under it; the `migrate-db` and `migrate-storage`
+  handlers drain nothing themselves (the run has drained), and the work happens after
+  claim and before settle.
 
 Locks live as long as the *execution*, not one task. A batch whose task types declare
 holds gets them acquired **at the dispatcher's claim**, for the whole run: the claim
@@ -793,7 +797,7 @@ claims when the locks free.
   can exceed the 30-minute staleness window, the handler refreshes the lock heartbeat
   every 5 minutes for the rsync itself — the gate never goes stale mid-mirror. The
   heartbeat is started by the runner *before* `WaitForTaskDrain` returns, so the
-  drain-wait is covered too; backup, the four tag passes and the maintenance routine's
+  drain-wait is covered too; backup, the four tag passes, `tagrejudge` and the maintenance routine's
   handlers get that sequence — heartbeat, drain, body, settle — from the runner. The
   queued mirror handler is the pure `backup.RunMirrorAndRecord`; the direct `kushim
   mirror` runs under the manual holder path and writes the `.edub-mirror.json`
@@ -829,6 +833,14 @@ claims when the locks free.
   so an active run blocks the next trigger. The queue dispatches it always —
   `enricher.tag_reconcile.enabled` gates only the automatic schedule.
   [Consolidation](consolidation.md) §9 documents the pass itself.
+- **tagrejudge** (`internal/ops/cli/tagrejudge.go`): lock-holding; the child re-runs one judge
+  over one stored tag — the quality judge from the value's first live document, or the
+  composition judge over the compound — and stores the refreshed verdict or hold as the task
+  result. The payload carries `{tag_id, scope}` and the dedup key derives from it
+  (`tagrejudge:<tag_id>:<scope>`), so one live re-judge per tag and scope. Its only producer
+  is the review queue's **Re-judge** / **Judge now** actions
+  (`POST /api/v1/tags/{id}/rejudge`); there is no schedule, no `kushim batch create` variant
+  and no direct mode.
 - **tagmaintenance** (`internal/ops/tagmaintenance`): chains the four passes into one
   batch — `curation.MaintenanceSpecs` enqueues the reconcile task as the pending root
   with identity, audit and measure waiting on their predecessor, so each pass activates

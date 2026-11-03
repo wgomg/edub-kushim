@@ -143,6 +143,7 @@ func Run(c *container.Container, args []string) error {
 		types.Task.Type.TagMeasure:   {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
 		types.Task.Type.TagIdentity:  {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
 		types.Task.Type.TagAudit:     {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
+		types.Task.Type.TagRejudge:   {DedupKey: curation.TagRejudgeDedupKey},
 	})
 	if err != nil {
 		return fmt.Errorf("task catalog: %w", err)

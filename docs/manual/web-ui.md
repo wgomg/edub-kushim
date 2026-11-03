@@ -171,13 +171,15 @@ The vocabulary workspace with five tabs, deep-linkable by hash (`/tags#provision
 | Tab | Contents |
 |---|---|
 | **Vocabulary** | All tags with counts, creation date and standing; editors can create, rename and demote from here; `?q=` filters |
-| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote or reject per tag, filterable by name, criteria and verdict |
+| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote, reject and the contextual hold actions, filterable by name, criteria and verdict |
 | **Coverage** | Open coverage flags from the audit pass — titles link to their documents; apply, dismiss, or register a missing name |
 | **Overlap** (siblings) | Near-containment pairs from the latest measurement; `gray` marks the review band |
 | **Deleted** | The blocklist of rejected names, restorable |
 
 Moderation actions require the editor role; the queue and reports are readable by viewers.
-Review decisions are described in the [tag review workflow](api.md#tag-review).
+What the badges mean, what each action does, and how tags move between provisional and promoted
+standing are explained in [tags.md](tags.md); the queue's **Help** button opens the same reference
+in-app. Review decisions are described in the [tag review workflow](api.md#tag-review).
 
 ![The New tags tab: the provisional review queue with rubric verdicts](images/tags-provisional.png)
 

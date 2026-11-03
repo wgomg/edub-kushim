@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,7 @@ type handlerTestEnv struct {
 	tagSvc        *curation.Tag
 	tagIdentity   *curation.TagIdentity
 	tagAudit      *curation.TagAudit
+	tagRejudge    *curation.TagRejudge
 	peopleSvc     *service.People
 	peopleTypeSvc *service.PeopleType
 	docTypeSvc    *service.DocumentType
@@ -93,6 +95,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 
 	tagIdentity := curation.NewTagIdentity(client.Queries, enqueuer)
 	tagAudit := curation.NewTagAudit(client.Queries, enqueuer)
+	tagRejudge := curation.NewTagRejudge(enqueuer)
 
 	services := &service.CrudServices{
 		Batch:        batchSvc,
@@ -113,6 +116,7 @@ func newHandlerTestEnv(t *testing.T) *handlerTestEnv {
 		tagSvc:        tagSvc,
 		tagIdentity:   tagIdentity,
 		tagAudit:      tagAudit,
+		tagRejudge:    tagRejudge,
 		peopleSvc:     peopleSvc,
 		peopleTypeSvc: peopleTypeSvc,
 		docTypeSvc:    docTypeSvc,
@@ -179,6 +183,7 @@ func newHandlerTestEnqueuer(client *database.Client) *task.Enqueuer {
 		itypes.Task.Type.MigrateStorage: {Type: itypes.Task.Type.MigrateStorage, DedupKey: constant(configtask.DedupKeyMigrateStorage)},
 		itypes.Task.Type.TagIdentity:    {Type: itypes.Task.Type.TagIdentity, DedupKey: constant(curation.TagIdentityDedupKey)},
 		itypes.Task.Type.TagAudit:       {Type: itypes.Task.Type.TagAudit, DedupKey: constant(curation.TagAuditDedupKey)},
+		itypes.Task.Type.TagRejudge:     {Type: itypes.Task.Type.TagRejudge, DedupKey: curation.TagRejudgeDedupKey},
 	}}
 	return task.NewEnqueuer(client, catalog)
 }
@@ -2846,7 +2851,7 @@ func TestAddDocumentTag_ClearsOrphanMark(t *testing.T) {
 func TestListProvisional(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	// Create a tag and manually set promoted_at = NULL to make it provisional.
 	tagID := database.MustCreateTag(t, env.client.Queries, "prov-handler-tag")
@@ -2883,7 +2888,7 @@ func TestListProvisional(t *testing.T) {
 func TestListProvisionalIdentityHold(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "hold-anchor-tag")
 	candidateID := database.MustCreateTag(t, env.client.Queries, "hold-candidate-tag")
@@ -2930,7 +2935,7 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 func TestListProvisionalComposition(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	heldID := database.MustCreateTag(t, env.client.Queries, "world war 2")
 	degradedID := database.MustCreateTag(t, env.client.Queries, "degraded split compound")
@@ -2999,7 +3004,7 @@ func TestListProvisionalComposition(t *testing.T) {
 func TestListProvisionalFilters(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "prov-filter-doc")
 
@@ -3159,7 +3164,7 @@ func TestListProvisionalFilters(t *testing.T) {
 func TestTagListCreatedAt(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	_, err := env.tagSvc.Create(ctx, []string{"created-at-tag"})
 	testutil.AssertNoError(t, err, "create")
@@ -3212,7 +3217,7 @@ func TestTagListCreatedAt(t *testing.T) {
 func TestListAuditFlagsCarriesDocumentUUID(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "audit-uuid-doc")
 	var wantUUID string
@@ -3247,7 +3252,7 @@ func TestListAuditFlagsCarriesDocumentUUID(t *testing.T) {
 func TestPromoteTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	t.Run("promote provisional tag", func(t *testing.T) {
 		// Create a tag and set promoted_at = NULL to make it provisional.
@@ -3295,7 +3300,7 @@ func TestPromoteTag(t *testing.T) {
 func TestDemoteTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	demote := func(id string) *httptest.ResponseRecorder {
 		w := rec()
@@ -3352,7 +3357,7 @@ func TestDemoteTag(t *testing.T) {
 
 func TestReevaluateIdentity(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	type reevaluateResponse struct {
 		BatchID       string `json:"batch_id"`
@@ -3389,7 +3394,7 @@ func TestTagSiblingsEndpoint(t *testing.T) {
 	if _, err := env.client.DB().ExecContext(ctx, "DELETE FROM tag_measurement"); err != nil {
 		t.Fatalf("clear measurement journal: %v", err)
 	}
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
 	type reading struct {
 		A    string `json:"a"`
@@ -3549,4 +3554,370 @@ func TestBatchOverviewNotFound(t *testing.T) {
 	r.SetPathValue("id", "missing-batch")
 	h.GetBatchSummary(w, r)
 	testutil.AssertEqual(t, w.Code, http.StatusNotFound, "single-batch summary of an unknown batch")
+}
+
+// TestFoldTag pins the operator fold endpoint: a fold that applies answers 204 and removes the loser,
+// a fold whose target is gone answers 409 rather than half-merging, and an unknown loser answers 404.
+func TestFoldTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	fold := func(body FoldTagRequest) *httptest.ResponseRecorder {
+		w := rec()
+		raw, err := json.Marshal(body)
+		testutil.AssertNoError(t, err, "encode body")
+		h.FoldTag(w, req(t, "POST", "/api/v1/tags/fold", raw))
+		return w
+	}
+
+	t.Run("folds a tag onto its canonical value", func(t *testing.T) {
+		database.MustCreateTag(t, env.client.Queries, "fold handler canonical")
+		loserID := database.MustCreateTag(t, env.client.Queries, "fold handler loser")
+		docID := database.CreateUniqueDocument(t, env.client.Queries, "fold handler doc")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, loserID)
+
+		w := fold(FoldTagRequest{Alias: "fold handler loser", Canonical: "fold handler canonical"})
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+
+		if _, err := env.client.Queries.GetTagByName(ctx, "fold handler loser"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the loser row should be gone, got err %v", err)
+		}
+	})
+
+	t.Run("an unknown loser returns 404", func(t *testing.T) {
+		testutil.AssertEqual(t,
+			fold(FoldTagRequest{Alias: "ghost fold loser", Canonical: "fold handler canonical"}).Code,
+			http.StatusNotFound, "status")
+	})
+
+	t.Run("a missing canonical returns 409", func(t *testing.T) {
+		database.MustCreateTag(t, env.client.Queries, "fold handler orphan")
+
+		w := fold(FoldTagRequest{Alias: "fold handler orphan", Canonical: "fold handler ghost"})
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+
+		if _, err := env.client.Queries.GetTagByName(ctx, "fold handler orphan"); err != nil {
+			t.Errorf("the loser must survive a refused fold: %v", err)
+		}
+	})
+
+	t.Run("blank names return 400", func(t *testing.T) {
+		testutil.AssertEqual(t,
+			fold(FoldTagRequest{Alias: "", Canonical: "fold handler canonical"}).Code,
+			http.StatusBadRequest, "status")
+	})
+
+	t.Run("a malformed body returns 400", func(t *testing.T) {
+		w := rec()
+		h.FoldTag(w, req(t, "POST", "/api/v1/tags/fold", []byte("not json")))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestRetireTag pins the soft-delete endpoint: the row goes without a blocklist entry, a promoted tag
+// is refused so only Demote drops standing, and an unknown id answers 404.
+func TestRetireTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	retire := func(id string) *httptest.ResponseRecorder {
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/"+id+"/retire", nil)
+		r.SetPathValue("id", id)
+		h.RetireTag(w, r)
+		return w
+	}
+
+	t.Run("retires a provisional value without blocklisting it", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "retire handler value")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		testutil.AssertEqual(t, retire(fmt.Sprintf("%d", id)).Code, http.StatusNoContent, "status")
+		if _, err := env.client.Queries.GetTagByName(ctx, "retire handler value"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the row should be gone, got err %v", err)
+		}
+		var blocked int
+		testutil.AssertNoError(t,
+			env.client.DB().QueryRowContext(ctx,
+				"SELECT count(*) FROM deleted_tag WHERE name = $1", "retire handler value").Scan(&blocked),
+			"count blocklist rows")
+		testutil.AssertEqual(t, blocked, 0, "the name stays eligible for enrichment")
+	})
+
+	t.Run("a promoted value returns 409", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "retire handler promoted")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set standing")
+
+		testutil.AssertEqual(t, retire(fmt.Sprintf("%d", id)).Code, http.StatusConflict, "status")
+		if _, err := env.client.Queries.GetTagByName(ctx, "retire handler promoted"); err != nil {
+			t.Errorf("a promoted value must survive a retire: %v", err)
+		}
+	})
+
+	t.Run("not found returns 404", func(t *testing.T) {
+		testutil.AssertEqual(t, retire("999999").Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("invalid id returns 400", func(t *testing.T) {
+		testutil.AssertEqual(t, retire("abc").Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestCompositionDecision pins the operator decision endpoint: a valid split or keep answers 204, a
+// compound that is no longer provisional is refused with 409, and a decision the boundary cannot
+// accept answers 400 without touching the store.
+func TestCompositionDecision(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	decide := func(id string, body CompositionDecisionRequest) *httptest.ResponseRecorder {
+		w := rec()
+		raw, err := json.Marshal(body)
+		testutil.AssertNoError(t, err, "encode body")
+		r := req(t, "POST", "/api/v1/tags/"+id+"/composition", raw)
+		r.SetPathValue("id", id)
+		h.CompositionDecision(w, r)
+		return w
+	}
+
+	t.Run("a keep answers 204 and journals the decision", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "decision handler keep compound")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		w := decide(fmt.Sprintf("%d", id), CompositionDecisionRequest{Disposition: "keep"})
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+
+		rows, err := env.client.Queries.LatestCompositionEventsForNames(ctx, []string{"decision handler keep compound"})
+		testutil.AssertNoError(t, err, "read the journal")
+		testutil.AssertEqual(t, len(rows), 1, "one journal row")
+		testutil.AssertEqual(t, rows[0].Reason, tags.CompositionReasonOperatorKeep, "reason")
+	})
+
+	t.Run("a split answers 204 and removes the compound", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "decision handler split compound")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		w := decide(fmt.Sprintf("%d", id),
+			CompositionDecisionRequest{Disposition: "split", Parts: []string{"decision handler part one"}})
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+
+		if _, err := env.client.Queries.GetTagByName(ctx, "decision handler split compound"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the compound should be gone, got err %v", err)
+		}
+	})
+
+	t.Run("a promoted compound returns 409", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "decision handler promoted compound")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set standing")
+
+		w := decide(fmt.Sprintf("%d", id), CompositionDecisionRequest{Disposition: "keep"})
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+	})
+
+	t.Run("a missing tag returns 404", func(t *testing.T) {
+		testutil.AssertEqual(t,
+			decide("999999", CompositionDecisionRequest{Disposition: "keep"}).Code,
+			http.StatusNotFound, "status")
+	})
+
+	t.Run("an unknown disposition returns 400", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "decision handler bogus compound")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		w := decide(fmt.Sprintf("%d", id), CompositionDecisionRequest{Disposition: "bogus"})
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+
+	t.Run("too many parts returns 400", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "decision handler huge compound")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		parts := make([]string, maxCompositionParts+1)
+		for i := range parts {
+			parts[i] = fmt.Sprintf("decision handler part %d", i)
+		}
+		w := decide(fmt.Sprintf("%d", id), CompositionDecisionRequest{Disposition: "split", Parts: parts})
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if _, err := env.client.Queries.GetTagByName(ctx, "decision handler part 0"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("no part may be created for a rejected request, got err %v", err)
+		}
+	})
+
+	t.Run("an invalid id returns 400", func(t *testing.T) {
+		w := rec()
+		raw, err := json.Marshal(CompositionDecisionRequest{Disposition: "keep"})
+		testutil.AssertNoError(t, err, "encode body")
+		r := req(t, "POST", "/api/v1/tags/abc/composition", raw)
+		r.SetPathValue("id", "abc")
+		h.CompositionDecision(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestRejudgeTag pins the re-judge endpoint: an accepted request enqueues once per tag and scope and
+// answers 202, a repeat collapses into the active task, and a request with nothing to judge answers
+// 409 instead of queueing noise.
+func TestRejudgeTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	type rejudgeResponse struct {
+		BatchID       string `json:"batch_id"`
+		AlreadyQueued bool   `json:"already_queued"`
+	}
+
+	rejudge := func(id, scope string) *httptest.ResponseRecorder {
+		w := rec()
+		raw, err := json.Marshal(RejudgeTagRequest{Scope: scope})
+		testutil.AssertNoError(t, err, "encode body")
+		r := req(t, "POST", "/api/v1/tags/"+id+"/rejudge", raw)
+		r.SetPathValue("id", id)
+		h.RejudgeTag(w, r)
+		return w
+	}
+
+	quality := func(t *testing.T, name string) (int64, rejudgeResponse) {
+		t.Helper()
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		w := rejudge(fmt.Sprintf("%d", id), string(tags.RejudgeScopeQuality))
+		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
+		var resp rejudgeResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		return id, resp
+	}
+
+	t.Run("a quality re-judge queues once per tag", func(t *testing.T) {
+		id, first := quality(t, "rejudge handler unjudged")
+		testutil.AssertEqual(t, first.BatchID != "", true, "batch id present")
+		testutil.AssertEqual(t, first.AlreadyQueued, false, "queues on a cold queue")
+
+		again := rejudge(fmt.Sprintf("%d", id), string(tags.RejudgeScopeQuality))
+		testutil.AssertEqual(t, again.Code, http.StatusAccepted, "status")
+		var second rejudgeResponse
+		testutil.AssertNoError(t, json.NewDecoder(again.Body).Decode(&second), "decode")
+		testutil.AssertEqual(t, second.AlreadyQueued, true, "the first re-judge is still active")
+		testutil.AssertEqual(t, second.BatchID, "", "no second batch")
+	})
+
+	t.Run("a composition re-judge queues for a compound", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "rejudge bike repair")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+
+		w := rejudge(fmt.Sprintf("%d", id), string(tags.RejudgeScopeComposition))
+		testutil.AssertEqual(t, w.Code, http.StatusAccepted, "status")
+		var resp rejudgeResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.BatchID != "", true, "batch id present")
+	})
+
+	t.Run("a single-word tag has nothing to compose", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "rejudgesingle")
+		w := rejudge(fmt.Sprintf("%d", id), string(tags.RejudgeScopeComposition))
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+	})
+
+	t.Run("a judged tag has nothing to re-judge", func(t *testing.T) {
+		id, _ := quality(t, "rejudge handler judged")
+		docID := database.CreateUniqueDocument(t, env.client.Queries, "rejudge handler judged doc")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+		tag, err := env.client.Queries.GetTag(ctx, id)
+		testutil.AssertNoError(t, err, "read the tag")
+		_, err = env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       tag.Name,
+			Criteria:      json.RawMessage(`{"atomic":false}`),
+			Pass:          false,
+			VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		})
+		testutil.AssertNoError(t, err, "insert the quality event")
+
+		w := rejudge(fmt.Sprintf("%d", id), string(tags.RejudgeScopeQuality))
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+	})
+
+	t.Run("an unknown scope returns 400", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "rejudge handler bad scope")
+		testutil.AssertEqual(t, rejudge(fmt.Sprintf("%d", id), "bogus").Code, http.StatusBadRequest, "status")
+	})
+
+	t.Run("an unknown tag returns 404", func(t *testing.T) {
+		testutil.AssertEqual(t, rejudge("999999", string(tags.RejudgeScopeQuality)).Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("an invalid id returns 400", func(t *testing.T) {
+		testutil.AssertEqual(t, rejudge("abc", string(tags.RejudgeScopeQuality)).Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestListProvisionalCompositionAction pins the actionability class the queue derives from each
+// journal row: it is what drives which inline actions an entry offers, so a policy change in Go must
+// surface here.
+func TestListProvisionalCompositionAction(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	cases := []struct {
+		name        string
+		disposition tags.CompositionDisposition
+		reason      string
+		want        tags.CompositionAction
+	}{
+		{"action undecided split hold", tags.CompositionKeep, tags.CompositionReasonSplitDefer, tags.CompositionActionUndecided},
+		{"action named unit keep", tags.CompositionKeep, tags.CompositionReasonNamedUnitReconstructible, tags.CompositionActionKeep},
+		{"action decided drop", tags.CompositionDrop, tags.CompositionReasonNoDimension, tags.CompositionActionDrop},
+		{"action degraded keep", tags.CompositionKeep, tags.CompositionReasonJudgeUnavailable, tags.CompositionActionDegraded},
+		{"action final keep", tags.CompositionKeep, tags.CompositionReasonOperatorKeep, ""},
+	}
+
+	rows := make([]tags.CompositionRow, 0, len(cases))
+	for _, tc := range cases {
+		id := database.MustCreateTag(t, env.client.Queries, tc.name)
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		docID := database.CreateUniqueDocument(t, env.client.Queries, tc.name+" doc")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+		rows = append(rows, tags.CompositionRow{
+			DocumentID:      docID,
+			Candidate:       tc.name,
+			Disposition:     tc.disposition,
+			Reason:          tc.reason,
+			CriteriaVersion: analyzer.TagSplitVersion,
+		})
+	}
+	testutil.AssertNoError(t, env.tagSvc.RecordCompositionEvidence(ctx, rows), "write composition events")
+
+	w := rec()
+	h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var resp ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	byName := make(map[string]ProvisionalTagResponse, len(resp.Results))
+	for _, result := range resp.Results {
+		byName[result.Name] = result
+	}
+	for _, tc := range cases {
+		row, ok := byName[tc.name]
+		if !ok {
+			t.Errorf("tag %q missing from the queue", tc.name)
+			continue
+		}
+		testutil.AssertEqual(t, row.CompositionAction, tc.want, "action for "+tc.name)
+	}
 }

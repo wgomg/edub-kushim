@@ -316,8 +316,9 @@ store-changed signal protocol `TestOpenStoreSignal`). Its
 DB-gated tests `t.Skip` when `TEST_DATABASE_URL` is unset, so the package is
 listed in both CGo tiers.
 
-Also runs `internal/tags/curation` (tag CRUD, merge, aliases,
-composition-evidence writes). Its tests are ungated database tests, so it is
+Also runs `internal/tags/curation` (tag CRUD, merge, aliases, composition-evidence
+writes, the operator fold, composition-decision and retire paths, and the re-judge
+enqueue). Its tests are ungated database tests, so it is
 listed only in the DB tier, like `internal/api/handlers`.
 
 ```bash
@@ -355,8 +356,10 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   sort refetch, empty/error states, `onTotal` reporting), `FilterPanel.svelte` (filter-store wiring,
   tag autocomplete, failure toast), `UploadModal.svelte` (upload success/error paths),
   `tags/ProvisionalReview.svelte` (verdict labels: recorded outcome preferred, legacy rubric
-  fallback, unjudged names, the identity-hold, split-hold and degraded-reason pills, the
-  `not_form_genre` criterion chip; filters
+  fallback, unjudged names, the collapsed rubric — failing criteria plus the score — the
+  identity-hold, split-hold and degraded-reason pills, and the entry's actions: both fold
+  directions with their confirmation, split → parts editor, keep/apply-parts gating by
+  `composition_action`, re-judge, retire, rename and the labelled Help button; filters
   and paging: select → API args and `prov_*` URL sync incl. the tab hash, the name-search
   input → `q` argument with paging reset and `prov_q` sync, URL round-trip with
   invalid entries dropped, pager end states, last-page clamp after a reject, and the

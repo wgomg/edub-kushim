@@ -161,7 +161,8 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
   cadence.
 
 Behavior of the five tag passes (direct vs queued, gating, no-op conditions) is documented
-in [cli.md](cli.md#tag-passes); the underlying rules live in the
+in [cli.md](cli.md#tag-passes); the concepts the settings below govern — provisional standing,
+verdicts, holds, aliases and the review actions — are in [tags.md](tags.md). The underlying rules live in the
 [tag specs](../specs/tags/overview.md) and the
 [consolidation guide](../developer-guide/consolidation.md).
 

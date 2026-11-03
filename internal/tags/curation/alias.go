@@ -10,7 +10,45 @@ import (
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+// Fold collapses one live tag name onto another through ApplyAliasPlan, the operator's counterpart to
+// a confirmed identity fold: the canonical tag keeps its row and standing, the folded name's documents
+// move onto it, its aliases re-target, its row is deleted, and the alias table records the collapse.
+// The folded name must be a live tag (FoldNotFound otherwise); a canonical that is missing or an alias
+// that already exists leaves the store untouched and reports FoldNotApplied. It returns the number of
+// documents re-pointed.
+func (s *Tag) Fold(ctx context.Context, alias, canonical string) (types.FoldStatus, int64, error) {
+	aliasName := textnorm.NormalizeTag(alias)
+	canonicalName := textnorm.NormalizeTag(canonical)
+	if aliasName == "" || canonicalName == "" || aliasName == canonicalName {
+		return types.FoldNotApplied, 0, nil
+	}
+
+	if _, err := s.GetByName(ctx, aliasName); err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			return types.FoldNotFound, 0, nil
+		}
+		return types.FoldNotApplied, 0, err
+	}
+
+	outcomes, err := s.ApplyAliasPlan(ctx, []tags.AliasAction{{
+		AliasName:         aliasName,
+		Canonical:         canonicalName,
+		RemoveExistingTag: true,
+	}})
+	if err != nil {
+		return types.FoldNotApplied, 0, err
+	}
+	if len(outcomes) == 0 || !outcomes[0].Applied {
+		return types.FoldNotApplied, 0, nil
+	}
+
+	s.logger.Info("", "tag fold: %q -> %q (reason=human-fold, reassigned=%d)",
+		aliasName, canonicalName, outcomes[0].Reassigned)
+	return types.FoldApplied, outcomes[0].Reassigned, nil
+}
 
 // ApplyAliasPlan applies the planned alias actions in one transaction and returns, per action in order,
 // what happened: whether it applied and how many documents it re-pointed; blocked names are skipped,

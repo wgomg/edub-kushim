@@ -46,6 +46,7 @@ type Server struct {
 	tag           *curation.Tag
 	tagIdentity   *curation.TagIdentity
 	tagAudit      *curation.TagAudit
+	tagRejudge    *curation.TagRejudge
 	configWatcher *config.Watcher
 	db            *sql.DB
 	client        *database.Client
@@ -104,6 +105,7 @@ func (s *Server) rebuild(client *database.Client) {
 		types.Task.Type.MigrateStorage: {DedupKey: task.ConstantDedupKey(configtask.DedupKeyMigrateStorage)},
 		types.Task.Type.TagIdentity:    {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
 		types.Task.Type.TagAudit:       {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
+		types.Task.Type.TagRejudge:     {DedupKey: curation.TagRejudgeDedupKey},
 		types.Task.Type.TagMeasure:     {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
 	})
 	if err != nil {
@@ -120,6 +122,7 @@ func (s *Server) rebuild(client *database.Client) {
 	services.ReEnrich = service.NewReEnrich(client.Queries, enqueuer)
 	s.tagIdentity = curation.NewTagIdentity(client.Queries, enqueuer)
 	s.tagAudit = curation.NewTagAudit(client.Queries, enqueuer)
+	s.tagRejudge = curation.NewTagRejudge(enqueuer)
 	services.ErroredFiles = service.NewErroredFiles(cfg, s.logger)
 
 	onConfigSet := func(cfg *config.Config) {
@@ -131,7 +134,7 @@ func (s *Server) rebuild(client *database.Client) {
 
 	getConfigFn := func() *config.Config { return s.cfg.Load() }
 
-	mux := registerRoutes(s.logger, client, enqueuer, getConfigFn, onConfigSet, services, s.tag, s.tagIdentity, s.tagAudit)
+	mux := registerRoutes(s.logger, client, enqueuer, getConfigFn, onConfigSet, services, s.tag, s.tagIdentity, s.tagAudit, s.tagRejudge)
 	handlers.RegisterStaticRoutes(mux, static.WebFS())
 
 	s.services = services
@@ -191,6 +194,7 @@ func registerRoutes(
 	tag *curation.Tag,
 	tagIdentity *curation.TagIdentity,
 	tagAudit *curation.TagAudit,
+	tagRejudge *curation.TagRejudge,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	engine := search.NewEngine(logger, client)
@@ -271,7 +275,7 @@ func registerRoutes(
 
 	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
 
-	tagHandler := handlers.NewTagHandler(tag, tagIdentity, tagAudit, logger)
+	tagHandler := handlers.NewTagHandler(tag, tagIdentity, tagAudit, tagRejudge, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
 	mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(http.HandlerFunc(tagHandler.ListDeleted)))
 	mux.Handle("GET /api/v1/tags/provisional", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListProvisional)))
@@ -289,6 +293,10 @@ func registerRoutes(
 	mux.Handle("GET /api/v1/tags/siblings", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListSiblings)))
 	mux.Handle("POST /api/v1/tags/{id}/promote", RequireRole(editor...)(http.HandlerFunc(tagHandler.PromoteTag)))
 	mux.Handle("POST /api/v1/tags/{id}/demote", RequireRole(editor...)(http.HandlerFunc(tagHandler.DemoteTag)))
+	mux.Handle("POST /api/v1/tags/fold", RequireRole(editor...)(http.HandlerFunc(tagHandler.FoldTag)))
+	mux.Handle("POST /api/v1/tags/{id}/composition", RequireRole(editor...)(http.HandlerFunc(tagHandler.CompositionDecision)))
+	mux.Handle("POST /api/v1/tags/{id}/retire", RequireRole(editor...)(http.HandlerFunc(tagHandler.RetireTag)))
+	mux.Handle("POST /api/v1/tags/{id}/rejudge", RequireRole(editor...)(http.HandlerFunc(tagHandler.RejudgeTag)))
 
 	peopleHandler := handlers.NewPeopleHandler(services, logger)
 	mux.Handle("GET /api/v1/people", RequireRole(viewer...)(http.HandlerFunc(peopleHandler.List)))

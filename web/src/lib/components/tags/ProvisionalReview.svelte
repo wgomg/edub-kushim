@@ -5,6 +5,9 @@
 	import { resolve } from '$app/paths';
 	import { api, encodeCriteria } from '#lib/api.js';
 	import Icon from '#lib/components/Icon.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import SlideOver from '#lib/components/SlideOver.svelte';
+	import TagReviewHelp from '#lib/components/tags/TagReviewHelp.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import { documentsForTagHref, documentsLabel, formatNumber } from '#lib/utils/html.js';
@@ -28,6 +31,10 @@
 		{ value: 'absent', label: '— absent' }
 	];
 
+	// defer records the judge's abstention, not a content criterion: the verdict badge already says
+	// when it fired, so the rubric counts only the five substantive checks
+	const rubricCriteria = criteria.filter((c) => c.key !== 'defer');
+
 	const VERDICT_FILTERS = [
 		{ value: '', label: 'Any verdict' },
 		{ value: 'none', label: 'no verdict' },
@@ -36,15 +43,44 @@
 		{ value: 'reject', label: 'judge rejected' }
 	];
 
-	const cardClass = 'rounded-lg border border-clay-800 bg-clay-900 p-4';
+	const cardClass =
+		'grid grid-cols-1 gap-2 rounded-lg border border-clay-800 bg-clay-900 p-3.5 md:grid-cols-[minmax(0,1fr)_16rem] md:gap-x-3 md:pl-4';
+	const contentClass = 'order-1 flex min-w-0 flex-col gap-1.5 md:col-start-1 md:row-start-1';
+	const sideClass =
+		'contents md:col-start-2 md:row-start-1 md:flex md:flex-col md:gap-1 md:self-start md:border-l md:border-clay-800 md:pl-3';
+	const decisionsClass =
+		'order-2 grid grid-cols-2 gap-1.5 border-t border-clay-800 pt-2 md:order-none md:border-t-0 md:pt-0';
+	const sideSeparatorClass = 'my-1.5 hidden h-px bg-clay-800 md:block';
+	const utilitiesClass = 'order-4 flex flex-wrap gap-x-2.5 gap-y-0.5 md:order-none';
+	const resolveClass =
+		'order-3 flex flex-wrap items-center gap-1.5 border-t border-clay-800 pt-2 md:col-span-2 md:order-none';
+	const resolveLabelClass =
+		'shrink-0 text-[0.59375rem] font-semibold tracking-[0.09em] text-parchment-600 uppercase';
+
 	const criteriaPill = 'rounded-full px-2 py-0.5 font-mono text-[0.6875rem] whitespace-nowrap';
 	const pillBase =
 		'rounded-full px-2 py-0.5 font-mono text-[0.6875rem] font-medium whitespace-nowrap';
 	const pillPlain = `${pillBase} bg-clay-800 text-parchment-400`;
 	const pillOk = `${pillBase} bg-emerald-600/20 text-emerald-500`;
 	const pillWarn = `${pillBase} bg-amber-600/20 text-amber-400`;
-	const btnPrimary =
-		'rounded-lg bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
+	const pillButton =
+		'cursor-pointer hover:brightness-125 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	const summaryPill = `${criteriaPill} bg-clay-800 text-parchment-500`;
+
+	const btnApprove =
+		'inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-gold-500 px-2 py-1 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
+	const btnReject =
+		'inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs text-parchment-400 hover:bg-terracotta-900/40 hover:text-terracotta-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
+	const btnAction =
+		'inline-flex max-w-full items-center gap-1.5 rounded-md border border-clay-700 px-2.5 py-1 text-xs font-medium text-parchment-300 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
+	const btnUtil =
+		'inline-flex items-center gap-1 rounded px-0 py-0.5 text-[0.6875rem] text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
+	const btnUtilDanger = `${btnUtil} hover:text-terracotta-400`;
+	const btnHelp =
+		'inline-flex items-center gap-1.5 rounded-lg border border-clay-700 px-2.5 py-1 text-xs font-medium text-parchment-300 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+
+	const iconButton =
+		'rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
 	const btnGhost =
 		'rounded-lg px-3 py-1.5 text-xs text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
 	const countLink =
@@ -53,6 +89,10 @@
 		'rounded-md border border-clay-700 bg-clay-900 px-2 py-1 text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
 	const pagerButton =
 		'rounded-md border border-clay-700 px-2.5 py-1 text-parchment-400 hover:border-gold-500 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
+	const inputClass =
+		'w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	const btnPrimary =
+		'rounded-lg bg-gold-500 px-3 py-1.5 text-xs font-medium text-clay-950 hover:bg-gold-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
 
 	let { onchanged = null } = $props();
 
@@ -68,6 +108,17 @@
 	let verdictFilter = $state('');
 	let query = $state('');
 	let loadSeq = 0;
+
+	let helpOpen = $state(false);
+	let helpSection = $state('overview');
+	let renaming = $state(null);
+	let renameName = $state('');
+	let renameError = $state('');
+	let renamingBusy = $state(false);
+	let splitting = $state(null);
+	let splitParts = $state([]);
+	let splitError = $state('');
+	let splittingBusy = $state(false);
 
 	let hasFilters = $derived(
 		query !== '' || criteria.some((c) => filterStates[c.key]) || verdictFilter !== ''
@@ -191,6 +242,11 @@
 		syncUrl();
 	}
 
+	function openHelp(section) {
+		helpSection = section;
+		helpOpen = true;
+	}
+
 	async function approve(tag) {
 		acting = tag.id;
 		const result = await api.tags.promote(tag.id);
@@ -223,6 +279,199 @@
 		await load();
 	}
 
+	async function retire(tag) {
+		const ok = await confirmStore.confirm({
+			title: 'Retire tag',
+			message: `Retire "${tag.name}"? The tag is removed now and its ${documentsLabel(tag.document_count)} lose the assignment. The name is not blocked, so enrichment may propose it again.`,
+			danger: true
+		});
+		if (!ok) return;
+		acting = tag.id;
+		const result = await api.tags.retire(tag.id);
+		acting = null;
+		if (result.ok) {
+			toastStore.success(`Retired "${tag.name}"`);
+			if (onchanged) onchanged();
+		} else {
+			toastStore.error('Failed to retire tag');
+		}
+		await load();
+	}
+
+	async function foldInto(tag) {
+		const anchor = tag.identity_hold;
+		const ok = await confirmStore.confirm({
+			title: 'Fold into the existing value',
+			message: `Fold "${tag.name}" into "${anchor}"? Its ${documentsLabel(tag.document_count)} move onto "${anchor}", and "${tag.name}" stops existing as a tag.`,
+			danger: true
+		});
+		if (!ok) return;
+		acting = tag.id;
+		const result = await api.tags.fold(tag.name, anchor);
+		acting = null;
+		if (result.ok) {
+			toastStore.success(`Folded "${tag.name}" into "${anchor}"`);
+			if (onchanged) onchanged();
+		} else if (result.status === 409) {
+			toastStore.error('Fold did not apply — the target may already be gone');
+		} else {
+			toastStore.error('Failed to fold tag');
+		}
+		await load();
+	}
+
+	async function makeCanonical(tag) {
+		const anchor = tag.identity_hold;
+		const ok = await confirmStore.confirm({
+			title: 'Make this tag canonical',
+			message: `Fold "${anchor}" into "${tag.name}"? "${anchor}" loses its row and standing, its documents move onto "${tag.name}", and "${tag.name}" stays provisional until approved.`,
+			danger: true
+		});
+		if (!ok) return;
+		acting = tag.id;
+		const result = await api.tags.fold(anchor, tag.name);
+		acting = null;
+		if (result.ok) {
+			toastStore.success(`Folded "${anchor}" into "${tag.name}"`);
+			if (onchanged) onchanged();
+		} else if (result.status === 409) {
+			toastStore.error('Fold did not apply — the target may already be gone');
+		} else {
+			toastStore.error('Failed to fold tag');
+		}
+		await load();
+	}
+
+	async function keepWhole(tag) {
+		const ok = await confirmStore.confirm({
+			title: 'Keep the compound whole',
+			message: `Keep "${tag.name}" whole? The hold is cleared and the value stays as it is.`
+		});
+		if (!ok) return;
+		await submitComposition(tag, 'keep', []);
+	}
+
+	async function applyParts(tag) {
+		const parts = tag.composition_parts ?? [];
+		const ok = await confirmStore.confirm({
+			title: 'Apply the parts alongside',
+			message: `Apply ${parts.length} part(s) alongside "${tag.name}"? No documents move; the parts are attached to the same documents.`
+		});
+		if (!ok) return;
+		await submitComposition(tag, 'keep', parts);
+	}
+
+	async function submitComposition(tag, disposition, parts) {
+		acting = tag.id;
+		const result = await api.tags.compositionDecision(tag.id, disposition, parts);
+		acting = null;
+		if (result.ok) {
+			if (disposition === 'split') toastStore.success(`Split "${tag.name}"`);
+			else if (parts.length > 0) toastStore.success(`Applied the parts alongside "${tag.name}"`);
+			else toastStore.success(`Kept "${tag.name}" whole`);
+			if (onchanged) onchanged();
+		} else if (result.status === 409) {
+			toastStore.error('Tag is no longer provisional');
+		} else {
+			toastStore.error('Failed to apply the decision');
+		}
+		await load();
+	}
+
+	function openSplit(tag) {
+		splitting = tag;
+		splitParts = (tag.composition_parts ?? []).map((name) => ({ name }));
+		if (splitParts.length === 0) splitParts = [{ name: '' }];
+		splitError = '';
+	}
+
+	function addSplitPart() {
+		splitParts = [...splitParts, { name: '' }];
+	}
+
+	function removeSplitPart(index) {
+		splitParts = splitParts.filter((_, i) => i !== index);
+		if (splitParts.length === 0) splitParts = [{ name: '' }];
+	}
+
+	async function submitSplit() {
+		if (!splitting) return;
+		const parts = splitParts.map((part) => part.name.trim()).filter(Boolean);
+		if (parts.length === 0) {
+			splitError = 'At least one component is required';
+			return;
+		}
+		splittingBusy = true;
+		const tag = splitting;
+		const result = await api.tags.compositionDecision(tag.id, 'split', parts);
+		splittingBusy = false;
+		if (result.ok) {
+			toastStore.success(`Split "${tag.name}"`);
+			splitting = null;
+			if (onchanged) onchanged();
+			await load();
+		} else if (result.status === 409) {
+			splitError = 'Tag is no longer provisional';
+		} else {
+			splitError = 'Failed to split the tag';
+		}
+	}
+
+	function openRename(tag) {
+		renaming = tag;
+		renameName = tag.name;
+		renameError = '';
+	}
+
+	async function submitRename() {
+		if (!renaming) return;
+		const name = renameName.trim();
+		if (!name) {
+			renameError = 'Tag name is required';
+			return;
+		}
+		renamingBusy = true;
+		const tag = renaming;
+		const result = await api.tags.update(tag.id, name);
+		renamingBusy = false;
+		if (result.ok) {
+			toastStore.success(`Renamed "${tag.name}"`);
+			renaming = null;
+			if (onchanged) onchanged();
+			await load();
+		} else if (result.status === 409) {
+			renameError = 'Tag already exists';
+		} else {
+			renameError = 'Failed to rename the tag';
+		}
+	}
+
+	async function judgeNow(tag) {
+		await enqueueRejudge(tag, 'quality');
+	}
+
+	async function rejudgeComposition(tag) {
+		await enqueueRejudge(tag, 'composition');
+	}
+
+	async function enqueueRejudge(tag, scope) {
+		acting = tag.id;
+		const result = await api.tags.rejudge(tag.id, scope);
+		acting = null;
+		if (result.ok) {
+			toastStore.success(rejudgeMessage(scope));
+		} else if (result.status === 409) {
+			toastStore.error(result.data?.error ?? 'Nothing to re-judge');
+		} else {
+			toastStore.error('Failed to queue the re-judge');
+		}
+		await load();
+	}
+
+	function rejudgeMessage(scope) {
+		return scope === 'composition' ? 'Re-judge queued' : 'Quality judge queued';
+	}
+
 	async function reevaluateIdentity() {
 		identityActing = true;
 		const result = await api.tags.reevaluateIdentity();
@@ -245,6 +494,31 @@
 		if (value === true) return 'bg-emerald-600/20 text-emerald-500';
 		if (value === false) return 'bg-clay-800 text-terracotta-500';
 		return 'bg-clay-800 text-parchment-600';
+	}
+
+	function passingCount(tag) {
+		return rubricCriteria.filter((c) => tag.verdict.criteria?.[c.key] === true).length;
+	}
+
+	function failingCriteria(tag) {
+		return rubricCriteria.filter((c) => tag.verdict.criteria?.[c.key] !== true);
+	}
+
+	function rubricSummary(tag) {
+		const passed = passingCount(tag);
+		return passed === rubricCriteria.length
+			? `rubric ${passed}/${rubricCriteria.length} ✓`
+			: `rubric ${passed}/${rubricCriteria.length}`;
+	}
+
+	function rubricTitle(tag) {
+		const detail = rubricCriteria
+			.map((c) => `${c.label} ${criterionMark(tag.verdict.criteria?.[c.key])}`)
+			.join(', ');
+		const defer = tag.verdict.criteria?.defer;
+		const deferDetail =
+			defer === true ? 'defer: abstained' : defer === false ? 'defer: did not abstain' : 'defer: —';
+		return [verdictMeta(tag), detail, deferDetail].filter(Boolean).join(' · ');
 	}
 
 	function verdictPillClass(tag) {
@@ -278,7 +552,7 @@
 	}
 </script>
 
-<div class="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+<div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
 	<h2 class="text-base font-semibold text-parchment-200">Provisional queue</h2>
 	{#if !loading && !error}
 		<span class="text-[0.8125rem] text-parchment-500">
@@ -286,16 +560,27 @@
 				· filtered{/if}
 		</span>
 	{/if}
-	{#if pendingTotal > 0}
+	<div class="ml-auto flex items-center gap-2">
+		{#if pendingTotal > 0}
+			<button
+				onclick={reevaluateIdentity}
+				disabled={identityActing}
+				class={btnGhost}
+				title="Adjudicate the pending identity evidence now instead of waiting for the daily identity pass"
+			>
+				{identityActing ? 'Queueing…' : 'Reevaluate identity'}
+			</button>
+		{/if}
 		<button
-			onclick={reevaluateIdentity}
-			disabled={identityActing}
-			class="{btnGhost} ml-auto"
-			title="Adjudicate the pending identity evidence now instead of waiting for the daily identity pass"
+			type="button"
+			class={btnHelp}
+			title="Open the tag review guide"
+			onclick={() => openHelp('overview')}
 		>
-			{identityActing ? 'Queueing…' : 'Reevaluate identity'}
+			<Icon name="help" size={14} />
+			Help
 		</button>
-	{/if}
+	</div>
 </div>
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
@@ -352,8 +637,13 @@
 
 <p class="mb-4 max-w-3xl text-[0.8125rem] text-parchment-500">
 	New tags stay provisional until the admission decision admits them and enough live documents carry
-	them to clear the promotion floor; uncertain ones wait here for review. Approve promotes a tag
-	into the shared vocabulary; reject deletes it and blocks it from enrichment.
+	them to clear the promotion floor. Approve promotes a tag into the shared vocabulary; reject
+	deletes it and blocks it from enrichment.
+	<button
+		type="button"
+		class="underline underline-offset-[3px] hover:text-parchment-300"
+		onclick={() => openHelp('overview')}>How this queue works</button
+	>.
 </p>
 
 {#if loading}
@@ -386,81 +676,231 @@
 		{/if}
 	</div>
 {:else}
-	<ul class="flex flex-col gap-3">
+	<ul class="flex flex-col gap-2">
 		{#each tags as tag (tag.id)}
 			<li class={cardClass}>
-				<div class="flex flex-wrap items-center gap-2">
-					<span class="text-[0.9375rem] font-semibold text-parchment-200">{tag.name}</span>
-					<a href={resolve(documentsForTagHref(tag.name))} class={countLink}>
-						<Icon name="external-link" size={12} class="text-lapis-400" />
-						{documentsLabel(tag.document_count)}
-					</a>
-					<span class="text-xs text-parchment-500">
-						· created {new Date(tag.created_at).toLocaleDateString()}
-					</span>
-					<span class={verdictPillClass(tag)} title={verdictTitle(tag)}>{verdictLabel(tag)}</span>
-					{#if tag.pending_identity > 0}
-						<span
-							class={pillWarn}
-							title="This tag is waiting for a same-intent decision; the daily identity pass resolves it, or trigger the reevaluation"
-						>
-							identity pending
-						</span>
-					{/if}
-					{#if tag.identity_hold}
-						<span
-							class={pillWarn}
-							title="The identity judge refused a fold of this tag onto that store value; promotion waits for review"
-						>
-							identity hold → {tag.identity_hold}
-						</span>
-					{/if}
-					{#if tag.composition_hold}
-						<span
-							class={pillWarn}
-							title="The split decision could not settle this compound; promotion waits for review"
-						>
-							split hold → {tag.composition_hold}
-						</span>
-					{/if}
-					{#if tag.composition_reason === 'judge_unavailable' && !tag.composition_hold}
-						<span
-							class={pillPlain}
-							title="No split judge was available; the compound was kept whole and is re-judged when emitted again"
-						>
-							composition → judge_unavailable
-						</span>
-					{/if}
-					{#if tag.demoted_at}
-						<span class={pillWarn} title="This tag's standing was revoked; approve to restore it">
-							demoted → {demotionLabel(tag.demoted_reason)}
-						</span>
-					{/if}
-				</div>
-				{#if tag.verdict}
-					<div class="mt-2.5 flex flex-wrap items-center gap-1.5">
-						{#each criteria as c (c.key)}
-							<span class="{criteriaPill} {criterionClass(tag.verdict.criteria?.[c.key])}">
-								{c.label}
-								{criterionMark(tag.verdict.criteria?.[c.key])}
-							</span>
-						{/each}
-						<span class="font-mono text-[0.6875rem] text-parchment-600">
-							{verdictMeta(tag)}
+				<div class={contentClass}>
+					<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+						<span class="text-[0.9375rem] font-semibold text-parchment-200">{tag.name}</span>
+						<a href={resolve(documentsForTagHref(tag.name))} class={countLink}>
+							<Icon name="external-link" size={12} class="text-lapis-400" />
+							{documentsLabel(tag.document_count)}
+						</a>
+						<span class="text-xs text-parchment-500">
+							· created {new Date(tag.created_at).toLocaleDateString()}
 						</span>
 					</div>
-				{/if}
-				<div
-					class="mt-3 flex flex-wrap items-center gap-2 border-t border-dashed border-clay-800 pt-3"
-				>
-					<span class="flex-1"></span>
-					<button onclick={() => approve(tag)} disabled={acting === tag.id} class={btnPrimary}>
-						Approve
-					</button>
-					<button onclick={() => reject(tag)} disabled={acting === tag.id} class={btnGhost}>
-						Reject
-					</button>
+
+					<div class="flex flex-wrap items-center gap-1.5">
+						<button
+							type="button"
+							class="{verdictPillClass(tag)} {pillButton}"
+							title={verdictTitle(tag)}
+							onclick={() => openHelp('verdict')}>{verdictLabel(tag)}</button
+						>
+						{#if tag.pending_identity > 0}
+							<button
+								type="button"
+								class="{pillWarn} {pillButton}"
+								title="This tag is waiting for a same-intent decision; the daily identity pass resolves it, or trigger the reevaluation"
+								onclick={() => openHelp('identity-pending')}>identity pending</button
+							>
+						{/if}
+						{#if tag.identity_hold}
+							<button
+								type="button"
+								class="{pillWarn} {pillButton}"
+								title="The identity judge refused a fold of this tag onto that store value; promotion waits for review"
+								onclick={() => openHelp('identity-hold')}
+								>identity hold → {tag.identity_hold}</button
+							>
+						{/if}
+						{#if tag.composition_hold}
+							<button
+								type="button"
+								class="{pillWarn} {pillButton}"
+								title="The split decision could not settle this compound; promotion waits for review"
+								onclick={() => openHelp('split-hold')}>split hold → {tag.composition_hold}</button
+							>
+						{/if}
+						{#if tag.composition_reason === 'judge_unavailable' && !tag.composition_hold}
+							<button
+								type="button"
+								class="{pillPlain} {pillButton}"
+								title="No split judge was available; the compound was kept whole and is re-judged when emitted again"
+								onclick={() => openHelp('composition-degraded')}
+								>composition → judge_unavailable</button
+							>
+						{/if}
+						{#if tag.demoted_at}
+							<button
+								type="button"
+								class="{pillWarn} {pillButton}"
+								title="This tag's standing was revoked; approve to restore it"
+								onclick={() => openHelp('demoted')}
+								>demoted → {demotionLabel(tag.demoted_reason)}</button
+							>
+						{/if}
+					</div>
+
+					{#if tag.verdict?.criteria}
+						<div class="flex flex-wrap items-center gap-1.5" title={rubricTitle(tag)}>
+							{#each failingCriteria(tag) as c (c.key)}
+								<span class="{criteriaPill} {criterionClass(tag.verdict.criteria?.[c.key])}">
+									{c.label}
+									{criterionMark(tag.verdict.criteria?.[c.key])}
+								</span>
+							{/each}
+							<span class={summaryPill}>{rubricSummary(tag)}</span>
+						</div>
+					{/if}
 				</div>
+
+				<div class={sideClass}>
+					<div class={decisionsClass}>
+						<button
+							type="button"
+							class={btnApprove}
+							title="Approve — promote into the shared vocabulary"
+							disabled={acting === tag.id}
+							onclick={() => approve(tag)}
+						>
+							<Icon name="check" size={14} />
+							Approve
+						</button>
+						<button
+							type="button"
+							class={btnReject}
+							title="Reject — delete and block the name"
+							disabled={acting === tag.id}
+							onclick={() => reject(tag)}
+						>
+							<Icon name="x" size={14} />
+							Reject
+						</button>
+					</div>
+					<div class={sideSeparatorClass}></div>
+					<div class={utilitiesClass}>
+						{#if !tag.verdict}
+							<button
+								type="button"
+								class={btnUtil}
+								title="Judge this tag now"
+								disabled={acting === tag.id}
+								onclick={() => judgeNow(tag)}
+							>
+								<Icon name="judge-now" size={13} />
+								Judge now
+							</button>
+						{/if}
+						<button
+							type="button"
+							class={btnUtil}
+							title="Rename this tag"
+							disabled={acting === tag.id}
+							onclick={() => openRename(tag)}
+						>
+							<Icon name="pencil" size={13} />
+							Rename
+						</button>
+						<button
+							type="button"
+							class={btnUtilDanger}
+							title="Retire — remove the tag without blocking the name"
+							disabled={acting === tag.id}
+							onclick={() => retire(tag)}
+						>
+							<Icon name="retire" size={13} />
+							Retire
+						</button>
+					</div>
+				</div>
+
+				{#if tag.identity_hold || tag.composition_action === 'undecided' || tag.composition_action === 'keep' || tag.composition_action === 'degraded'}
+					<div class={resolveClass}>
+						<span class={resolveLabelClass}>Resolve</span>
+						{#if tag.identity_hold}
+							<button
+								type="button"
+								class={btnAction}
+								title="Fold this tag into “{tag.identity_hold}”: its documents move there and this name becomes an alias"
+								disabled={acting === tag.id}
+								onclick={() => foldInto(tag)}
+							>
+								<Icon name="fold-into" size={13} />
+								Fold into “{tag.identity_hold}”
+							</button>
+							<button
+								type="button"
+								class={btnAction}
+								title="Fold “{tag.identity_hold}” into this tag: this name becomes canonical"
+								disabled={acting === tag.id}
+								onclick={() => makeCanonical(tag)}
+							>
+								<Icon name="make-canonical" size={13} />
+								Make canonical
+							</button>
+						{/if}
+						{#if tag.composition_action === 'undecided'}
+							<button
+								type="button"
+								class={btnAction}
+								title="Split the compound into its components…"
+								disabled={acting === tag.id}
+								onclick={() => openSplit(tag)}
+							>
+								<Icon name="split" size={13} />
+								Split now…
+							</button>
+							<button
+								type="button"
+								class={btnAction}
+								title="Record that the compound is a value in its own right"
+								disabled={acting === tag.id}
+								onclick={() => keepWhole(tag)}
+							>
+								<Icon name="keep-whole" size={13} />
+								Keep whole
+							</button>
+						{/if}
+						{#if tag.composition_action === 'keep'}
+							{#if (tag.composition_parts ?? []).length > 0}
+								<button
+									type="button"
+									class={btnAction}
+									title="Apply the parts alongside the compound"
+									disabled={acting === tag.id}
+									onclick={() => applyParts(tag)}
+								>
+									<Icon name="apply-parts" size={13} />
+									Apply parts alongside
+								</button>
+							{/if}
+							<button
+								type="button"
+								class={btnAction}
+								title="Record that the compound is a value in its own right"
+								disabled={acting === tag.id}
+								onclick={() => keepWhole(tag)}
+							>
+								<Icon name="keep-whole" size={13} />
+								Keep whole
+							</button>
+						{/if}
+						{#if tag.composition_action === 'degraded'}
+							<button
+								type="button"
+								class={btnAction}
+								title="Queue a fresh composition judgment"
+								disabled={acting === tag.id}
+								onclick={() => rejudgeComposition(tag)}
+							>
+								<Icon name="rotate-cw" size={13} />
+								Re-judge
+							</button>
+						{/if}
+					</div>
+				{/if}
 			</li>
 		{/each}
 	</ul>
@@ -478,3 +918,123 @@
 		</div>
 	{/if}
 {/if}
+
+<SlideOver open={helpOpen} title="Tag review guide" onClose={() => (helpOpen = false)}>
+	<TagReviewHelp section={helpSection} />
+</SlideOver>
+
+<Modal
+	open={renaming !== null}
+	title="Rename tag"
+	onClose={() => {
+		renaming = null;
+		renamingBusy = false;
+	}}
+>
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			submitRename();
+		}}
+	>
+		<div class="space-y-4">
+			<div>
+				<label for="rename-tag" class="mb-1 block text-xs font-medium text-parchment-400"
+					>Name</label
+				>
+				<input
+					id="rename-tag"
+					name="rename-tag"
+					type="text"
+					bind:value={renameName}
+					autocomplete="off"
+					class={inputClass}
+				/>
+				<p class="mt-1.5 text-[0.75rem] text-parchment-600">
+					The verdict and hold journals are keyed by name, so the tag shows no verdict until it is
+					judged again under the new name.
+				</p>
+			</div>
+			{#if renameError}
+				<p class="text-sm text-terracotta-500" aria-live="polite">{renameError}</p>
+			{/if}
+			<div class="flex justify-end gap-2">
+				<button
+					type="button"
+					onclick={() => (renaming = null)}
+					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					Cancel
+				</button>
+				<button type="submit" disabled={renamingBusy} class={btnPrimary}>
+					{renamingBusy ? 'Saving…' : 'Save'}
+				</button>
+			</div>
+		</div>
+	</form>
+</Modal>
+
+<Modal
+	open={splitting !== null}
+	title="Split compound"
+	onClose={() => {
+		splitting = null;
+		splittingBusy = false;
+	}}
+>
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			submitSplit();
+		}}
+	>
+		<div class="space-y-4">
+			<p class="text-[0.8125rem] text-parchment-400">
+				Replace <b class="text-parchment-300">{splitting?.name}</b> with its components. The
+				components are created, the compound's {documentsLabel(splitting?.document_count ?? 0)} are attached
+				to them, and the compound is deleted.
+			</p>
+			<div class="space-y-2">
+				{#each splitParts as part, index (index)}
+					<div class="flex items-center gap-2">
+						<input
+							type="text"
+							bind:value={part.name}
+							placeholder="Component name…"
+							autocomplete="off"
+							class={inputClass}
+							aria-label="Component {index + 1}"
+						/>
+						<button
+							type="button"
+							class={iconButton}
+							title="Remove this component"
+							aria-label="Remove component {index + 1}"
+							onclick={() => removeSplitPart(index)}
+						>
+							<Icon name="minus" size={14} />
+						</button>
+					</div>
+				{/each}
+			</div>
+			<button type="button" class="{btnGhost} px-0" onclick={addSplitPart}>
+				+ Add component
+			</button>
+			{#if splitError}
+				<p class="text-sm text-terracotta-500" aria-live="polite">{splitError}</p>
+			{/if}
+			<div class="flex justify-end gap-2">
+				<button
+					type="button"
+					onclick={() => (splitting = null)}
+					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+				>
+					Cancel
+				</button>
+				<button type="submit" disabled={splittingBusy} class={btnPrimary}>
+					{splittingBusy ? 'Splitting…' : 'Split'}
+				</button>
+			</div>
+		</div>
+	</form>
+</Modal>

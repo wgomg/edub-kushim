@@ -2,8 +2,6 @@ package reconcile
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"sort"
 
@@ -281,80 +279,27 @@ func (r *Reconciler) applyDemotion(ctx context.Context, id int64, name, reason s
 		name, reason, tags.DecisionRuleSetVersion)
 }
 
+// applyCompoundSplit applies one planned split through the shared store mutation the operator path
+// also uses, so both leave the store in the same shape. A compound renamed since the worklist was
+// built refuses the split rather than re-pointing the wrong value's documents.
 func (r *Reconciler) applyCompoundSplit(ctx context.Context, e *compoundEntry, storeTags map[string]database.Tag) (int64, error) {
 	compound, ok := storeTags[e.name]
 	if !ok {
 		return 0, fmt.Errorf("tag %q no longer in store", e.name)
 	}
 
-	outputs := make([]string, 0, len(e.components))
-	seen := make(map[string]bool, len(e.components))
-	for _, name := range e.components {
-		if name == "" || seen[name] || name == e.name {
-			continue
-		}
-		seen[name] = true
-		outputs = append(outputs, name)
-	}
-	if len(outputs) == 0 {
-		return 0, fmt.Errorf("no valid components")
-	}
-
-	results, err := r.tag.Create(ctx, outputs)
+	outcome, err := r.tag.SplitCompound(ctx, compound.ID, e.name, e.components, false)
 	if err != nil {
-		return 0, fmt.Errorf("create component tags: %w", err)
+		return 0, err
 	}
-	var componentIDs []int64
-	for i, res := range results {
-		switch res.Status {
-		case types.Created, types.Conflict, types.Apply:
-			componentIDs = append(componentIDs, res.Entity.ID)
-		default:
-			return 0, fmt.Errorf("create component %q: invalid result", outputs[i])
-		}
+	switch outcome.Status {
+	case types.CompositionApplied:
+		return outcome.Reassigned, nil
+	case types.CompositionConflict:
+		return 0, fmt.Errorf("compound tag %q renamed during run", e.name)
+	case types.CompositionNotFound:
+		return 0, fmt.Errorf("compound tag %q already deleted", e.name)
+	default:
+		return 0, fmt.Errorf("split %q did not apply", e.name)
 	}
-
-	tx, err := r.client.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-	txQ := r.client.WithTx(tx)
-
-	locked, err := txQ.GetTagForUpdate(ctx, compound.ID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("compound tag %q already deleted", e.name)
-		}
-		return 0, fmt.Errorf("lock compound tag: %w", err)
-	}
-	if locked.Name != e.name {
-		return 0, fmt.Errorf("compound tag %q renamed to %q during run", e.name, locked.Name)
-	}
-	docIDs, err := txQ.GetTagDocumentIDs(ctx, compound.ID)
-	if err != nil {
-		return 0, fmt.Errorf("document ids for tag: %w", err)
-	}
-	if _, err := txQ.AddComponentTagsToTagDocuments(ctx, database.AddComponentTagsToTagDocumentsParams{
-		ComponentIds: componentIDs,
-		JointID:      compound.ID,
-	}); err != nil {
-		return 0, fmt.Errorf("add component tags: %w", err)
-	}
-	if len(docIDs) > 0 {
-		if err := txQ.ClearOrphanTagMarksByTagIDs(ctx, componentIDs); err != nil {
-			return 0, fmt.Errorf("clear component orphan tag marks: %w", err)
-		}
-	}
-	if err := txQ.DeleteTag(ctx, compound.ID); err != nil {
-		return 0, fmt.Errorf("delete compound tag: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit split: %w", err)
-	}
-
-	if err := r.tag.RemoveFromStore(ctx, []string{e.name}); err != nil {
-		r.logger.Error("", "tag reconcile: split %q: remove from store: %v", e.name, err)
-	}
-	return int64(len(docIDs)), nil
 }

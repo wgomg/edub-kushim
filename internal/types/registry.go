@@ -57,6 +57,7 @@ var lockDeclarations = map[TaskType]LockDeclaration{
 	Task.Type.TagMeasure:     {Holds: []LockName{LockMaintenance}},
 	Task.Type.TagIdentity:    {Holds: []LockName{LockMaintenance}},
 	Task.Type.TagAudit:       {Holds: []LockName{LockMaintenance}},
+	Task.Type.TagRejudge:     {Holds: []LockName{LockMaintenance}},
 	Task.Type.MigrateDB:      {Holds: []LockName{LockMaintenance}},
 	Task.Type.MigrateStorage: {Holds: []LockName{LockMaintenance}, WaitsFor: []LockName{LockStorage}},
 }
@@ -148,6 +149,7 @@ var Task = struct {
 		TagMeasure     TaskType
 		TagIdentity    TaskType
 		TagAudit       TaskType
+		TagRejudge     TaskType
 	}
 	Status struct {
 		Pending    TaskStatus
@@ -172,6 +174,7 @@ var Task = struct {
 		TagMeasure     TaskType
 		TagIdentity    TaskType
 		TagAudit       TaskType
+		TagRejudge     TaskType
 	}{
 		Consume:        "consume",
 		Enrich:         "enrich",
@@ -185,6 +188,7 @@ var Task = struct {
 		TagMeasure:     "tagmeasure",
 		TagIdentity:    "tagidentity",
 		TagAudit:       "tagaudit",
+		TagRejudge:     "tagrejudge",
 	},
 	Status: struct {
 		Pending    TaskStatus
@@ -374,6 +378,7 @@ var allTaskTypes = []TaskType{
 	Task.Type.TagMeasure,
 	Task.Type.TagIdentity,
 	Task.Type.TagAudit,
+	Task.Type.TagRejudge,
 }
 
 var allTaskStatuses = []TaskStatus{

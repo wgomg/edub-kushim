@@ -11,7 +11,7 @@ func TestAllCounts(t *testing.T) {
 	if got, want := len(AllBatchStatuses()), 6; got != want {
 		t.Errorf("AllBatchStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskTypes()), 12; got != want {
+	if got, want := len(AllTaskTypes()), 13; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
 }

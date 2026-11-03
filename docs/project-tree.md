@@ -19,7 +19,7 @@ edub-kushim/
 ├── docs  # project documentation
 │   ├── adr  # architecture decision records
 │   ├── developer-guide  # language and feature onboarding guides (Go, frontend, PostgreSQL, cgo, OCR, tasks, LLM, semantic matching, consolidation, algorithms)
-│   ├── manual  # user documentation: entry point, CLI, API usage, Web UI, configuration
+│   ├── manual  # user documentation: entry point, CLI, API usage, Web UI, tags, configuration
 │   │   └── images  # screenshots for the Web UI guide
 │   ├── research  # design notes and investigation reports
 │   └── specs  # living normative specifications

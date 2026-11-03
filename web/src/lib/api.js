@@ -297,6 +297,25 @@ export const api = {
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
 		demote: (id) => requestRaw(`/api/v1/tags/${id}/demote`, { method: 'POST' }),
+		fold: (alias, canonical) =>
+			requestRaw('/api/v1/tags/fold', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ alias, canonical })
+			}),
+		compositionDecision: (id, disposition, parts) =>
+			requestRaw(`/api/v1/tags/${id}/composition`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ disposition, parts })
+			}),
+		retire: (id) => requestRaw(`/api/v1/tags/${id}/retire`, { method: 'POST' }),
+		rejudge: (id, scope) =>
+			requestRaw(`/api/v1/tags/${id}/rejudge`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ scope })
+			}),
 		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' }),
 		reevaluateAudit: () => requestRaw('/api/v1/tags/audit/reevaluate', { method: 'POST' }),
 		auditFlags: (limit = 50, offset = 0) => {

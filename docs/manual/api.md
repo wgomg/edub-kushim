@@ -248,7 +248,8 @@ re-ingesting the same file later creates a new document.
 
 The review loop over provisional tags and vocabulary hygiene. Tag **mutations** require the
 matcher to be up (503 otherwise); the report endpoints are read-only against PostgreSQL and
-always work.
+always work. Badge meanings, hold reasons and each action's consequences are documented in
+[tags.md](tags.md).
 
 1. **Queue**: `GET /api/v1/tags/provisional?limit=50&offset=0` lists provisional tags with
    their latest rubric verdict and `pending_identity_total`. Filter it with:
@@ -265,16 +266,28 @@ always work.
 2. **Decide**: `POST /api/v1/tags/{id}/promote` → `204` (already promoted → `409`). Rejecting
    uses `DELETE /api/v1/tags/{id}`, which blocklists the name. `POST /api/v1/tags/{id}/demote`
    withdraws a promoted tag's standing (seeded inventory cannot be demoted — `409`); its
-   assignments stay and it returns to the queue.
-3. **Identity**: `POST /api/v1/tags/identity/reevaluate` → `202` with
+   assignments stay and it returns to the queue. Three operator decisions cover the holds:
+   `POST /api/v1/tags/fold` with `{"alias": "loser", "canonical": "winner"}` (`204`; `404` when the
+   loser name is not a tag, `409` when the fold cannot apply) collapses two names;
+   `POST /api/v1/tags/{id}/composition` with `{"disposition": "split"|"keep", "parts": ["…"]}`
+   (`204`; `404` unknown tag, `400` an invalid decision or too many components, `409` when the tag is
+   already promoted) applies a split or keeps the compound whole, with parts applied alongside when
+   supplied; and `POST /api/v1/tags/{id}/retire` (`204`; `404` unknown tag, `409` when promoted —
+   demote owns that case) deletes a provisional tag *without* blocklisting its name. Renaming reuses
+   `PUT /api/v1/tags/{id}`.
+3. **Re-judge**: `POST /api/v1/tags/{id}/rejudge` with `{"scope": "quality"|"composition"}`
+   enqueues one on-demand judgment → `202` with `{"batch_id": "…", "already_queued": false}`
+   (`404` unknown tag; `409` when there is nothing to judge — a current verdict for `quality`, a
+   non-compound for `composition`). The task refreshes the verdict or hold the queue reads.
+4. **Identity**: `POST /api/v1/tags/identity/reevaluate` → `202` with
    `{"batch_id": "…", "already_queued": false}` — enqueue a pass over pending identity claims
    (also runs on its own daily schedule; `already_queued: true` means the call was a no-op).
-4. **Coverage**: `POST /api/v1/tags/audit/reevaluate` enqueues an audit;
+5. **Coverage**: `POST /api/v1/tags/audit/reevaluate` enqueues an audit;
    `GET /api/v1/tags/audit/flags` lists open flags; `POST /api/v1/tags/audit/flags/apply` and
    `…/flags/dismiss` take `{"document_id": N, "tag_name": "…"}` → `204` (a dismiss is
    authoritative — the pair is not re-flagged while the text is unchanged);
    `…/flags/create-value` registers a missing name as `{"tag_name": "…"}` → `204`.
-5. **Reports**: `GET /api/v1/tags/reconciliation/report` returns the latest completed
+6. **Reports**: `GET /api/v1/tags/reconciliation/report` returns the latest completed
    `tagreconcile` run (`404` before the first run; `zero_work: true` marks a skipped run),
    and `GET /api/v1/tags/siblings?limit=50` lists the latest measurement's near-containment
    pairs (`gray: true` marks the review band; `absent: true` means no measurement exists yet).

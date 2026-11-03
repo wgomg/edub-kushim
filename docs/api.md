@@ -487,6 +487,21 @@ RestoreDeleted unblocks one deleted tag name.
 | 500 | string |
 | 503 | object |
 
+#### `POST /api/v1/tags/fold`
+
+FoldTag folds one tag name onto another at an operator's request, overriding a refused identity fold: the alias name's documents move onto the canonical value and the alias name leaves the store.
+
+Request body (required) (`application/json`): [FoldTagRequest](#foldtagrequest)
+
+| Status | Body |
+|---|---|
+| 200 | object |
+| 204 | no body |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
 #### `POST /api/v1/tags/identity/reevaluate`
 
 ReevaluateIdentity enqueues a fresh identity sweep for the vocabulary.
@@ -585,6 +600,25 @@ Delete removes a tag and blocks its name.
 | 500 | string |
 | 503 | object |
 
+#### `POST /api/v1/tags/{id}/composition`
+
+CompositionDecision applies an operator's split or keep decision over one provisional compound.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `id` | path | string | yes | — |
+
+Request body (required) (`application/json`): [CompositionDecisionRequest](#compositiondecisionrequest)
+
+| Status | Body |
+|---|---|
+| 200 | object |
+| 204 | no body |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
 #### `POST /api/v1/tags/{id}/demote`
 
 DemoteTag withdraws a tag's standing at an operator's request.
@@ -605,6 +639,41 @@ DemoteTag withdraws a tag's standing at an operator's request.
 #### `POST /api/v1/tags/{id}/promote`
 
 PromoteTag promotes one provisional tag, recording the reason.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `id` | path | string | yes | — |
+
+| Status | Body |
+|---|---|
+| 200 | object |
+| 204 | no body |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
+#### `POST /api/v1/tags/{id}/rejudge`
+
+RejudgeTag enqueues one on-demand re-judge of a tag's quality verdict or its composition verdict.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `id` | path | string | yes | — |
+
+Request body (required) (`application/json`): [RejudgeTagRequest](#rejudgetagrequest)
+
+| Status | Body |
+|---|---|
+| 202 | object |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
+#### `POST /api/v1/tags/{id}/retire`
+
+RetireTag removes one provisional tag without blocklisting its name.
 
 | Parameter | In | Type | Required | Default |
 |---|---|---|---|---|
@@ -1916,6 +1985,15 @@ CompanionTool is a binary an engine wraps (ocrmypdf needs tesseract and unpaper)
 | `purpose` | string | yes |
 | `required` | boolean | yes |
 
+### CompositionDecisionRequest
+
+CompositionDecisionRequest is the body of POST /api/v1/tags/{id}/composition: the disposition and, for a split or an apply-alongside keep, the parts.
+
+| Field | Type | Required |
+|---|---|---|
+| `disposition` | string | yes |
+| `parts` | array of string (nullable) | yes |
+
 ### ConfigResponse
 
 ConfigResponse is the full configuration as the API shows it: every section view plus the engines and file types the UI offers.
@@ -2386,6 +2464,15 @@ Filter is the structured search request: the optional free-text query, tag and p
 | `tags` | array of string (nullable) | yes |
 | `untagged` | boolean | yes |
 
+### FoldTagRequest
+
+FoldTagRequest is the body of POST /api/v1/tags/fold: the name that folds away and the canonical value it folds onto.
+
+| Field | Type | Required |
+|---|---|---|
+| `alias` | string | yes |
+| `canonical` | string | yes |
+
 ### HealthResponse
 
 HealthResponse is the liveness probe payload.
@@ -2649,7 +2736,9 @@ ProvisionalTagResponse describes a tag awaiting review, with its latest verdict 
 
 | Field | Type | Required |
 |---|---|---|
+| `composition_action` | string | no |
 | `composition_hold` | string | no |
+| `composition_parts` | array of string | no |
 | `composition_reason` | string | no |
 | `created_at` | string (date-time) | yes |
 | `demoted_at` | string (date-time) | no |
@@ -2670,6 +2759,14 @@ ReclaimConfigResponse is the reclaim section's API view.
 | `enabled` | boolean | yes |
 | `max_retries` | integer | yes |
 | `stale_task_after` | integer | yes |
+
+### RejudgeTagRequest
+
+RejudgeTagRequest is the body of POST /api/v1/tags/{id}/rejudge: which judge to re-run.
+
+| Field | Type | Required |
+|---|---|---|
+| `scope` | string | yes |
 
 ### RemoveDocumentPeopleRequest
 

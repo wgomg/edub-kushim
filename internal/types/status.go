@@ -61,3 +61,39 @@ const (
 	DemoteSeeded
 	DemoteDemoted
 )
+
+// FoldStatus reports how an operator fold resolved: the loser name is not a live tag, the fold could
+// not apply (its canonical is gone or the alias was already recorded), or it collapsed the names.
+type FoldStatus int
+
+// The fold outcomes, in iota order.
+const (
+	FoldNotFound FoldStatus = iota
+	FoldNotApplied
+	FoldApplied
+)
+
+// CompositionStatus reports how an operator composition decision resolved: the tag is missing, it is
+// no longer provisional, it changed underneath the decision, the decision or its parts are invalid,
+// or it was applied.
+type CompositionStatus int
+
+// The composition decision outcomes, in iota order.
+const (
+	CompositionNotFound CompositionStatus = iota
+	CompositionNotProvisional
+	CompositionConflict
+	CompositionInvalid
+	CompositionApplied
+)
+
+// RetireStatus reports how a retire resolved: the tag is missing, still promoted (demote owns that
+// case), or removed from the store without blocklisting its name.
+type RetireStatus int
+
+// The retire outcomes, in iota order.
+const (
+	RetireNotFound RetireStatus = iota
+	RetirePromoted
+	RetireRetired
+)

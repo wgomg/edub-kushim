@@ -153,6 +153,8 @@ const (
 	CompositionReasonConflictingEvidence      = "conflicting_evidence"
 	CompositionReasonSampleDisagreement       = "sample_disagreement"
 	CompositionReasonPartialParts             = "partial_parts"
+	CompositionReasonOperator                 = "operator"
+	CompositionReasonOperatorKeep             = "operator_keep"
 )
 
 // compositionHolds is the single definition of which composition reasons withhold a compound from
@@ -168,6 +170,39 @@ func compositionHolds(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// CompositionAction names the operator actions one recorded composition decision calls for, derived
+// from the same hold policy compositionHolds applies: Undecided offers a split or a keep, Keep offers
+// the parts-alongside application or a keep, Degraded offers a re-judge, and Drop offers nothing but
+// a retire. An empty action means the decision is already final and needs no operator input.
+type CompositionAction string
+
+// The composition action classes, in the order the review queue offers them.
+const (
+	CompositionActionUndecided CompositionAction = "undecided"
+	CompositionActionKeep      CompositionAction = "keep"
+	CompositionActionDegraded  CompositionAction = "degraded"
+	CompositionActionDrop      CompositionAction = "drop"
+)
+
+// CompositionActionFor classifies one journal row for the review queue: a decided drop can only be
+// retired, a degraded keep must be judged again, the named-unit keeps are applied alongside, and the
+// remaining holds split or keep. A final keep reports the empty action.
+func CompositionActionFor(disposition CompositionDisposition, reason string) CompositionAction {
+	if disposition == CompositionDrop {
+		return CompositionActionDrop
+	}
+	if reason == CompositionReasonJudgeUnavailable {
+		return CompositionActionDegraded
+	}
+	if !compositionHolds(reason) {
+		return ""
+	}
+	if reason == CompositionReasonNamedUnitReconstructible || reason == CompositionReasonRelationalKeep {
+		return CompositionActionKeep
+	}
+	return CompositionActionUndecided
 }
 
 // CompositionRow is one decomposition verdict over a judged compound. Parts means by disposition: a split's

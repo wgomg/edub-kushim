@@ -27,6 +27,7 @@ For the design behind this split, see [Architecture](../architecture.md).
 | Call the REST API from a script or client | [api.md](api.md) — usage, auth and workflows |
 | Look up one endpoint, its parameters or schema | [Generated API reference](../api.md) |
 | Use the web interface | [web-ui.md](web-ui.md) |
+| Understand tags, their badges and the review queue | [tags.md](tags.md) |
 | Edit the configuration file or tune timeouts | [configuration.md](configuration.md) |
 | Understand how tasks and batches behave | [Tasks and batches](#tasks-and-batches) below |
 | Understand the design and pipeline | [Architecture](../architecture.md) |

@@ -8,6 +8,8 @@ package curation
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"sort"
 	"time"
 
@@ -392,6 +394,44 @@ func (s *Tag) Delete(ctx context.Context, ids []int64) ([]types.DeleteResult, er
 	}
 
 	return results, nil
+}
+
+// Retire removes one provisional value from the store without recording its name in the blocklist: the
+// row and its document assignments go and the name leaves the matcher store, but enrichment may propose
+// the value again. The row is locked and re-checked, so a value promoted concurrently is refused
+// (RetirePromoted) rather than deleted; dropping the standing of a promoted value is Demote's
+// operation, and it keeps the row.
+func (s *Tag) Retire(ctx context.Context, id int64) (types.RetireStatus, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return types.RetireNotFound, errs.FromDB(err, "begin retire tag")
+	}
+	defer tx.Rollback()
+	txQ := s.client.WithTx(tx)
+
+	tag, err := txQ.GetTagForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.RetireNotFound, nil
+		}
+		return types.RetireNotFound, errs.FromDB(err, "lock retired tag")
+	}
+	if tag.PromotedAt.Valid {
+		return types.RetirePromoted, nil
+	}
+
+	if err := txQ.DeleteTag(ctx, id); err != nil {
+		return types.RetireNotFound, errs.FromDB(err, "retire tag")
+	}
+	if err := tx.Commit(); err != nil {
+		return types.RetireNotFound, errs.FromDB(err, "commit retire tag")
+	}
+
+	if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
+		s.logger.Error("", "tag service: remove retired tag %q from store: %v", tag.Name, err)
+	}
+	s.logger.Info("", "tagquality[%s]: retire %q (reason=human-retire)", analyzer.TagQualityVersion, tag.Name)
+	return types.RetireRetired, nil
 }
 
 // Promote promotes one provisional tag and embeds it; already-promoted

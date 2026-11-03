@@ -1072,3 +1072,37 @@ func TestCompositionReview(t *testing.T) {
 		t.Errorf("empty input = (%v, %v), want two empty maps", emptyHeld, emptyStates)
 	}
 }
+
+// TestCompositionActionFor pins the actionability class the review queue derives from one journal
+// row: a decided drop only retires, a degraded keep needs a re-judge, the named-unit keeps apply
+// their parts, the undecided holds split or keep, and a final decision needs no action.
+func TestCompositionActionFor(t *testing.T) {
+	cases := []struct {
+		name        string
+		disposition CompositionDisposition
+		reason      string
+		want        CompositionAction
+	}{
+		{"a decided drop retires", CompositionDrop, CompositionReasonNoDimension, CompositionActionDrop},
+		{"a part rejection retires", CompositionDrop, CompositionReasonPartRejected, CompositionActionDrop},
+		{"a degraded keep re-judges", CompositionKeep, CompositionReasonJudgeUnavailable, CompositionActionDegraded},
+		{"a deferred split splits", CompositionKeep, CompositionReasonSplitDefer, CompositionActionUndecided},
+		{"conflicting evidence splits", CompositionKeep, CompositionReasonConflictingEvidence, CompositionActionUndecided},
+		{"a sample disagreement splits", CompositionKeep, CompositionReasonSampleDisagreement, CompositionActionUndecided},
+		{"a reconstructible named unit applies its parts", CompositionKeep, CompositionReasonNamedUnitReconstructible, CompositionActionKeep},
+		{"a relational keep applies its parts", CompositionKeep, CompositionReasonRelationalKeep, CompositionActionKeep},
+		{"a decided keep needs nothing", CompositionKeep, CompositionReasonNamedUnit, ""},
+		{"an operator keep needs nothing", CompositionKeep, CompositionReasonOperatorKeep, ""},
+		{"an operator split needs nothing", CompositionSplit, CompositionReasonOperator, ""},
+		{"a drop wins over the reason", CompositionDrop, CompositionReasonOperator, CompositionActionDrop},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CompositionActionFor(tc.disposition, tc.reason)
+			if got != tc.want {
+				t.Errorf("CompositionActionFor(%q, %q) = %q, want %q", tc.disposition, tc.reason, got, tc.want)
+			}
+		})
+	}
+}

@@ -3234,6 +3234,76 @@ paths:
                 properties:
                   error:
                     type: string
+  /api/v1/tags/{id}/composition:
+    post:
+      summary: CompositionDecision applies an operator's split or keep decision over one provisional compound.
+      operationId: postApiV1TagsByIdComposition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompositionDecisionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  names:
+                    anyOf:
+                      - type: array
+                        items:
+                          type: string
+                      - type: "null"
+                required:
+                  - names
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/tags/{id}/demote:
     post:
       summary: DemoteTag withdraws a tag's standing at an operator's request.
@@ -3302,6 +3372,134 @@ paths:
     post:
       summary: PromoteTag promotes one provisional tag, recording the reason.
       operationId: postApiV1TagsByIdPromote
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  names:
+                    anyOf:
+                      - type: array
+                        items:
+                          type: string
+                      - type: "null"
+                required:
+                  - names
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+  /api/v1/tags/{id}/rejudge:
+    post:
+      summary: RejudgeTag enqueues one on-demand re-judge of a tag's quality verdict or its composition verdict.
+      operationId: postApiV1TagsByIdRejudge
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejudgeTagRequest'
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  already_queued:
+                    type: boolean
+                  batch_id:
+                    type: string
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+  /api/v1/tags/{id}/retire:
+    post:
+      summary: RetireTag removes one provisional tag without blocklisting its name.
+      operationId: postApiV1TagsByIdRetire
       parameters:
         - name: id
           in: path
@@ -3719,6 +3917,70 @@ paths:
                 properties:
                   error:
                     type: string
+  /api/v1/tags/fold:
+    post:
+      summary: 'FoldTag folds one tag name onto another at an operator''s request, overriding a refused identity fold: the alias name''s documents move onto the canonical value and the alias name leaves the store.'
+      operationId: postApiV1TagsFold
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FoldTagRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  names:
+                    anyOf:
+                      - type: array
+                        items:
+                          type: string
+                      - type: "null"
+                required:
+                  - names
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/tags/identity/reevaluate:
     post:
       summary: ReevaluateIdentity enqueues a fresh identity sweep for the vocabulary.
@@ -5272,6 +5534,23 @@ components:
         - available
         - required
         - install_hints
+    CompositionDecisionRequest:
+      type: object
+      description: |-
+        CompositionDecisionRequest is the body of POST /api/v1/tags/{id}/composition: the disposition and,
+        for a split or an apply-alongside keep, the parts.
+      properties:
+        disposition:
+          type: string
+        parts:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: "null"
+      required:
+        - disposition
+        - parts
     ConfigResponse:
       type: object
       description: |-
@@ -6223,6 +6502,19 @@ components:
         - missing_language
         - missing_type
         - untagged
+    FoldTagRequest:
+      type: object
+      description: |-
+        FoldTagRequest is the body of POST /api/v1/tags/fold: the name that folds away and the canonical
+        value it folds onto.
+      properties:
+        alias:
+          type: string
+        canonical:
+          type: string
+      required:
+        - alias
+        - canonical
     HealthResponse:
       type: object
       description: HealthResponse is the liveness probe payload.
@@ -6679,8 +6971,19 @@ components:
         ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
         provisional.
       properties:
+        composition_action:
+          type: string
+          enum:
+            - degraded
+            - drop
+            - keep
+            - undecided
         composition_hold:
           type: string
+        composition_parts:
+          type: array
+          items:
+            type: string
         composition_reason:
           type: string
         created_at:
@@ -6726,6 +7029,14 @@ components:
         - enabled
         - max_retries
         - stale_task_after
+    RejudgeTagRequest:
+      type: object
+      description: 'RejudgeTagRequest is the body of POST /api/v1/tags/{id}/rejudge: which judge to re-run.'
+      properties:
+        scope:
+          type: string
+      required:
+        - scope
     RemoveDocumentPeopleRequest:
       type: object
       description: RemoveDocumentPeopleRequest removes one person-role assignment.
