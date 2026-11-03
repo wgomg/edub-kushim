@@ -3016,7 +3016,7 @@ func TestListProvisionalFilters(t *testing.T) {
 		return id
 	}
 
-	failID := seedTag("prov-filter-fail")
+	failID := seedTag("prov filter fail")
 	tag, err := env.client.Queries.GetTag(ctx, failID)
 	testutil.AssertNoError(t, err, "read fixture tag")
 	_, err = env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
@@ -3029,7 +3029,7 @@ func TestListProvisionalFilters(t *testing.T) {
 	})
 	testutil.AssertNoError(t, err, "insert quality event")
 
-	unjudgedID := seedTag("prov-filter-unjudged")
+	unjudgedID := seedTag("prov filter unjudged")
 
 	contains := func(results []ProvisionalTagResponse, id int64) bool {
 		for _, r := range results {
@@ -3087,23 +3087,23 @@ func TestListProvisionalFilters(t *testing.T) {
 
 	t.Run("q narrows rows by name prefix", func(t *testing.T) {
 		w := rec()
-		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?q=prov-filter-f", nil))
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?q=prov+filter+f", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
 		var resp ProvisionalTagListResponse
 		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
 		if !contains(resp.Results, failID) {
-			t.Errorf("q=prov-filter-f must include tag %d", failID)
+			t.Errorf("q=prov filter f must include tag %d", failID)
 		}
 		if contains(resp.Results, unjudgedID) {
-			t.Errorf("q=prov-filter-f must exclude tag %d", unjudgedID)
+			t.Errorf("q=prov filter f must exclude tag %d", unjudgedID)
 		}
 	})
 
 	t.Run("q matches only the prefix, not a substring", func(t *testing.T) {
 		w := rec()
-		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?q=filter-f", nil))
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?q=filter+f", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
 		var resp ProvisionalTagListResponse
@@ -3166,7 +3166,7 @@ func TestTagListCreatedAt(t *testing.T) {
 	ctx := context.Background()
 	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
 
-	_, err := env.tagSvc.Create(ctx, []string{"created-at-tag"})
+	_, err := env.tagSvc.Create(ctx, []string{"created at tag"})
 	testutil.AssertNoError(t, err, "create")
 
 	w := rec()
@@ -3177,7 +3177,7 @@ func TestTagListCreatedAt(t *testing.T) {
 	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	created := -1
 	for i := range resp.Results {
-		if resp.Results[i].Name == "created-at-tag" {
+		if resp.Results[i].Name == "created at tag" {
 			created = i
 		}
 	}
@@ -3201,7 +3201,7 @@ func TestTagListCreatedAt(t *testing.T) {
 	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&raw), "decode raw")
 	found := false
 	for _, r := range raw.Results {
-		if string(r["name"]) != `"created-at-tag"` {
+		if string(r["name"]) != `"created at tag"` {
 			continue
 		}
 		found = true
