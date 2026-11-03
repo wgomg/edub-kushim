@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -388,6 +390,76 @@ func TestPromoteEligible_CompositionHold(t *testing.T) {
 	}
 	assertPromoted("held compound", held.Entity.ID, false)
 	assertPromoted("free compound", free.Entity.ID, true)
+}
+
+// TestPromoteEligible_Acceptance pins the enrichment promotion path's half of the operator
+// acceptance: two floor-mass candidates carrying the same cached defer verdict differ only in the
+// acceptance stamp, and only the accepted one promotes — without the stamp the deferred value never
+// reaches the promotion path no matter its mass.
+func TestPromoteEligible_Acceptance(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	logger := log.NewDiscardLogger()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	e := NewEnricher(&config.Config{}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
+
+	const deferCriteria = `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`
+	seed := func(t *testing.T, name string, accepted bool) types.CreateResult[database.Tag] {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		verdictDoc := database.CreateUniqueDocument(t, client.Queries, name)
+		database.MustAddDocumentTag(t, client.Queries, verdictDoc, id)
+		for i := 1; i < tags.RecurrenceFloor; i++ {
+			database.MustAddDocumentTag(t, client.Queries,
+				database.CreateUniqueDocument(t, client.Queries, fmt.Sprintf("%s doc %d", name, i)), id)
+		}
+		database.MustInsertTagQualityEvent(t, client.Queries, verdictDoc, name, deferCriteria,
+			"defer", analyzer.TagQualityVersion)
+		// the acceptance must postdate the fresh verdict, so age the verdict
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag_quality_event SET verdict_at = now() - interval '1 hour' WHERE tag_name = $1", name); err != nil {
+			t.Fatalf("age verdict: %v", err)
+		}
+		entity := database.Tag{ID: id, Name: name}
+		if accepted {
+			if _, err := client.DB().ExecContext(ctx,
+				"UPDATE tag SET accepted_at = now() WHERE id = $1", id); err != nil {
+				t.Fatalf("stamp acceptance: %v", err)
+			}
+			entity.AcceptedAt = sql.NullTime{Time: time.Now(), Valid: true}
+		}
+		return types.CreateResult[database.Tag]{Entity: entity, Status: types.Created}
+	}
+
+	unaccepted := seed(t, "enrich unaccepted defer", false)
+	accepted := seed(t, "enrich accepted defer", true)
+
+	promoted := e.promoteEligible(ctx, client.Queries,
+		[]types.CreateResult[database.Tag]{unaccepted, accepted},
+		map[string]tags.AdmissionDecision{}, "acceptance-test")
+
+	if want := []string{accepted.Entity.Name}; !slices.Equal(promoted, want) {
+		t.Fatalf("promoted = %v, want %v (only the accepted defer promotes)", promoted, want)
+	}
+	assertPromoted := func(label string, id int64, want bool) {
+		t.Helper()
+		var got bool
+		if err := client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&got); err != nil {
+			t.Fatalf("%s: read promoted state: %v", label, err)
+		}
+		if got != want {
+			t.Errorf("%s: promoted = %v, want %v", label, got, want)
+		}
+	}
+	assertPromoted("unaccepted defer", unaccepted.Entity.ID, false)
+	assertPromoted("accepted defer", accepted.Entity.ID, true)
 }
 
 // TestPruneRejectedParts pins the keep-row half of the part-rejection rule: a kept compound stands whole

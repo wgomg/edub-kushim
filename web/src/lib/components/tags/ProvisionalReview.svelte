@@ -298,6 +298,26 @@
 		await load();
 	}
 
+	async function accept(tag) {
+		const ok = await confirmStore.confirm({
+			title: 'Accept as provisional',
+			message: `Accept "${tag.name}" as provisional? The deferral is cleared; the value waits for the promotion floor and promotes once enough live documents carry it.`
+		});
+		if (!ok) return;
+		acting = tag.id;
+		const result = await api.tags.accept(tag.id);
+		acting = null;
+		if (result.ok) {
+			toastStore.success(`Accepted "${tag.name}" as provisional`);
+			if (onchanged) onchanged();
+		} else if (result.status === 409) {
+			toastStore.error(result.data?.error ?? 'The tag cannot be accepted');
+		} else {
+			toastStore.error('Failed to accept the tag');
+		}
+		await load();
+	}
+
 	async function foldInto(tag) {
 		const anchor = tag.identity_hold;
 		const ok = await confirmStore.confirm({
@@ -523,7 +543,23 @@
 
 	function verdictPillClass(tag) {
 		if (!tag.verdict) return pillPlain;
+		if (isAccepted(tag)) return pillOk;
 		return tag.verdict.pass ? pillOk : pillWarn;
+	}
+
+	function isAccepted(tag) {
+		return !!tag.accepted_at;
+	}
+
+	function isBareDeferral(tag) {
+		return (
+			!!tag.verdict &&
+			verdictOutcome(tag) === 'defer' &&
+			!isAccepted(tag) &&
+			!tag.identity_hold &&
+			!tag.composition_action &&
+			!tag.demoted_at
+		);
 	}
 
 	function verdictOutcome(tag) {
@@ -534,12 +570,15 @@
 
 	function verdictLabel(tag) {
 		if (!tag.verdict) return 'no verdict';
+		if (isAccepted(tag)) return 'accepted — awaiting promotion floor';
 		if (tag.verdict.pass) return 'awaiting promotion floor';
 		return verdictOutcome(tag) === 'defer' ? 'deferred to review' : 'judge rejected';
 	}
 
 	function verdictTitle(tag) {
 		if (!tag.verdict) return 'Never judged — no verdict was recorded when this tag was born';
+		if (isAccepted(tag))
+			return 'An operator accepted this deferral; the value now waits for the promotion floor';
 		if (tag.verdict.pass) return 'The quality judge admitted this tag';
 		if (verdictOutcome(tag) === 'defer') return 'The quality judge deferred this tag to review';
 		return 'The quality judge rejected this tag';
@@ -816,9 +855,21 @@
 					</div>
 				</div>
 
-				{#if tag.identity_hold || tag.composition_action === 'undecided' || tag.composition_action === 'keep' || tag.composition_action === 'degraded'}
+				{#if tag.identity_hold || tag.composition_action === 'undecided' || tag.composition_action === 'keep' || tag.composition_action === 'degraded' || isBareDeferral(tag)}
 					<div class={resolveClass}>
 						<span class={resolveLabelClass}>Resolve</span>
+						{#if isBareDeferral(tag)}
+							<button
+								type="button"
+								class={btnAction}
+								title="Clear the deferral: the value waits for the promotion floor like any admitted tag"
+								disabled={acting === tag.id}
+								onclick={() => accept(tag)}
+							>
+								<Icon name="circle-check" size={13} />
+								Accept as provisional
+							</button>
+						{/if}
 						{#if tag.identity_hold}
 							<button
 								type="button"

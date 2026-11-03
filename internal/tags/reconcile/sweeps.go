@@ -336,6 +336,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 			continue
 		}
 		decision := admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
+		decision = tags.WithAcceptance(decision, t.AcceptedAt.Time, row.FreshVerdictAt)
 		if promote, _ := r.provisionalOutcome(t.Name, decision, docs); !promote {
 			continue
 		}

@@ -97,3 +97,18 @@ const (
 	RetirePromoted
 	RetireRetired
 )
+
+// AcceptStatus reports how an acceptance resolved: the tag is missing, it is already promoted, it was
+// already accepted, it is not deferred to review, another review concern still withholds it, or the
+// deferral was waived.
+type AcceptStatus int
+
+// The acceptance outcomes, in iota order.
+const (
+	AcceptNotFound AcceptStatus = iota
+	AcceptNotProvisional
+	AcceptAlready
+	AcceptNotDeferred
+	AcceptHeld
+	AcceptApplied
+)

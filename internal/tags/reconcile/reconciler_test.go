@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 
@@ -804,6 +805,86 @@ func TestSweepProvisionalTags_CompositionHold(t *testing.T) {
 			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", tagID).Scan(&isPromoted),
 		"read promoted state")
 	testutil.AssertEqual(t, isPromoted, false, "the held compound stays provisional")
+}
+
+// TestSweepProvisionalTags_Acceptance pins the sweep's half of the operator acceptance: an accepted
+// defer follows the ordinary floor rule — at the floor it promotes, below it stays a silent pending
+// candidate — while an unaccepted deferral at the same mass still stays for review, so the acceptance
+// alone is what admits the value to the promotion paths.
+func TestSweepProvisionalTags_Acceptance(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	const deferCriteria = `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`
+	seed := func(t *testing.T, name string, docs int, accepted bool) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx,
+			`UPDATE tag SET promoted_at = NULL, created_at = now() - interval '90 days' WHERE id = $1`, id); err != nil {
+			t.Fatalf("backdate provisional tag: %v", err)
+		}
+		verdictDoc := database.CreateUniqueDocument(t, client.Queries, name)
+		database.MustAddDocumentTag(t, client.Queries, verdictDoc, id)
+		for i := 1; i < docs; i++ {
+			database.MustAddDocumentTag(t, client.Queries,
+				database.CreateUniqueDocument(t, client.Queries, fmt.Sprintf("%s doc %d", name, i)), id)
+		}
+		database.MustInsertTagQualityEvent(t, client.Queries, verdictDoc, name, deferCriteria,
+			"defer", analyzer.TagQualityVersion)
+		// the acceptance must postdate the fresh verdict, so age the verdict
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag_quality_event SET verdict_at = now() - interval '1 hour' WHERE tag_name = $1", name); err != nil {
+			t.Fatalf("age verdict: %v", err)
+		}
+		if accepted {
+			if _, err := client.DB().ExecContext(ctx,
+				"UPDATE tag SET accepted_at = now() WHERE id = $1", id); err != nil {
+				t.Fatalf("stamp acceptance: %v", err)
+			}
+		}
+		return id
+	}
+
+	atFloor := seed(t, "accept sweep at floor", tags.RecurrenceFloor, true)
+	belowFloor := seed(t, "accept sweep below floor", 1, true)
+	unaccepted := seed(t, "accept sweep unaccepted", tags.RecurrenceFloor, false)
+
+	cfg := &config.Config{
+		Enricher: config.EnricherConfig{
+			TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30},
+		},
+	}
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		logger: logger,
+	}
+	report := &Report{}
+	r.sweepProvisionalTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Provisional.Worklist, 3, "worklist")
+	testutil.AssertEqual(t, report.Provisional.Skipped, 0, "no hold to skip")
+	testutil.AssertEqual(t, report.Provisional.Promoted, 1, "only the accepted value at the floor promotes")
+
+	assertPromoted := func(label string, id int64, want bool) {
+		t.Helper()
+		var got bool
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&got),
+			"read promoted state")
+		testutil.AssertEqual(t, got, want, label)
+	}
+	assertPromoted("accepted at the floor", atFloor, true)
+	assertPromoted("accepted below the floor", belowFloor, false)
+	assertPromoted("unaccepted at the floor", unaccepted, false)
 }
 
 func TestBuildCompoundWorklist_DecidedDropQueuesDemotion(t *testing.T) {

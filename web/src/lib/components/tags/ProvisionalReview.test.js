@@ -10,6 +10,7 @@ const {
 	foldTag,
 	compositionDecision,
 	retireTag,
+	acceptTag,
 	rejudgeTag,
 	updateTag,
 	confirmMock,
@@ -22,6 +23,7 @@ const {
 	foldTag: vi.fn(),
 	compositionDecision: vi.fn(),
 	retireTag: vi.fn(),
+	acceptTag: vi.fn(),
 	rejudgeTag: vi.fn(),
 	updateTag: vi.fn(),
 	confirmMock: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock('#lib/api.js', async (importOriginal) => {
 				fold: foldTag,
 				compositionDecision,
 				retire: retireTag,
+				accept: acceptTag,
 				rejudge: rejudgeTag,
 				update: updateTag
 			}
@@ -103,6 +106,7 @@ beforeEach(() => {
 	foldTag.mockReset();
 	compositionDecision.mockReset();
 	retireTag.mockReset();
+	acceptTag.mockReset();
 	rejudgeTag.mockReset();
 	updateTag.mockReset();
 	confirmMock.mockReset();
@@ -469,6 +473,39 @@ describe('ProvisionalReview review actions', () => {
 
 		await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(retireTag).toHaveBeenCalledWith(1));
+	});
+
+	it('offers accept as provisional for a bare deferral', async () => {
+		await renderEntry({ verdict: verdict({ outcome: 'defer' }) });
+
+		expect(await screen.findByRole('button', { name: 'Accept as provisional' })).toBeTruthy();
+	});
+
+	it('hides accept while another review concern holds the tag', async () => {
+		await renderEntry({ verdict: verdict({ outcome: 'defer' }), identity_hold: 'politics' });
+
+		expect(await screen.findByRole('button', { name: /Fold into/ })).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Accept as provisional' })).toBeNull();
+	});
+
+	it('shows the accepted pill and no accept action once accepted', async () => {
+		await renderEntry({
+			verdict: verdict({ outcome: 'defer' }),
+			accepted_at: '2026-09-02T00:00:00Z'
+		});
+
+		expect(await screen.findByText('accepted — awaiting promotion floor')).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Accept as provisional' })).toBeNull();
+	});
+
+	it('accepts the tag after confirming', async () => {
+		acceptTag.mockResolvedValue({ ok: true, status: 204 });
+		await renderEntry({ verdict: verdict({ outcome: 'defer' }) });
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Accept as provisional' }));
+
+		await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(acceptTag).toHaveBeenCalledWith(1));
 	});
 
 	it('renames the tag from the queue', async () => {

@@ -408,18 +408,20 @@ The enrichment pipeline:
    they never reach suggestions or consolidation targets. A provisional name
    is promoted inline — inside the persist transaction — when the admission
    decision admits it and it has assignments on ≥10 distinct live documents
-   (trashed carriers do not count); provisionals already in the store are
-   decided from their cached verdict row. Influence is revocable: a promoted value
+    (trashed carriers do not count); provisionals already in the store are
+    decided from their cached verdict row, unless an operator acceptance waives
+    the recorded deferral. Influence is revocable: a promoted value
    that stops qualifying is demoted — its standing and store membership are
    withdrawn while the row, its assignments, and the demotion record stay — and a
    verdict-less provisional (judge outage) is never re-judged in flight — a
    name in the tag table is not novel, so the judge does not see it again.
    Those names are resolved later by the scheduled tag reconciliation, whose
-   provisional phase re-derives the decision from stored verdicts and
-   re-judges the rest, or by an operator through the provisional review queue
-   (`GET /api/v1/tags/provisional`, `POST /api/v1/tags/{id}/promote`, and the
-   tags page's "New tags" tab); a rejection there is a normal tag delete and
-   lands in the blocklist. An identity-held name — a fold the gate refused
+    provisional phase re-derives the decision from stored verdicts and
+    re-judges the rest, or by an operator through the provisional review queue
+    (`GET /api/v1/tags/provisional`, `POST /api/v1/tags/{id}/promote`,
+    `POST /api/v1/tags/{id}/accept`, and the tags page's "New tags" tab); a
+    rejection there is a normal tag delete and lands in the blocklist, and an
+    accepted deferral returns to the floor rule. An identity-held name — a fold the gate refused
    beside a live store value — and a composition-held name — its latest
    composition verdict under the current split criteria version defers,
    conflicts, disagrees, is a reconstructible named unit, is a relational

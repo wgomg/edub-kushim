@@ -315,8 +315,11 @@ it again. They are re-judged by the reconciliation sweep once they pass
 Operators resolve what remains from the tags page's "New tags" tab or the API:
 `GET /api/v1/tags/provisional` lists provisional tags with a live `document_count` and
 the latest verdict; `POST /api/v1/tags/{id}/promote` promotes one through the same path
-the sweep uses. Rejecting a provisional tag is a normal tag delete, so the name lands in
-the `deleted_tag` blocklist and enrichment cannot resurrect it.
+the sweep uses; `POST /api/v1/tags/{id}/accept` waives a recorded deferral so the value
+stops being parked for review and answers to the promotion floor like any admitted value,
+the waiver holding until a newer verdict re-decides the name. Rejecting a provisional tag
+is a normal tag delete, so the name lands in the `deleted_tag` blocklist and enrichment
+cannot resurrect it.
 
 ## 8. Aliases
 
@@ -399,7 +402,8 @@ twin arm for the run rather than degrading its safety gates.
 **Provisional hygiene** — the same run re-checks provisional tags older than
 `provisional_grace_days` (default 30), oldest first. A stored verdict the decision
 re-derives as admit plus ≥10 live documents promotes the name with no judge call; defer
-and reject verdicts stay queued for review; verdict-less names are re-judged one at a
+and reject verdicts stay queued for review, except a defer an operator has accepted,
+which follows the same floor rule; verdict-less names are re-judged one at a
 time (the tag's first live document, reduced with the tag-matcher arithmetic, one retry
 on failure) and promoted when admitted. Zero-assignment rows are only counted — the
 orphan sweep owns them; rows whose assignments all sit on trashed documents re-judge to

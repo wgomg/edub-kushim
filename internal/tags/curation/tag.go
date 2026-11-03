@@ -434,6 +434,74 @@ func (s *Tag) Retire(ctx context.Context, id int64) (types.RetireStatus, error) 
 	return types.RetireRetired, nil
 }
 
+// Accept waives one provisional value's review deferral at an operator's request: when the value's latest
+// current-version verdict deferred the value and no identity or composition hold still withholds it from
+// promotion, accepted_at is stamped so the promotion floor decides instead of the review queue. The hold
+// refusals exist because waiving the deferral alone could not move a held value; a promoted value keeps
+// Demote as its path. The row is locked and re-checked, so any concurrent promotion or acceptance is
+// refused rather than overwritten. The verdict stays in the journal untouched — only the standing stamp
+// records the operator's decision.
+func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return types.AcceptNotFound, errs.FromDB(err, "begin accept tag")
+	}
+	defer tx.Rollback()
+	txQ := s.client.WithTx(tx)
+
+	tag, err := txQ.GetTagForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.AcceptNotFound, nil
+		}
+		return types.AcceptNotFound, errs.FromDB(err, "lock accepted tag")
+	}
+	if tag.PromotedAt.Valid {
+		return types.AcceptNotProvisional, nil
+	}
+	if tag.AcceptedAt.Valid {
+		return types.AcceptAlready, nil
+	}
+
+	verdicts, err := txQ.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+		PolicyVersion: analyzer.TagQualityVersion,
+		TagNames:      []string{tag.Name},
+	})
+	if err != nil {
+		return types.AcceptNotDeferred, errs.FromDB(err, "load accept verdict")
+	}
+	if len(verdicts) == 0 || !verdicts[0].Outcome.Valid ||
+		verdicts[0].Outcome.String != tags.AdmissionDefer.String() {
+		return types.AcceptNotDeferred, nil
+	}
+
+	held, err := tags.IdentityHeldNames(ctx, txQ, []string{tag.Name})
+	if err != nil {
+		return types.AcceptHeld, errs.FromDB(err, "load accept identity hold")
+	}
+	compositionHeld, err := tags.CompositionHeldNames(ctx, txQ, []string{tag.Name}, analyzer.TagSplitVersion)
+	if err != nil {
+		return types.AcceptHeld, errs.FromDB(err, "load accept composition hold")
+	}
+	if _, ok := held[tag.Name]; ok {
+		return types.AcceptHeld, nil
+	}
+	if _, ok := compositionHeld[tag.Name]; ok {
+		return types.AcceptHeld, nil
+	}
+
+	if err := txQ.AcceptTag(ctx, id); err != nil {
+		return types.AcceptNotFound, errs.FromDB(err, "accept tag")
+	}
+	if err := tx.Commit(); err != nil {
+		return types.AcceptNotFound, errs.FromDB(err, "commit accept tag")
+	}
+
+	s.logger.Info("", "tagquality[%s]: accept %q (reason=human-accept)",
+		analyzer.TagQualityVersion, tag.Name)
+	return types.AcceptApplied, nil
+}
+
 // Promote promotes one provisional tag and embeds it; already-promoted
 // and not-found cases are reported through the status, and reason goes to
 // the audit log.

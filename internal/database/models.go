@@ -214,6 +214,7 @@ const (
 	TaskTypeTagaudit       TaskType = "tagaudit"
 	TaskTypeMigrateDb      TaskType = "migrate-db"
 	TaskTypeMigrateStorage TaskType = "migrate-storage"
+	TaskTypeTagrejudge     TaskType = "tagrejudge"
 )
 
 func (e *TaskType) Scan(src interface{}) error {
@@ -383,6 +384,7 @@ type Tag struct {
 	DemotedReason sql.NullString
 	Seeded        bool
 	ModifiedAt    time.Time
+	AcceptedAt    sql.NullTime
 }
 
 type TagAlias struct {

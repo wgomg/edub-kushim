@@ -1,5 +1,7 @@
 package tags
 
+import "time"
+
 // AdmissionOutcome is how the pinned rule set disposes of one candidate.
 // Reject drops it, defer sends it to review, and admit keeps it; defer and
 // admit both leave the candidate provisional, told apart only by the
@@ -45,7 +47,8 @@ type AdmissionFeatures struct {
 
 // The reasons an admission decision carries into the logs: a judge abstention, a candidate judged neither
 // subject matter nor a dimension (the definition's drop leg, §3.6), two or more failing signals, a failure
-// set of deterministic signals alone, one lone failing signal in the gray band, or no failing signal.
+// set of deterministic signals alone, one lone failing signal in the gray band, no failing signal, or an
+// operator who waived a review deferral.
 const (
 	ReasonJudgeDefer        = "judge_defer"
 	ReasonNoDimension       = "no_dimension"
@@ -53,6 +56,7 @@ const (
 	ReasonDeterministicOnly = "deterministic_only"
 	ReasonSingleSignal      = "single_signal"
 	ReasonAdmitted          = "admitted"
+	ReasonOperatorAccept    = "operator_accept"
 )
 
 // The triggers that cost a value its standing (docs/specs/tags/definition.md §6.4, §8): mass decay below
@@ -214,8 +218,10 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // removes the stored row, the admission and demotion rules unchanged. v9 structures the admission rules:
 // a candidate judged neither subject matter nor a dimension rejects with its own no_dimension reason, and
 // a rejection requires at least one judge-owned failing signal — a failure set of deterministic signals
-// alone defers as deterministic_only — the demotion and retention rules unchanged.
-const DecisionRuleSetVersion = "v9"
+// alone defers as deterministic_only — the demotion and retention rules unchanged. v10 adds the operator
+// acceptance: a review deferral waived by an editor admits the value to the ordinary promotion paths, the
+// admission, demotion and retention rules unchanged.
+const DecisionRuleSetVersion = "v10"
 
 // RecurrenceFloor is the promotion minimum of docs/specs/tags/definition.md §4.3 (P2), in live
 // documents: ten until its calibration exists (operator decision D8, 2026-09-30). Same-batch mass
@@ -230,6 +236,19 @@ const RecurrenceFloor = 10
 // action.
 func DecidePromotion(outcome AdmissionOutcome, liveMass int64) bool {
 	return outcome == AdmissionAdmit && liveMass >= RecurrenceFloor
+}
+
+// WithAcceptance resolves one derived decision against an operator acceptance: a review deferral waived
+// after the current policy version's fresh verdict admits the value to the ordinary promotion floor, so a
+// provisional tag can still wait for recurrence instead of being promoted or deleted outright. A missing
+// acceptance, an acceptance older than the fresh verdict (a newer decision always re-decides), or a
+// decision that is not a defer all keep the derived decision; a missing fresh verdict arrives as the
+// epoch, so an acceptance still governs until a verdict replaces it.
+func WithAcceptance(derived AdmissionDecision, acceptedAt, freshVerdictAt time.Time) AdmissionDecision {
+	if acceptedAt.IsZero() || !acceptedAt.After(freshVerdictAt) || derived.Outcome != AdmissionDefer {
+		return derived
+	}
+	return AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonOperatorAccept}
 }
 
 // DecideMassDemotion treats the recurrence floor as a standing condition (P2): a value whose live mass has

@@ -1069,3 +1069,119 @@ func TestTag_Retire(t *testing.T) {
 		testutil.AssertEqual(t, status, types.RetireNotFound, "status")
 	})
 }
+
+// deferCriteria is a complete rubric with exactly one failing answer, so
+// DecisionFromStored re-derives the stored defer outcome it was written with.
+const deferCriteria = `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`
+
+func TestTag_Accept(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	// seedDeferred creates a provisional value carrying a fresh defer verdict
+	// under the current quality version; verdictOutcome overrides the stored
+	// outcome when a test needs a non-defer verdict instead. The subtest's t
+	// is passed in so a failure aborts the subtest, not the parent.
+	seedDeferred := func(t *testing.T, name, verdictOutcome string) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		docID := database.CreateUniqueDocument(t, client.Queries, name)
+		database.MustInsertTagQualityEvent(t, client.Queries, docID, name, deferCriteria,
+			verdictOutcome, analyzer.TagQualityVersion)
+		return id
+	}
+	acceptedAt := func(t *testing.T, id int64) bool {
+		t.Helper()
+		var ok bool
+		if err := client.DB().QueryRowContext(ctx,
+			"SELECT accepted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&ok); err != nil {
+			t.Fatalf("read accepted_at: %v", err)
+		}
+		return ok
+	}
+
+	t.Run("waives the deferral of a provisional value and promotes clean", func(t *testing.T) {
+		id := seedDeferred(t, "accept deferred value", "defer")
+
+		status, err := svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "accept")
+		testutil.AssertEqual(t, status, types.AcceptApplied, "status")
+		testutil.AssertEqual(t, acceptedAt(t, id), true, "accepted_at stamped")
+
+		if _, _, err := svc.Promote(ctx, id, "test"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+		testutil.AssertEqual(t, acceptedAt(t, id), false, "promote clears the acceptance")
+	})
+
+	t.Run("refuses a promoted value", func(t *testing.T) {
+		id := seedDeferred(t, "accept promoted value", "defer")
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id); err != nil {
+			t.Fatalf("set standing: %v", err)
+		}
+
+		status, err := svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "accept")
+		testutil.AssertEqual(t, status, types.AcceptNotProvisional, "status")
+		testutil.AssertEqual(t, acceptedAt(t, id), false, "no stamp")
+	})
+
+	t.Run("refuses a value whose verdict is not a defer", func(t *testing.T) {
+		id := seedDeferred(t, "accept admitted value", "admit")
+
+		status, err := svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "accept")
+		testutil.AssertEqual(t, status, types.AcceptNotDeferred, "status")
+		testutil.AssertEqual(t, acceptedAt(t, id), false, "no stamp")
+	})
+
+	t.Run("refuses a value that was never judged", func(t *testing.T) {
+		id := database.MustCreateTag(t, client.Queries, "accept unjudged value")
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+
+		status, err := svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "accept")
+		testutil.AssertEqual(t, status, types.AcceptNotDeferred, "status")
+	})
+
+	t.Run("refuses a value already accepted", func(t *testing.T) {
+		id := seedDeferred(t, "accept twice value", "defer")
+
+		status, err := svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "first accept")
+		testutil.AssertEqual(t, status, types.AcceptApplied, "first status")
+
+		status, err = svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "second accept")
+		testutil.AssertEqual(t, status, types.AcceptAlready, "second status")
+	})
+
+	t.Run("refuses a value a composition hold still withholds", func(t *testing.T) {
+		id := seedDeferred(t, "accept held value", "defer")
+		name := "accept held value"
+		docID := database.CreateUniqueDocument(t, client.Queries, name+" hold")
+		if _, err := client.DB().ExecContext(ctx, `
+			INSERT INTO tag_composition_event
+			    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+			VALUES ($1, $2, '[]'::jsonb, 'keep', $3, $4, now())`,
+			docID, name, tags.CompositionReasonSplitDefer, analyzer.TagSplitVersion); err != nil {
+			t.Fatalf("seed composition event: %v", err)
+		}
+
+		status, err := svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "accept")
+		testutil.AssertEqual(t, status, types.AcceptHeld, "status")
+		testutil.AssertEqual(t, acceptedAt(t, id), false, "no stamp")
+	})
+
+	t.Run("reports a missing value", func(t *testing.T) {
+		status, err := svc.Accept(ctx, 999999)
+		testutil.AssertNoError(t, err, "accept")
+		testutil.AssertEqual(t, status, types.AcceptNotFound, "status")
+	})
+}

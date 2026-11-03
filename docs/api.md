@@ -600,6 +600,22 @@ Delete removes a tag and blocks its name.
 | 500 | string |
 | 503 | object |
 
+#### `POST /api/v1/tags/{id}/accept`
+
+AcceptTag waives one provisional tag's review deferral so the ordinary promotion floor decides it.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `id` | path | string | yes | — |
+
+| Status | Body |
+|---|---|
+| 204 | no body |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
 #### `POST /api/v1/tags/{id}/composition`
 
 CompositionDecision applies an operator's split or keep decision over one provisional compound.
@@ -2732,10 +2748,11 @@ ProvisionalTagListResponse is one page of provisional tags: the filtered total f
 
 ### ProvisionalTagResponse
 
-ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it provisional.
+ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a value whose fresh verdict has since re-decided it reads as deferred again.
 
 | Field | Type | Required |
 |---|---|---|
+| `accepted_at` | string (date-time) | no |
 | `composition_action` | string | no |
 | `composition_hold` | string | no |
 | `composition_parts` | array of string | no |

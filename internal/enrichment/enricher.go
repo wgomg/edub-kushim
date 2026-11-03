@@ -745,8 +745,9 @@ func documentCounts(results []types.CreateResult[database.Tag], tagIDs []int64, 
 
 func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, results []types.CreateResult[database.Tag], decisions map[string]tags.AdmissionDecision, reqID string) []string {
 	type candidate struct {
-		name string
-		id   int64
+		name       string
+		id         int64
+		acceptedAt time.Time
 	}
 	var candidates []candidate
 	seen := make(map[string]bool, len(results))
@@ -758,17 +759,24 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 			continue
 		}
 		seen[r.Entity.Name] = true
-		candidates = append(candidates, candidate{name: r.Entity.Name, id: r.Entity.ID})
+		candidates = append(candidates, candidate{
+			name:       r.Entity.Name,
+			id:         r.Entity.ID,
+			acceptedAt: r.Entity.AcceptedAt.Time,
+		})
 	}
 	if len(candidates) == 0 {
 		return nil
 	}
 
 	// the emission decided the novel names; a provisional already in the
-	// store was skipped there, so its cached verdict row decides it
+	// store was skipped there, so its cached verdict row decides it, with an operator acceptance waiving
+	// the deferral it was recorded against
 	decisionByName := make(map[string]tags.AdmissionDecision, len(candidates))
+	acceptedAtByName := make(map[string]time.Time, len(candidates))
 	var undecided []string
 	for _, c := range candidates {
+		acceptedAtByName[c.name] = c.acceptedAt
 		if decision, ok := decisions[c.name]; ok {
 			decisionByName[c.name] = decision
 			continue
@@ -781,7 +789,8 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 			e.logger.Error(reqID, "tag quality promotion verdict lookup failed: %v", err)
 		}
 		for _, row := range rows {
-			decisionByName[row.TagName] = admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
+			decision := admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
+			decisionByName[row.TagName] = tags.WithAcceptance(decision, acceptedAtByName[row.TagName], row.FreshVerdictAt)
 		}
 	}
 

@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -207,6 +208,26 @@ func MustAddDocumentTag(t TB, queries *Queries, documentID, tagID int64) {
 		DocumentID: documentID, TagID: tagID, Source: "enrich",
 	}); err != nil {
 		t.Fatalf("add document_tag: %v", err)
+	}
+}
+
+// MustInsertTagQualityEvent records one fresh quality verdict for the name under policyVersion: the
+// criteria JSON carries the rubric answers, outcome is the stored admission outcome ("admit", "defer"
+// or "reject"), and the verdict model marks the row as the fresh verdict of its (name, version) slot.
+// The verdict is stamped at insert time; a test that compares it against another timestamp backdates
+// it with its own UPDATE.
+func MustInsertTagQualityEvent(t TB, queries *Queries, documentID int64, name, criteria, outcome, policyVersion string) {
+	t.Helper()
+	if _, err := queries.InsertTagQualityEvent(context.Background(), InsertTagQualityEventParams{
+		DocumentID:    documentID,
+		TagName:       textnorm.NormalizeTag(name),
+		Criteria:      json.RawMessage(criteria),
+		Pass:          outcome == "admit",
+		Outcome:       sql.NullString{String: outcome, Valid: true},
+		VerdictModel:  sql.NullString{String: "judge", Valid: true},
+		PolicyVersion: policyVersion,
+	}); err != nil {
+		t.Fatalf("insert tag quality event %q: %v", name, err)
 	}
 }
 

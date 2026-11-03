@@ -273,7 +273,10 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
    (`204`; `404` unknown tag, `400` an invalid decision or too many components, `409` when the tag is
    already promoted) applies a split or keeps the compound whole, with parts applied alongside when
    supplied; and `POST /api/v1/tags/{id}/retire` (`204`; `404` unknown tag, `409` when promoted —
-   demote owns that case) deletes a provisional tag *without* blocklisting its name. Renaming reuses
+   demote owns that case) deletes a provisional tag *without* blocklisting its name.
+   `POST /api/v1/tags/{id}/accept` (`204`; `404` unknown tag, `409` when promoted, already
+   accepted, not deferred to review, or still held by an identity or composition hold) waives a
+   review deferral so the tag waits for the promotion floor like any admitted value. Renaming reuses
    `PUT /api/v1/tags/{id}`.
 3. **Re-judge**: `POST /api/v1/tags/{id}/rejudge` with `{"scope": "quality"|"composition"}`
    enqueues one on-demand judgment → `202` with `{"batch_id": "…", "already_queued": false}`

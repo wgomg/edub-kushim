@@ -48,13 +48,17 @@ func (q *Queries) InsertTagQualityEvent(ctx context.Context, arg InsertTagQualit
 }
 
 const latestTagQualityEventsForNames = `-- name: LatestTagQualityEventsForNames :many
-SELECT DISTINCT ON (tag_name)
-       tag_name, criteria, pass, outcome, verdict_model, policy_version, verdict_at,
-       (MIN(verdict_at) OVER (PARTITION BY tag_name))::timestamptz AS first_verdict_at
-FROM tag_quality_event
-WHERE policy_version = $1
-  AND tag_name = ANY($2::text[])
-ORDER BY tag_name, verdict_at DESC
+SELECT DISTINCT ON (e.tag_name)
+       e.tag_name, e.criteria, e.pass, e.outcome, e.verdict_model, e.policy_version, e.verdict_at,
+       (MIN(e.verdict_at) OVER (PARTITION BY e.tag_name))::timestamptz AS first_verdict_at,
+       coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                 WHERE f.tag_name = e.tag_name
+                   AND f.policy_version = $1
+                   AND f.verdict_model IS NOT NULL), 'epoch'::timestamptz)::timestamptz AS fresh_verdict_at
+FROM tag_quality_event e
+WHERE e.policy_version = $1
+  AND e.tag_name = ANY($2::text[])
+ORDER BY e.tag_name, e.verdict_at DESC
 `
 
 type LatestTagQualityEventsForNamesParams struct {
@@ -71,6 +75,7 @@ type LatestTagQualityEventsForNamesRow struct {
 	PolicyVersion  string
 	VerdictAt      time.Time
 	FirstVerdictAt time.Time
+	FreshVerdictAt time.Time
 }
 
 func (q *Queries) LatestTagQualityEventsForNames(ctx context.Context, arg LatestTagQualityEventsForNamesParams) ([]LatestTagQualityEventsForNamesRow, error) {
@@ -91,6 +96,7 @@ func (q *Queries) LatestTagQualityEventsForNames(ctx context.Context, arg Latest
 			&i.PolicyVersion,
 			&i.VerdictAt,
 			&i.FirstVerdictAt,
+			&i.FreshVerdictAt,
 		); err != nil {
 			return nil, err
 		}

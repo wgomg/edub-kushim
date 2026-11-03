@@ -61,6 +61,7 @@ matching section of the guide.
 | `no verdict` | grey | never judged under the current rules |
 | `awaiting promotion floor` | green | admitted by the judge; waiting for enough live documents |
 | `deferred to review` | amber | the judge abstained or the evidence was inconclusive |
+| `accepted — awaiting promotion floor` | green | an operator waived the deferral; the value waits for the promotion floor |
 | `judge rejected` | amber | the judge found the value failing the rubric |
 | `identity pending` | amber | a same-intent claim about this tag awaits the identity pass |
 | `identity hold → *value*` | amber | the identity judge refused to fold this tag onto that value |
@@ -104,6 +105,7 @@ justify.
 | **Approve** | promotes the tag into the shared vocabulary; overrides undecided verdicts and holds, but a decided drop is re-demoted by the next reconciliation run |
 | **Reject** | deletes the tag *and blocklists the name*, so enrichment never proposes it again (restorable from the Deleted tab) |
 | **Retire** | deletes the tag without blocklisting the name, so enrichment may propose the value again |
+| **Accept as provisional** | waives a review deferral: the tag stops being deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it; offered only when no identity or split hold still withholds the tag |
 | **Rename** | changes the name in place; the journals are keyed by name, so the tag shows no verdict until it is judged again under the new name |
 | **Fold into *value*** | collapses this tag onto its held store value: documents move, this name becomes an alias and leaves the vocabulary |
 | **Make canonical** | the reverse fold: the held value collapses onto this tag, losing its row and standing; this tag stays provisional until approved |

@@ -3667,6 +3667,100 @@ func TestRetireTag(t *testing.T) {
 	})
 }
 
+// TestAcceptTag pins the accept endpoint: a bare deferral answers 204 and stamps the acceptance,
+// every guard answers 409 with a JSON error body the queue surfaces verbatim, and an unknown or
+// malformed id answers 404/400.
+func TestAcceptTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	accept := func(id string) *httptest.ResponseRecorder {
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/"+id+"/accept", nil)
+		r.SetPathValue("id", id)
+		h.AcceptTag(w, r)
+		return w
+	}
+	assertConflict := func(t *testing.T, w *httptest.ResponseRecorder, wantError string) {
+		t.Helper()
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+		var body map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("409 body must be JSON: %v", err)
+		}
+		testutil.AssertEqual(t, body["error"], wantError, "conflict error text")
+	}
+	seedDeferred := func(t *testing.T, name, outcome string) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		if _, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		docID := database.CreateUniqueDocument(t, env.client.Queries, name)
+		database.MustInsertTagQualityEvent(t, env.client.Queries, docID, name,
+			`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`,
+			outcome, analyzer.TagQualityVersion)
+		return id
+	}
+
+	t.Run("accepting a bare deferral answers 204 and stamps accepted_at", func(t *testing.T) {
+		id := seedDeferred(t, "accept handler value", "defer")
+
+		testutil.AssertEqual(t, accept(fmt.Sprintf("%d", id)).Code, http.StatusNoContent, "status")
+		var stamped bool
+		testutil.AssertNoError(t,
+			env.client.DB().QueryRowContext(ctx,
+				"SELECT accepted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&stamped),
+			"read accepted_at")
+		testutil.AssertEqual(t, stamped, true, "accepted_at stamped")
+	})
+
+	t.Run("a promoted value answers 409", func(t *testing.T) {
+		id := seedDeferred(t, "accept handler promoted", "defer")
+		if _, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id); err != nil {
+			t.Fatalf("set standing: %v", err)
+		}
+
+		assertConflict(t, accept(fmt.Sprintf("%d", id)), "Tag is already promoted")
+	})
+
+	t.Run("an already accepted value answers 409", func(t *testing.T) {
+		id := seedDeferred(t, "accept handler twice", "defer")
+		testutil.AssertEqual(t, accept(fmt.Sprintf("%d", id)).Code, http.StatusNoContent, "first accept")
+
+		assertConflict(t, accept(fmt.Sprintf("%d", id)), "Tag is already accepted")
+	})
+
+	t.Run("a non-deferred verdict answers 409", func(t *testing.T) {
+		id := seedDeferred(t, "accept handler admitted", "admit")
+
+		assertConflict(t, accept(fmt.Sprintf("%d", id)), "Tag is not deferred to review")
+	})
+
+	t.Run("a held value answers 409", func(t *testing.T) {
+		id := seedDeferred(t, "accept handler held", "defer")
+		docID := database.CreateUniqueDocument(t, env.client.Queries, "accept handler held hold")
+		if _, err := env.client.DB().ExecContext(ctx, `
+			INSERT INTO tag_composition_event
+			    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+			VALUES ($1, $2, '[]'::jsonb, 'keep', $3, $4, now())`,
+			docID, "accept handler held", tags.CompositionReasonSplitDefer, analyzer.TagSplitVersion); err != nil {
+			t.Fatalf("seed composition event: %v", err)
+		}
+
+		assertConflict(t, accept(fmt.Sprintf("%d", id)), "Another review concern still holds this tag")
+	})
+
+	t.Run("not found answers 404", func(t *testing.T) {
+		testutil.AssertEqual(t, accept("999999").Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("invalid id answers 400", func(t *testing.T) {
+		testutil.AssertEqual(t, accept("abc").Code, http.StatusBadRequest, "status")
+	})
+}
+
 // TestCompositionDecision pins the operator decision endpoint: a valid split or keep answers 204, a
 // compound that is no longer provisional is refused with 409, and a decision the boundary cannot
 // accept answers 400 without touching the store.

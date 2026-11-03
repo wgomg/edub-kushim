@@ -53,6 +53,9 @@
 		<path d="m13 9-3 3 3 3" />
 	{:else if name === 'check'}
 		<path d="M20 6 9 17l-5-5" />
+	{:else if name === 'circle-check'}
+		<circle cx="12" cy="12" r="10" />
+		<path d="m9 12 2 2 4-4" />
 	{:else if name === 'x'}
 		<path d="M18 6 6 18" />
 		<path d="m6 6 12 12" />

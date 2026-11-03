@@ -46,6 +46,7 @@ UPDATE tag SET
     promoted_at = now(),
     demoted_at = NULL,
     demoted_reason = NULL,
+    accepted_at = NULL,
     modified_at = now()
 WHERE id = ANY(@tag_ids::bigint[])
   AND promoted_at IS NULL;
@@ -59,6 +60,12 @@ UPDATE tag SET
 WHERE id = ANY(@tag_ids::bigint[])
   AND promoted_at IS NOT NULL
   AND NOT seeded;
+
+-- name: AcceptTag :exec
+UPDATE tag SET accepted_at = now()
+WHERE id = $1
+  AND promoted_at IS NULL
+  AND accepted_at IS NULL;
 
 -- name: ListPromotedTagsForDemotion :many
 SELECT id, name, promoted_at FROM tag
@@ -126,7 +133,10 @@ WHERE id = ANY(@tag_ids::bigint[])
 
 -- name: ListProvisionalTagsWithDocumentCount :many
 SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
-       t.demoted_at, t.demoted_reason,
+       t.demoted_at, t.demoted_reason, t.accepted_at,
+       coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                 WHERE f.tag_name = t.name AND f.policy_version = @policy_version
+                   AND f.verdict_model IS NOT NULL), 'epoch'::timestamptz)::timestamptz AS fresh_verdict_at,
        (SELECT COUNT(*) FROM document_tag dt
         JOIN document d ON d.id = dt.document_id
         WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
@@ -154,15 +164,28 @@ WHERE t.promoted_at IS NULL
   AND (@defer_state::text = ''
        OR coalesce(qe.criteria ->> 'defer', 'absent') = @defer_state::text)
   -- legacy rows carry no outcome: derive it the same way the ui's verdict
-  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class. An operator
+  -- acceptance newer than the fresh verdict waives the deferral, so the tag reads admitted
   AND (@verdict_state::text = ''
        OR (@verdict_state::text = 'none' AND qe.pass IS NULL)
        OR (@verdict_state::text <> 'none'
            AND qe.pass IS NOT NULL
-           AND coalesce(qe.outcome,
-                        CASE WHEN qe.pass THEN 'admit'
-                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                             ELSE 'reject' END) = @verdict_state::text))
+           AND CASE
+                   WHEN t.accepted_at IS NOT NULL
+                        AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                                                      WHERE f.tag_name = t.name
+                                                        AND f.policy_version = @policy_version
+                                                        AND f.verdict_model IS NOT NULL),
+                                                     'epoch'::timestamptz)
+                        AND coalesce(qe.outcome,
+                                     CASE WHEN qe.pass THEN 'admit'
+                                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                          ELSE 'reject' END) = 'defer' THEN 'admit'
+                   ELSE coalesce(qe.outcome,
+                                 CASE WHEN qe.pass THEN 'admit'
+                                      WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                      ELSE 'reject' END)
+               END = @verdict_state::text))
 ORDER BY coalesce(t.created_at, now()) DESC, t.id DESC
 LIMIT @page_limit OFFSET @page_offset;
 
@@ -191,18 +214,31 @@ WHERE t.promoted_at IS NULL
   AND (@defer_state::text = ''
        OR coalesce(qe.criteria ->> 'defer', 'absent') = @defer_state::text)
   -- legacy rows carry no outcome: derive it the same way the ui's verdict
-  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class. An operator
+  -- acceptance newer than the fresh verdict waives the deferral, so the tag reads admitted
   AND (@verdict_state::text = ''
        OR (@verdict_state::text = 'none' AND qe.pass IS NULL)
        OR (@verdict_state::text <> 'none'
            AND qe.pass IS NOT NULL
-           AND coalesce(qe.outcome,
-                        CASE WHEN qe.pass THEN 'admit'
-                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                             ELSE 'reject' END) = @verdict_state::text));
+           AND CASE
+                   WHEN t.accepted_at IS NOT NULL
+                        AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                                                      WHERE f.tag_name = t.name
+                                                        AND f.policy_version = @policy_version
+                                                        AND f.verdict_model IS NOT NULL),
+                                                     'epoch'::timestamptz)
+                        AND coalesce(qe.outcome,
+                                     CASE WHEN qe.pass THEN 'admit'
+                                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                          ELSE 'reject' END) = 'defer' THEN 'admit'
+                   ELSE coalesce(qe.outcome,
+                                 CASE WHEN qe.pass THEN 'admit'
+                                      WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                      ELSE 'reject' END)
+               END = @verdict_state::text));
 
 -- name: ListProvisionalTagsOlderThan :many
-SELECT t.id, t.name, t.created_at FROM tag t
+SELECT t.id, t.name, t.created_at, t.accepted_at FROM tag t
 WHERE t.promoted_at IS NULL
   AND t.created_at < @cutoff::timestamptz
 ORDER BY t.created_at;

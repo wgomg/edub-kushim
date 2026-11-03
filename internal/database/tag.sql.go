@@ -13,6 +13,18 @@ import (
 	"github.com/lib/pq"
 )
 
+const acceptTag = `-- name: AcceptTag :exec
+UPDATE tag SET accepted_at = now()
+WHERE id = $1
+  AND promoted_at IS NULL
+  AND accepted_at IS NULL
+`
+
+func (q *Queries) AcceptTag(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, acceptTag, id)
+	return err
+}
+
 const clearOrphanTagMarks = `-- name: ClearOrphanTagMarks :execrows
 UPDATE tag t SET orphaned_since = NULL
 WHERE t.orphaned_since IS NOT NULL
@@ -67,15 +79,28 @@ WHERE t.promoted_at IS NULL
   AND ($8::text = ''
        OR coalesce(qe.criteria ->> 'defer', 'absent') = $8::text)
   -- legacy rows carry no outcome: derive it the same way the ui's verdict
-  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class. An operator
+  -- acceptance newer than the fresh verdict waives the deferral, so the tag reads admitted
   AND ($9::text = ''
        OR ($9::text = 'none' AND qe.pass IS NULL)
        OR ($9::text <> 'none'
            AND qe.pass IS NOT NULL
-           AND coalesce(qe.outcome,
-                        CASE WHEN qe.pass THEN 'admit'
-                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                             ELSE 'reject' END) = $9::text))
+           AND CASE
+                   WHEN t.accepted_at IS NOT NULL
+                        AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                                                      WHERE f.tag_name = t.name
+                                                        AND f.policy_version = $1
+                                                        AND f.verdict_model IS NOT NULL),
+                                                     'epoch'::timestamptz)
+                        AND coalesce(qe.outcome,
+                                     CASE WHEN qe.pass THEN 'admit'
+                                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                          ELSE 'reject' END) = 'defer' THEN 'admit'
+                   ELSE coalesce(qe.outcome,
+                                 CASE WHEN qe.pass THEN 'admit'
+                                      WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                      ELSE 'reject' END)
+               END = $9::text))
 `
 
 type CountProvisionalTagsParams struct {
@@ -260,7 +285,7 @@ func (q *Queries) FirstDocumentIDForTag(ctx context.Context, tagID int64) (int64
 }
 
 const getTag = `-- name: GetTag :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag WHERE id = $1
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at FROM tag WHERE id = $1
 `
 
 func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
@@ -276,12 +301,13 @@ func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
 		&i.DemotedReason,
 		&i.Seeded,
 		&i.ModifiedAt,
+		&i.AcceptedAt,
 	)
 	return i, err
 }
 
 const getTagByName = `-- name: GetTagByName :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag WHERE name = $1
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at FROM tag WHERE name = $1
 `
 
 func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
@@ -297,12 +323,13 @@ func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
 		&i.DemotedReason,
 		&i.Seeded,
 		&i.ModifiedAt,
+		&i.AcceptedAt,
 	)
 	return i, err
 }
 
 const getTagForUpdate = `-- name: GetTagForUpdate :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag WHERE id = $1 FOR UPDATE
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at FROM tag WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
@@ -318,12 +345,13 @@ func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
 		&i.DemotedReason,
 		&i.Seeded,
 		&i.ModifiedAt,
+		&i.AcceptedAt,
 	)
 	return i, err
 }
 
 const getTagForUpdateByName = `-- name: GetTagForUpdateByName :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag WHERE name = $1 FOR UPDATE
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at FROM tag WHERE name = $1 FOR UPDATE
 `
 
 func (q *Queries) GetTagForUpdateByName(ctx context.Context, name string) (Tag, error) {
@@ -339,12 +367,13 @@ func (q *Queries) GetTagForUpdateByName(ctx context.Context, name string) (Tag, 
 		&i.DemotedReason,
 		&i.Seeded,
 		&i.ModifiedAt,
+		&i.AcceptedAt,
 	)
 	return i, err
 }
 
 const listAllTags = `-- name: ListAllTags :many
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag ORDER BY created_at DESC
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at FROM tag ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
@@ -366,6 +395,7 @@ func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
 			&i.DemotedReason,
 			&i.Seeded,
 			&i.ModifiedAt,
+			&i.AcceptedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -381,7 +411,7 @@ func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
 }
 
 const listAllTagsWithDocumentCount = `-- name: ListAllTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -398,6 +428,7 @@ type ListAllTagsWithDocumentCountRow struct {
 	DemotedReason sql.NullString
 	Seeded        bool
 	ModifiedAt    time.Time
+	AcceptedAt    sql.NullTime
 	DocumentCount int64
 }
 
@@ -420,6 +451,7 @@ func (q *Queries) ListAllTagsWithDocumentCount(ctx context.Context) ([]ListAllTa
 			&i.DemotedReason,
 			&i.Seeded,
 			&i.ModifiedAt,
+			&i.AcceptedAt,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -537,16 +569,17 @@ func (q *Queries) ListPromotedTagsForDemotion(ctx context.Context) ([]ListPromot
 }
 
 const listProvisionalTagsOlderThan = `-- name: ListProvisionalTagsOlderThan :many
-SELECT t.id, t.name, t.created_at FROM tag t
+SELECT t.id, t.name, t.created_at, t.accepted_at FROM tag t
 WHERE t.promoted_at IS NULL
   AND t.created_at < $1::timestamptz
 ORDER BY t.created_at
 `
 
 type ListProvisionalTagsOlderThanRow struct {
-	ID        int64
-	Name      string
-	CreatedAt sql.NullTime
+	ID         int64
+	Name       string
+	CreatedAt  sql.NullTime
+	AcceptedAt sql.NullTime
 }
 
 func (q *Queries) ListProvisionalTagsOlderThan(ctx context.Context, cutoff time.Time) ([]ListProvisionalTagsOlderThanRow, error) {
@@ -558,7 +591,12 @@ func (q *Queries) ListProvisionalTagsOlderThan(ctx context.Context, cutoff time.
 	var items []ListProvisionalTagsOlderThanRow
 	for rows.Next() {
 		var i ListProvisionalTagsOlderThanRow
-		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.AcceptedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -574,7 +612,10 @@ func (q *Queries) ListProvisionalTagsOlderThan(ctx context.Context, cutoff time.
 
 const listProvisionalTagsWithDocumentCount = `-- name: ListProvisionalTagsWithDocumentCount :many
 SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
-       t.demoted_at, t.demoted_reason,
+       t.demoted_at, t.demoted_reason, t.accepted_at,
+       coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                 WHERE f.tag_name = t.name AND f.policy_version = $1
+                   AND f.verdict_model IS NOT NULL), 'epoch'::timestamptz)::timestamptz AS fresh_verdict_at,
        (SELECT COUNT(*) FROM document_tag dt
         JOIN document d ON d.id = dt.document_id
         WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
@@ -602,15 +643,28 @@ WHERE t.promoted_at IS NULL
   AND ($8::text = ''
        OR coalesce(qe.criteria ->> 'defer', 'absent') = $8::text)
   -- legacy rows carry no outcome: derive it the same way the ui's verdict
-  -- outcome does; the pass guard keeps unjudged tags in the 'none' class
+  -- outcome does; the pass guard keeps unjudged tags in the 'none' class. An operator
+  -- acceptance newer than the fresh verdict waives the deferral, so the tag reads admitted
   AND ($9::text = ''
        OR ($9::text = 'none' AND qe.pass IS NULL)
        OR ($9::text <> 'none'
            AND qe.pass IS NOT NULL
-           AND coalesce(qe.outcome,
-                        CASE WHEN qe.pass THEN 'admit'
-                             WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                             ELSE 'reject' END) = $9::text))
+           AND CASE
+                   WHEN t.accepted_at IS NOT NULL
+                        AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                                                      WHERE f.tag_name = t.name
+                                                        AND f.policy_version = $1
+                                                        AND f.verdict_model IS NOT NULL),
+                                                     'epoch'::timestamptz)
+                        AND coalesce(qe.outcome,
+                                     CASE WHEN qe.pass THEN 'admit'
+                                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                          ELSE 'reject' END) = 'defer' THEN 'admit'
+                   ELSE coalesce(qe.outcome,
+                                 CASE WHEN qe.pass THEN 'admit'
+                                      WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                      ELSE 'reject' END)
+               END = $9::text))
 ORDER BY coalesce(t.created_at, now()) DESC, t.id DESC
 LIMIT $11 OFFSET $10
 `
@@ -630,12 +684,14 @@ type ListProvisionalTagsWithDocumentCountParams struct {
 }
 
 type ListProvisionalTagsWithDocumentCountRow struct {
-	ID            int64
-	Name          string
-	CreatedAt     sql.NullTime
-	DemotedAt     sql.NullTime
-	DemotedReason sql.NullString
-	DocumentCount int64
+	ID             int64
+	Name           string
+	CreatedAt      sql.NullTime
+	DemotedAt      sql.NullTime
+	DemotedReason  sql.NullString
+	AcceptedAt     sql.NullTime
+	FreshVerdictAt time.Time
+	DocumentCount  int64
 }
 
 func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg ListProvisionalTagsWithDocumentCountParams) ([]ListProvisionalTagsWithDocumentCountRow, error) {
@@ -665,6 +721,8 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 			&i.CreatedAt,
 			&i.DemotedAt,
 			&i.DemotedReason,
+			&i.AcceptedAt,
+			&i.FreshVerdictAt,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -818,7 +876,7 @@ func (q *Queries) ListTagIDsByNames(ctx context.Context, names []string) ([]List
 }
 
 const listTags = `-- name: ListTags :many
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListTagsParams struct {
@@ -845,6 +903,7 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 			&i.DemotedReason,
 			&i.Seeded,
 			&i.ModifiedAt,
+			&i.AcceptedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -860,7 +919,7 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 }
 
 const listTagsWithDocumentCount = `-- name: ListTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -882,6 +941,7 @@ type ListTagsWithDocumentCountRow struct {
 	DemotedReason sql.NullString
 	Seeded        bool
 	ModifiedAt    time.Time
+	AcceptedAt    sql.NullTime
 	DocumentCount int64
 }
 
@@ -904,6 +964,7 @@ func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWit
 			&i.DemotedReason,
 			&i.Seeded,
 			&i.ModifiedAt,
+			&i.AcceptedAt,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -964,6 +1025,7 @@ UPDATE tag SET
     promoted_at = now(),
     demoted_at = NULL,
     demoted_reason = NULL,
+    accepted_at = NULL,
     modified_at = now()
 WHERE id = ANY($1::bigint[])
   AND promoted_at IS NULL
@@ -1048,7 +1110,7 @@ func (q *Queries) RetentionTagProbe(ctx context.Context, cutoff time.Time) (bool
 }
 
 const searchTagsByName = `-- name: SearchTagsByName :many
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at FROM tag WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at FROM tag WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchTagsByNameParams struct {
@@ -1076,6 +1138,7 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 			&i.DemotedReason,
 			&i.Seeded,
 			&i.ModifiedAt,
+			&i.AcceptedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1091,7 +1154,7 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 }
 
 const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 WHERE t.name ILIKE $1
@@ -1115,6 +1178,7 @@ type SearchTagsByNameWithDocumentCountRow struct {
 	DemotedReason sql.NullString
 	Seeded        bool
 	ModifiedAt    time.Time
+	AcceptedAt    sql.NullTime
 	DocumentCount int64
 }
 
@@ -1137,6 +1201,7 @@ func (q *Queries) SearchTagsByNameWithDocumentCount(ctx context.Context, arg Sea
 			&i.DemotedReason,
 			&i.Seeded,
 			&i.ModifiedAt,
+			&i.AcceptedAt,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err

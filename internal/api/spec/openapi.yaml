@@ -3234,6 +3234,52 @@ paths:
                 properties:
                   error:
                     type: string
+  /api/v1/tags/{id}/accept:
+    post:
+      summary: AcceptTag waives one provisional tag's review deferral so the ordinary promotion floor decides it.
+      operationId: postApiV1TagsByIdAccept
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/tags/{id}/composition:
     post:
       summary: CompositionDecision applies an operator's split or keep decision over one provisional compound.
@@ -6969,8 +7015,12 @@ components:
       type: object
       description: |-
         ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
-        provisional.
+        provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral,
+        so a value whose fresh verdict has since re-decided it reads as deferred again.
       properties:
+        accepted_at:
+          type: string
+          format: date-time
         composition_action:
           type: string
           enum:

@@ -96,6 +96,11 @@
 			text: 'Deletes the tag without blocklisting the name: the assignments are removed now, but enrichment may propose the value again.'
 		},
 		{
+			icon: 'circle-check',
+			name: 'Accept as provisional',
+			text: 'Waives a review deferral: the tag is no longer deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it. Offered only when no identity or split hold still withholds the tag.'
+		},
+		{
 			icon: 'pencil',
 			name: 'Rename',
 			text: 'Changes the tag name in place. The verdict and hold journals are keyed by name, so a renamed tag shows no verdict until it is judged again under the new name.'
@@ -170,6 +175,12 @@
 			<li>
 				<span class={pillWarn}>deferred to review</span>
 				<span class="ms-1.5 {text}">the judge abstained or the evidence was inconclusive.</span>
+			</li>
+			<li>
+				<span class={pillOk}>accepted — awaiting promotion floor</span>
+				<span class="ms-1.5 {text}"
+					>an operator waived the deferral; the value waits for the promotion floor.</span
+				>
 			</li>
 			<li>
 				<span class={pillWarn}>judge rejected</span>

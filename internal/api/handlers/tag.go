@@ -356,6 +356,10 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				demotedAt := t.DemotedAt.Time
 				responses[i].DemotedAt = &demotedAt
 			}
+			if t.AcceptedAt.Valid && t.AcceptedAt.Time.After(t.FreshVerdictAt) {
+				acceptedAt := t.AcceptedAt.Time
+				responses[i].AcceptedAt = &acceptedAt
+			}
 			if v, ok := verdicts[t.Name]; ok {
 				responses[i].Verdict = &v
 			}
@@ -566,6 +570,40 @@ func (h *TagHandler) RetireTag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Tag not found", http.StatusNotFound)
 	default:
 		http.Error(w, "Use demote for a promoted tag", http.StatusConflict)
+	}
+}
+
+// AcceptTag waives one provisional tag's review deferral so the ordinary promotion floor decides it.
+func (h *TagHandler) AcceptTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.tag.Accept(ctx, id)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "accept tag", err)
+		return
+	}
+
+	switch status {
+	case types.AcceptApplied:
+		w.WriteHeader(http.StatusNoContent)
+	case types.AcceptNotFound:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	case types.AcceptNotProvisional:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Tag is already promoted"})
+	case types.AcceptAlready:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Tag is already accepted"})
+	case types.AcceptNotDeferred:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Tag is not deferred to review"})
+	default:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Another review concern still holds this tag"})
 	}
 }
 
@@ -933,7 +971,8 @@ type TagQualityVerdictInfo struct {
 }
 
 // ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
-// provisional.
+// provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral,
+// so a value whose fresh verdict has since re-decided it reads as deferred again.
 type ProvisionalTagResponse struct {
 	ID                int64                  `json:"id"`
 	Name              string                 `json:"name"`
@@ -948,6 +987,7 @@ type ProvisionalTagResponse struct {
 	CompositionParts  []string               `json:"composition_parts,omitempty"`
 	DemotedAt         *time.Time             `json:"demoted_at,omitempty"`
 	DemotedReason     string                 `json:"demoted_reason,omitempty"`
+	AcceptedAt        *time.Time             `json:"accepted_at,omitempty"`
 }
 
 // compositionView is one candidate's latest composition journal row as the queue reads it: the

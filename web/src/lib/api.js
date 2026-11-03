@@ -310,6 +310,7 @@ export const api = {
 				body: JSON.stringify({ disposition, parts })
 			}),
 		retire: (id) => requestRaw(`/api/v1/tags/${id}/retire`, { method: 'POST' }),
+		accept: (id) => requestRaw(`/api/v1/tags/${id}/accept`, { method: 'POST' }),
 		rejudge: (id, scope) =>
 			requestRaw(`/api/v1/tags/${id}/rejudge`, {
 				method: 'POST',
