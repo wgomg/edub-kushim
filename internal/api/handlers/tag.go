@@ -467,8 +467,9 @@ func (h *TagHandler) DemoteTag(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// FoldTag folds one tag name onto another at an operator's request, overriding a refused identity
+// FoldTag folds one tag name onto another at an operator's request, the manual counterpart to an identity
 // fold: the alias name's documents move onto the canonical value and the alias name leaves the store.
+// Seeded values cannot be folded away, since the startup seeder would re-create them.
 func (h *TagHandler) FoldTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
@@ -497,8 +498,10 @@ func (h *TagHandler) FoldTag(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case types.FoldNotFound:
 		http.Error(w, "Tag not found", http.StatusNotFound)
+	case types.FoldSeeded:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Seeded values cannot be folded"})
 	default:
-		http.Error(w, "Fold did not apply", http.StatusConflict)
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "The target is gone or already an alias"})
 	}
 }
 

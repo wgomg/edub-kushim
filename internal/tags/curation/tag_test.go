@@ -966,8 +966,8 @@ func TestListSiblings(t *testing.T) {
 }
 
 // TestTag_Fold pins the operator fold: the loser's documents move onto the canonical value, the loser
-// row disappears, and the alias table records the collapse. A fold that cannot apply leaves the store
-// untouched instead of half-merging it.
+// row disappears, and the alias table records the collapse. A fold that cannot apply — a missing
+// target or a seeded loser — leaves the store untouched instead of half-merging it.
 func TestTag_Fold(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()
@@ -1020,6 +1020,23 @@ func TestTag_Fold(t *testing.T) {
 		status, _, err := svc.Fold(ctx, "fold same value", "fold same value")
 		testutil.AssertNoError(t, err, "fold")
 		testutil.AssertEqual(t, status, types.FoldNotApplied, "status")
+	})
+
+	t.Run("a seeded loser is refused", func(t *testing.T) {
+		loserID := database.MustCreateTag(t, client.Queries, "fold seeded value")
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET seeded = true WHERE id = $1", loserID)
+		testutil.AssertNoError(t, err, "mark seeded")
+
+		status, _, err := svc.Fold(ctx, "fold seeded value", "fold canonical value")
+		testutil.AssertNoError(t, err, "fold")
+		testutil.AssertEqual(t, status, types.FoldSeeded, "status")
+
+		if _, err := client.Queries.GetTagByName(ctx, "fold seeded value"); err != nil {
+			t.Errorf("the seeded loser must survive a refused fold: %v", err)
+		}
+		if _, err := client.Queries.GetTagAliasByName(ctx, "fold seeded value"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("a refused fold may not record an alias, got err %v", err)
+		}
 	})
 }
 

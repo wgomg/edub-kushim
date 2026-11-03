@@ -63,7 +63,8 @@ const (
 )
 
 // FoldStatus reports how an operator fold resolved: the loser name is not a live tag, the fold could
-// not apply (its canonical is gone or the alias was already recorded), or it collapsed the names.
+// not apply (its canonical is gone or the alias was already recorded), the loser is operator-owned inventory
+// the seeder would resurrect, or it collapsed the names.
 type FoldStatus int
 
 // The fold outcomes, in iota order.
@@ -71,6 +72,7 @@ const (
 	FoldNotFound FoldStatus = iota
 	FoldNotApplied
 	FoldApplied
+	FoldSeeded
 )
 
 // CompositionStatus reports how an operator composition decision resolved: the tag is missing, it is

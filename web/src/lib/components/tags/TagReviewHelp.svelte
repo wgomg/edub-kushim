@@ -111,6 +111,11 @@
 			text: 'Collapses this tag onto the value named by its identity hold. The documents move onto the kept value and this name becomes an alias of it, disappearing from the vocabulary.'
 		},
 		{
+			icon: 'fold-into',
+			name: 'Fold into…',
+			text: 'Folds this tag into any other live tag you pick. Available on every entry in this queue and on every Vocabulary row; the documents move onto the kept value and this name becomes an alias of it. Seeded values cannot be folded away.'
+		},
+		{
 			icon: 'make-canonical',
 			name: 'Make canonical',
 			text: 'The reverse fold: the held store value is collapsed onto this tag. The old value loses its row and standing, its documents move here, and this tag stays provisional until approved.'

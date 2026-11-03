@@ -3965,7 +3965,8 @@ paths:
                     type: string
   /api/v1/tags/fold:
     post:
-      summary: 'FoldTag folds one tag name onto another at an operator''s request, overriding a refused identity fold: the alias name''s documents move onto the canonical value and the alias name leaves the store.'
+      summary: 'FoldTag folds one tag name onto another at an operator''s request, the manual counterpart to an identity fold: the alias name''s documents move onto the canonical value and the alias name leaves the store.'
+      description: Seeded values cannot be folded away, since the startup seeder would re-create them.
       operationId: postApiV1TagsFold
       requestBody:
         content:
@@ -4018,9 +4019,6 @@ paths:
                 properties:
                   error:
                     type: string
-            text/plain; charset=utf-8:
-              schema:
-                type: string
         "500":
           description: Internal Server Error
           content:

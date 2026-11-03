@@ -7,11 +7,12 @@
 	import DataTable from '#lib/components/DataTable.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import TagReconcileStrip from '#lib/components/tags/TagReconcileStrip.svelte';
+	import FoldTagModal from '#lib/components/tags/FoldTagModal.svelte';
 	import ProvisionalReview from '#lib/components/tags/ProvisionalReview.svelte';
 	import CoverageReview from '#lib/components/tags/CoverageReview.svelte';
 	import SiblingReview from '#lib/components/tags/SiblingReview.svelte';
 	import DeletedTags from '#lib/components/tags/DeletedTags.svelte';
-	import { EDIT_ICON, DELETE_ICON, DEMOTE_ICON, actionButton } from '#lib/icons.js';
+	import { EDIT_ICON, DELETE_ICON, DEMOTE_ICON, FOLD_ICON, actionButton } from '#lib/icons.js';
 	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
@@ -40,6 +41,7 @@
 	let refreshKey = $state(0);
 	let deletedRefreshKey = $state(0);
 	let savingTag = $state(false);
+	let folding = $state(null);
 	let activeTab = $state('vocabulary');
 	let vocabularyTotal = $state(null);
 	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0 });
@@ -74,8 +76,15 @@
 					row.promoted && !row.seeded
 						? `${actionButton(DEMOTE_ICON, 'Demote', `${actionable} hover:text-amber-400`, { 'data-demote-tag': row.id, 'data-tag-name': safeName })}\n`
 						: '';
+				const fold = !row.seeded
+					? actionButton(FOLD_ICON, 'Fold into another tag', `${actionable} hover:text-gold-500`, {
+							'data-fold-tag': row.id,
+							'data-tag-name': safeName,
+							'data-tag-documents': String(row.document_count ?? 0)
+						})
+					: '';
 				return `${actionButton(EDIT_ICON, 'Edit', `${actionable} hover:text-gold-500`, { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
-${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
+${demote}${fold}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
 			}
 		}
 	];
@@ -206,6 +215,13 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 			const id = parseInt(editBtn.getAttribute('data-edit-tag'));
 			const name = editBtn.getAttribute('data-tag-name');
 			openEdit(id, name);
+			return;
+		}
+		const foldBtn = e.target.closest('[data-fold-tag]');
+		if (foldBtn) {
+			const name = foldBtn.getAttribute('data-tag-name');
+			const documents = parseInt(foldBtn.getAttribute('data-tag-documents') ?? '0');
+			folding = { name, document_count: documents };
 			return;
 		}
 		const demoteBtn = e.target.closest('[data-demote-tag]');
@@ -376,6 +392,13 @@ ${demote}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terraco
 		<SiblingReview />
 	</div>
 {/if}
+
+<FoldTagModal
+	open={folding !== null}
+	tag={folding}
+	onClose={() => (folding = null)}
+	onfolded={() => onReviewChanged()}
+/>
 
 <Modal
 	open={showModal}

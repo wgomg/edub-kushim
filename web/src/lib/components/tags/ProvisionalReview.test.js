@@ -371,7 +371,7 @@ describe('ProvisionalReview review actions', () => {
 	it('offers both fold directions for an identity hold', async () => {
 		await renderEntry({ identity_hold: 'politics' });
 
-		expect(await screen.findByRole('button', { name: /Fold into/ })).toBeTruthy();
+		expect(await screen.findByRole('button', { name: /Fold into “politics”/ })).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Make canonical' })).toBeTruthy();
 	});
 
@@ -379,10 +379,19 @@ describe('ProvisionalReview review actions', () => {
 		foldTag.mockResolvedValue({ ok: true, status: 200 });
 		await renderEntry({ identity_hold: 'politics' });
 
-		await fireEvent.click(screen.getByRole('button', { name: /Fold into/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Fold into “politics”/ }));
 
 		await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(foldTag).toHaveBeenCalledWith('sample tag', 'politics'));
+	});
+
+	it('offers the manual fold on every entry and opens the target picker', async () => {
+		await renderEntry();
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Fold into…' }));
+
+		expect(await screen.findByRole('dialog', { name: 'Fold tag into another' })).toBeTruthy();
+		expect(screen.getByLabelText('Target tag')).toBeTruthy();
 	});
 
 	it('offers split and keep for an undecided split hold', async () => {
@@ -484,7 +493,7 @@ describe('ProvisionalReview review actions', () => {
 	it('hides accept while another review concern holds the tag', async () => {
 		await renderEntry({ verdict: verdict({ outcome: 'defer' }), identity_hold: 'politics' });
 
-		expect(await screen.findByRole('button', { name: /Fold into/ })).toBeTruthy();
+		expect(await screen.findByRole('button', { name: /Fold into “politics”/ })).toBeTruthy();
 		expect(screen.queryByRole('button', { name: 'Accept as provisional' })).toBeNull();
 	});
 

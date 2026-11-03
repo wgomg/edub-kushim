@@ -98,7 +98,8 @@ matching section of the guide.
 ## Actions
 
 Every action is available from the entry that needs it; the queue only shows the actions its badges
-justify.
+justify. The manual fold is the exception: it is offered on every queue entry and on every Vocabulary
+row.
 
 | Action | What it does |
 |---|---|
@@ -108,6 +109,7 @@ justify.
 | **Accept as provisional** | waives a review deferral: the tag stops being deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it; offered only when no identity or split hold still withholds the tag |
 | **Rename** | changes the name in place; the journals are keyed by name, so the tag shows no verdict until it is judged again under the new name |
 | **Fold into *value*** | collapses this tag onto its held store value: documents move, this name becomes an alias and leaves the vocabulary |
+| **Fold into…** | folds this tag onto any other live tag you pick: its documents move onto the kept value, this name becomes an alias and stops existing as a tag; seeded inventory cannot be folded away |
 | **Make canonical** | the reverse fold: the held value collapses onto this tag, losing its row and standing; this tag stays provisional until approved |
 | **Split now** | replaces the compound with the components you confirm: components are created, the compound's documents are attached to them, the compound is deleted |
 | **Keep whole** | records that the compound is a value in its own right; the hold clears and nothing else changes |
@@ -117,8 +119,8 @@ justify.
 | **Reevaluate identity** (queue header) | runs the identity pass now instead of waiting for its daily schedule |
 
 Destructive or document-moving actions ask for confirmation and state the consequence first. Approve
-and reject are the two universal decisions; everything else is contextual to the badge that motivated
-it.
+and reject are the two universal queue decisions; the manual fold is offered on every queue entry and
+on every Vocabulary row. Everything else is contextual to the badge that motivated it.
 
 ## Aliases
 
@@ -128,8 +130,8 @@ onto the winner, the loser's own aliases are re-targeted (aliases never chain), 
 deleted while the alias table keeps the mapping. The alias therefore stops appearing as a tag in the
 vocabulary, but the system still knows the old spelling refers to the canonical value.
 
-Aliases have no dedicated screen today: the Vocabulary tab lists live values only. The fold actions in
-the New tags queue are the way to create and correct them by hand.
+Aliases have no dedicated screen today: the Vocabulary tab lists live values only. The fold actions —
+on every New tags entry and on every Vocabulary row — are the way to create and correct them by hand.
 
 ## Related review surfaces
 
@@ -138,8 +140,8 @@ the New tags queue are the way to create and correct them by hand.
 - **Overlap** (`/tags#siblings`) — near-containment readings from the latest measurement pass. They are
   informational: nothing is merged or removed automatically.
 - **Deleted** (`/tags#deleted`) — the blocklist of rejected names, restorable.
-- **Vocabulary** (`/tags`) — every live tag with counts and standing; rename, demote and delete live
-  there too.
+- **Vocabulary** (`/tags`) — every live tag with counts and standing; rename, fold, demote and delete
+  live there too.
 
 Running the passes by hand and their schedules are described in
 [cli.md](cli.md#tag-passes); the configuration keys behind the judges and schedules

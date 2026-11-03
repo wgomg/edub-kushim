@@ -268,7 +268,8 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
    withdraws a promoted tag's standing (seeded inventory cannot be demoted — `409`); its
    assignments stay and it returns to the queue. Three operator decisions cover the holds:
    `POST /api/v1/tags/fold` with `{"alias": "loser", "canonical": "winner"}` (`204`; `404` when the
-   loser name is not a tag, `409` when the fold cannot apply) collapses two names;
+   loser name is not a tag, `409` when the fold cannot apply — seeded inventory cannot be folded
+   away) collapses two names;
    `POST /api/v1/tags/{id}/composition` with `{"disposition": "split"|"keep", "parts": ["…"]}`
    (`204`; `404` unknown tag, `400` an invalid decision or too many components, `409` when the tag is
    already promoted) applies a split or keeps the compound whole, with parts applied alongside when

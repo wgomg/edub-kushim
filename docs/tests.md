@@ -357,16 +357,20 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   tag autocomplete, failure toast), `UploadModal.svelte` (upload success/error paths),
   `tags/ProvisionalReview.svelte` (verdict labels: recorded outcome preferred, legacy rubric
   fallback, unjudged names, the collapsed rubric — failing criteria plus the score — the
-  identity-hold, split-hold and degraded-reason pills, and the entry's actions: both fold
-  directions with their confirmation, split → parts editor, keep/apply-parts gating by
-  `composition_action`, re-judge, retire, rename and the labelled Help button; filters
+  identity-hold, split-hold and degraded-reason pills, and the entry's actions: both hold fold
+  directions with their confirmation, the manual fold opening the target picker, split → parts
+  editor, keep/apply-parts gating by `composition_action`, re-judge, retire, rename and the
+  labelled Help button; filters
   and paging: select → API args and `prov_*` URL sync incl. the tab hash, the name-search
   input → `q` argument with paging reset and `prov_q` sync, URL round-trip with
   invalid entries dropped, pager end states, last-page clamp after a reject, and the
   `pending_identity_total`-driven reevaluate button),
   `tags/CoverageReview.svelte` (the flagged document title links to its detail page by public
-  uuid) and `tags/SiblingReview.svelte` (pair rendering with the `.ui-symbol` separator, the
-  gray band, run totals and the empty state).
+  uuid), `tags/SiblingReview.svelte` (pair rendering with the `.ui-symbol` separator, the
+  gray band, run totals and the empty state) and `tags/FoldTagModal.svelte` (the fold target
+  picker: submit disabled until a live target is picked, the loser excluded from its own
+  suggestions, the success path firing `onfolded`/close/toast, and a 409 refusal surfacing the
+  server's message without closing).
 
 Test files are co-located next to their sources as `*.test.js` (mirroring Go's
 `_test.go` convention) and import `describe/it/expect/vi` explicitly — no globals,
@@ -375,8 +379,8 @@ so `eslint.config.js` needed no changes. Mocking conventions:
 - `$app/*` modules are mocked with `vi.mock` where a unit imports them (`$app/navigation`
   `goto`, `$app/paths` `resolve`, `$app/state` `page`).
 - `#lib/api.js` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
-  `UploadModal`, `ProvisionalReview`, `SiblingReview`, `CoverageReview`) so no network calls
-  escape.
+  `UploadModal`, `ProvisionalReview`, `SiblingReview`, `CoverageReview`, `FoldTagModal`) so no
+  network calls escape.
 - `api.test.js` stubs the global `fetch` (`vi.stubGlobal`) and asserts the Bearer
   header, 401 → logout + redirect, null propagation, `requestRaw` shape, and the
   `supportedMimeTypes` cache.

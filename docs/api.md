@@ -489,7 +489,9 @@ RestoreDeleted unblocks one deleted tag name.
 
 #### `POST /api/v1/tags/fold`
 
-FoldTag folds one tag name onto another at an operator's request, overriding a refused identity fold: the alias name's documents move onto the canonical value and the alias name leaves the store.
+FoldTag folds one tag name onto another at an operator's request, the manual counterpart to an identity fold: the alias name's documents move onto the canonical value and the alias name leaves the store.
+
+Seeded values cannot be folded away, since the startup seeder would re-create them.
 
 Request body (required) (`application/json`): [FoldTagRequest](#foldtagrequest)
 

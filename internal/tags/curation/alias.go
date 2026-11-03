@@ -13,12 +13,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// Fold collapses one live tag name onto another through ApplyAliasPlan, the operator's counterpart to
-// a confirmed identity fold: the canonical tag keeps its row and standing, the folded name's documents
-// move onto it, its aliases re-target, its row is deleted, and the alias table records the collapse.
-// The folded name must be a live tag (FoldNotFound otherwise); a canonical that is missing or an alias
-// that already exists leaves the store untouched and reports FoldNotApplied. It returns the number of
-// documents re-pointed.
+// Fold collapses one live tag name onto another through ApplyAliasPlan, the operator's manual fold:
+// the canonical tag keeps its row and standing, the folded name's documents move onto it, its aliases
+// re-target, its row is deleted, and the alias table records the collapse. The folded name must be a
+// live tag (FoldNotFound otherwise); seeded values are operator-owned inventory the seeder re-creates,
+// so folding one away reports FoldSeeded. A canonical that is missing or an alias that already exists
+// leaves the store untouched and reports FoldNotApplied. It returns the number of documents re-pointed.
 func (s *Tag) Fold(ctx context.Context, alias, canonical string) (types.FoldStatus, int64, error) {
 	aliasName := textnorm.NormalizeTag(alias)
 	canonicalName := textnorm.NormalizeTag(canonical)
@@ -26,11 +26,15 @@ func (s *Tag) Fold(ctx context.Context, alias, canonical string) (types.FoldStat
 		return types.FoldNotApplied, 0, nil
 	}
 
-	if _, err := s.GetByName(ctx, aliasName); err != nil {
+	loser, err := s.GetByName(ctx, aliasName)
+	if err != nil {
 		if errs.KindOf(err) == errs.KindNotFound {
 			return types.FoldNotFound, 0, nil
 		}
 		return types.FoldNotApplied, 0, err
+	}
+	if loser.Seeded {
+		return types.FoldSeeded, 0, nil
 	}
 
 	outcomes, err := s.ApplyAliasPlan(ctx, []tags.AliasAction{{

@@ -3557,7 +3557,8 @@ func TestBatchOverviewNotFound(t *testing.T) {
 }
 
 // TestFoldTag pins the operator fold endpoint: a fold that applies answers 204 and removes the loser,
-// a fold whose target is gone answers 409 rather than half-merging, and an unknown loser answers 404.
+// a fold whose target is gone answers 409 rather than half-merging, an unknown loser answers 404, and
+// a seeded loser answers 409 with the refusal, since the startup seeder would re-create the name.
 func TestFoldTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
@@ -3599,6 +3600,22 @@ func TestFoldTag(t *testing.T) {
 
 		if _, err := env.client.Queries.GetTagByName(ctx, "fold handler orphan"); err != nil {
 			t.Errorf("the loser must survive a refused fold: %v", err)
+		}
+	})
+
+	t.Run("a seeded loser returns 409", func(t *testing.T) {
+		tagID := database.MustCreateTag(t, env.client.Queries, "fold handler seeded")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET seeded = true WHERE id = $1", tagID)
+		testutil.AssertNoError(t, err, "mark seeded")
+
+		w := fold(FoldTagRequest{Alias: "fold handler seeded", Canonical: "fold handler canonical"})
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+		if !strings.Contains(w.Body.String(), "Seeded values cannot be folded") {
+			t.Errorf("body = %q, want the seeded refusal", w.Body.String())
+		}
+
+		if _, err := env.client.Queries.GetTagByName(ctx, "fold handler seeded"); err != nil {
+			t.Errorf("the seeded loser must survive a refused fold: %v", err)
 		}
 	})
 

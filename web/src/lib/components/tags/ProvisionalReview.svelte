@@ -7,6 +7,7 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import SlideOver from '#lib/components/SlideOver.svelte';
+	import FoldTagModal from '#lib/components/tags/FoldTagModal.svelte';
 	import TagReviewHelp from '#lib/components/tags/TagReviewHelp.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
@@ -119,6 +120,7 @@
 	let splitParts = $state([]);
 	let splitError = $state('');
 	let splittingBusy = $state(false);
+	let folding = $state(null);
 
 	let hasFilters = $derived(
 		query !== '' || criteria.some((c) => filterStates[c.key]) || verdictFilter !== ''
@@ -333,7 +335,7 @@
 			toastStore.success(`Folded "${tag.name}" into "${anchor}"`);
 			if (onchanged) onchanged();
 		} else if (result.status === 409) {
-			toastStore.error('Fold did not apply — the target may already be gone');
+			toastStore.error(result.data?.error ?? 'Fold did not apply — the target may already be gone');
 		} else {
 			toastStore.error('Failed to fold tag');
 		}
@@ -355,7 +357,7 @@
 			toastStore.success(`Folded "${anchor}" into "${tag.name}"`);
 			if (onchanged) onchanged();
 		} else if (result.status === 409) {
-			toastStore.error('Fold did not apply — the target may already be gone');
+			toastStore.error(result.data?.error ?? 'Fold did not apply — the target may already be gone');
 		} else {
 			toastStore.error('Failed to fold tag');
 		}
@@ -835,6 +837,16 @@
 						<button
 							type="button"
 							class={btnUtil}
+							title="Fold this tag into another tag; its documents move there and this name becomes an alias"
+							disabled={acting === tag.id}
+							onclick={() => (folding = tag)}
+						>
+							<Icon name="fold-into" size={13} />
+							Fold into…
+						</button>
+						<button
+							type="button"
+							class={btnUtil}
 							title="Rename this tag"
 							disabled={acting === tag.id}
 							onclick={() => openRename(tag)}
@@ -1024,6 +1036,16 @@
 		</div>
 	</form>
 </Modal>
+
+<FoldTagModal
+	open={folding !== null}
+	tag={folding}
+	onClose={() => (folding = null)}
+	onfolded={() => {
+		if (onchanged) onchanged();
+		load();
+	}}
+/>
 
 <Modal
 	open={splitting !== null}
