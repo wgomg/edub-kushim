@@ -364,6 +364,27 @@
 		await load();
 	}
 
+	async function keepSeparate(tag) {
+		const anchor = tag.identity_hold;
+		const ok = await confirmStore.confirm({
+			title: 'Keep the values separate',
+			message: `Keep "${tag.name}" separate from "${anchor}"? The identity hold clears; the value keeps standing on its own and follows the ordinary review and promotion rules.`
+		});
+		if (!ok) return;
+		acting = tag.id;
+		const result = await api.tags.separate(tag.id);
+		acting = null;
+		if (result.ok) {
+			toastStore.success(`Kept "${tag.name}" separate from "${anchor}"`);
+			if (onchanged) onchanged();
+		} else if (result.status === 409) {
+			toastStore.error(result.data?.error ?? 'The hold is already gone');
+		} else {
+			toastStore.error('Failed to keep the values separate');
+		}
+		await load();
+	}
+
 	async function keepWhole(tag) {
 		const ok = await confirmStore.confirm({
 			title: 'Keep the compound whole',
@@ -902,6 +923,16 @@
 							>
 								<Icon name="make-canonical" size={13} />
 								Make canonical
+							</button>
+							<button
+								type="button"
+								class={btnAction}
+								title="Keep this tag separate from “{tag.identity_hold}”: the hold clears and the value stands on its own"
+								disabled={acting === tag.id}
+								onclick={() => keepSeparate(tag)}
+							>
+								<Icon name="keep-separate" size={13} />
+								Keep separate
 							</button>
 						{/if}
 						{#if tag.composition_action === 'undecided'}

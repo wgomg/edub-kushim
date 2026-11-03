@@ -1202,3 +1202,94 @@ func TestTag_Accept(t *testing.T) {
 		testutil.AssertEqual(t, status, types.AcceptNotFound, "status")
 	})
 }
+
+// TestTag_Separate pins the operator's identity separation: a held value's hold clears while the value
+// stays provisional and answers again only when a new hold appears, and a promoted value, a value
+// without a hold, and a missing row are refused through the status.
+func TestTag_Separate(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	seedHeld := func(t *testing.T, anchor, name string) int64 {
+		t.Helper()
+		database.MustCreateTag(t, client.Queries, anchor)
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		if _, err := client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+			Kind:           tags.IdentityKindFoldGate,
+			Candidate:      name,
+			Criteria:       []byte(`{"proposed_fold":"` + anchor + `"}`),
+			Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+			RuleSetVersion: tags.IdentityRuleSetVersion,
+		}); err != nil {
+			t.Fatalf("seed refused fold: %v", err)
+		}
+		return id
+	}
+	seedProvisional := func(t *testing.T, name string) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		return id
+	}
+	holds := func(t *testing.T, name string) bool {
+		t.Helper()
+		held, err := tags.IdentityHeldNames(ctx, client.Queries, []string{name})
+		testutil.AssertNoError(t, err, "identity holds")
+		return len(held) > 0
+	}
+	provisional := func(t *testing.T, id int64) bool {
+		t.Helper()
+		var standing bool
+		testutil.AssertNoError(t, client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&standing), "read promoted_at")
+		return !standing
+	}
+
+	t.Run("clears the identity hold of a held value", func(t *testing.T) {
+		id := seedHeld(t, "separate anchor value", "separate held value")
+		if !holds(t, "separate held value") {
+			t.Fatal("the seed must hold the value before the separation")
+		}
+
+		status, err := svc.Separate(ctx, id)
+		testutil.AssertNoError(t, err, "separate")
+		testutil.AssertEqual(t, status, types.SeparateApplied, "status")
+		testutil.AssertEqual(t, holds(t, "separate held value"), false, "hold cleared")
+		testutil.AssertEqual(t, provisional(t, id), true, "value stays provisional")
+
+		status, err = svc.Separate(ctx, id)
+		testutil.AssertNoError(t, err, "second separate")
+		testutil.AssertEqual(t, status, types.SeparateWithoutHold, "second status")
+	})
+
+	t.Run("refuses a promoted value and leaves its hold", func(t *testing.T) {
+		id := seedHeld(t, "separate anchor promoted", "separate promoted value")
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id); err != nil {
+			t.Fatalf("set standing: %v", err)
+		}
+
+		status, err := svc.Separate(ctx, id)
+		testutil.AssertNoError(t, err, "separate")
+		testutil.AssertEqual(t, status, types.SeparateNotProvisional, "status")
+		testutil.AssertEqual(t, holds(t, "separate promoted value"), true, "hold untouched")
+	})
+
+	t.Run("refuses a value without an identity hold", func(t *testing.T) {
+		id := seedProvisional(t, "separate unheld value")
+
+		status, err := svc.Separate(ctx, id)
+		testutil.AssertNoError(t, err, "separate")
+		testutil.AssertEqual(t, status, types.SeparateWithoutHold, "status")
+	})
+
+	t.Run("reports a missing value", func(t *testing.T) {
+		status, err := svc.Separate(ctx, 999999)
+		testutil.AssertNoError(t, err, "separate")
+		testutil.AssertEqual(t, status, types.SeparateNotFound, "status")
+	})
+}

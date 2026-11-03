@@ -111,6 +111,7 @@ row.
 | **Fold into *value*** | collapses this tag onto its held store value: documents move, this name becomes an alias and leaves the vocabulary |
 | **Fold into…** | folds this tag onto any other live tag you pick: its documents move onto the kept value, this name becomes an alias and stops existing as a tag; seeded inventory cannot be folded away |
 | **Make canonical** | the reverse fold: the held value collapses onto this tag, losing its row and standing; this tag stays provisional until approved |
+| **Keep separate** | records that this tag names its own value: the identity hold clears, both values stay, and the tag keeps answering to its verdict and the promotion floor |
 | **Split now** | replaces the compound with the components you confirm: components are created, the compound's documents are attached to them, the compound is deleted |
 | **Keep whole** | records that the compound is a value in its own right; the hold clears and nothing else changes |
 | **Apply the parts alongside** | keeps the compound and attaches its parts to the same documents, so both are searchable; no documents move |

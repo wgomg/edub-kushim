@@ -114,3 +114,15 @@ const (
 	AcceptHeld
 	AcceptApplied
 )
+
+// SeparateStatus reports how an identity separation resolved: the tag is missing, it is already promoted,
+// no identity hold withholds it, or the operator's separation cleared the hold.
+type SeparateStatus int
+
+// The separation outcomes, in iota order.
+const (
+	SeparateNotFound SeparateStatus = iota
+	SeparateNotProvisional
+	SeparateWithoutHold
+	SeparateApplied
+)

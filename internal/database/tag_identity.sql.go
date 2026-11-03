@@ -158,14 +158,15 @@ SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict, (criteria->>'prop
 FROM tag_identity_event e
 WHERE e.rule_set_version = $1
   AND e.verdict IS NOT NULL
-  AND e.kind IN ('base_form', 'fold_gate')
-  AND e.candidate = ANY($2::text[])
+  AND e.kind = ANY($2::text[])
+  AND e.candidate = ANY($3::text[])
   AND EXISTS (SELECT 1 FROM tag t WHERE t.name = e.criteria->>'proposed_fold')
 ORDER BY candidate, kind, created_at DESC
 `
 
 type ListIdentityHeldNamesParams struct {
 	RuleSetVersion string
+	Kinds          []string
 	Candidates     []string
 }
 
@@ -181,7 +182,7 @@ type ListIdentityHeldNamesRow struct {
 // boundaries, and house form only rewrites ordinals and roman numerals,
 // which this class lacks.
 func (q *Queries) ListIdentityHeldNames(ctx context.Context, arg ListIdentityHeldNamesParams) ([]ListIdentityHeldNamesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listIdentityHeldNames, arg.RuleSetVersion, pq.Array(arg.Candidates))
+	rows, err := q.db.QueryContext(ctx, listIdentityHeldNames, arg.RuleSetVersion, pq.Array(arg.Kinds), pq.Array(arg.Candidates))
 	if err != nil {
 		return nil, err
 	}

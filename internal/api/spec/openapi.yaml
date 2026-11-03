@@ -3606,6 +3606,52 @@ paths:
             text/plain; charset=utf-8:
               schema:
                 type: string
+  /api/v1/tags/{id}/separate:
+    post:
+      summary: SeparateTag records the operator's decision that one identity-held provisional tag names its own value, clearing the hold so the ordinary review and promotion rules decide it.
+      operationId: postApiV1TagsByIdSeparate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/tags/audit/flags:
     get:
       summary: ListAuditFlags serves the paged open coverage flags.

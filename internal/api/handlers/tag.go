@@ -610,6 +610,37 @@ func (h *TagHandler) AcceptTag(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// SeparateTag records the operator's decision that one identity-held provisional tag names its own value,
+// clearing the hold so the ordinary review and promotion rules decide it.
+func (h *TagHandler) SeparateTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.tag.Separate(ctx, id)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "separate tag", err)
+		return
+	}
+
+	switch status {
+	case types.SeparateApplied:
+		w.WriteHeader(http.StatusNoContent)
+	case types.SeparateNotFound:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	case types.SeparateNotProvisional:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Tag is already promoted"})
+	default:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "No identity hold to separate from"})
+	}
+}
+
 // RejudgeTag enqueues one on-demand re-judge of a tag's quality verdict or its composition verdict.
 func (h *TagHandler) RejudgeTag(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

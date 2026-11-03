@@ -706,6 +706,22 @@ RetireTag removes one provisional tag without blocklisting its name.
 | 409 | object |
 | 500 | string |
 
+#### `POST /api/v1/tags/{id}/separate`
+
+SeparateTag records the operator's decision that one identity-held provisional tag names its own value, clearing the hold so the ordinary review and promotion rules decide it.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `id` | path | string | yes | — |
+
+| Status | Body |
+|---|---|
+| 204 | no body |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
 ### People
 
 #### `GET /api/v1/people`

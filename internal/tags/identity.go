@@ -51,7 +51,8 @@ const (
 	IdentityKindSameIntent       = "same_intent"
 )
 
-// The verdict values an identity evidence row carries.
+// The verdict values an identity evidence row carries. Separate is the operator's separation verdict
+// over a refused fold: it refuses the fold for every later read but never counts as a hold.
 const (
 	IdentityVerdictFold      = "fold"
 	IdentityVerdictStand     = "stand"
@@ -59,7 +60,17 @@ const (
 	IdentityVerdictRejected  = "rejected"
 	IdentityVerdictStands    = "stands"
 	IdentityVerdictDefer     = "defer"
+	IdentityVerdictSeparate  = "separate"
 )
+
+// allIdentityHoldKinds is the single definition of which evidence kinds can withhold a tag: the hold
+// read filters on exactly these kinds and the operator's separation journals a clearing row for each,
+// so extending the set cannot leave the two out of step.
+var allIdentityHoldKinds = []string{IdentityKindBaseForm, IdentityKindFoldGate}
+
+// IdentityHoldKinds returns every identity evidence kind whose refused verdict can withhold a tag from
+// promotion, cloned.
+func IdentityHoldKinds() []string { return slices.Clone(allIdentityHoldKinds) }
 
 // Disposition is what the deterministic plan says to do with one
 // candidate name.
@@ -614,6 +625,7 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 
 	rows, err := q.ListIdentityHeldNames(ctx, database.ListIdentityHeldNamesParams{
 		RuleSetVersion: IdentityRuleSetVersion,
+		Kinds:          IdentityHoldKinds(),
 		Candidates:     normalized,
 	})
 	if err != nil {

@@ -204,6 +204,66 @@ func (s *Tag) RecordIdentityEvidence(ctx context.Context, rows []tags.EvidenceRo
 	return s.recordIdentityEvidence(ctx, s.client.Queries, rows)
 }
 
+// Separate records the operator's decision that one identity-held provisional tag names its own value
+// instead of the anchor its refused fold proposed. Operator separation rows are journaled for every
+// hold kind under the current rule set version, so the hold lookup stops withholding the value while
+// every later fold decision keeps refusing the fold. The tag itself is untouched — it stays provisional
+// and answers to its verdict — and both promotion paths already gate on the hold, so clearing the record
+// is what releases it. A promoted tag has left the review queue and a tag without an identity hold has
+// nothing to separate, so both are refused through the status.
+func (s *Tag) Separate(ctx context.Context, id int64) (types.SeparateStatus, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return types.SeparateNotFound, errs.FromDB(err, "begin separate tag")
+	}
+	defer tx.Rollback()
+	txQ := s.client.WithTx(tx)
+
+	tag, err := txQ.GetTagForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.SeparateNotFound, nil
+		}
+		return types.SeparateNotFound, errs.FromDB(err, "lock separated tag")
+	}
+	if tag.PromotedAt.Valid {
+		return types.SeparateNotProvisional, nil
+	}
+
+	name := textnorm.NormalizeTag(tag.Name)
+	held, err := tags.IdentityHeldNames(ctx, txQ, []string{name})
+	if err != nil {
+		return types.SeparateWithoutHold, errs.FromDB(err, "load separate identity hold")
+	}
+	anchor, ok := held[name]
+	if !ok {
+		return types.SeparateWithoutHold, nil
+	}
+
+	criteria, _ := json.Marshal(map[string]string{"proposed_fold": anchor})
+	kinds := tags.IdentityHoldKinds()
+	rows := make([]tags.EvidenceRow, 0, len(kinds))
+	for _, kind := range kinds {
+		rows = append(rows, tags.EvidenceRow{
+			Kind:      kind,
+			Candidate: name,
+			Criteria:  criteria,
+			Verdict:   tags.IdentityVerdictSeparate,
+			Model:     "operator",
+		})
+	}
+	if err := s.recordIdentityEvidence(ctx, txQ, rows); err != nil {
+		return types.SeparateNotFound, err
+	}
+	if err := tx.Commit(); err != nil {
+		return types.SeparateNotFound, errs.FromDB(err, "commit separate tag")
+	}
+
+	s.logger.Info("", "identity[%s]: operator separate %q from %q (reason=human-separate)",
+		tags.IdentityRuleSetVersion, name, anchor)
+	return types.SeparateApplied, nil
+}
+
 func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, rows []tags.EvidenceRow) error {
 	for _, row := range rows {
 		candidate := textnorm.NormalizeTag(row.Candidate)

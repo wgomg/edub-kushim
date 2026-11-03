@@ -41,7 +41,7 @@ SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict, (criteria->>'prop
 FROM tag_identity_event e
 WHERE e.rule_set_version = @rule_set_version
   AND e.verdict IS NOT NULL
-  AND e.kind IN ('base_form', 'fold_gate')
+  AND e.kind = ANY(@kinds::text[])
   AND e.candidate = ANY(@candidates::text[])
   AND EXISTS (SELECT 1 FROM tag t WHERE t.name = e.criteria->>'proposed_fold')
 ORDER BY candidate, kind, created_at DESC;

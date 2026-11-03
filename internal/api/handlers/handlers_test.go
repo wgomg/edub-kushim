@@ -3778,6 +3778,90 @@ func TestAcceptTag(t *testing.T) {
 	})
 }
 
+// TestSeparateTag pins the separation endpoint: a held value answers 204 and its hold clears, a
+// promoted value and a value without a hold answer 409, and an unknown or malformed id answers
+// 404/400 without touching the store.
+func TestSeparateTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	separate := func(id string) *httptest.ResponseRecorder {
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/"+id+"/separate", nil)
+		r.SetPathValue("id", id)
+		h.SeparateTag(w, r)
+		return w
+	}
+	assertConflict := func(t *testing.T, w *httptest.ResponseRecorder, wantError string) {
+		t.Helper()
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+		var body map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("409 body must be JSON: %v", err)
+		}
+		testutil.AssertEqual(t, body["error"], wantError, "conflict error text")
+	}
+	seedHeld := func(t *testing.T, anchor, name string) int64 {
+		t.Helper()
+		database.MustCreateTag(t, env.client.Queries, anchor)
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		if _, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		if _, err := env.client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+			Kind:           tags.IdentityKindFoldGate,
+			Candidate:      name,
+			Criteria:       []byte(`{"proposed_fold":"` + anchor + `"}`),
+			Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+			RuleSetVersion: tags.IdentityRuleSetVersion,
+		}); err != nil {
+			t.Fatalf("seed refused fold: %v", err)
+		}
+		return id
+	}
+	holds := func(t *testing.T, name string) bool {
+		t.Helper()
+		held, err := tags.IdentityHeldNames(ctx, env.client.Queries, []string{name})
+		testutil.AssertNoError(t, err, "identity holds")
+		return len(held) > 0
+	}
+
+	t.Run("separating a held value answers 204 and clears the hold", func(t *testing.T) {
+		id := seedHeld(t, "separate handler anchor", "separate handler value")
+
+		testutil.AssertEqual(t, separate(fmt.Sprintf("%d", id)).Code, http.StatusNoContent, "status")
+		testutil.AssertEqual(t, holds(t, "separate handler value"), false, "hold cleared")
+	})
+
+	t.Run("a promoted value answers 409", func(t *testing.T) {
+		id := seedHeld(t, "separate handler anchor p", "separate handler promoted")
+		if _, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id); err != nil {
+			t.Fatalf("set standing: %v", err)
+		}
+
+		assertConflict(t, separate(fmt.Sprintf("%d", id)), "Tag is already promoted")
+		testutil.AssertEqual(t, holds(t, "separate handler promoted"), true, "hold untouched")
+	})
+
+	t.Run("a value without a hold answers 409", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "separate handler unheld")
+		if _, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+
+		assertConflict(t, separate(fmt.Sprintf("%d", id)), "No identity hold to separate from")
+	})
+
+	t.Run("not found answers 404", func(t *testing.T) {
+		testutil.AssertEqual(t, separate("999999").Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("invalid id answers 400", func(t *testing.T) {
+		testutil.AssertEqual(t, separate("abc").Code, http.StatusBadRequest, "status")
+	})
+}
+
 // TestCompositionDecision pins the operator decision endpoint: a valid split or keep answers 204, a
 // compound that is no longer provisional is refused with 409, and a decision the boundary cannot
 // accept answers 400 without touching the store.

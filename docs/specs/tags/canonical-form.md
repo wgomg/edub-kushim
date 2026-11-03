@@ -194,8 +194,9 @@ blocklisted.
 Per candidate or pair: the key; the proposed fold and its gate result; the J3 verdict
 with criteria and model versions (the M8 class, with no model, for a mechanically resolved
 pair); the J4 direction and reason; any alias made; the rule-set version; the review
-outcome when deferred. Consumers are D1's canonicalization work, the review surfaces, and
-later calibration — it is evidence, not a verdict machine.
+outcome when deferred; and the operator's separation row over a refused fold, which clears
+the hold without applying the fold. Consumers are D1's canonicalization work, the review
+surfaces, and later calibration — it is evidence, not a verdict machine.
 
 ## 4. Scenarios and worked examples
 

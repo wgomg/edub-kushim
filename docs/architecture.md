@@ -419,7 +419,8 @@ The enrichment pipeline:
     provisional phase re-derives the decision from stored verdicts and
     re-judges the rest, or by an operator through the provisional review queue
     (`GET /api/v1/tags/provisional`, `POST /api/v1/tags/{id}/promote`,
-    `POST /api/v1/tags/{id}/accept`, and the tags page's "New tags" tab); a
+    `POST /api/v1/tags/{id}/accept`, `POST /api/v1/tags/{id}/separate`, and the tags
+    page's "New tags" tab); a
     rejection there is a normal tag delete and lands in the blocklist, and an
     accepted deferral returns to the floor rule. An identity-held name — a fold the gate refused
    beside a live store value — and a composition-held name — its latest

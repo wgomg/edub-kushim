@@ -121,6 +121,11 @@
 			text: 'The reverse fold: the held store value is collapsed onto this tag. The old value loses its row and standing, its documents move here, and this tag stays provisional until approved.'
 		},
 		{
+			icon: 'keep-separate',
+			name: 'Keep separate',
+			text: 'Records that this tag names its own value: the identity hold clears, both values stay in the vocabulary, and this tag keeps waiting on its own verdict and the promotion floor.'
+		},
+		{
 			icon: 'split',
 			name: 'Split now',
 			text: 'Replaces the compound with the components you confirm: the components are created and the compound\u2019s documents are attached to them, then the compound is deleted.'
@@ -200,9 +205,10 @@
 			The identity judge refused to fold this tag onto an existing store value, so the two names
 			stay separate until someone decides. Use
 			<b class="text-parchment-300">Fold into the existing value</b> when they mean the same thing
-			and the established value should win, or
-			<b class="text-parchment-300">Make canonical</b> when this tag is the better name. Approving keeps
-			both, which is what a genuine second concept should do.
+			and the established value should win, <b class="text-parchment-300">Make canonical</b> when
+			this tag is the better name, or <b class="text-parchment-300">Keep separate</b> when the two are
+			genuinely different values — the hold clears and this tag keeps answering to its own verdict and
+			promotion floor. Approving promotes it into the vocabulary immediately instead.
 		</p>
 	</section>
 

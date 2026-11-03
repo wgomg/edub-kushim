@@ -311,6 +311,7 @@ export const api = {
 			}),
 		retire: (id) => requestRaw(`/api/v1/tags/${id}/retire`, { method: 'POST' }),
 		accept: (id) => requestRaw(`/api/v1/tags/${id}/accept`, { method: 'POST' }),
+		separate: (id) => requestRaw(`/api/v1/tags/${id}/separate`, { method: 'POST' }),
 		rejudge: (id, scope) =>
 			requestRaw(`/api/v1/tags/${id}/rejudge`, {
 				method: 'POST',

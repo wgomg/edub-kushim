@@ -317,7 +317,9 @@ Operators resolve what remains from the tags page's "New tags" tab or the API:
 the latest verdict; `POST /api/v1/tags/{id}/promote` promotes one through the same path
 the sweep uses; `POST /api/v1/tags/{id}/accept` waives a recorded deferral so the value
 stops being parked for review and answers to the promotion floor like any admitted value,
-the waiver holding until a newer verdict re-decides the name. Rejecting a provisional tag
+the waiver holding until a newer verdict re-decides the name.
+`POST /api/v1/tags/{id}/separate` records that an identity-held name is its own value,
+clearing the hold so the promotion paths stop skipping it. Rejecting a provisional tag
 is a normal tag delete, so the name lands in the `deleted_tag` blocklist and enrichment
 cannot resurrect it.
 

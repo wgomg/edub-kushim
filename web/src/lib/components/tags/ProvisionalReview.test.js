@@ -11,6 +11,7 @@ const {
 	compositionDecision,
 	retireTag,
 	acceptTag,
+	separateTag,
 	rejudgeTag,
 	updateTag,
 	confirmMock,
@@ -24,6 +25,7 @@ const {
 	compositionDecision: vi.fn(),
 	retireTag: vi.fn(),
 	acceptTag: vi.fn(),
+	separateTag: vi.fn(),
 	rejudgeTag: vi.fn(),
 	updateTag: vi.fn(),
 	confirmMock: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock('#lib/api.js', async (importOriginal) => {
 				compositionDecision,
 				retire: retireTag,
 				accept: acceptTag,
+				separate: separateTag,
 				rejudge: rejudgeTag,
 				update: updateTag
 			}
@@ -107,6 +110,7 @@ beforeEach(() => {
 	compositionDecision.mockReset();
 	retireTag.mockReset();
 	acceptTag.mockReset();
+	separateTag.mockReset();
 	rejudgeTag.mockReset();
 	updateTag.mockReset();
 	confirmMock.mockReset();
@@ -383,6 +387,29 @@ describe('ProvisionalReview review actions', () => {
 
 		await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(foldTag).toHaveBeenCalledWith('sample tag', 'politics'));
+	});
+
+	it('offers keep separate for an identity hold', async () => {
+		await renderEntry({ identity_hold: 'politics' });
+
+		expect(await screen.findByRole('button', { name: 'Keep separate' })).toBeTruthy();
+	});
+
+	it('hides keep separate without an identity hold', async () => {
+		await renderEntry();
+
+		await screen.findByText('sample tag');
+		expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
+	});
+
+	it('keeps the values separate after confirming', async () => {
+		separateTag.mockResolvedValue({ ok: true, status: 204 });
+		await renderEntry({ identity_hold: 'politics' });
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
+
+		await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(separateTag).toHaveBeenCalledWith(1));
 	});
 
 	it('offers the manual fold on every entry and opens the target picker', async () => {

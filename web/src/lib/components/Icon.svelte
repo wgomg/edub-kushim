@@ -80,6 +80,11 @@
 	{:else if name === 'keep-whole'}
 		<rect width="18" height="18" x="3" y="3" rx="2" />
 		<path d="m9 12 2 2 4-4" />
+	{:else if name === 'keep-separate'}
+		<path d="M8 4v16" />
+		<path d="M16 4v16" />
+		<path d="m5 9-3 3 3 3" />
+		<path d="m19 9 3 3-3 3" />
 	{:else if name === 'apply-parts'}
 		<path
 			d="m16.02 12 5.48 3.13a1 1 0 0 1 0 1.74L13 21.74a2 2 0 0 1-2 0l-8.5-4.87a1 1 0 0 1 0-1.74L7.98 12"
