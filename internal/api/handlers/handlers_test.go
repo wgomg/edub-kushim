@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -4056,6 +4057,231 @@ func TestRejudgeTag(t *testing.T) {
 
 	t.Run("an invalid id returns 400", func(t *testing.T) {
 		testutil.AssertEqual(t, rejudge("abc", string(tags.RejudgeScopeQuality)).Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestListProvisionalStateFilter pins the state contract the compact filter bar sends: every value
+// narrows rows and total to exactly the fixtures carrying it, journal-backed states read the seeded
+// identity and composition rows (including a degraded keep whose criteria version was superseded),
+// values combine as alternatives, facets count the base set under the canonical vocabulary, and
+// unknown values fail at the boundary.
+func TestListProvisionalStateFilter(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "state filter anchor")
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "state filter doc")
+
+	seed := func(name string) int64 {
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+		return id
+	}
+	seedVerdict := func(id int64, criteria string, pass bool, outcome string) {
+		row, err := env.client.Queries.GetTag(ctx, id)
+		testutil.AssertNoError(t, err, "read fixture tag")
+		_, err = env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       row.Name,
+			Criteria:      json.RawMessage(criteria),
+			Pass:          pass,
+			Outcome:       sql.NullString{String: outcome, Valid: outcome != ""},
+			VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		})
+		testutil.AssertNoError(t, err, "insert quality event")
+	}
+	allPass := `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`
+
+	deferredID := seed("state filter deferred")
+	seedVerdict(deferredID, `{"defer":true}`, false, "")
+	admitID := seed("state filter admit")
+	seedVerdict(admitID, allPass, true, "admit")
+	acceptedID := seed("state filter accepted")
+	seedVerdict(acceptedID, `{"defer":true}`, false, "")
+	demotedID := seed("state filter demoted")
+	seedVerdict(demotedID, allPass, true, "admit")
+
+	// the acceptance must postdate the verdict for the waiver to count as active
+	_, err := env.client.DB().ExecContext(ctx,
+		"UPDATE tag SET accepted_at = now() + interval '1 second' WHERE id = $1", acceptedID)
+	testutil.AssertNoError(t, err, "accept the deferral")
+	_, err = env.client.DB().ExecContext(ctx,
+		"UPDATE tag SET demoted_at = now(), demoted_reason = 'mass_decay' WHERE id = $1", demotedID)
+	testutil.AssertNoError(t, err, "demote the admitted tag")
+
+	heldID := seed("state filter held")
+	pendingID := seed("state filter pending")
+	staleID := seed("state filter stale degraded")
+	splitID := seed("state filter split")
+
+	_, err = env.client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindFoldGate,
+		Candidate:      "state filter held",
+		Criteria:       json.RawMessage(`{"proposed_fold":"state filter anchor"}`),
+		Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	})
+	testutil.AssertNoError(t, err, "seed refused fold gate")
+
+	_, err = env.client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindFoldGate,
+		Candidate:      "state filter pending",
+		Criteria:       json.RawMessage(`{"proposed_fold":"state filter anchor"}`),
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	})
+	testutil.AssertNoError(t, err, "seed unresolved identity judgment")
+
+	tx, err := env.client.BeginTx(ctx, nil)
+	testutil.AssertNoError(t, err, "begin tx")
+	plan := tags.Plan{Composition: []tags.CompositionRow{{
+		DocumentID:      docID,
+		Candidate:       "state filter split",
+		Disposition:     tags.CompositionKeep,
+		Reason:          tags.CompositionReasonSplitDefer,
+		CriteriaVersion: analyzer.TagSplitVersion,
+	}}}
+	_, _, err = env.tagSvc.CreatePlannedTx(ctx, env.client.WithTx(tx), plan, false)
+	testutil.AssertNoError(t, err, "write composition events")
+	testutil.AssertNoError(t, tx.Commit(), "commit composition events")
+
+	// A degraded keep written under a superseded criteria version reads as degraded rather than
+	// split hold: the current-version hold is gone, but the unversioned latest reason still says
+	// no judge ever answered, which is what queues the re-judge.
+	err = env.client.Queries.InsertTagCompositionEvent(ctx, database.InsertTagCompositionEventParams{
+		DocumentID:      sql.NullInt64{Int64: docID, Valid: true},
+		Candidate:       "state filter stale degraded",
+		Parts:           json.RawMessage("[]"),
+		Disposition:     string(tags.CompositionKeep),
+		Reason:          tags.CompositionReasonJudgeUnavailable,
+		CriteriaVersion: analyzer.TagSplitVersion + "-superseded",
+	})
+	testutil.AssertNoError(t, err, "seed stale degraded keep")
+
+	fixtures := []int64{deferredID, admitID, acceptedID, demotedID, heldID, splitID, pendingID, staleID}
+	inList := func(results []ProvisionalTagResponse, id int64) bool {
+		for _, r := range results {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	inWant := func(want []int64, id int64) bool {
+		return slices.Contains(want, id)
+	}
+
+	cases := []struct {
+		name  string
+		state string
+		want  []int64
+	}{
+		{name: "identity hold", state: "identity_hold", want: []int64{heldID}},
+		{name: "identity pending", state: "identity_pending", want: []int64{pendingID}},
+		{name: "split hold", state: "split_hold", want: []int64{splitID}},
+		{name: "degraded composition", state: "degraded", want: []int64{staleID}},
+		{name: "bare deferral needs the decision", state: "needs_decision", want: []int64{deferredID}},
+		{name: "accepted deferral", state: "accepted", want: []int64{acceptedID}},
+		{name: "demoted", state: "demoted", want: []int64{demotedID}},
+		{name: "unblocked covers admitted and accepted", state: "unblocked", want: []int64{admitID, acceptedID}},
+		{
+			name:  "no verdict covers the unjudged",
+			state: "no_verdict",
+			want:  []int64{heldID, splitID, pendingID, staleID},
+		},
+		{
+			name:  "admission survives a demotion",
+			state: "admitted",
+			want:  []int64{admitID, demotedID},
+		},
+		{name: "deferred drops the accepted deferral", state: "deferred", want: []int64{deferredID}},
+		{name: "rejected has no fixture here", state: "rejected", want: nil},
+		{name: "values combine as alternatives", state: "identity_hold,split_hold", want: []int64{heldID, splitID}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := rec()
+			h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?state="+tc.state, nil))
+			testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+			var resp ProvisionalTagListResponse
+			testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+			if resp.Total != int64(len(tc.want)) {
+				t.Errorf("total = %d, want %d", resp.Total, len(tc.want))
+			}
+			for _, id := range fixtures {
+				got := inList(resp.Results, id)
+				want := inWant(tc.want, id)
+				if got != want {
+					t.Errorf("fixture %d: present = %t, want %t", id, got, want)
+				}
+			}
+		})
+	}
+
+	t.Run("unknown state is rejected", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?state=bogus", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if !strings.Contains(w.Body.String(), "Invalid state filter") {
+			t.Errorf("body = %q, want the state error", w.Body.String())
+		}
+	})
+
+	t.Run("facets count the base set under the canonical vocabulary", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?facets=true", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(len(fixtures)), "base total")
+		testutil.AssertEqual(t, resp.StateValues, curation.ProvisionalStateValues(), "state values")
+		testutil.AssertEqual(t, resp.StateFacets, map[string]int64{
+			"no_verdict":       4,
+			"admitted":         2,
+			"deferred":         1,
+			"rejected":         0,
+			"accepted":         1,
+			"identity_pending": 1,
+			"identity_hold":    1,
+			"split_hold":       1,
+			"degraded":         1,
+			"demoted":          1,
+			"needs_decision":   1,
+			"unblocked":        2,
+		}, "state facets")
+	})
+
+	t.Run("facets ignore the state filter", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?state=deferred&facets=true", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "states narrow the total")
+		if resp.StateFacets["admitted"] != 2 {
+			t.Errorf("facet admitted = %d, want the base-set count 2 while the total is narrowed", resp.StateFacets["admitted"])
+		}
+	})
+
+	t.Run("state values are served without facets", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var raw map[string]json.RawMessage
+		testutil.AssertNoError(t, json.Unmarshal(w.Body.Bytes(), &raw), "decode keys")
+		if _, ok := raw["state_values"]; !ok {
+			t.Error("response must always carry state_values")
+		}
+		if _, ok := raw["state_facets"]; ok {
+			t.Error("state_facets must stay absent unless facets are requested")
+		}
 	})
 }
 

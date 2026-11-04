@@ -518,15 +518,17 @@ ReevaluateIdentity enqueues a fresh identity sweep for the vocabulary.
 
 #### `GET /api/v1/tags/provisional`
 
-ListProvisional serves the paged provisional tag list with quality verdicts, pending identity counts, and identity holds.
+ListProvisional serves the paged provisional tag list with its quality verdicts, pending identity counts and identity holds, plus the review-state filter and, when requested, the optional per-state facet counts kept under the same name and rubric constraints.
 
 | Parameter | In | Type | Required | Default |
 |---|---|---|---|---|
 | `q` | query | string | no | "" |
 | `criteria` | query | array of string | no | — |
 | `verdict` | query | string | no | "" |
+| `state` | query | array of string | no | — |
 | `limit` | query | integer | no | `50` |
 | `offset` | query | integer | no | `0` |
+| `facets` | query | boolean | no | — |
 
 | Status | Body |
 |---|---|
@@ -2756,12 +2758,14 @@ ProviderInput is a provider's editable catalog fields: the name (its key), the a
 
 ### ProvisionalTagListResponse
 
-ProvisionalTagListResponse is one page of provisional tags: the filtered total for the queue's pager and the queue-level pending identity count that decides the reevaluation affordance.
+ProvisionalTagListResponse is one page of provisional tags: the filtered total for the review queue's pager, the queue-level pending identity count that decides the reevaluation affordance, and also the canonical review-state values the filter accepts, plus the optional per-state facet counts that the review menu reads.
 
 | Field | Type | Required |
 |---|---|---|
 | `pending_identity_total` | integer | yes |
 | `results` | array of [ProvisionalTagResponse](#provisionaltagresponse) (nullable) | yes |
+| `state_facets` | object | no |
+| `state_values` | array of string (nullable) | yes |
 | `total` | integer | yes |
 
 ### ProvisionalTagResponse

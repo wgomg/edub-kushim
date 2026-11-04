@@ -306,7 +306,7 @@ func TestTag_ListProvisional(t *testing.T) {
 	}
 
 	// CountProvisional must match.
-	count, err := svc.CountProvisional(ctx, ProvisionalFilter{})
+	count, _, err := svc.CountProvisional(ctx, ProvisionalFilter{}, false)
 	testutil.AssertNoError(t, err, "count provisional")
 	if count < 1 {
 		t.Errorf("CountProvisional = %d, want >= 1", count)
@@ -428,13 +428,48 @@ func TestTag_ListProvisionalFilters(t *testing.T) {
 			filter: ProvisionalFilter{Atomic: "false", Verdict: "none"},
 			drop:   []int64{admitID, failID, deferredID, rejectID, unjudgedID},
 		},
+		{
+			name:   "state no_verdict selects only the unjudged rows",
+			filter: ProvisionalFilter{States: []string{"no_verdict"}},
+			want:   []int64{unjudgedID},
+			drop:   []int64{admitID, failID, deferredID, rejectID},
+		},
+		{
+			name:   "state admitted follows the pass flag",
+			filter: ProvisionalFilter{States: []string{"admitted"}},
+			want:   []int64{admitID},
+			drop:   []int64{failID, deferredID, rejectID, unjudgedID},
+		},
+		{
+			name:   "state deferred matches the rubric abstention",
+			filter: ProvisionalFilter{States: []string{"deferred"}},
+			want:   []int64{deferredID},
+			drop:   []int64{admitID, failID, rejectID, unjudgedID},
+		},
+		{
+			name:   "state rejected joins derived and recorded outcomes",
+			filter: ProvisionalFilter{States: []string{"rejected"}},
+			want:   []int64{failID, rejectID},
+			drop:   []int64{admitID, deferredID, unjudgedID},
+		},
+		{
+			name:   "state values combine as alternatives",
+			filter: ProvisionalFilter{States: []string{"deferred", "admitted"}},
+			want:   []int64{admitID, deferredID},
+			drop:   []int64{failID, rejectID, unjudgedID},
+		},
+		{
+			name:   "state combines with criteria by AND",
+			filter: ProvisionalFilter{States: []string{"rejected"}, Defer: "true"},
+			drop:   []int64{admitID, failID, deferredID, rejectID, unjudgedID},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := svc.ListProvisional(ctx, tc.filter, 500, 0)
 			testutil.AssertNoError(t, err, "list provisional")
-			count, err := svc.CountProvisional(ctx, tc.filter)
+			count, _, err := svc.CountProvisional(ctx, tc.filter, false)
 			testutil.AssertNoError(t, err, "count provisional")
 			if count != int64(len(rows)) {
 				t.Errorf("filtered count = %d, len(rows) = %d, they must agree", count, len(rows))
@@ -455,6 +490,106 @@ func TestTag_ListProvisionalFilters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTag_CountProvisionalStateFacets pins the facet contract the review menu reads: counts are
+// scoped by the same name filter as the list, keyed by the canonical state vocabulary, and computed
+// over the base set regardless of the state filter so the menu can show what each unselected value
+// would add.
+func TestTag_CountProvisionalStateFacets(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+	docID := database.CreateUniqueDocument(t, client.Queries, "prov facets doc")
+
+	seed := func(name, criteria string, pass bool, outcome string) {
+		id := database.MustCreateTag(t, client.Queries, name)
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		if criteria != "" {
+			row, err := client.Queries.GetTag(ctx, id)
+			testutil.AssertNoError(t, err, "read fixture tag")
+			insertProvisionalVerdict(t, client, docID, row.Name, criteria, pass, outcome)
+		}
+	}
+
+	// MustCreateTag normalizes names, so the scope prefix carries spaces like the stored names.
+	seed("prov facets admit",
+		`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`,
+		true, "admit")
+	seed("prov facets deferred", `{"defer":true}`, false, "")
+	seed("prov facets reject", `{"atomic":false}`, false, "reject")
+	seed("prov facets unjudged", "", false, "")
+
+	filter := ProvisionalFilter{NamePrefix: "prov facets "}
+
+	_, withoutFacets, err := svc.CountProvisional(ctx, filter, false)
+	testutil.AssertNoError(t, err, "count without facets")
+	if withoutFacets != nil {
+		t.Errorf("facets = %v, must stay nil when not requested", withoutFacets)
+	}
+
+	total, facets, err := svc.CountProvisional(ctx, filter, true)
+	testutil.AssertNoError(t, err, "count with facets")
+	rows, err := svc.ListProvisional(ctx, filter, 500, 0)
+	testutil.AssertNoError(t, err, "list scoped fixtures")
+	if total != int64(len(rows)) {
+		t.Errorf("facet total = %d, len(rows) = %d, they must agree", total, len(rows))
+	}
+
+	want := map[string]int64{
+		"no_verdict":       1,
+		"admitted":         1,
+		"deferred":         1,
+		"rejected":         1,
+		"accepted":         0,
+		"identity_pending": 0,
+		"identity_hold":    0,
+		"split_hold":       0,
+		"degraded":         0,
+		"demoted":          0,
+		"needs_decision":   1,
+		"unblocked":        1,
+	}
+	if len(facets) != len(want) {
+		t.Errorf("facet map has %d keys, want the %d canonical states", len(facets), len(want))
+	}
+	for _, value := range ProvisionalStateValues() {
+		got, ok := facets[value]
+		if !ok {
+			t.Errorf("facet %q missing from the map", value)
+			continue
+		}
+		if got != want[value] {
+			t.Errorf("facet %q = %d, want %d", value, got, want[value])
+		}
+	}
+
+	// Every state's own list must agree with the facet that reports it: the two SQL
+	// queries share the predicate text but are separate copies, so parity is the drift net.
+	for _, value := range ProvisionalStateValues() {
+		stateRows, err := svc.ListProvisional(ctx, ProvisionalFilter{
+			NamePrefix: filter.NamePrefix,
+			States:     []string{value},
+		}, 500, 0)
+		testutil.AssertNoError(t, err, "list by state")
+		if int64(len(stateRows)) != facets[value] {
+			t.Errorf("state %q: list returned %d rows, facet reports %d", value, len(stateRows), facets[value])
+		}
+	}
+
+	// The state filter narrows the total but leaves the facet base untouched.
+	narrowed, narrowedFacets, err := svc.CountProvisional(ctx, ProvisionalFilter{
+		NamePrefix: filter.NamePrefix,
+		States:     []string{"deferred"},
+	}, true)
+	testutil.AssertNoError(t, err, "count narrowed by state")
+	if narrowed != 1 {
+		t.Errorf("narrowed total = %d, want 1", narrowed)
+	}
+	if narrowedFacets["admitted"] != 1 {
+		t.Errorf("facet admitted = %d under a deferred filter, want the base-set count 1", narrowedFacets["admitted"])
 	}
 }
 

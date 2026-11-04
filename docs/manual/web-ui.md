@@ -171,7 +171,7 @@ The vocabulary workspace with five tabs, deep-linkable by hash (`/tags#provision
 | Tab | Contents |
 |---|---|
 | **Vocabulary** | All tags with counts, creation date and standing; editors can create, rename, fold and demote from here; `?q=` filters |
-| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote, reject, accept a deferral, fold a tag into any other live value, and the contextual hold actions, filterable by name, criteria and verdict |
+| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote, reject, accept a deferral, fold a tag into any other live value, and the contextual hold actions; filters by name, rubric criteria and review state, with quick views and live per-state counts in the state menu |
 | **Coverage** | Open coverage flags from the audit pass — titles link to their documents; apply, dismiss, or register a missing name |
 | **Overlap** (siblings) | Near-containment pairs from the latest measurement; `gray` marks the review band |
 | **Deleted** | The blocklist of rejected names, restorable |

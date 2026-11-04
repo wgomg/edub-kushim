@@ -135,9 +135,11 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 	return tags, nil
 }
 
-// ProvisionalFilter narrows the provisional queue by name prefix, rubric criterion state and verdict
-// class. An empty field leaves that dimension unfiltered, while criterion fields otherwise carry the
-// states 'true', 'false' or 'absent'; Verdict carries 'none', 'admit', 'defer' or 'reject'.
+// ProvisionalFilter narrows the provisional queue by name prefix, rubric criterion state, verdict class
+// and review state; an empty field leaves that dimension unfiltered. The individual criterion fields
+// carry 'true', 'false' or 'absent', the Verdict carries 'none', 'admit', 'defer' or 'reject', and the
+// States field holds values from ProvisionalStateValues whose multiple entries combine as alternatives,
+// with the legacy Verdict dimension staying independent of States.
 type ProvisionalFilter struct {
 	NamePrefix    string
 	SubjectMatter string
@@ -147,23 +149,64 @@ type ProvisionalFilter struct {
 	NotFormGenre  string
 	Defer         string
 	Verdict       string
+	States        []string
 }
 
-// ListProvisional pages the not-yet-promoted tags with document counts,
-// keeping only the rows matching the filter.
+// provisionalStates is the canonical state vocabulary the queue's state filter accepts, in the order
+// the review menu offers it: the verdict classes first, then the journal-backed blockers, and then the
+// derived worklist classes; each entry pairs a value with the count column reporting it, so the set
+// of accepted values and the facet map cannot drift apart.
+type provisionalState struct {
+	value string
+	count func(database.CountProvisionalTagsRow) int64
+}
+
+var provisionalStates = []provisionalState{
+	{"no_verdict", func(row database.CountProvisionalTagsRow) int64 { return row.NoVerdict }},
+	{"admitted", func(row database.CountProvisionalTagsRow) int64 { return row.Admitted }},
+	{"deferred", func(row database.CountProvisionalTagsRow) int64 { return row.Deferred }},
+	{"rejected", func(row database.CountProvisionalTagsRow) int64 { return row.Rejected }},
+	{"accepted", func(row database.CountProvisionalTagsRow) int64 { return row.Accepted }},
+	{"identity_pending", func(row database.CountProvisionalTagsRow) int64 { return row.IdentityPending }},
+	{"identity_hold", func(row database.CountProvisionalTagsRow) int64 { return row.IdentityHold }},
+	{"split_hold", func(row database.CountProvisionalTagsRow) int64 { return row.SplitHold }},
+	{"degraded", func(row database.CountProvisionalTagsRow) int64 { return row.Degraded }},
+	{"demoted", func(row database.CountProvisionalTagsRow) int64 { return row.Demoted }},
+	{"needs_decision", func(row database.CountProvisionalTagsRow) int64 { return row.NeedsDecision }},
+	{"unblocked", func(row database.CountProvisionalTagsRow) int64 { return row.Unblocked }},
+}
+
+// ProvisionalStateValues returns every value that the provisional queue's state filter accepts, in the
+// order the review menu offers it.
+func ProvisionalStateValues() []string {
+	values := make([]string, 0, len(provisionalStates))
+	for _, state := range provisionalStates {
+		values = append(values, state.value)
+	}
+	return values
+}
+
+// ListProvisional pages the not-yet-promoted tags with their live document counts, keeping only the
+// rows matching the filter.
 func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, limit, offset int32) ([]database.ListProvisionalTagsWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.ListProvisionalTagsWithDocumentCount(ctx, database.ListProvisionalTagsWithDocumentCountParams{
-		PolicyVersion:      analyzer.TagQualityVersion,
-		NamePrefix:         filter.NamePrefix,
-		SubjectMatterState: filter.SubjectMatter,
-		DimensionState:     filter.Dimension,
-		NotPersonState:     filter.NotPerson,
-		AtomicState:        filter.Atomic,
-		NotFormGenreState:  filter.NotFormGenre,
-		DeferState:         filter.Defer,
-		VerdictState:       filter.Verdict,
-		PageOffset:         offset,
-		PageLimit:          limit,
+		PolicyVersion:          analyzer.TagQualityVersion,
+		States:                 filter.States,
+		JournalFlags:           needsJournalFlags(filter.States),
+		IdentityRuleSetVersion: tags.IdentityRuleSetVersion,
+		IdentityHoldKinds:      tags.IdentityHoldKinds(),
+		SplitCriteriaVersion:   analyzer.TagSplitVersion,
+		CompositionHoldReasons: tags.CompositionHoldReasons(),
+		NamePrefix:             filter.NamePrefix,
+		SubjectMatterState:     filter.SubjectMatter,
+		DimensionState:         filter.Dimension,
+		NotPersonState:         filter.NotPerson,
+		AtomicState:            filter.Atomic,
+		NotFormGenreState:      filter.NotFormGenre,
+		DeferState:             filter.Defer,
+		VerdictState:           filter.Verdict,
+		PageOffset:             offset,
+		PageLimit:              limit,
 	})
 	if err != nil {
 		return nil, errs.FromDB(err, "list provisional tags")
@@ -171,23 +214,59 @@ func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, lim
 	return tags, nil
 }
 
-// CountProvisional counts the not-yet-promoted tags matching the filter.
-func (s *Tag) CountProvisional(ctx context.Context, filter ProvisionalFilter) (int64, error) {
-	count, err := s.client.Queries.CountProvisionalTags(ctx, database.CountProvisionalTagsParams{
-		PolicyVersion:      analyzer.TagQualityVersion,
-		NamePrefix:         filter.NamePrefix,
-		SubjectMatterState: filter.SubjectMatter,
-		DimensionState:     filter.Dimension,
-		NotPersonState:     filter.NotPerson,
-		AtomicState:        filter.Atomic,
-		NotFormGenreState:  filter.NotFormGenre,
-		DeferState:         filter.Defer,
-		VerdictState:       filter.Verdict,
+// CountProvisional counts the not-yet-promoted tags matching the filter and, when facet counts are being
+// requested, it also counts them for every review state under the same name and rubric constraints.
+// The filter's States are ignored for the facet counts so the review menu can show how many entries
+// each unselected value would add; facets are nil when not requested.
+func (s *Tag) CountProvisional(ctx context.Context, filter ProvisionalFilter, facets bool) (int64, map[string]int64, error) {
+	row, err := s.client.Queries.CountProvisionalTags(ctx, database.CountProvisionalTagsParams{
+		PolicyVersion:          analyzer.TagQualityVersion,
+		States:                 filter.States,
+		JournalFlags:           facets || needsJournalFlags(filter.States),
+		IdentityRuleSetVersion: tags.IdentityRuleSetVersion,
+		IdentityHoldKinds:      tags.IdentityHoldKinds(),
+		SplitCriteriaVersion:   analyzer.TagSplitVersion,
+		CompositionHoldReasons: tags.CompositionHoldReasons(),
+		NamePrefix:             filter.NamePrefix,
+		SubjectMatterState:     filter.SubjectMatter,
+		DimensionState:         filter.Dimension,
+		NotPersonState:         filter.NotPerson,
+		AtomicState:            filter.Atomic,
+		NotFormGenreState:      filter.NotFormGenre,
+		DeferState:             filter.Defer,
+		VerdictState:           filter.Verdict,
 	})
 	if err != nil {
-		return 0, errs.FromDB(err, "count provisional tags")
+		return 0, nil, errs.FromDB(err, "count provisional tags")
 	}
-	return count, nil
+	if !facets {
+		return row.Total, nil, nil
+	}
+	return row.Total, stateFacetCounts(row), nil
+}
+
+// stateFacetCounts reports the per-state counts from one count row, keyed by the canonical state value
+// list so a caller can never enumerate a value the filter rejects.
+func stateFacetCounts(row database.CountProvisionalTagsRow) map[string]int64 {
+	counts := make(map[string]int64, len(provisionalStates))
+	for _, state := range provisionalStates {
+		counts[state.value] = state.count(row)
+	}
+	return counts
+}
+
+// needsJournalFlags reports whether any selected review state is derived from the identity or composition
+// journals, so the list and count queries can skip those journal EXISTS reads for the verdict-only and
+// demoted state filters.
+func needsJournalFlags(states []string) bool {
+	for _, state := range states {
+		switch state {
+		case "identity_pending", "identity_hold", "split_hold", "degraded",
+			"needs_decision", "unblocked":
+			return true
+		}
+	}
+	return false
 }
 
 // LatestQualityEventsForNames returns the most recent quality verdict per

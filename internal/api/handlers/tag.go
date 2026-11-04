@@ -238,8 +238,9 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ListProvisional serves the paged provisional tag list with quality
-// verdicts, pending identity counts, and identity holds.
+// ListProvisional serves the paged provisional tag list with its quality verdicts, pending identity
+// counts and identity holds, plus the review-state filter and, when requested, the optional per-state
+// facet counts kept under the same name and rubric constraints.
 func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
@@ -264,7 +265,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, h.logger, reqID, "list provisional tags", err)
 		return
 	}
-	total, err := h.tag.CountProvisional(ctx, filter)
+	total, stateFacets, err := h.tag.CountProvisional(ctx, filter, pb.GetBool("facets", false))
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "count provisional tags", err)
 		return
@@ -370,13 +371,16 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		Results:              responses,
 		Total:                total,
 		PendingIdentityTotal: pendingIdentityTotal,
+		StateValues:          curation.ProvisionalStateValues(),
+		StateFacets:          stateFacets,
 	})
 }
 
-// parseProvisionalFilter reads the name, criteria and verdict query parameters into the curation filter.
-// The name is an ILIKE prefix, like the deleted-tag listing; criteria entries are `key:state` pairs with
-// state `pass`, `fail` or `absent`; unknown keys, unknown states and unknown verdict values are rejected
-// instead of silently ignored.
+// parseProvisionalFilter reads the name, criteria, verdict and review-state query parameters into the
+// curation filter. The name is an ILIKE prefix, like the deleted-tag listing; and the criteria entries
+// are `key:state` pairs carrying `pass`, `fail` or `absent`; the review-state entries are the values
+// from curation.ProvisionalStateValues, with any duplicates dropped. Unknown keys, unknown criteria
+// states, unknown verdict values and unknown review states are rejected instead of silently ignored.
 func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
 	filter := curation.ProvisionalFilter{NamePrefix: pb.Get("q", "")}
 	fields := map[string]*string{
@@ -405,6 +409,23 @@ func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
 		filter.Verdict = verdict
 	default:
 		return curation.ProvisionalFilter{}, errors.New("Invalid verdict filter")
+	}
+
+	known := curation.ProvisionalStateValues()
+	knownStates := make(map[string]struct{}, len(known))
+	for _, state := range known {
+		knownStates[state] = struct{}{}
+	}
+	seen := make(map[string]struct{})
+	for _, state := range pb.GetStrings("state") {
+		if _, ok := knownStates[state]; !ok {
+			return curation.ProvisionalFilter{}, errors.New("Invalid state filter")
+		}
+		if _, dup := seen[state]; dup {
+			continue
+		}
+		seen[state] = struct{}{}
+		filter.States = append(filter.States, state)
 	}
 	return filter, nil
 }
@@ -1033,13 +1054,16 @@ type compositionView struct {
 	Parts  []string
 }
 
-// ProvisionalTagListResponse is one page of provisional tags: the
-// filtered total for the queue's pager and the queue-level pending
-// identity count that decides the reevaluation affordance.
+// ProvisionalTagListResponse is one page of provisional tags: the filtered total for the review queue's
+// pager, the queue-level pending identity count that decides the reevaluation affordance, and also the
+// canonical review-state values the filter accepts, plus the optional per-state facet counts that the
+// review menu reads.
 type ProvisionalTagListResponse struct {
 	Results              []ProvisionalTagResponse `json:"results"`
 	Total                int64                    `json:"total"`
 	PendingIdentityTotal int64                    `json:"pending_identity_total"`
+	StateValues          []string                 `json:"state_values"`
+	StateFacets          map[string]int64         `json:"state_facets,omitempty"`
 }
 
 // CreateTagRequest is the body of POST /api/v1/tags.

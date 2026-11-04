@@ -8,6 +8,7 @@
 	import Modal from '#lib/components/Modal.svelte';
 	import SlideOver from '#lib/components/SlideOver.svelte';
 	import FoldTagModal from '#lib/components/tags/FoldTagModal.svelte';
+	import ProvisionalFilters from '#lib/components/tags/ProvisionalFilters.svelte';
 	import TagReviewHelp from '#lib/components/tags/TagReviewHelp.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
@@ -25,24 +26,36 @@
 		{ key: 'defer', label: 'defer' }
 	];
 
-	const FILTER_STATES = [
-		{ value: '', label: 'Any' },
-		{ value: 'pass', label: '✓ pass' },
-		{ value: 'fail', label: '✗ fail' },
-		{ value: 'absent', label: '— absent' }
+	// review states the compact bar offers, grouped exactly as the menu renders them; the values mirror
+	// the server's canonical list
+	const reviewStates = [
+		{ value: 'no_verdict', label: 'no verdict', group: 'Verdict' },
+		{ value: 'admitted', label: 'awaiting promotion floor', group: 'Verdict' },
+		{ value: 'deferred', label: 'deferred to review', group: 'Verdict' },
+		{ value: 'rejected', label: 'judge rejected', group: 'Verdict' },
+		{ value: 'accepted', label: 'accepted deferral', group: 'Verdict' },
+		{ value: 'identity_pending', label: 'identity pending', group: 'Blocking' },
+		{ value: 'identity_hold', label: 'identity hold', group: 'Blocking' },
+		{ value: 'split_hold', label: 'split hold', group: 'Blocking' },
+		{ value: 'degraded', label: 'degraded composition', group: 'Blocking' },
+		{ value: 'demoted', label: 'demoted', group: 'Blocking' },
+		{ value: 'needs_decision', label: 'needs decision', group: 'Action' },
+		{ value: 'unblocked', label: 'awaiting floor, unblocked', group: 'Action' }
 	];
+
+	// older links carry the single verdict filter; map it onto the states the server newly exposes so
+	// they keep landing filtered; the old admit class folded accepted deferrals in, so it maps them to
+	// both admitted and accepted
+	const LEGACY_VERDICT_STATES = {
+		none: ['no_verdict'],
+		admit: ['admitted', 'accepted'],
+		defer: ['deferred'],
+		reject: ['rejected']
+	};
 
 	// defer records the judge's abstention, not a content criterion: the verdict badge already says
 	// when it fired, so the rubric counts only the five substantive checks
 	const rubricCriteria = criteria.filter((c) => c.key !== 'defer');
-
-	const VERDICT_FILTERS = [
-		{ value: '', label: 'Any verdict' },
-		{ value: 'none', label: 'no verdict' },
-		{ value: 'admit', label: 'awaiting promotion floor' },
-		{ value: 'defer', label: 'deferred to review' },
-		{ value: 'reject', label: 'judge rejected' }
-	];
 
 	const cardClass =
 		'grid grid-cols-1 gap-2 rounded-lg border border-clay-800 bg-clay-900 p-3.5 md:grid-cols-[minmax(0,1fr)_16rem] md:gap-x-3 md:pl-4';
@@ -86,8 +99,6 @@
 		'rounded-lg px-3 py-1.5 text-xs text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
 	const countLink =
 		'flex items-center gap-1.5 text-xs text-parchment-400 tabular-nums underline-offset-[3px] hover:text-lapis-300 hover:underline hover:decoration-lapis-300/40 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
-	const selectClass =
-		'rounded-md border border-clay-700 bg-clay-900 px-2 py-1 text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
 	const pagerButton =
 		'rounded-md border border-clay-700 px-2.5 py-1 text-parchment-400 hover:border-gold-500 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
 	const inputClass =
@@ -106,7 +117,10 @@
 	let offset = $state(0);
 	let pendingTotal = $state(0);
 	let filterStates = $state({});
-	let verdictFilter = $state('');
+	let stateFilter = $state([]);
+	let stateValues = $state(null);
+	let facets = $state(null);
+	let facetsOpen = $state(false);
 	let query = $state('');
 	let loadSeq = 0;
 
@@ -123,7 +137,13 @@
 	let folding = $state(null);
 
 	let hasFilters = $derived(
-		query !== '' || criteria.some((c) => filterStates[c.key]) || verdictFilter !== ''
+		query !== '' || criteria.some((c) => filterStates[c.key]) || stateFilter.length > 0
+	);
+
+	// the server owns the canonical state values; the local list only supplies the labels and the menu
+	// grouping
+	let activeReviewStates = $derived(
+		stateValues ? reviewStates.filter((s) => stateValues.includes(s.value)) : reviewStates
 	);
 
 	onMount(() => {
@@ -137,13 +157,25 @@
 		const rawCriteria = sp.get('prov_criteria') ?? '';
 		for (const entry of rawCriteria ? rawCriteria.split(',') : []) {
 			const [key, state] = entry.split(':');
-			if (criteria.some((c) => c.key === key) && FILTER_STATES.some((s) => s.value === state)) {
+			if (criteria.some((c) => c.key === key) && ['', 'pass', 'fail', 'absent'].includes(state)) {
 				filterStates[key] = state;
 			}
 		}
 
-		const rawVerdict = sp.get('prov_verdict') ?? '';
-		if (VERDICT_FILTERS.some((v) => v.value === rawVerdict)) verdictFilter = rawVerdict;
+		const rawStates = sp.get('prov_state') ?? '';
+		for (const value of rawStates ? rawStates.split(',') : []) {
+			if (reviewStates.some((s) => s.value === value) && !stateFilter.includes(value)) {
+				stateFilter = [...stateFilter, value];
+			}
+		}
+		if (stateFilter.length === 0) {
+			const legacy = LEGACY_VERDICT_STATES[sp.get('prov_verdict') ?? ''] ?? [];
+			for (const value of legacy) {
+				if (reviewStates.some((s) => s.value === value) && !stateFilter.includes(value)) {
+					stateFilter = [...stateFilter, value];
+				}
+			}
+		}
 
 		load();
 	});
@@ -168,8 +200,9 @@
 
 		if (active) sp.set('prov_criteria', active);
 		else sp.delete('prov_criteria');
-		if (verdictFilter) sp.set('prov_verdict', verdictFilter);
-		else sp.delete('prov_verdict');
+		if (stateFilter.length > 0) sp.set('prov_state', stateFilter.join(','));
+		else sp.delete('prov_state');
+		sp.delete('prov_verdict');
 
 		goto(resolve(`${page.url.pathname}?${sp.toString()}${page.url.hash}`), {
 			shallow: true,
@@ -177,17 +210,19 @@
 		});
 	}
 
-	async function load(clamp = true) {
+	async function load(clamp = true, silent = false) {
 		const seq = ++loadSeq;
-		loading = true;
+		if (!silent) loading = true;
 		error = '';
 		const result = await api.tags.provisionalList(PAGE_SIZE, offset, {
 			criteria: activeCriteria(),
-			verdict: verdictFilter,
-			q: query
+			states: stateFilter,
+			q: query,
+			facets: facetsOpen
 		});
 		if (seq !== loadSeq) return;
 		if (!result.ok) {
+			if (silent) return;
 			tags = [];
 			total = 0;
 			pendingTotal = 0;
@@ -198,6 +233,9 @@
 		tags = result.data?.results ?? [];
 		total = result.data?.total ?? 0;
 		pendingTotal = result.data?.pending_identity_total ?? 0;
+		const values = result.data?.state_values;
+		if (Array.isArray(values) && values.length > 0) stateValues = values;
+		if (facetsOpen) facets = result.data?.state_facets ?? null;
 		// an emptied page and a deep-link offset the API clamped away both
 		// surface as offset >= total
 		if (clamp && offset > 0 && total <= offset) {
@@ -214,6 +252,30 @@
 		syncUrl();
 	}
 
+	function onQueryChange(value) {
+		query = value;
+		onQueryInput();
+	}
+
+	// the menu shows what each state would add, so opening it asks the API for the facet counts while
+	// the request runs silently so the queue does not flash a loader; closing it stops carrying facets
+	// on later list, paging and keystroke requests
+	function onFacetsRequested() {
+		facetsOpen = true;
+		load(true, true);
+	}
+
+	function onFacetsClosed() {
+		facetsOpen = false;
+	}
+
+	function applyFilters(next) {
+		query = next.q;
+		filterStates = { ...next.criteria };
+		stateFilter = [...next.states];
+		onFilterChange();
+	}
+
 	// one load runs the list query, its count and the per-row identity lookups, so keystrokes wait for a
 	// pause instead of firing a full query set per character
 	let queryTimer;
@@ -224,10 +286,7 @@
 	onDestroy(() => clearTimeout(queryTimer));
 
 	function clearFilters() {
-		query = '';
-		for (const c of criteria) filterStates[c.key] = '';
-		verdictFilter = '';
-		onFilterChange();
+		applyFilters({ q: '', criteria: {}, states: [] });
 	}
 
 	function prevPage() {
@@ -645,57 +704,18 @@
 	</div>
 </div>
 
-<div class="mb-4 flex flex-wrap items-center gap-3">
-	<label for="provisional-filter" class="sr-only">Filter new tags by name</label>
-	<input
-		id="provisional-filter"
-		name="provisional-filter"
-		type="text"
-		bind:value={query}
-		oninput={onQueryInput}
-		autocomplete="off"
-		placeholder="Filter new tags…"
-		class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-	/>
-</div>
-
-<div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-	{#each criteria as c (c.key)}
-		<label class="flex items-center gap-1.5 text-[0.6875rem] text-parchment-500">
-			{c.label}
-			<select
-				value={filterStates[c.key] ?? ''}
-				onchange={(e) => {
-					filterStates[c.key] = e.target.value;
-					onFilterChange();
-				}}
-				class={selectClass}
-			>
-				{#each FILTER_STATES as s (s.value)}
-					<option value={s.value}>{s.label}</option>
-				{/each}
-			</select>
-		</label>
-	{/each}
-	<label class="flex items-center gap-1.5 text-[0.6875rem] text-parchment-500">
-		verdict
-		<select
-			value={verdictFilter}
-			onchange={(e) => {
-				verdictFilter = e.target.value;
-				onFilterChange();
-			}}
-			class={selectClass}
-		>
-			{#each VERDICT_FILTERS as v (v.value)}
-				<option value={v.value}>{v.label}</option>
-			{/each}
-		</select>
-	</label>
-	{#if hasFilters}
-		<button onclick={clearFilters} class={btnGhost}>Clear filters</button>
-	{/if}
-</div>
+<ProvisionalFilters
+	q={query}
+	{criteria}
+	criteriaStates={filterStates}
+	reviewStates={activeReviewStates}
+	states={stateFilter}
+	{facets}
+	onquerychange={onQueryChange}
+	onchange={applyFilters}
+	onfacets={onFacetsRequested}
+	onfacetsclose={onFacetsClosed}
+/>
 
 <p class="mb-4 max-w-3xl text-[0.8125rem] text-parchment-500">
 	New tags stay provisional until the admission decision admits them and enough live documents carry

@@ -252,16 +252,27 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
 [tags.md](tags.md).
 
 1. **Queue**: `GET /api/v1/tags/provisional?limit=50&offset=0` lists provisional tags with
-   their latest rubric verdict and `pending_identity_total`. Filter it with:
+   their latest rubric verdict, `pending_identity_total`, and `state_values` (the accepted
+   review-state vocabulary). Filter it with:
 
    - `criteria=key:state[,key:state…]` — keys `subject_matter`, `dimension`, `not_person`,
      `atomic`, `not_form_genre`, `defer`; states `pass`, `fail`, `absent`. Pairs combine with
      AND. **Send one comma-separated value**: the server reads a single value per key and
      splits on commas, so repeated `criteria=` keys silently keep only the first. Unknown keys
      or states answer `400 Invalid criteria filter`.
-   - `verdict=none|admit|defer|reject` (unknown values → `400`).
+   - `state=value[,value…]` — review states `no_verdict`, `admitted`, `deferred`, `rejected`,
+     `accepted`, `identity_pending`, `identity_hold`, `split_hold`, `degraded`, `demoted`,
+     `needs_decision`, `unblocked`. Values combine with OR, and the dimension combines with
+     `q` and `criteria` by AND. **Send one comma-separated value** (same single-value rule as
+     `criteria`); unknown values answer `400 Invalid state filter`.
+   - `verdict=none|admit|defer|reject` (unknown values → `400`) — selects a single verdict
+     class; an active acceptance folds into `admit`, where the `state` dimension reports it
+     as `accepted`.
+   - `facets=true` — adds `state_facets`, a count per review state over the `q`/`criteria`
+     result set. The counts ignore `state` (and `verdict`), so each entry answers what its
+     value would add.
    - `q=prefix` — case-insensitive prefix match on the tag name (absent or empty lists
-     everything); combines with `criteria` and `verdict`.
+     everything); combines with `criteria`, `state` and `verdict`.
 
 2. **Decide**: `POST /api/v1/tags/{id}/promote` → `204` (already promoted → `409`). Rejecting
    uses `DELETE /api/v1/tags/{id}`, which blocklists the name. `POST /api/v1/tags/{id}/demote`

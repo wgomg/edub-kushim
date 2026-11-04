@@ -73,6 +73,21 @@ const rubric = {
 	defer: false
 };
 
+const ALL_STATES = [
+	'no_verdict',
+	'admitted',
+	'deferred',
+	'rejected',
+	'accepted',
+	'identity_pending',
+	'identity_hold',
+	'split_hold',
+	'degraded',
+	'demoted',
+	'needs_decision',
+	'unblocked'
+];
+
 function tag(overrides = {}) {
 	return {
 		id: 1,
@@ -197,15 +212,15 @@ describe('ProvisionalReview filters and paging', () => {
 		render(ProvisionalReview);
 		await waitFor(() => expect(provisionalList).toHaveBeenCalledTimes(1));
 
-		await fireEvent.change(screen.getByRole('combobox', { name: /atomic/ }), {
-			target: { value: 'fail' }
-		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Rubric' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'atomic: fail' }));
 
 		await waitFor(() =>
 			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
 				criteria: [{ key: 'atomic', state: 'fail' }],
-				verdict: '',
-				q: ''
+				states: [],
+				q: '',
+				facets: false
 			})
 		);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_criteria=atomic%3Afail#provisional', {
@@ -215,26 +230,101 @@ describe('ProvisionalReview filters and paging', () => {
 		expect(await screen.findByText('No tags match the current filters.')).toBeTruthy();
 	});
 
-	it('sends the verdict filter to the API and syncs it to the URL', async () => {
+	it('sends a review state to the API and syncs it to the URL', async () => {
 		provisionalList.mockResolvedValue({ ok: true, data: { results: [], total: 0 } });
 		render(ProvisionalReview);
 		await waitFor(() => expect(provisionalList).toHaveBeenCalledTimes(1));
 
-		await fireEvent.change(screen.getByRole('combobox', { name: /verdict/ }), {
-			target: { value: 'none' }
-		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Review state' }));
+		await fireEvent.click(screen.getByRole('checkbox', { name: /no verdict/ }));
 
 		await waitFor(() =>
 			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
 				criteria: [],
-				verdict: 'none',
-				q: ''
+				states: ['no_verdict'],
+				q: '',
+				facets: true
 			})
 		);
-		expect(goto).toHaveBeenLastCalledWith('/tags?prov_verdict=none', {
+		expect(goto).toHaveBeenLastCalledWith('/tags?prov_state=no_verdict', {
 			shallow: true,
 			replace: true
 		});
+	});
+
+	it('requests facet counts only while the review state menu is open', async () => {
+		provisionalList.mockResolvedValue({
+			ok: true,
+			data: {
+				results: [tag()],
+				total: 1,
+				state_values: ALL_STATES,
+				state_facets: { identity_hold: 7, deferred: 2 }
+			}
+		});
+		render(ProvisionalReview);
+		await screen.findByText('sample tag');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Review state' }));
+		await waitFor(() =>
+			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
+				criteria: [],
+				states: [],
+				q: '',
+				facets: true
+			})
+		);
+		await waitFor(() => {
+			const box = screen.getByRole('checkbox', { name: /identity hold/ });
+			expect(box.parentElement.textContent).toContain('7');
+		});
+
+		await fireEvent.keyDown(document, { key: 'Escape' });
+		await fireEvent.click(screen.getByRole('button', { name: 'Rubric' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'atomic: fail' }));
+		await waitFor(() =>
+			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
+				criteria: [{ key: 'atomic', state: 'fail' }],
+				states: [],
+				q: '',
+				facets: false
+			})
+		);
+	});
+
+	it('translates a legacy admit verdict link into both states', async () => {
+		page.url.searchParams = new URLSearchParams('prov_verdict=admit');
+		provisionalList.mockResolvedValue({
+			ok: true,
+			data: { results: [], total: 0, state_values: ALL_STATES }
+		});
+		render(ProvisionalReview);
+
+		await waitFor(() =>
+			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
+				criteria: [],
+				states: ['admitted', 'accepted'],
+				q: '',
+				facets: false
+			})
+		);
+		expect(await screen.findByRole('button', { name: 'Remove awaiting promotion floor filter' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Remove accepted deferral filter' })).toBeTruthy();
+	});
+
+	it('offers only the states the server reports', async () => {
+		provisionalList.mockResolvedValue({
+			ok: true,
+			data: { results: [tag()], total: 1, state_values: ['no_verdict', 'identity_hold'] }
+		});
+		render(ProvisionalReview);
+		await screen.findByText('sample tag');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Review state' }));
+		expect(await screen.findByRole('checkbox', { name: 'no verdict' })).toBeTruthy();
+		expect(screen.getByRole('checkbox', { name: 'identity hold' })).toBeTruthy();
+		expect(screen.queryByRole('checkbox', { name: /^demoted/ })).toBeNull();
+		expect(screen.queryByRole('checkbox', { name: /^split hold/ })).toBeNull();
 	});
 
 	it('sends the name query to the API after the debounce and resets paging', async () => {
@@ -250,8 +340,9 @@ describe('ProvisionalReview filters and paging', () => {
 		await waitFor(() =>
 			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
 				criteria: [],
-				verdict: '',
-				q: 'politic'
+				states: [],
+				q: 'politic',
+				facets: false
 			})
 		);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_q=politic', {
@@ -270,12 +361,13 @@ describe('ProvisionalReview filters and paging', () => {
 
 		expect(provisionalList).toHaveBeenLastCalledWith(50, 100, {
 			criteria: [{ key: 'atomic', state: 'fail' }],
-			verdict: 'none',
-			q: ''
+			states: ['no_verdict'],
+			q: '',
+			facets: false
 		});
 		await waitFor(() => {
-			expect(screen.getByRole('combobox', { name: /atomic/ }).value).toBe('fail');
-			expect(screen.getByRole('combobox', { name: /verdict/ }).value).toBe('none');
+			expect(screen.getByRole('button', { name: 'Remove atomic filter' })).toBeTruthy();
+			expect(screen.getByRole('button', { name: 'Remove no verdict filter' })).toBeTruthy();
 		});
 	});
 
@@ -306,8 +398,9 @@ describe('ProvisionalReview filters and paging', () => {
 		await screen.findByText('second page tag');
 		expect(provisionalList).toHaveBeenLastCalledWith(50, 50, {
 			criteria: [],
-			verdict: '',
-			q: ''
+			states: [],
+			q: '',
+			facets: false
 		});
 		expect(screen.getByRole('button', { name: 'Prev' }).disabled).toBe(false);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_page=1', { shallow: true, replace: true });

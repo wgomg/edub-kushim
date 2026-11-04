@@ -56,12 +56,15 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
   **`ActiveTasksStrip.svelte`**, **`DocumentAnalyticsPanel.svelte`**,
   **`ProcessingHealthPanel.svelte`** — the dashboard panels.
 - **`src/lib/components/Modal.svelte`**, **`ConfirmDialog.svelte`**, **`Toast.svelte`**,
-  **`UploadModal.svelte`**, **`SlideOver.svelte`**, **`Icon.svelte`** — shared UI primitives.
+  **`UploadModal.svelte`**, **`SlideOver.svelte`**, **`MenuPopover.svelte`**,
+  **`Icon.svelte`** — shared UI primitives.
 - **`src/lib/components/settings/`** — the settings section components plus `ChangesTray.svelte`
   and `SettingsPalette.svelte` (the `/`/`Ctrl+K` command palette).
-- **`src/lib/components/tags/`** — the tag review surfaces: `ProvisionalReview.svelte`,
-  `TagReviewHelp.svelte` (the in-app guide the queue's Help button opens), `CoverageReview.svelte`,
-  `DeletedTags.svelte`, `SiblingReview.svelte` and `TagReconcileStrip.svelte`.
+- **`src/lib/components/tags/`** — the tag review surfaces: `ProvisionalReview.svelte` with its
+  filter bar in `ProvisionalFilters.svelte` (search, review-state menu with facet counts, rubric
+  menu, chips, quick views), `TagReviewHelp.svelte` (the in-app guide the queue's Help button
+  opens), `CoverageReview.svelte`, `DeletedTags.svelte`, `SiblingReview.svelte` and
+  `TagReconcileStrip.svelte`.
 - **`src/lib/components/TagReconcileReport.svelte`** — the full reconciliation report rendered on
   `tagreconcile` task pages.
 - **`src/lib/pdf/`** — the pdf.js loader singleton, the worker wrapper with its polyfills, and the

@@ -361,7 +361,10 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   directions with their confirmation, the manual fold opening the target picker, split → parts
   editor, keep/apply-parts gating by `composition_action`, re-judge, retire, rename and the
   labelled Help button; filters
-  and paging: select → API args and `prov_*` URL sync incl. the tab hash, the name-search
+  and paging: the review-state menu → API args and `prov_state` URL sync incl. the tab hash,
+  the rubric menu's criterion toggle → API args, facet counts requested only while the state
+  menu is open and dropped from later loads, a legacy `prov_verdict=admit` link landing on both
+  matching states, the server's `state_values` gating the offered states, the name-search
   input → `q` argument with paging reset and `prov_q` sync, URL round-trip with
   invalid entries dropped, pager end states, last-page clamp after a reject, and the
   `pending_identity_total`-driven reevaluate button),

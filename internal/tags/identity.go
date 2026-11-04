@@ -168,19 +168,30 @@ const (
 	CompositionReasonOperatorKeep             = "operator_keep"
 )
 
-// compositionHolds is the single definition of which composition reasons withhold a compound from
-// promotion until review or a criteria-version bump (docs/specs/tags/atomicity.md §3.5): the
+// compositionHoldReasons is the single definition of which composition reasons withhold a compound
+// from promotion until review or a criteria-version bump (docs/specs/tags/atomicity.md §3.5): the
 // cross-sample, conflict, and deferred outcomes, the reconstructible and relational named-unit keeps,
 // a degraded keep no judge answered, and a decided drop, which mass must not resurrect.
+var compositionHoldReasons = []string{
+	CompositionReasonSplitDefer,
+	CompositionReasonConflictingEvidence,
+	CompositionReasonSampleDisagreement,
+	CompositionReasonNamedUnitReconstructible,
+	CompositionReasonRelationalKeep,
+	CompositionReasonJudgeUnavailable,
+	CompositionReasonNoDimension,
+	CompositionReasonPartRejected,
+}
+
+// CompositionHoldReasons returns every composition reason that withholds a compound from promotion.
+// It is the list query filters pass to SQL so a state predicate cannot drift from compositionHolds.
+func CompositionHoldReasons() []string {
+	return slices.Clone(compositionHoldReasons)
+}
+
+// compositionHolds reports whether reason withholds a compound from promotion.
 func compositionHolds(reason string) bool {
-	switch reason {
-	case CompositionReasonSplitDefer, CompositionReasonConflictingEvidence,
-		CompositionReasonSampleDisagreement, CompositionReasonNamedUnitReconstructible,
-		CompositionReasonRelationalKeep, CompositionReasonJudgeUnavailable,
-		CompositionReasonNoDimension, CompositionReasonPartRejected:
-		return true
-	}
-	return false
+	return slices.Contains(compositionHoldReasons, reason)
 }
 
 // CompositionAction names the operator actions one recorded composition decision calls for, derived

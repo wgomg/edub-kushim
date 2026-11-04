@@ -55,69 +55,201 @@ func (q *Queries) ClearOrphanTagMarksByTagIDs(ctx context.Context, tagIds []int6
 }
 
 const countProvisionalTags = `-- name: CountProvisionalTags :one
-SELECT COUNT(*) FROM tag t
-LEFT JOIN LATERAL (
-    SELECT e.criteria, e.pass, e.outcome
-    FROM tag_quality_event e
-    WHERE e.tag_name = t.name AND e.policy_version = $1
-    ORDER BY e.verdict_at DESC
-    LIMIT 1
-) qe ON true
-WHERE t.promoted_at IS NULL
-  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-  AND ($2::text = '' OR t.name ILIKE $2::text || '%')
-  AND ($3::text = ''
-       OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $3::text)
-  AND ($4::text = ''
-       OR coalesce(qe.criteria ->> 'dimension', 'absent') = $4::text)
-  AND ($5::text = ''
-       OR coalesce(qe.criteria ->> 'not_person', 'absent') = $5::text)
-  AND ($6::text = ''
-       OR coalesce(qe.criteria ->> 'atomic', 'absent') = $6::text)
-  AND ($7::text = ''
-       OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $7::text)
-  AND ($8::text = ''
-       OR coalesce(qe.criteria ->> 'defer', 'absent') = $8::text)
-  -- legacy rows carry no outcome: derive it the same way the ui's verdict
-  -- outcome does; the pass guard keeps unjudged tags in the 'none' class. An operator
-  -- acceptance newer than the fresh verdict waives the deferral, so the tag reads admitted
-  AND ($9::text = ''
-       OR ($9::text = 'none' AND qe.pass IS NULL)
-       OR ($9::text <> 'none'
-           AND qe.pass IS NOT NULL
-           AND CASE
-                   WHEN t.accepted_at IS NOT NULL
-                        AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
-                                                      WHERE f.tag_name = t.name
-                                                        AND f.policy_version = $1
-                                                        AND f.verdict_model IS NOT NULL),
-                                                     'epoch'::timestamptz)
-                        AND coalesce(qe.outcome,
-                                     CASE WHEN qe.pass THEN 'admit'
-                                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                                          ELSE 'reject' END) = 'defer' THEN 'admit'
-                   ELSE coalesce(qe.outcome,
-                                 CASE WHEN qe.pass THEN 'admit'
-                                      WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                                      ELSE 'reject' END)
-               END = $9::text))
+SELECT
+    count(*) FILTER (WHERE
+        ($1::text = ''
+         OR ($1::text = 'none' AND v.no_verdict)
+         OR ($1::text <> 'none'
+             AND NOT v.no_verdict
+             AND CASE WHEN v.accepted AND v.outcome_class = 'defer' THEN 'admit'
+                      ELSE v.outcome_class END = $1::text))
+        AND (coalesce(cardinality($2::text[]), 0) = 0
+             OR ('no_verdict' = ANY($2::text[]) AND v.no_verdict)
+             OR ('admitted' = ANY($2::text[])
+                 AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
+             OR ('deferred' = ANY($2::text[])
+                 AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer')
+             OR ('rejected' = ANY($2::text[])
+                 AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'reject')
+             OR ('accepted' = ANY($2::text[]) AND v.accepted)
+             OR ('identity_pending' = ANY($2::text[]) AND v.identity_pending)
+             OR ('identity_hold' = ANY($2::text[]) AND v.identity_hold)
+             OR ('split_hold' = ANY($2::text[]) AND v.split_hold)
+             OR ('degraded' = ANY($2::text[])
+                 AND v.degraded_unversioned AND NOT v.split_hold)
+             OR ('demoted' = ANY($2::text[]) AND v.demoted)
+             OR ('needs_decision' = ANY($2::text[])
+                 AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer'
+                 AND NOT v.demoted AND NOT v.identity_hold AND NOT v.composition_blocks)
+             OR ('unblocked' = ANY($2::text[])
+                 AND ((NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
+                      OR v.accepted)
+                 AND NOT v.identity_pending AND NOT v.identity_hold AND NOT v.split_hold
+                 AND NOT v.degraded_unversioned AND NOT v.demoted))) AS total,
+    count(*) FILTER (WHERE v.no_verdict) AS no_verdict,
+    count(*) FILTER (WHERE NOT v.no_verdict AND NOT v.accepted
+                          AND v.outcome_class = 'admit') AS admitted,
+    count(*) FILTER (WHERE NOT v.no_verdict AND NOT v.accepted
+                          AND v.outcome_class = 'defer') AS deferred,
+    count(*) FILTER (WHERE NOT v.no_verdict AND NOT v.accepted
+                          AND v.outcome_class = 'reject') AS rejected,
+    count(*) FILTER (WHERE v.accepted) AS accepted,
+    count(*) FILTER (WHERE v.identity_pending) AS identity_pending,
+    count(*) FILTER (WHERE v.identity_hold) AS identity_hold,
+    count(*) FILTER (WHERE v.split_hold) AS split_hold,
+    count(*) FILTER (WHERE v.degraded_unversioned AND NOT v.split_hold) AS degraded,
+    count(*) FILTER (WHERE v.demoted) AS demoted,
+    count(*) FILTER (WHERE NOT v.no_verdict AND NOT v.accepted
+                          AND v.outcome_class = 'defer'
+                          AND NOT v.demoted AND NOT v.identity_hold
+                          AND NOT v.composition_blocks) AS needs_decision,
+    count(*) FILTER (WHERE ((NOT v.no_verdict AND NOT v.accepted
+                             AND v.outcome_class = 'admit') OR v.accepted)
+                          AND NOT v.identity_pending AND NOT v.identity_hold
+                          AND NOT v.split_hold AND NOT v.degraded_unversioned
+                          AND NOT v.demoted) AS unblocked
+FROM (
+    SELECT qe.pass IS NULL AS no_verdict,
+           coalesce(qe.outcome,
+                    CASE WHEN qe.pass THEN 'admit'
+                         WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                         ELSE 'reject' END) AS outcome_class,
+           (t.accepted_at IS NOT NULL
+            AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                                          WHERE f.tag_name = t.name
+                                            AND f.policy_version = $3
+                                            AND f.verdict_model IS NOT NULL),
+                                         'epoch'::timestamptz)) AS accepted,
+           flag.identity_pending, flag.identity_hold, flag.split_hold,
+           flag.degraded_unversioned, flag.composition_blocks, flag.demoted
+    FROM tag t
+    LEFT JOIN LATERAL (
+        SELECT e.criteria, e.pass, e.outcome
+        FROM tag_quality_event e
+        WHERE e.tag_name = t.name AND e.policy_version = $3
+        ORDER BY e.verdict_at DESC
+        LIMIT 1
+    ) qe ON true
+    LEFT JOIN LATERAL (
+        SELECT
+            CASE WHEN $4::boolean THEN
+                EXISTS (SELECT 1 FROM tag_identity_event ie
+                        WHERE ie.verdict IS NULL
+                          AND (ie.candidate = t.name OR ie.partner = t.name))
+            ELSE false END AS identity_pending,
+            CASE WHEN $4::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ie.candidate, ie.kind)
+                                   ie.kind, ie.verdict, ie.criteria ->> 'proposed_fold' AS anchor
+                            FROM tag_identity_event ie
+                            WHERE ie.rule_set_version = $5
+                              AND ie.verdict IS NOT NULL
+                              AND ie.kind = ANY($6::text[])
+                              AND ie.candidate = t.name
+                              AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                          WHERE anchor_tag.name = ie.criteria ->> 'proposed_fold')
+                            ORDER BY ie.candidate, ie.kind, ie.created_at DESC
+                        ) held
+                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                           OR held.kind = 'base_form' AND held.verdict = 'stand')
+            ELSE false END AS identity_hold,
+            CASE WHEN $4::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ce.candidate) ce.reason
+                            FROM tag_composition_event ce
+                            WHERE ce.criteria_version = $7
+                              AND ce.candidate = t.name
+                            ORDER BY ce.candidate, ce.created_at DESC
+                        ) held
+                        WHERE held.reason = ANY($8::text[]))
+            ELSE false END AS split_hold,
+            CASE WHEN $4::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ce.candidate) ce.reason
+                            FROM tag_composition_event ce
+                            WHERE ce.candidate = t.name
+                            ORDER BY ce.candidate, ce.created_at DESC
+                        ) latest
+                        WHERE latest.reason = 'judge_unavailable')
+            ELSE false END AS degraded_unversioned,
+            CASE WHEN $4::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition
+                            FROM tag_composition_event ce
+                            WHERE ce.candidate = t.name
+                            ORDER BY ce.candidate, ce.created_at DESC
+                        ) latest
+                        WHERE latest.disposition = 'drop'
+                           OR latest.reason = ANY($8::text[]))
+            ELSE false END AS composition_blocks,
+            t.demoted_at IS NOT NULL AS demoted
+    ) flag ON true
+    WHERE t.promoted_at IS NULL
+      AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+      AND ($9::text = '' OR t.name ILIKE $9::text || '%')
+      AND ($10::text = ''
+           OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $10::text)
+      AND ($11::text = ''
+           OR coalesce(qe.criteria ->> 'dimension', 'absent') = $11::text)
+      AND ($12::text = ''
+           OR coalesce(qe.criteria ->> 'not_person', 'absent') = $12::text)
+      AND ($13::text = ''
+           OR coalesce(qe.criteria ->> 'atomic', 'absent') = $13::text)
+      AND ($14::text = ''
+           OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $14::text)
+      AND ($15::text = ''
+           OR coalesce(qe.criteria ->> 'defer', 'absent') = $15::text)
+) v
 `
 
 type CountProvisionalTagsParams struct {
-	PolicyVersion      string
-	NamePrefix         string
-	SubjectMatterState string
-	DimensionState     string
-	NotPersonState     string
-	AtomicState        string
-	NotFormGenreState  string
-	DeferState         string
-	VerdictState       string
+	VerdictState           string
+	States                 []string
+	PolicyVersion          string
+	JournalFlags           bool
+	IdentityRuleSetVersion string
+	IdentityHoldKinds      []string
+	SplitCriteriaVersion   string
+	CompositionHoldReasons []string
+	NamePrefix             string
+	SubjectMatterState     string
+	DimensionState         string
+	NotPersonState         string
+	AtomicState            string
+	NotFormGenreState      string
+	DeferState             string
 }
 
-func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisionalTagsParams) (int64, error) {
+type CountProvisionalTagsRow struct {
+	Total           int64
+	NoVerdict       int64
+	Admitted        int64
+	Deferred        int64
+	Rejected        int64
+	Accepted        int64
+	IdentityPending int64
+	IdentityHold    int64
+	SplitHold       int64
+	Degraded        int64
+	Demoted         int64
+	NeedsDecision   int64
+	Unblocked       int64
+}
+
+// counts the provisional queue page total and, when journal flags are requested, the per-state review
+// facet counts; the total filter group must mirror exactly the where clause group of the list query,
+// while the facet columns count the name and rubric base set under those same base filters, and read
+// zero when journal flags are off
+func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisionalTagsParams) (CountProvisionalTagsRow, error) {
 	row := q.db.QueryRowContext(ctx, countProvisionalTags,
+		arg.VerdictState,
+		pq.Array(arg.States),
 		arg.PolicyVersion,
+		arg.JournalFlags,
+		arg.IdentityRuleSetVersion,
+		pq.Array(arg.IdentityHoldKinds),
+		arg.SplitCriteriaVersion,
+		pq.Array(arg.CompositionHoldReasons),
 		arg.NamePrefix,
 		arg.SubjectMatterState,
 		arg.DimensionState,
@@ -125,11 +257,24 @@ func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisional
 		arg.AtomicState,
 		arg.NotFormGenreState,
 		arg.DeferState,
-		arg.VerdictState,
 	)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var i CountProvisionalTagsRow
+	err := row.Scan(
+		&i.Total,
+		&i.NoVerdict,
+		&i.Admitted,
+		&i.Deferred,
+		&i.Rejected,
+		&i.Accepted,
+		&i.IdentityPending,
+		&i.IdentityHold,
+		&i.SplitHold,
+		&i.Degraded,
+		&i.Demoted,
+		&i.NeedsDecision,
+		&i.Unblocked,
+	)
+	return i, err
 }
 
 const countTags = `-- name: CountTags :one
@@ -611,76 +756,170 @@ func (q *Queries) ListProvisionalTagsOlderThan(ctx context.Context, cutoff time.
 }
 
 const listProvisionalTagsWithDocumentCount = `-- name: ListProvisionalTagsWithDocumentCount :many
-SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
-       t.demoted_at, t.demoted_reason, t.accepted_at,
-       coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
-                 WHERE f.tag_name = t.name AND f.policy_version = $1
-                   AND f.verdict_model IS NOT NULL), 'epoch'::timestamptz)::timestamptz AS fresh_verdict_at,
-       (SELECT COUNT(*) FROM document_tag dt
-        JOIN document d ON d.id = dt.document_id
-        WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count
-FROM tag t
-LEFT JOIN LATERAL (
-    SELECT e.criteria, e.pass, e.outcome
-    FROM tag_quality_event e
-    WHERE e.tag_name = t.name AND e.policy_version = $1
-    ORDER BY e.verdict_at DESC
-    LIMIT 1
-) qe ON true
-WHERE t.promoted_at IS NULL
-  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-  AND ($2::text = '' OR t.name ILIKE $2::text || '%')
-  AND ($3::text = ''
-       OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $3::text)
-  AND ($4::text = ''
-       OR coalesce(qe.criteria ->> 'dimension', 'absent') = $4::text)
-  AND ($5::text = ''
-       OR coalesce(qe.criteria ->> 'not_person', 'absent') = $5::text)
-  AND ($6::text = ''
-       OR coalesce(qe.criteria ->> 'atomic', 'absent') = $6::text)
-  AND ($7::text = ''
-       OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $7::text)
-  AND ($8::text = ''
-       OR coalesce(qe.criteria ->> 'defer', 'absent') = $8::text)
-  -- legacy rows carry no outcome: derive it the same way the ui's verdict
-  -- outcome does; the pass guard keeps unjudged tags in the 'none' class. An operator
-  -- acceptance newer than the fresh verdict waives the deferral, so the tag reads admitted
-  AND ($9::text = ''
-       OR ($9::text = 'none' AND qe.pass IS NULL)
-       OR ($9::text <> 'none'
-           AND qe.pass IS NOT NULL
-           AND CASE
-                   WHEN t.accepted_at IS NOT NULL
-                        AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
-                                                      WHERE f.tag_name = t.name
-                                                        AND f.policy_version = $1
-                                                        AND f.verdict_model IS NOT NULL),
-                                                     'epoch'::timestamptz)
-                        AND coalesce(qe.outcome,
-                                     CASE WHEN qe.pass THEN 'admit'
-                                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                                          ELSE 'reject' END) = 'defer' THEN 'admit'
-                   ELSE coalesce(qe.outcome,
-                                 CASE WHEN qe.pass THEN 'admit'
-                                      WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                                      ELSE 'reject' END)
-               END = $9::text))
-ORDER BY coalesce(t.created_at, now()) DESC, t.id DESC
-LIMIT $11 OFFSET $10
+SELECT v.id, v.name, v.created_at, v.demoted_at, v.demoted_reason, v.accepted_at,
+       v.fresh_verdict_at, v.document_count
+FROM (
+    SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
+           t.demoted_at, t.demoted_reason, t.accepted_at,
+           coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                     WHERE f.tag_name = t.name AND f.policy_version = $1
+                       AND f.verdict_model IS NOT NULL), 'epoch'::timestamptz)::timestamptz AS fresh_verdict_at,
+           (SELECT COUNT(*) FROM document_tag dt
+            JOIN document d ON d.id = dt.document_id
+            WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count,
+           qe.pass IS NULL AS no_verdict,
+           coalesce(qe.outcome,
+                    CASE WHEN qe.pass THEN 'admit'
+                         WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                         ELSE 'reject' END) AS outcome_class,
+           (t.accepted_at IS NOT NULL
+            AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
+                                          WHERE f.tag_name = t.name
+                                            AND f.policy_version = $1
+                                            AND f.verdict_model IS NOT NULL),
+                                         'epoch'::timestamptz)) AS accepted,
+           flag.identity_pending, flag.identity_hold, flag.split_hold,
+           flag.degraded_unversioned, flag.composition_blocks, flag.demoted
+    FROM tag t
+    LEFT JOIN LATERAL (
+        SELECT e.criteria, e.pass, e.outcome
+        FROM tag_quality_event e
+        WHERE e.tag_name = t.name AND e.policy_version = $1
+        ORDER BY e.verdict_at DESC
+        LIMIT 1
+    ) qe ON true
+    -- the journal flags are read only by the journal-backed state values and by the facet counts; the
+    -- journal_flags gate keeps them out of the unfiltered plan and out of all the legacy verdict-only
+    -- paths; each EXISTS mirrors the Go helper the matching response pill reads, so a drift in just
+    -- one cannot possibly diverge from the other: identity_pending mirrors PendingTagIdentityCountsByNames,
+    -- identity_hold mirrors ListIdentityHeldNames plus the refusal pairing in IdentityHeldNames, and
+    -- split_hold mirrors CompositionReview's compositionHolds reasons; the composition_blocks mirrors
+    -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests
+    LEFT JOIN LATERAL (
+        SELECT
+            CASE WHEN $2::boolean THEN
+                EXISTS (SELECT 1 FROM tag_identity_event ie
+                        WHERE ie.verdict IS NULL
+                          AND (ie.candidate = t.name OR ie.partner = t.name))
+            ELSE false END AS identity_pending,
+            CASE WHEN $2::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ie.candidate, ie.kind)
+                                   ie.kind, ie.verdict, ie.criteria ->> 'proposed_fold' AS anchor
+                            FROM tag_identity_event ie
+                            WHERE ie.rule_set_version = $3
+                              AND ie.verdict IS NOT NULL
+                              AND ie.kind = ANY($4::text[])
+                              AND ie.candidate = t.name
+                              AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                          WHERE anchor_tag.name = ie.criteria ->> 'proposed_fold')
+                            ORDER BY ie.candidate, ie.kind, ie.created_at DESC
+                        ) held
+                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                           OR held.kind = 'base_form' AND held.verdict = 'stand')
+            ELSE false END AS identity_hold,
+            CASE WHEN $2::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ce.candidate) ce.reason
+                            FROM tag_composition_event ce
+                            WHERE ce.criteria_version = $5
+                              AND ce.candidate = t.name
+                            ORDER BY ce.candidate, ce.created_at DESC
+                        ) held
+                        WHERE held.reason = ANY($6::text[]))
+            ELSE false END AS split_hold,
+            CASE WHEN $2::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ce.candidate) ce.reason
+                            FROM tag_composition_event ce
+                            WHERE ce.candidate = t.name
+                            ORDER BY ce.candidate, ce.created_at DESC
+                        ) latest
+                        WHERE latest.reason = 'judge_unavailable')
+            ELSE false END AS degraded_unversioned,
+            CASE WHEN $2::boolean THEN
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition
+                            FROM tag_composition_event ce
+                            WHERE ce.candidate = t.name
+                            ORDER BY ce.candidate, ce.created_at DESC
+                        ) latest
+                        WHERE latest.disposition = 'drop'
+                           OR latest.reason = ANY($6::text[]))
+            ELSE false END AS composition_blocks,
+            t.demoted_at IS NOT NULL AS demoted
+    ) flag ON true
+    WHERE t.promoted_at IS NULL
+      AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+      AND ($7::text = '' OR t.name ILIKE $7::text || '%')
+      AND ($8::text = ''
+           OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $8::text)
+      AND ($9::text = ''
+           OR coalesce(qe.criteria ->> 'dimension', 'absent') = $9::text)
+      AND ($10::text = ''
+           OR coalesce(qe.criteria ->> 'not_person', 'absent') = $10::text)
+      AND ($11::text = ''
+           OR coalesce(qe.criteria ->> 'atomic', 'absent') = $11::text)
+      AND ($12::text = ''
+           OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $12::text)
+      AND ($13::text = ''
+           OR coalesce(qe.criteria ->> 'defer', 'absent') = $13::text)
+) v
+  -- legacy rows carry no outcome: derive it the same way the ui's verdict outcome does; the pass guard
+  -- keeps unjudged tags in the 'none' class; an operator acceptance newer than the tag's fresh verdict
+  -- waives the deferral, so the tag reads as admitted
+WHERE ($14::text = ''
+       OR ($14::text = 'none' AND v.no_verdict)
+       OR ($14::text <> 'none'
+           AND NOT v.no_verdict
+           AND CASE WHEN v.accepted AND v.outcome_class = 'defer' THEN 'admit'
+                    ELSE v.outcome_class END = $14::text))
+  -- state values are alternatives, so one matching flag is enough; the accepted class is its own state,
+  -- so the verdict classes exclude an active acceptance
+  AND (coalesce(cardinality($15::text[]), 0) = 0
+       OR ('no_verdict' = ANY($15::text[]) AND v.no_verdict)
+       OR ('admitted' = ANY($15::text[])
+           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
+       OR ('deferred' = ANY($15::text[])
+           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer')
+       OR ('rejected' = ANY($15::text[])
+           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'reject')
+       OR ('accepted' = ANY($15::text[]) AND v.accepted)
+       OR ('identity_pending' = ANY($15::text[]) AND v.identity_pending)
+       OR ('identity_hold' = ANY($15::text[]) AND v.identity_hold)
+       OR ('split_hold' = ANY($15::text[]) AND v.split_hold)
+       OR ('degraded' = ANY($15::text[]) AND v.degraded_unversioned AND NOT v.split_hold)
+       OR ('demoted' = ANY($15::text[]) AND v.demoted)
+       OR ('needs_decision' = ANY($15::text[])
+           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer'
+           AND NOT v.demoted AND NOT v.identity_hold AND NOT v.composition_blocks)
+       OR ('unblocked' = ANY($15::text[])
+           AND ((NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
+                OR v.accepted)
+           AND NOT v.identity_pending AND NOT v.identity_hold AND NOT v.split_hold
+           AND NOT v.degraded_unversioned AND NOT v.demoted))
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT $17 OFFSET $16
 `
 
 type ListProvisionalTagsWithDocumentCountParams struct {
-	PolicyVersion      string
-	NamePrefix         string
-	SubjectMatterState string
-	DimensionState     string
-	NotPersonState     string
-	AtomicState        string
-	NotFormGenreState  string
-	DeferState         string
-	VerdictState       string
-	PageOffset         int32
-	PageLimit          int32
+	PolicyVersion          string
+	JournalFlags           bool
+	IdentityRuleSetVersion string
+	IdentityHoldKinds      []string
+	SplitCriteriaVersion   string
+	CompositionHoldReasons []string
+	NamePrefix             string
+	SubjectMatterState     string
+	DimensionState         string
+	NotPersonState         string
+	AtomicState            string
+	NotFormGenreState      string
+	DeferState             string
+	VerdictState           string
+	States                 []string
+	PageOffset             int32
+	PageLimit              int32
 }
 
 type ListProvisionalTagsWithDocumentCountRow struct {
@@ -697,6 +936,11 @@ type ListProvisionalTagsWithDocumentCountRow struct {
 func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg ListProvisionalTagsWithDocumentCountParams) ([]ListProvisionalTagsWithDocumentCountRow, error) {
 	rows, err := q.db.QueryContext(ctx, listProvisionalTagsWithDocumentCount,
 		arg.PolicyVersion,
+		arg.JournalFlags,
+		arg.IdentityRuleSetVersion,
+		pq.Array(arg.IdentityHoldKinds),
+		arg.SplitCriteriaVersion,
+		pq.Array(arg.CompositionHoldReasons),
 		arg.NamePrefix,
 		arg.SubjectMatterState,
 		arg.DimensionState,
@@ -705,6 +949,7 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 		arg.NotFormGenreState,
 		arg.DeferState,
 		arg.VerdictState,
+		pq.Array(arg.States),
 		arg.PageOffset,
 		arg.PageLimit,
 	)
