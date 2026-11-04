@@ -130,6 +130,32 @@ func (s *Tag) SplitCompound(ctx context.Context, compoundID int64, name string, 
 	return SplitOutcome{Status: types.CompositionApplied, Reassigned: int64(len(docIDs)), Parts: cleaned}, nil
 }
 
+// Split replaces one live tag with the given parts regardless of promotion: the parts are created, the
+// tag's documents are re-pointed onto them, and its row is deleted. The tag is named rather than merely
+// identified, because the journals, the parts and the operator all speak names; a name missing from
+// the store is refused. Seeded values are refused because the startup seeder would re-create them; a
+// split whose parts do not validate is refused and leaves no new vocabulary behind. The decision is
+// journaled under the current split criteria version with the operator model, exactly like a decided
+// split, so a stale hold cannot reopen the question.
+func (s *Tag) Split(ctx context.Context, name string, parts []string) (types.CompositionStatus, error) {
+	compound, err := s.GetByName(ctx, name)
+	if err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			return types.CompositionNotFound, nil
+		}
+		return types.CompositionNotFound, err
+	}
+	if compound.Seeded {
+		return types.CompositionSeeded, nil
+	}
+
+	outcome, err := s.SplitCompound(ctx, compound.ID, compound.Name, parts, false)
+	if err != nil || outcome.Status != types.CompositionApplied {
+		return outcome.Status, err
+	}
+	return s.journalAppliedSplit(ctx, compound.Name, outcome), nil
+}
+
 // applyOperatorSplit runs the shared split and journals the operator's decision so the review
 // surface and the sweep read the same record a judge writes.
 func (s *Tag) applyOperatorSplit(ctx context.Context, compound database.Tag, parts []string) (types.CompositionStatus, error) {
@@ -137,14 +163,20 @@ func (s *Tag) applyOperatorSplit(ctx context.Context, compound database.Tag, par
 	if err != nil || outcome.Status != types.CompositionApplied {
 		return outcome.Status, err
 	}
+	return s.journalAppliedSplit(ctx, compound.Name, outcome), nil
+}
 
-	if err := s.recordOperatorComposition(ctx, compound.Name, tags.CompositionSplit,
+// journalAppliedSplit records a split that already applied under the operator model and logs the full
+// reassignment, so both operator entry points leave the same audit trail; a journal write failure is
+// logged rather than returned, because the split itself is already committed.
+func (s *Tag) journalAppliedSplit(ctx context.Context, name string, outcome SplitOutcome) types.CompositionStatus {
+	if err := s.recordOperatorComposition(ctx, name, tags.CompositionSplit,
 		tags.CompositionReasonOperator, outcome.Parts); err != nil {
-		s.logger.Error("", "tag service: record operator split %q: %v", compound.Name, err)
+		s.logger.Error("", "tag service: record operator split %q: %v", name, err)
 	}
 	s.logger.Info("", "tag composition: operator split %q -> %v (reason=human-split, reassigned=%d)",
-		compound.Name, outcome.Parts, outcome.Reassigned)
-	return types.CompositionApplied, nil
+		name, outcome.Parts, outcome.Reassigned)
+	return types.CompositionApplied
 }
 
 // applyOperatorKeep journals the operator's keep and, when parts are supplied, attaches them to the

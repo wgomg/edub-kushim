@@ -139,7 +139,8 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 // and review state; an empty field leaves that dimension unfiltered. The individual criterion fields
 // carry 'true', 'false' or 'absent', the Verdict carries 'none', 'admit', 'defer' or 'reject', and the
 // States field holds values from ProvisionalStateValues whose multiple entries combine as alternatives,
-// with the legacy Verdict dimension staying independent of States.
+// with the legacy Verdict dimension staying independent of States. OldestFirst reverses the default
+// newest-first page order.
 type ProvisionalFilter struct {
 	NamePrefix    string
 	SubjectMatter string
@@ -150,6 +151,7 @@ type ProvisionalFilter struct {
 	Defer         string
 	Verdict       string
 	States        []string
+	OldestFirst   bool
 }
 
 // provisionalStates is the canonical state vocabulary the queue's state filter accepts, in the order
@@ -205,6 +207,7 @@ func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, lim
 		NotFormGenreState:      filter.NotFormGenre,
 		DeferState:             filter.Defer,
 		VerdictState:           filter.Verdict,
+		OldestFirst:            filter.OldestFirst,
 		PageOffset:             offset,
 		PageLimit:              limit,
 	})

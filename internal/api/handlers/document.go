@@ -1165,13 +1165,15 @@ type PersonListResponse struct {
 
 // TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both
 // DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
-// operator-owned inventory the demote action must leave alone.
+// operator-owned inventory the demote action must leave alone, while Compound marks the composition
+// shape the split actions gate on.
 type TagResponse struct {
 	ID            int64      `json:"id"`
 	Name          string     `json:"name"`
 	DocumentCount int64      `json:"document_count"`
 	Promoted      bool       `json:"promoted"`
 	Seeded        bool       `json:"seeded"`
+	Compound      bool       `json:"compound,omitempty"`
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 }
 

@@ -9,6 +9,7 @@
 	import SlideOver from '#lib/components/SlideOver.svelte';
 	import FoldTagModal from '#lib/components/tags/FoldTagModal.svelte';
 	import ProvisionalFilters from '#lib/components/tags/ProvisionalFilters.svelte';
+	import SplitTagModal from '#lib/components/tags/SplitTagModal.svelte';
 	import TagReviewHelp from '#lib/components/tags/TagReviewHelp.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
@@ -92,9 +93,11 @@
 	const btnUtilDanger = `${btnUtil} hover:text-terracotta-400`;
 	const btnHelp =
 		'inline-flex items-center gap-1.5 rounded-lg border border-clay-700 px-2.5 py-1 text-xs font-medium text-parchment-300 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	const sortClass =
+		'px-2 py-1 text-[0.6875rem] focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	const sortActive = 'bg-gold-500 font-semibold text-clay-950';
+	const sortIdle = 'bg-clay-900 text-parchment-500 hover:bg-clay-800 hover:text-parchment-200';
 
-	const iconButton =
-		'rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
 	const btnGhost =
 		'rounded-lg px-3 py-1.5 text-xs text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50';
 	const countLink =
@@ -132,9 +135,8 @@
 	let renamingBusy = $state(false);
 	let splitting = $state(null);
 	let splitParts = $state([]);
-	let splitError = $state('');
-	let splittingBusy = $state(false);
 	let folding = $state(null);
+	let provSort = $state('newest');
 
 	let hasFilters = $derived(
 		query !== '' || criteria.some((c) => filterStates[c.key]) || stateFilter.length > 0
@@ -153,6 +155,8 @@
 
 		const rawPage = sp.get('prov_page') ?? '';
 		if (/^\d+$/.test(rawPage)) offset = parseInt(rawPage, 10) * PAGE_SIZE;
+
+		if (sp.get('prov_sort') === 'oldest') provSort = 'oldest';
 
 		const rawCriteria = sp.get('prov_criteria') ?? '';
 		for (const entry of rawCriteria ? rawCriteria.split(',') : []) {
@@ -202,6 +206,8 @@
 		else sp.delete('prov_criteria');
 		if (stateFilter.length > 0) sp.set('prov_state', stateFilter.join(','));
 		else sp.delete('prov_state');
+		if (provSort === 'oldest') sp.set('prov_sort', 'oldest');
+		else sp.delete('prov_sort');
 		sp.delete('prov_verdict');
 
 		goto(resolve(`${page.url.pathname}?${sp.toString()}${page.url.hash}`), {
@@ -218,6 +224,7 @@
 			criteria: activeCriteria(),
 			states: stateFilter,
 			q: query,
+			sort: provSort,
 			facets: facetsOpen
 		});
 		if (seq !== loadSeq) return;
@@ -299,6 +306,14 @@
 	function nextPage() {
 		if (offset + tags.length >= total) return;
 		offset += PAGE_SIZE;
+		load();
+		syncUrl();
+	}
+
+	function setSort(value) {
+		if (provSort === value) return;
+		provSort = value;
+		offset = 0;
 		load();
 		syncUrl();
 	}
@@ -482,41 +497,7 @@
 
 	function openSplit(tag) {
 		splitting = tag;
-		splitParts = (tag.composition_parts ?? []).map((name) => ({ name }));
-		if (splitParts.length === 0) splitParts = [{ name: '' }];
-		splitError = '';
-	}
-
-	function addSplitPart() {
-		splitParts = [...splitParts, { name: '' }];
-	}
-
-	function removeSplitPart(index) {
-		splitParts = splitParts.filter((_, i) => i !== index);
-		if (splitParts.length === 0) splitParts = [{ name: '' }];
-	}
-
-	async function submitSplit() {
-		if (!splitting) return;
-		const parts = splitParts.map((part) => part.name.trim()).filter(Boolean);
-		if (parts.length === 0) {
-			splitError = 'At least one component is required';
-			return;
-		}
-		splittingBusy = true;
-		const tag = splitting;
-		const result = await api.tags.compositionDecision(tag.id, 'split', parts);
-		splittingBusy = false;
-		if (result.ok) {
-			toastStore.success(`Split "${tag.name}"`);
-			splitting = null;
-			if (onchanged) onchanged();
-			await load();
-		} else if (result.status === 409) {
-			splitError = 'Tag is no longer provisional';
-		} else {
-			splitError = 'Failed to split the tag';
-		}
+		splitParts = tag.composition_parts ?? [];
 	}
 
 	function openRename(tag) {
@@ -682,6 +663,28 @@
 		</span>
 	{/if}
 	<div class="ml-auto flex items-center gap-2">
+		<div
+			class="flex overflow-hidden rounded-md border border-clay-700"
+			role="group"
+			aria-label="Queue order"
+		>
+			<button
+				type="button"
+				class="{sortClass} {provSort === 'newest' ? sortActive : sortIdle}"
+				aria-pressed={provSort === 'newest'}
+				onclick={() => setSort('newest')}
+			>
+				Newest
+			</button>
+			<button
+				type="button"
+				class="{sortClass} {provSort === 'oldest' ? sortActive : sortIdle}"
+				aria-pressed={provSort === 'oldest'}
+				onclick={() => setSort('oldest')}
+			>
+				Oldest
+			</button>
+		</div>
 		{#if pendingTotal > 0}
 			<button
 				onclick={reevaluateIdentity}
@@ -885,6 +888,18 @@
 							<Icon name="fold-into" size={13} />
 							Fold into…
 						</button>
+						{#if tag.compound}
+							<button
+								type="button"
+								class={btnUtil}
+								title="Split this tag into components you choose; the components are created, the documents move onto them, and this tag is deleted"
+								disabled={acting === tag.id}
+								onclick={() => openSplit(tag)}
+							>
+								<Icon name="split" size={13} />
+								Split…
+							</button>
+						{/if}
 						<button
 							type="button"
 							class={btnUtil}
@@ -1098,67 +1113,13 @@
 	}}
 />
 
-<Modal
+<SplitTagModal
 	open={splitting !== null}
-	title="Split compound"
-	onClose={() => {
-		splitting = null;
-		splittingBusy = false;
+	tag={splitting}
+	initialParts={splitParts}
+	onClose={() => (splitting = null)}
+	onsplit={() => {
+		if (onchanged) onchanged();
+		load();
 	}}
->
-	<form
-		onsubmit={(e) => {
-			e.preventDefault();
-			submitSplit();
-		}}
-	>
-		<div class="space-y-4">
-			<p class="text-[0.8125rem] text-parchment-400">
-				Replace <b class="text-parchment-300">{splitting?.name}</b> with its components. The
-				components are created, the compound's {documentsLabel(splitting?.document_count ?? 0)} are attached
-				to them, and the compound is deleted.
-			</p>
-			<div class="space-y-2">
-				{#each splitParts as part, index (index)}
-					<div class="flex items-center gap-2">
-						<input
-							type="text"
-							bind:value={part.name}
-							placeholder="Component name…"
-							autocomplete="off"
-							class={inputClass}
-							aria-label="Component {index + 1}"
-						/>
-						<button
-							type="button"
-							class={iconButton}
-							title="Remove this component"
-							aria-label="Remove component {index + 1}"
-							onclick={() => removeSplitPart(index)}
-						>
-							<Icon name="minus" size={14} />
-						</button>
-					</div>
-				{/each}
-			</div>
-			<button type="button" class="{btnGhost} px-0" onclick={addSplitPart}>
-				+ Add component
-			</button>
-			{#if splitError}
-				<p class="text-sm text-terracotta-500" aria-live="polite">{splitError}</p>
-			{/if}
-			<div class="flex justify-end gap-2">
-				<button
-					type="button"
-					onclick={() => (splitting = null)}
-					class="rounded-md px-3 py-1.5 text-xs font-medium text-parchment-400 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
-				>
-					Cancel
-				</button>
-				<button type="submit" disabled={splittingBusy} class={btnPrimary}>
-					{splittingBusy ? 'Splitting…' : 'Split'}
-				</button>
-			</div>
-		</div>
-	</form>
-</Modal>
+/>

@@ -317,7 +317,7 @@ DB-gated tests `t.Skip` when `TEST_DATABASE_URL` is unset, so the package is
 listed in both CGo tiers.
 
 Also runs `internal/tags/curation` (tag CRUD, merge, aliases, composition-evidence
-writes, the operator fold, composition-decision and retire paths, and the re-judge
+writes, the operator fold, split, composition-decision and retire paths, and the re-judge
 enqueue). Its tests are ungated database tests, so it is
 listed only in the DB tier, like `internal/api/handlers`.
 
@@ -359,7 +359,9 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   fallback, unjudged names, the collapsed rubric — failing criteria plus the score — the
   identity-hold, split-hold and degraded-reason pills, and the entry's actions: both hold fold
   directions with their confirmation, the manual fold opening the target picker, split → parts
-  editor, keep/apply-parts gating by `composition_action`, re-judge, retire, rename and the
+  editor, the manual split gated on `compound` with its name-based submit, the newest/oldest header
+  toggle (`sort` argument + `prov_sort` sync), keep/apply-parts gating by `composition_action`,
+  re-judge, retire, rename and the
   labelled Help button; filters
   and paging: the review-state menu → API args and `prov_state` URL sync incl. the tab hash,
   the rubric menu's criterion toggle → API args, facet counts requested only while the state
@@ -370,10 +372,13 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   `pending_identity_total`-driven reevaluate button),
   `tags/CoverageReview.svelte` (the flagged document title links to its detail page by public
   uuid), `tags/SiblingReview.svelte` (pair rendering with the `.ui-symbol` separator, the
-  gray band, run totals and the empty state) and `tags/FoldTagModal.svelte` (the fold target
+  gray band, run totals and the empty state), `tags/FoldTagModal.svelte` (the fold target
   picker: submit disabled until a live target is picked, the loser excluded from its own
   suggestions, the success path firing `onfolded`/close/toast, and a 409 refusal surfacing the
-  server's message without closing).
+  server's message without closing), `tags/SplitTagModal.svelte` (caller-prefilled parts with the
+  one-component floor, the name-based submit, and the same non-closing 409 refusal) and the
+  `routes/tags` page (a Vocabulary row's split action opening the shared dialog and submitting by
+  name).
 
 Test files are co-located next to their sources as `*.test.js` (mirroring Go's
 `_test.go` convention) and import `describe/it/expect/vi` explicitly — no globals,
@@ -381,9 +386,9 @@ so `eslint.config.js` needed no changes. Mocking conventions:
 
 - `$app/*` modules are mocked with `vi.mock` where a unit imports them (`$app/navigation`
   `goto`, `$app/paths` `resolve`, `$app/state` `page`).
-- `#lib/api.js` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
-  `UploadModal`, `ProvisionalReview`, `SiblingReview`, `CoverageReview`, `FoldTagModal`) so no
-  network calls escape.
+-   `#lib/api.js` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
+  `UploadModal`, `ProvisionalReview`, `SiblingReview`, `CoverageReview`, `FoldTagModal`,
+  `SplitTagModal`, the `routes/tags` page) so no network calls escape.
 - `api.test.js` stubs the global `fetch` (`vi.stubGlobal`) and asserts the Bearer
   header, 401 → logout + redirect, null propagation, `requestRaw` shape, and the
   `supportedMimeTypes` cache.

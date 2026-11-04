@@ -82,7 +82,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, CreatedAt: tagCreatedAt(t.CreatedAt)}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, Compound: tags.ClassifyShape(t.Name) == tags.ShapeCompound, CreatedAt: tagCreatedAt(t.CreatedAt)}
 			}
 		}
 	} else {
@@ -94,7 +94,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, CreatedAt: tagCreatedAt(t.CreatedAt)}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, Compound: tags.ClassifyShape(t.Name) == tags.ShapeCompound, CreatedAt: tagCreatedAt(t.CreatedAt)}
 			}
 		}
 	}
@@ -347,6 +347,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				IdentityHold:    held[t.Name],
 				CompositionHold: compositionHeld[t.Name],
 				DemotedReason:   t.DemotedReason.String,
+				Compound:        tags.ClassifyShape(t.Name) == tags.ShapeCompound,
 			}
 			if composition, ok := compositionByCandidate[t.Name]; ok {
 				responses[i].CompositionReason = composition.Reason
@@ -376,11 +377,12 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseProvisionalFilter reads the name, criteria, verdict and review-state query parameters into the
-// curation filter. The name is an ILIKE prefix, like the deleted-tag listing; and the criteria entries
+// parseProvisionalFilter reads the name, criteria, verdict, review-state and sort query parameters into
+// the curation filter. The name is an ILIKE prefix, like the deleted-tag listing; the criteria entries
 // are `key:state` pairs carrying `pass`, `fail` or `absent`; the review-state entries are the values
-// from curation.ProvisionalStateValues, with any duplicates dropped. Unknown keys, unknown criteria
-// states, unknown verdict values and unknown review states are rejected instead of silently ignored.
+// from curation.ProvisionalStateValues, with duplicates dropped; and sort is `newest` (the default)
+// or `oldest`. Unknown keys, unknown criteria states, unknown verdict values, unknown review states
+// and unknown sort values are rejected instead of silently ignored.
 func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
 	filter := curation.ProvisionalFilter{NamePrefix: pb.Get("q", "")}
 	fields := map[string]*string{
@@ -409,6 +411,15 @@ func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
 		filter.Verdict = verdict
 	default:
 		return curation.ProvisionalFilter{}, errors.New("Invalid verdict filter")
+	}
+
+	switch pb.Get("sort", "") {
+	case "", "newest":
+		filter.OldestFirst = false
+	case "oldest":
+		filter.OldestFirst = true
+	default:
+		return curation.ProvisionalFilter{}, errors.New("Invalid sort filter")
 	}
 
 	known := curation.ProvisionalStateValues()
@@ -566,6 +577,49 @@ func (h *TagHandler) CompositionDecision(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Tag changed while the decision was applied", http.StatusConflict)
 	default:
 		http.Error(w, "Invalid composition decision", http.StatusBadRequest)
+	}
+}
+
+// SplitTag replaces the named live tag with the parts an editor names: the parts are created, the tag's
+// documents are re-pointed onto them, and the tag is deleted. Seeded values are refused because the
+// startup seeder would re-create them; promoted values are split in place.
+func (h *TagHandler) SplitTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	var req SplitTagRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name := stripTags(strings.TrimSpace(req.Name))
+	if name == "" {
+		http.Error(w, "Tag name is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Parts) > maxCompositionParts {
+		http.Error(w, "Too many components", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.tag.Split(ctx, name, req.Parts)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "split tag", err)
+		return
+	}
+
+	switch status {
+	case types.CompositionApplied:
+		w.WriteHeader(http.StatusNoContent)
+	case types.CompositionNotFound:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+	case types.CompositionSeeded:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Seeded values cannot be split"})
+	case types.CompositionConflict:
+		http.Error(w, "Tag changed while the split was applied", http.StatusConflict)
+	default:
+		http.Error(w, "Invalid split decision", http.StatusBadRequest)
 	}
 }
 
@@ -1043,6 +1097,7 @@ type ProvisionalTagResponse struct {
 	DemotedAt         *time.Time             `json:"demoted_at,omitempty"`
 	DemotedReason     string                 `json:"demoted_reason,omitempty"`
 	AcceptedAt        *time.Time             `json:"accepted_at,omitempty"`
+	Compound          bool                   `json:"compound,omitempty"`
 }
 
 // compositionView is one candidate's latest composition journal row as the queue reads it: the
@@ -1083,6 +1138,13 @@ type FoldTagRequest struct {
 type CompositionDecisionRequest struct {
 	Disposition string   `json:"disposition"`
 	Parts       []string `json:"parts"`
+}
+
+// SplitTagRequest is the body of POST /api/v1/tags/split: the tag to replace and the components that
+// replace it.
+type SplitTagRequest struct {
+	Name  string   `json:"name"`
+	Parts []string `json:"parts"`
 }
 
 // RejudgeTagRequest is the body of POST /api/v1/tags/{id}/rejudge: which judge to re-run.

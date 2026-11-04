@@ -525,6 +525,7 @@ ListProvisional serves the paged provisional tag list with its quality verdicts,
 | `q` | query | string | no | "" |
 | `criteria` | query | array of string | no | — |
 | `verdict` | query | string | no | "" |
+| `sort` | query | string | no | "" |
 | `state` | query | array of string | no | — |
 | `limit` | query | integer | no | `50` |
 | `offset` | query | integer | no | `0` |
@@ -564,6 +565,23 @@ Containment carries no automatic action, so the endpoint is read-only: nothing m
 | 200 | [SiblingListResponse](#siblinglistresponse) |
 | 400 | object |
 | 404 | no body |
+| 409 | object |
+| 500 | string |
+
+#### `POST /api/v1/tags/split`
+
+SplitTag replaces the named live tag with the parts an editor names: the parts are created, the tag's documents are re-pointed onto them, and the tag is deleted.
+
+Seeded values are refused because the startup seeder would re-create them; promoted values are split in place.
+
+Request body (required) (`application/json`): [SplitTagRequest](#splittagrequest)
+
+| Status | Body |
+|---|---|
+| 200 | object |
+| 204 | no body |
+| 400 | object |
+| 404 | string |
 | 409 | object |
 | 500 | string |
 
@@ -2779,6 +2797,7 @@ ProvisionalTagResponse describes a tag awaiting review, with its latest verdict 
 | `composition_hold` | string | no |
 | `composition_parts` | array of string | no |
 | `composition_reason` | string | no |
+| `compound` | boolean | no |
 | `created_at` | string (date-time) | yes |
 | `demoted_at` | string (date-time) | no |
 | `demoted_reason` | string | no |
@@ -2892,6 +2911,15 @@ SiblingReadingResponse is one near-contained tag pair, A holding nearly all of B
 | `gray` | boolean | yes |
 | `mass_a` | integer | yes |
 | `mass_b` | integer | yes |
+
+### SplitTagRequest
+
+SplitTagRequest is the body of POST /api/v1/tags/split: the tag to replace and the components that replace it.
+
+| Field | Type | Required |
+|---|---|---|
+| `name` | string | yes |
+| `parts` | array of string (nullable) | yes |
 
 ### StorageConfigResponse
 
@@ -3053,10 +3081,11 @@ TagReconcileReportResponse points at the task whose result holds the reconcile r
 
 ### TagResponse
 
-TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the operator-owned inventory the demote action must leave alone.
+TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the operator-owned inventory the demote action must leave alone, while Compound marks the composition shape the split actions gate on.
 
 | Field | Type | Required |
 |---|---|---|
+| `compound` | boolean | no |
 | `created_at` | string (date-time) | no |
 | `document_count` | integer | yes |
 | `id` | integer | yes |

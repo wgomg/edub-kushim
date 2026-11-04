@@ -99,7 +99,7 @@ matching section of the guide.
 
 Every action is available from the entry that needs it; the queue only shows the actions its badges
 justify. The manual fold is the exception: it is offered on every queue entry and on every Vocabulary
-row.
+row, and the manual split on every compound entry and row, overriding whatever the split judge decided.
 
 | Action | What it does |
 |---|---|
@@ -113,15 +113,18 @@ row.
 | **Make canonical** | the reverse fold: the held value collapses onto this tag, losing its row and standing; this tag stays provisional until approved |
 | **Keep separate** | records that this tag names its own value: the identity hold clears, both values stay, and the tag keeps answering to its verdict and the promotion floor |
 | **Split now** | replaces the compound with the components you confirm: components are created, the compound's documents are attached to them, the compound is deleted |
+| **Split…** | replaces this compound with the components you choose, whatever the split judge decided: components are created, this tag's documents move onto them and it is deleted; seeded values cannot be split |
 | **Keep whole** | records that the compound is a value in its own right; the hold clears and nothing else changes |
 | **Apply the parts alongside** | keeps the compound and attaches its parts to the same documents, so both are searchable; no documents move |
 | **Re-judge** | queues a fresh composition judgment; the queue refreshes when the background task finishes |
 | **Judge now** | queues the first quality judgment for a tag that was never judged |
 | **Reevaluate identity** (queue header) | runs the identity pass now instead of waiting for its daily schedule |
+| **Newest / Oldest** (queue header) | orders the queue by entry age in either direction; the choice is kept in the page URL |
 
 Destructive or document-moving actions ask for confirmation and state the consequence first. Approve
 and reject are the two universal queue decisions; the manual fold is offered on every queue entry and
-on every Vocabulary row. Everything else is contextual to the badge that motivated it.
+Vocabulary row and the manual split on every compound one. Everything else is contextual to the badge
+that motivated it.
 
 ## Aliases
 

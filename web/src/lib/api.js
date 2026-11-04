@@ -291,12 +291,13 @@ export const api = {
 		provisionalList: (
 			limit = 50,
 			offset = 0,
-			{ criteria = [], states = [], q = '', facets = false } = {}
+			{ criteria = [], states = [], q = '', sort = 'newest', facets = false } = {}
 		) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
 			if (q) params.set('q', q);
 			if (criteria.length) params.set('criteria', encodeCriteria(criteria));
 			if (states.length) params.set('state', states.join(','));
+			if (sort === 'oldest') params.set('sort', 'oldest');
 			if (facets) params.set('facets', 'true');
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
 		},
@@ -313,6 +314,12 @@ export const api = {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ disposition, parts })
+			}),
+		split: (name, parts) =>
+			requestRaw('/api/v1/tags/split', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name, parts })
 			}),
 		retire: (id) => requestRaw(`/api/v1/tags/${id}/retire`, { method: 'POST' }),
 		accept: (id) => requestRaw(`/api/v1/tags/${id}/accept`, { method: 'POST' }),

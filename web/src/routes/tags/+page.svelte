@@ -8,11 +8,19 @@
 	import Modal from '#lib/components/Modal.svelte';
 	import TagReconcileStrip from '#lib/components/tags/TagReconcileStrip.svelte';
 	import FoldTagModal from '#lib/components/tags/FoldTagModal.svelte';
+	import SplitTagModal from '#lib/components/tags/SplitTagModal.svelte';
 	import ProvisionalReview from '#lib/components/tags/ProvisionalReview.svelte';
 	import CoverageReview from '#lib/components/tags/CoverageReview.svelte';
 	import SiblingReview from '#lib/components/tags/SiblingReview.svelte';
 	import DeletedTags from '#lib/components/tags/DeletedTags.svelte';
-	import { EDIT_ICON, DELETE_ICON, DEMOTE_ICON, FOLD_ICON, actionButton } from '#lib/icons.js';
+	import {
+		EDIT_ICON,
+		DELETE_ICON,
+		DEMOTE_ICON,
+		FOLD_ICON,
+		SPLIT_ICON,
+		actionButton
+	} from '#lib/icons.js';
 	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
@@ -42,6 +50,7 @@
 	let deletedRefreshKey = $state(0);
 	let savingTag = $state(false);
 	let folding = $state(null);
+	let splitting = $state(null);
 	let activeTab = $state('vocabulary');
 	let vocabularyTotal = $state(null);
 	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0 });
@@ -83,8 +92,21 @@
 							'data-tag-documents': String(row.document_count ?? 0)
 						})
 					: '';
+				const split =
+					row.compound && !row.seeded
+						? actionButton(
+								SPLIT_ICON,
+								'Split into components',
+								`${actionable} hover:text-gold-500`,
+								{
+									'data-split-tag': row.id,
+									'data-tag-name': safeName,
+									'data-tag-documents': String(row.document_count ?? 0)
+								}
+							)
+						: '';
 				return `${actionButton(EDIT_ICON, 'Edit', `${actionable} hover:text-gold-500`, { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
-${demote}${fold}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
+${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
 			}
 		}
 	];
@@ -222,6 +244,13 @@ ${demote}${fold}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-
 			const name = foldBtn.getAttribute('data-tag-name');
 			const documents = parseInt(foldBtn.getAttribute('data-tag-documents') ?? '0');
 			folding = { name, document_count: documents };
+			return;
+		}
+		const splitBtn = e.target.closest('[data-split-tag]');
+		if (splitBtn) {
+			const name = splitBtn.getAttribute('data-tag-name');
+			const documents = parseInt(splitBtn.getAttribute('data-tag-documents') ?? '0');
+			splitting = { name, document_count: documents };
 			return;
 		}
 		const demoteBtn = e.target.closest('[data-demote-tag]');
@@ -398,6 +427,13 @@ ${demote}${fold}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-
 	tag={folding}
 	onClose={() => (folding = null)}
 	onfolded={() => onReviewChanged()}
+/>
+
+<SplitTagModal
+	open={splitting !== null}
+	tag={splitting}
+	onClose={() => (splitting = null)}
+	onsplit={() => onReviewChanged()}
 />
 
 <Modal

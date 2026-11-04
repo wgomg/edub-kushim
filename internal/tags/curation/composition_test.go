@@ -201,3 +201,64 @@ func TestTag_ApplyCompositionDecision(t *testing.T) {
 		assertNoComposition(t, client, "rollback compound value")
 	})
 }
+
+// TestTag_Split pins the lifecycle-wide operator split: a promoted compound is replaced by its parts
+// and the decision is journaled, a provisional one splits the same way, and a seeded or missing tag is
+// refused without touching the store.
+func TestTag_Split(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	t.Run("a promoted compound is replaced by its parts and journaled", func(t *testing.T) {
+		id := database.MustCreateTag(t, client.Queries, "lifecycle split compound")
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set standing")
+		docID := database.CreateUniqueDocument(t, client.Queries, "lifecycle split doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+
+		status, err := svc.Split(ctx, "lifecycle split compound", []string{"lifecycle part one", "lifecycle part two"})
+		testutil.AssertNoError(t, err, "split")
+		testutil.AssertEqual(t, status, types.CompositionApplied, "status")
+
+		if _, err := client.Queries.GetTagByName(ctx, "lifecycle split compound"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the compound row should be gone, got err %v", err)
+		}
+		if got := countDocumentTags(t, client, docID); got != 2 {
+			t.Errorf("document tags = %d, want the two parts only", got)
+		}
+		row := latestComposition(t, client, "lifecycle split compound")
+		testutil.AssertEqual(t, row.Disposition, string(tags.CompositionSplit), "disposition")
+		testutil.AssertEqual(t, row.Reason, tags.CompositionReasonOperator, "reason")
+	})
+
+	t.Run("a provisional compound splits too", func(t *testing.T) {
+		newProvisionalCompound(t, client, "lifecycle provisional compound")
+
+		status, err := svc.Split(ctx, "lifecycle provisional compound", []string{"lifecycle provisional part"})
+		testutil.AssertNoError(t, err, "split")
+		testutil.AssertEqual(t, status, types.CompositionApplied, "status")
+	})
+
+	t.Run("a seeded value is refused", func(t *testing.T) {
+		id := database.MustCreateTag(t, client.Queries, "lifecycle seeded compound")
+		_, err := client.DB().ExecContext(ctx, "UPDATE tag SET seeded = true WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "mark seeded")
+
+		status, err := svc.Split(ctx, "lifecycle seeded compound", []string{"lifecycle seeded part"})
+		testutil.AssertNoError(t, err, "split")
+		testutil.AssertEqual(t, status, types.CompositionSeeded, "status")
+
+		if _, err := client.Queries.GetTagByName(ctx, "lifecycle seeded compound"); err != nil {
+			t.Errorf("a seeded value must survive: %v", err)
+		}
+		if _, err := client.Queries.GetTagByName(ctx, "lifecycle seeded part"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("no part may be created for a refused split, got err %v", err)
+		}
+	})
+
+	t.Run("a missing tag reports not found", func(t *testing.T) {
+		status, err := svc.Split(ctx, "lifecycle missing compound", []string{"lifecycle missing part"})
+		testutil.AssertNoError(t, err, "split")
+		testutil.AssertEqual(t, status, types.CompositionNotFound, "status")
+	})
+}

@@ -131,6 +131,11 @@
 			text: 'Replaces the compound with the components you confirm: the components are created and the compound\u2019s documents are attached to them, then the compound is deleted.'
 		},
 		{
+			icon: 'split',
+			name: 'Split…',
+			text: 'Splits a compound tag into components you choose, whatever the split judge decided: the components are created and the tag\u2019s documents are attached to them, then the tag is deleted. Offered on every compound entry in this queue and on every compound Vocabulary row; seeded values cannot be split.'
+		},
+		{
 			icon: 'keep-whole',
 			name: 'Keep whole',
 			text: 'Records your decision that the compound is a value in its own right. The hold clears and the tag stays as it is.'

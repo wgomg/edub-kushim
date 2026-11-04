@@ -3139,6 +3139,15 @@ func TestListProvisionalFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("unknown sort is rejected", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?sort=sideways", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if !strings.Contains(w.Body.String(), "Invalid sort filter") {
+			t.Errorf("body = %q, want the sort error", w.Body.String())
+		}
+	})
+
 	t.Run("response reports the queue-level pending identity total", func(t *testing.T) {
 		w := rec()
 		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional", nil))
@@ -3212,6 +3221,96 @@ func TestTagListCreatedAt(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("created tag missing from the list")
+	}
+}
+
+// TestListProvisionalSortOrder pins the queue ordering plumbing: the default page lists the newer row
+// before the older one and `sort=oldest` reverses it.
+func TestListProvisionalSortOrder(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "prov-sort-doc")
+	seed := func(name, createdAt string) {
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		_, err := env.client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = NULL, created_at = $2::timestamptz WHERE id = $1", id, createdAt)
+		testutil.AssertNoError(t, err, "set provisional and created_at")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+	}
+	seed("prov sort older tag", "2026-01-01T00:00:00Z")
+	seed("prov sort newer tag", "2026-02-01T00:00:00Z")
+
+	position := func(rows []ProvisionalTagResponse, want string) int {
+		for i, row := range rows {
+			if row.Name == want {
+				return i
+			}
+		}
+		return -1
+	}
+	assertPositions := func(t *testing.T, oldest bool, olderPos, newerPos int) {
+		t.Helper()
+		if oldest {
+			if olderPos < 0 || newerPos < 0 || olderPos > newerPos {
+				t.Errorf("oldest-first positions older=%d newer=%d, want the older row before the newer one", olderPos, newerPos)
+			}
+			return
+		}
+		if olderPos < 0 || newerPos < 0 || olderPos < newerPos {
+			t.Errorf("newest-first positions older=%d newer=%d, want the older row after the newer one", olderPos, newerPos)
+		}
+	}
+
+	w := rec()
+	h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?limit=100", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+	var defaultPage ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&defaultPage), "decode default page")
+	assertPositions(t, false, position(defaultPage.Results, "prov sort older tag"), position(defaultPage.Results, "prov sort newer tag"))
+
+	w = rec()
+	h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?limit=100&sort=oldest", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+	var oldestPage ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&oldestPage), "decode oldest page")
+	assertPositions(t, true, position(oldestPage.Results, "prov sort older tag"), position(oldestPage.Results, "prov sort newer tag"))
+}
+
+// TestTagListCompoundFlag pins the compound marker both list surfaces expose: a multi-word name reads
+// as compound and a single word does not, so the split actions can gate on it.
+func TestTagListCompoundFlag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "compound flag doc")
+	for _, name := range []string{"compound flag value", "solitude"} {
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+	}
+	want := map[string]bool{"compound flag value": true, "solitude": false}
+
+	w := rec()
+	h.List(w, req(t, "GET", "/api/v1/tags", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+	var list TagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&list), "decode list")
+	for _, row := range list.Results {
+		if expected, ok := want[row.Name]; ok && row.Compound != expected {
+			t.Errorf("vocabulary compound for %q = %v, want %v", row.Name, row.Compound, expected)
+		}
+	}
+
+	w = rec()
+	h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?limit=100", nil))
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+	var provisional ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&provisional), "decode provisional")
+	for _, row := range provisional.Results {
+		if expected, ok := want[row.Name]; ok && row.Compound != expected {
+			t.Errorf("provisional compound for %q = %v, want %v", row.Name, row.Compound, expected)
+		}
 	}
 }
 
@@ -3956,6 +4055,71 @@ func TestCompositionDecision(t *testing.T) {
 		r := req(t, "POST", "/api/v1/tags/abc/composition", raw)
 		r.SetPathValue("id", "abc")
 		h.CompositionDecision(w, r)
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestSplitTag pins the lifecycle split endpoint: a promoted compound answers 204 and is replaced by
+// its parts, a seeded value answers 409, and the boundary refusals answer 404/400 without touching
+// the store.
+func TestSplitTag(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	split := func(body SplitTagRequest) *httptest.ResponseRecorder {
+		w := rec()
+		raw, err := json.Marshal(body)
+		testutil.AssertNoError(t, err, "encode body")
+		h.SplitTag(w, req(t, "POST", "/api/v1/tags/split", raw))
+		return w
+	}
+
+	t.Run("a promoted compound answers 204 and is replaced by its parts", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "split handler promoted compound")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = now() WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set standing")
+
+		w := split(SplitTagRequest{Name: "split handler promoted compound", Parts: []string{"split handler part one"}})
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "status")
+
+		if _, err := env.client.Queries.GetTagByName(ctx, "split handler promoted compound"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the compound should be gone, got err %v", err)
+		}
+		if _, err := env.client.Queries.GetTagByName(ctx, "split handler part one"); err != nil {
+			t.Errorf("the part must exist: %v", err)
+		}
+	})
+
+	t.Run("a seeded value answers 409", func(t *testing.T) {
+		id := database.MustCreateTag(t, env.client.Queries, "split handler seeded compound")
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET seeded = true WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "mark seeded")
+
+		w := split(SplitTagRequest{Name: "split handler seeded compound", Parts: []string{"split handler seeded part"}})
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+	})
+
+	t.Run("a missing tag returns 404", func(t *testing.T) {
+		w := split(SplitTagRequest{Name: "split handler missing compound", Parts: []string{"split handler missing part"}})
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("no valid parts returns 400", func(t *testing.T) {
+		database.MustCreateTag(t, env.client.Queries, "split handler invalid compound")
+
+		w := split(SplitTagRequest{Name: "split handler invalid compound", Parts: []string{"!!!"}})
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if _, err := env.client.Queries.GetTagByName(ctx, "split handler invalid compound"); err != nil {
+			t.Errorf("the compound must survive an invalid split: %v", err)
+		}
+	})
+
+	t.Run("a blank name returns 400", func(t *testing.T) {
+		w := rec()
+		raw, err := json.Marshal(SplitTagRequest{Name: "  ", Parts: []string{"split handler part"}})
+		testutil.AssertNoError(t, err, "encode body")
+		h.SplitTag(w, req(t, "POST", "/api/v1/tags/split", raw))
 		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
 	})
 }

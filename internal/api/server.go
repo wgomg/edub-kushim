@@ -294,6 +294,7 @@ func registerRoutes(
 	mux.Handle("POST /api/v1/tags/{id}/promote", RequireRole(editor...)(http.HandlerFunc(tagHandler.PromoteTag)))
 	mux.Handle("POST /api/v1/tags/{id}/demote", RequireRole(editor...)(http.HandlerFunc(tagHandler.DemoteTag)))
 	mux.Handle("POST /api/v1/tags/fold", RequireRole(editor...)(http.HandlerFunc(tagHandler.FoldTag)))
+	mux.Handle("POST /api/v1/tags/split", RequireRole(editor...)(http.HandlerFunc(tagHandler.SplitTag)))
 	mux.Handle("POST /api/v1/tags/{id}/composition", RequireRole(editor...)(http.HandlerFunc(tagHandler.CompositionDecision)))
 	mux.Handle("POST /api/v1/tags/{id}/retire", RequireRole(editor...)(http.HandlerFunc(tagHandler.RetireTag)))
 	mux.Handle("POST /api/v1/tags/{id}/accept", RequireRole(editor...)(http.HandlerFunc(tagHandler.AcceptTag)))

@@ -9,6 +9,7 @@ const {
 	reevaluateIdentity,
 	foldTag,
 	compositionDecision,
+	splitTag,
 	retireTag,
 	acceptTag,
 	separateTag,
@@ -23,6 +24,7 @@ const {
 	reevaluateIdentity: vi.fn(),
 	foldTag: vi.fn(),
 	compositionDecision: vi.fn(),
+	splitTag: vi.fn(),
 	retireTag: vi.fn(),
 	acceptTag: vi.fn(),
 	separateTag: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock('#lib/api.js', async (importOriginal) => {
 				reevaluateIdentity,
 				fold: foldTag,
 				compositionDecision,
+				split: splitTag,
 				retire: retireTag,
 				accept: acceptTag,
 				separate: separateTag,
@@ -96,6 +99,7 @@ function tag(overrides = {}) {
 		created_at: '2026-09-01T00:00:00Z',
 		pending_identity: 0,
 		verdict: null,
+		compound: true,
 		...overrides
 	};
 }
@@ -123,6 +127,7 @@ beforeEach(() => {
 	reevaluateIdentity.mockReset();
 	foldTag.mockReset();
 	compositionDecision.mockReset();
+	splitTag.mockReset();
 	retireTag.mockReset();
 	acceptTag.mockReset();
 	separateTag.mockReset();
@@ -220,6 +225,7 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [{ key: 'atomic', state: 'fail' }],
 				states: [],
 				q: '',
+				sort: 'newest',
 				facets: false
 			})
 		);
@@ -243,6 +249,7 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [],
 				states: ['no_verdict'],
 				q: '',
+				sort: 'newest',
 				facets: true
 			})
 		);
@@ -271,6 +278,7 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [],
 				states: [],
 				q: '',
+				sort: 'newest',
 				facets: true
 			})
 		);
@@ -287,6 +295,7 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [{ key: 'atomic', state: 'fail' }],
 				states: [],
 				q: '',
+				sort: 'newest',
 				facets: false
 			})
 		);
@@ -305,10 +314,13 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [],
 				states: ['admitted', 'accepted'],
 				q: '',
+				sort: 'newest',
 				facets: false
 			})
 		);
-		expect(await screen.findByRole('button', { name: 'Remove awaiting promotion floor filter' })).toBeTruthy();
+		expect(
+			await screen.findByRole('button', { name: 'Remove awaiting promotion floor filter' })
+		).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Remove accepted deferral filter' })).toBeTruthy();
 	});
 
@@ -342,6 +354,7 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [],
 				states: [],
 				q: 'politic',
+				sort: 'newest',
 				facets: false
 			})
 		);
@@ -363,6 +376,7 @@ describe('ProvisionalReview filters and paging', () => {
 			criteria: [{ key: 'atomic', state: 'fail' }],
 			states: ['no_verdict'],
 			q: '',
+			sort: 'newest',
 			facets: false
 		});
 		await waitFor(() => {
@@ -400,6 +414,7 @@ describe('ProvisionalReview filters and paging', () => {
 			criteria: [],
 			states: [],
 			q: '',
+			sort: 'newest',
 			facets: false
 		});
 		expect(screen.getByRole('button', { name: 'Prev' }).disabled).toBe(false);
@@ -528,6 +543,59 @@ describe('ProvisionalReview review actions', () => {
 
 		expect(await screen.findByRole('dialog', { name: 'Split compound' })).toBeTruthy();
 		expect(compositionDecision).not.toHaveBeenCalled();
+	});
+
+	it('offers the manual split on every compound entry and opens the parts editor', async () => {
+		await renderEntry();
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
+
+		expect(await screen.findByRole('dialog', { name: 'Split compound' })).toBeTruthy();
+		expect(compositionDecision).not.toHaveBeenCalled();
+		expect(splitTag).not.toHaveBeenCalled();
+	});
+
+	it('hides the manual split for a single-word tag', async () => {
+		provisionalList.mockResolvedValue({
+			ok: true,
+			data: { results: [tag({ name: 'history', compound: false })], total: 1 }
+		});
+		render(ProvisionalReview);
+		await screen.findByText('history');
+
+		expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
+	});
+
+	it('posts a split decision for a compound the judge kept whole', async () => {
+		splitTag.mockResolvedValue({ ok: true, status: 204 });
+		await renderEntry({
+			composition_hold: 'named_unit_reconstructible',
+			composition_action: 'keep',
+			composition_parts: ['part a']
+		});
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
+		await screen.findByRole('dialog', { name: 'Split compound' });
+		expect(screen.getByLabelText('Component 1').value).toBe('part a');
+		await fireEvent.click(screen.getByRole('button', { name: /^Split$/ }));
+
+		await waitFor(() => expect(splitTag).toHaveBeenCalledWith('sample tag', ['part a']));
+		expect(compositionDecision).not.toHaveBeenCalled();
+	});
+
+	it('reorders the queue oldest-first and records it in the url', async () => {
+		await renderEntry();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Oldest' }));
+
+		await waitFor(() =>
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({ sort: 'oldest' })
+			)
+		);
+		expect(goto.mock.calls.at(-1)[0]).toContain('prov_sort=oldest');
 	});
 
 	it('offers apply-parts alongside keep only when a keep hold carries parts', async () => {

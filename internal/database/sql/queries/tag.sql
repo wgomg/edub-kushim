@@ -274,7 +274,12 @@ WHERE (@verdict_state::text = ''
                 OR v.accepted)
            AND NOT v.identity_pending AND NOT v.identity_hold AND NOT v.split_hold
            AND NOT v.degraded_unversioned AND NOT v.demoted))
-ORDER BY v.created_at DESC, v.id DESC
+-- one boolean parameter cannot be spliced into an ORDER BY, so each direction gets its own key and the
+-- inactive arm collapses to NULL for every row, leaving the active direction to decide the order
+ORDER BY CASE WHEN @oldest_first::boolean THEN v.created_at END ASC,
+         CASE WHEN @oldest_first::boolean THEN v.id END ASC,
+         CASE WHEN NOT @oldest_first::boolean THEN v.created_at END DESC,
+         CASE WHEN NOT @oldest_first::boolean THEN v.id END DESC
 LIMIT @page_limit OFFSET @page_offset;
 
 -- counts the provisional queue page total and, when journal flags are requested, the per-state review

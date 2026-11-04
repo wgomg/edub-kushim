@@ -898,8 +898,11 @@ WHERE ($14::text = ''
                 OR v.accepted)
            AND NOT v.identity_pending AND NOT v.identity_hold AND NOT v.split_hold
            AND NOT v.degraded_unversioned AND NOT v.demoted))
-ORDER BY v.created_at DESC, v.id DESC
-LIMIT $17 OFFSET $16
+ORDER BY CASE WHEN $16::boolean THEN v.created_at END ASC,
+         CASE WHEN $16::boolean THEN v.id END ASC,
+         CASE WHEN NOT $16::boolean THEN v.created_at END DESC,
+         CASE WHEN NOT $16::boolean THEN v.id END DESC
+LIMIT $18 OFFSET $17
 `
 
 type ListProvisionalTagsWithDocumentCountParams struct {
@@ -918,6 +921,7 @@ type ListProvisionalTagsWithDocumentCountParams struct {
 	DeferState             string
 	VerdictState           string
 	States                 []string
+	OldestFirst            bool
 	PageOffset             int32
 	PageLimit              int32
 }
@@ -933,6 +937,8 @@ type ListProvisionalTagsWithDocumentCountRow struct {
 	DocumentCount  int64
 }
 
+// one boolean parameter cannot be spliced into an ORDER BY, so each direction gets its own key and the
+// inactive arm collapses to NULL for every row, leaving the active direction to decide the order
 func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg ListProvisionalTagsWithDocumentCountParams) ([]ListProvisionalTagsWithDocumentCountRow, error) {
 	rows, err := q.db.QueryContext(ctx, listProvisionalTagsWithDocumentCount,
 		arg.PolicyVersion,
@@ -950,6 +956,7 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 		arg.DeferState,
 		arg.VerdictState,
 		pq.Array(arg.States),
+		arg.OldestFirst,
 		arg.PageOffset,
 		arg.PageLimit,
 	)

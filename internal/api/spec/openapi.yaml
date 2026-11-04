@@ -4134,6 +4134,11 @@ paths:
           schema:
             type: string
             default: ""
+        - name: sort
+          in: query
+          schema:
+            type: string
+            default: ""
         - name: state
           in: query
           schema:
@@ -4258,6 +4263,73 @@ paths:
                 properties:
                   error:
                     type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+  /api/v1/tags/split:
+    post:
+      summary: 'SplitTag replaces the named live tag with the parts an editor names: the parts are created, the tag''s documents are re-pointed onto them, and the tag is deleted.'
+      description: |-
+        Seeded values are refused because the
+        startup seeder would re-create them; promoted values are split in place.
+      operationId: postApiV1TagsSplit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SplitTagRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  names:
+                    anyOf:
+                      - type: array
+                        items:
+                          type: string
+                      - type: "null"
+                required:
+                  - names
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
         "500":
           description: Internal Server Error
           content:
@@ -7102,6 +7174,8 @@ components:
             type: string
         composition_reason:
           type: string
+        compound:
+          type: boolean
         created_at:
           type: string
           format: date-time
@@ -7299,6 +7373,23 @@ components:
         - mass_a
         - mass_b
         - gray
+    SplitTagRequest:
+      type: object
+      description: |-
+        SplitTagRequest is the body of POST /api/v1/tags/split: the tag to replace and the components that
+        replace it.
+      properties:
+        name:
+          type: string
+        parts:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: "null"
+      required:
+        - name
+        - parts
     StorageConfigResponse:
       type: object
       description: StorageConfigResponse is the storage section's API view.
@@ -7580,8 +7671,11 @@ components:
       description: |-
         TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both
         DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
-        operator-owned inventory the demote action must leave alone.
+        operator-owned inventory the demote action must leave alone, while Compound marks the composition
+        shape the split actions gate on.
       properties:
+        compound:
+          type: boolean
         created_at:
           type: string
           format: date-time

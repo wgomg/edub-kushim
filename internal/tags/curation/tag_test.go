@@ -313,6 +313,48 @@ func TestTag_ListProvisional(t *testing.T) {
 	}
 }
 
+// TestTag_ListProvisionalOrder pins the newest/oldest page ordering: the default lists the newer row
+// before the older one and OldestFirst reverses that.
+func TestTag_ListProvisionalOrder(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	docID := database.CreateUniqueDocument(t, client.Queries, "prov-order-doc")
+	seed := func(name, createdAt string) int64 {
+		id := database.MustCreateTag(t, client.Queries, name)
+		_, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = NULL, created_at = $2::timestamptz WHERE id = $1", id, createdAt)
+		testutil.AssertNoError(t, err, "set provisional and created_at")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		return id
+	}
+	olderID := seed("order older tag", "2026-01-01T00:00:00Z")
+	newerID := seed("order newer tag", "2026-02-01T00:00:00Z")
+
+	newest, err := svc.ListProvisional(ctx, ProvisionalFilter{}, 1000, 0)
+	testutil.AssertNoError(t, err, "list newest")
+	oldest, err := svc.ListProvisional(ctx, ProvisionalFilter{OldestFirst: true}, 1000, 0)
+	testutil.AssertNoError(t, err, "list oldest")
+
+	position := func(rows []database.ListProvisionalTagsWithDocumentCountRow, id int64) int {
+		for i, row := range rows {
+			if row.ID == id {
+				return i
+			}
+		}
+		return -1
+	}
+
+	older, newer := position(newest, olderID), position(newest, newerID)
+	if older < 0 || newer < 0 || older < newer {
+		t.Errorf("newest-first positions older=%d newer=%d, want the older row after the newer one", older, newer)
+	}
+	older, newer = position(oldest, olderID), position(oldest, newerID)
+	if older < 0 || newer < 0 || older > newer {
+		t.Errorf("oldest-first positions older=%d newer=%d, want the older row before the newer one", older, newer)
+	}
+}
+
 // insertProvisionalVerdict records the judge's rubric answer for a
 // provisional tag under the current policy version; an empty outcome
 // leaves the row without one, matching the legacy rows the verdict
