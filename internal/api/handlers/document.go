@@ -1166,15 +1166,27 @@ type PersonListResponse struct {
 // TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both
 // DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
 // operator-owned inventory the demote action must leave alone, while Compound marks the composition
-// shape the split actions gate on.
+// shape the split actions gate on. The vocabulary listing also fills Aliases and, when the listing is
+// name-searched, the MatchedAlias that the search text prefix-matched; document surfaces leave both
+// empty.
 type TagResponse struct {
-	ID            int64      `json:"id"`
-	Name          string     `json:"name"`
-	DocumentCount int64      `json:"document_count"`
-	Promoted      bool       `json:"promoted"`
-	Seeded        bool       `json:"seeded"`
-	Compound      bool       `json:"compound,omitempty"`
-	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	ID            int64              `json:"id"`
+	Name          string             `json:"name"`
+	DocumentCount int64              `json:"document_count"`
+	Promoted      bool               `json:"promoted"`
+	Seeded        bool               `json:"seeded"`
+	Compound      bool               `json:"compound,omitempty"`
+	CreatedAt     *time.Time         `json:"created_at,omitempty"`
+	Aliases       []TagAliasResponse `json:"aliases,omitempty"`
+	MatchedAlias  string             `json:"matched_alias,omitempty"`
+}
+
+// TagAliasResponse is one recorded alias of a tag: the alternate spelling of a name, and whether the
+// startup seeder owns it. Seeded ownership keeps the removal action off the shipped inventory, since
+// reseeding would restore it.
+type TagAliasResponse struct {
+	Name   string `json:"name"`
+	Seeded bool   `json:"seeded"`
 }
 
 // PersonResponse is a person as attached to a document, including the

@@ -48,6 +48,11 @@
 		return null;
 	}
 
+	function tagSuggestionLabel(name, matchedAlias) {
+		if (!matchedAlias) return name;
+		return `${name} (alias: ${matchedAlias})`;
+	}
+
 	function isPersonField(field) {
 		return getPersonTypes().has(field);
 	}
@@ -55,7 +60,11 @@
 	async function fetchSuggestions(prefix, field) {
 		if (field === 'tag') {
 			const data = await api.autocomplete.tags(prefix, 10);
-			return data.map((t) => ({ label: t.name, value: t.name, type: 'tag' }));
+			return data.map((t) => ({
+				label: tagSuggestionLabel(t.name, t.matched_alias),
+				value: t.name,
+				type: 'tag'
+			}));
 		}
 
 		if (field === 'type') {
@@ -93,7 +102,12 @@
 		]);
 
 		const results = [];
-		for (const t of tagsData) results.push({ label: `tag: ${t.name}`, value: t.name, type: 'tag' });
+		for (const t of tagsData)
+			results.push({
+				label: `tag: ${tagSuggestionLabel(t.name, t.matched_alias)}`,
+				value: t.name,
+				type: 'tag'
+			});
 		for (const p of peopleData)
 			results.push({
 				label: `person: ${p.name}`,

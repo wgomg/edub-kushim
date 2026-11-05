@@ -291,7 +291,9 @@ func (q *Queries) CountTags(ctx context.Context) (int64, error) {
 }
 
 const countTagsByName = `-- name: CountTagsByName :one
-SELECT COUNT(*) FROM tag WHERE name ILIKE $1
+SELECT COUNT(*) FROM tag t
+WHERE (t.name ILIKE $1
+    OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id AND ta.alias_name ILIKE $1))
 `
 
 func (q *Queries) CountTagsByName(ctx context.Context, name string) (int64, error) {
@@ -1415,7 +1417,8 @@ const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocument
 SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
-WHERE t.name ILIKE $1
+WHERE (t.name ILIKE $1
+    OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id AND ta.alias_name ILIKE $1))
 GROUP BY t.id
 ORDER BY t.name ASC LIMIT $2 OFFSET $3
 `

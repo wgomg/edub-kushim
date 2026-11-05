@@ -19,6 +19,8 @@
 		DEMOTE_ICON,
 		FOLD_ICON,
 		SPLIT_ICON,
+		PROMOTE_ICON,
+		CANCEL_ICON,
 		actionButton
 	} from '#lib/icons.js';
 	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
@@ -55,8 +57,36 @@
 	let vocabularyTotal = $state(null);
 	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0 });
 
+	const compactButton =
+		'rounded p-0.5 text-parchment-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+
+	function aliasChip(alias, tagName) {
+		const safeAlias = escapeHtml(alias.name);
+		const actions = canModerate()
+			? `<button data-alias-promote="${safeAlias}" data-tag-name="${escapeHtml(tagName)}" title="Promote alias &quot;${safeAlias}&quot; to a tag" aria-label="Promote alias ${safeAlias} to a tag" class="${compactButton} hover:text-gold-500">${PROMOTE_ICON}</button>${
+					alias.seeded
+						? ''
+						: `<button data-alias-remove="${safeAlias}" data-tag-name="${escapeHtml(tagName)}" title="Remove alias &quot;${safeAlias}&quot;" aria-label="Remove alias ${safeAlias}" class="${compactButton} hover:text-terracotta-500">${CANCEL_ICON}</button>`
+				}`
+			: '';
+		const note = alias.seeded ? ' title="seeded alias; the startup seeder restores it"' : '';
+		return `<span class="inline-flex items-center gap-0.5 rounded-full border border-clay-700 bg-clay-900 py-0.5 ps-2 pe-1 text-[0.6875rem] text-parchment-400"${note}>${safeAlias}${actions}</span>`;
+	}
+
 	const columns = [
-		{ key: 'name', label: 'Name', sortable: true, width: '100%' },
+		{
+			key: 'name',
+			label: 'Name',
+			sortable: true,
+			width: '100%',
+			cell: (_v, row) => {
+				const name = escapeHtml(row.name);
+				const aliases = row.aliases ?? [];
+				if (aliases.length === 0) return name;
+				const chips = aliases.map((alias) => aliasChip(alias, row.name)).join('');
+				return `<div><span>${name}</span><div class="mt-1 flex flex-wrap items-center gap-1">${chips}</div></div>`;
+			}
+		},
 		{
 			key: 'document_count',
 			label: 'Documents',
@@ -231,7 +261,57 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 		refreshCounts();
 	}
 
+	async function handleRemoveAlias(aliasName, tagName) {
+		const ok = await confirmStore.confirm({
+			title: 'Remove alias',
+			message: `"${aliasName}" stops resolving to "${tagName}". Its documents stay on "${tagName}", and filters that still use "${aliasName}" stop matching.`
+		});
+		if (!ok) return;
+		const result = await api.tags.removeAlias(aliasName);
+		if (result.ok) {
+			toastStore.success(`Removed alias "${aliasName}"`);
+			refreshKey++;
+		} else if (result.status === 409) {
+			toastStore.error(result.data?.error ?? 'Alias cannot be removed');
+		} else {
+			toastStore.error('Failed to remove alias');
+		}
+	}
+
+	async function handlePromoteAlias(aliasName, tagName) {
+		const ok = await confirmStore.confirm({
+			title: 'Promote alias to tag',
+			message: `"${aliasName}" becomes a separate tag. Its documents stay on "${tagName}", so the new tag starts empty.`
+		});
+		if (!ok) return;
+		const result = await api.tags.promoteAlias(aliasName);
+		if (result.ok) {
+			toastStore.success(`Promoted "${aliasName}" to a tag`);
+			onReviewChanged();
+		} else if (result.status === 409) {
+			toastStore.error(result.data?.error ?? 'Alias cannot be promoted');
+		} else {
+			toastStore.error('Failed to promote alias');
+		}
+	}
+
 	function handlePageClick(e) {
+		const aliasPromoteBtn = e.target.closest('[data-alias-promote]');
+		if (aliasPromoteBtn) {
+			handlePromoteAlias(
+				aliasPromoteBtn.getAttribute('data-alias-promote'),
+				aliasPromoteBtn.getAttribute('data-tag-name')
+			);
+			return;
+		}
+		const aliasRemoveBtn = e.target.closest('[data-alias-remove]');
+		if (aliasRemoveBtn) {
+			handleRemoveAlias(
+				aliasRemoveBtn.getAttribute('data-alias-remove'),
+				aliasRemoveBtn.getAttribute('data-tag-name')
+			);
+			return;
+		}
 		const editBtn = e.target.closest('[data-edit-tag]');
 		if (editBtn) {
 			const id = parseInt(editBtn.getAttribute('data-edit-tag'));

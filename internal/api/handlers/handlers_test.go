@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -4505,4 +4506,163 @@ func TestListProvisionalCompositionAction(t *testing.T) {
 		}
 		testutil.AssertEqual(t, row.CompositionAction, tc.want, "action for "+tc.name)
 	}
+}
+
+// TestTagListAliases pins the alias surfacing on the listing: each row carries its recorded aliases
+// with the seeded flag, and a name search marks the alias whose prefix the query matched.
+func TestTagListAliases(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "alias list canonical")
+	database.MustCreateTag(t, env.client.Queries, "alias list loser")
+	_, _, err := env.tagSvc.Fold(ctx, "alias list loser", "alias list canonical")
+	testutil.AssertNoError(t, err, "fold")
+	_, err = env.client.DB().ExecContext(ctx,
+		"UPDATE tag_alias SET seeded = true WHERE alias_name = $1", "alias list loser")
+	testutil.AssertNoError(t, err, "mark seeded")
+
+	list := func(q string) TagListResponse {
+		target := "/api/v1/tags"
+		if q != "" {
+			target += "?q=" + url.QueryEscape(q)
+		}
+		w := rec()
+		h.List(w, req(t, "GET", target, nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "list status")
+		var resp TagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		return resp
+	}
+	find := func(resp TagListResponse, name string) (TagResponse, bool) {
+		for i := range resp.Results {
+			if resp.Results[i].Name == name {
+				return resp.Results[i], true
+			}
+		}
+		return TagResponse{}, false
+	}
+
+	t.Run("the unfiltered listing carries each alias with its seeded flag", func(t *testing.T) {
+		row, ok := find(list(""), "alias list canonical")
+		if !ok {
+			t.Fatal("canonical tag missing from the listing")
+		}
+		testutil.AssertEqual(t, len(row.Aliases), 1, "one alias")
+		testutil.AssertEqual(t, row.Aliases[0].Name, "alias list loser", "alias name")
+		testutil.AssertEqual(t, row.Aliases[0].Seeded, true, "seeded flag")
+		testutil.AssertEqual(t, row.MatchedAlias, "", "no search, no match")
+	})
+
+	t.Run("a name search marks the alias the query prefix-matched", func(t *testing.T) {
+		row, ok := find(list("alias list lo"), "alias list canonical")
+		if !ok {
+			t.Fatal("canonical tag missing from the alias search")
+		}
+		testutil.AssertEqual(t, row.MatchedAlias, "alias list loser", "matched alias")
+	})
+
+	t.Run("a direct name match carries no alias hint", func(t *testing.T) {
+		row, ok := find(list("alias list c"), "alias list canonical")
+		if !ok {
+			t.Fatal("canonical tag missing from the name search")
+		}
+		testutil.AssertEqual(t, row.MatchedAlias, "", "matched alias")
+	})
+}
+
+// TestRemoveAliasEndpoint pins the removal status contract: 204 for a live mapping, 409 for a seeded
+// one the seeder would restore, and 404 for an absent name.
+func TestRemoveAliasEndpoint(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	remove := func(name string) *httptest.ResponseRecorder {
+		w := rec()
+		r := req(t, "DELETE", "/api/v1/tags/aliases/placeholder", nil)
+		r.SetPathValue("name", name)
+		h.RemoveAlias(w, r)
+		return w
+	}
+
+	t.Run("removes a live mapping", func(t *testing.T) {
+		database.MustCreateTag(t, env.client.Queries, "alias remove canonical")
+		database.MustCreateTag(t, env.client.Queries, "alias remove loser")
+		_, _, err := env.tagSvc.Fold(ctx, "alias remove loser", "alias remove canonical")
+		testutil.AssertNoError(t, err, "fold")
+
+		testutil.AssertEqual(t, remove("alias remove loser").Code, http.StatusNoContent, "status")
+		if _, err := env.client.Queries.GetTagAliasByName(ctx, "alias remove loser"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the alias row should be gone, got err %v", err)
+		}
+	})
+
+	t.Run("a seeded mapping returns 409", func(t *testing.T) {
+		database.MustCreateTag(t, env.client.Queries, "alias seeded canonical")
+		database.MustCreateTag(t, env.client.Queries, "alias seeded loser")
+		_, _, err := env.tagSvc.Fold(ctx, "alias seeded loser", "alias seeded canonical")
+		testutil.AssertNoError(t, err, "fold")
+		_, err = env.client.DB().ExecContext(ctx,
+			"UPDATE tag_alias SET seeded = true WHERE alias_name = $1", "alias seeded loser")
+		testutil.AssertNoError(t, err, "mark seeded")
+
+		w := remove("alias seeded loser")
+		testutil.AssertEqual(t, w.Code, http.StatusConflict, "status")
+		if !strings.Contains(w.Body.String(), "Seeded aliases cannot be removed") {
+			t.Errorf("body = %q, want the seeded refusal", w.Body.String())
+		}
+		if _, err := env.client.Queries.GetTagAliasByName(ctx, "alias seeded loser"); err != nil {
+			t.Errorf("a refused removal may not delete the mapping: %v", err)
+		}
+	})
+
+	t.Run("an absent name returns 404", func(t *testing.T) {
+		testutil.AssertEqual(t, remove("ghost alias remove").Code, http.StatusNotFound, "status")
+	})
+}
+
+// TestPromoteAliasEndpoint pins the promotion status contract: 201 with the created tag, 404 for an
+// absent mapping, and 400 for a blank name.
+func TestPromoteAliasEndpoint(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	promote := func(name string) *httptest.ResponseRecorder {
+		w := rec()
+		r := req(t, "POST", "/api/v1/tags/aliases/placeholder/promote", nil)
+		r.SetPathValue("name", name)
+		h.PromoteAlias(w, r)
+		return w
+	}
+
+	t.Run("promotes a mapping into its own tag", func(t *testing.T) {
+		database.MustCreateTag(t, env.client.Queries, "alias promote canonical")
+		database.MustCreateTag(t, env.client.Queries, "alias promote loser")
+		_, _, err := env.tagSvc.Fold(ctx, "alias promote loser", "alias promote canonical")
+		testutil.AssertNoError(t, err, "fold")
+
+		w := promote("alias promote loser")
+		testutil.AssertEqual(t, w.Code, http.StatusCreated, "status")
+		var created TagResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&created), "decode")
+		testutil.AssertEqual(t, created.Name, "alias promote loser", "the created tag keeps the alias name")
+
+		if _, err := env.client.Queries.GetTagAliasByName(ctx, "alias promote loser"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the alias row should be gone, got err %v", err)
+		}
+		if _, err := env.client.Queries.GetTagByName(ctx, "alias promote loser"); err != nil {
+			t.Errorf("the promoted name must exist as a tag: %v", err)
+		}
+	})
+
+	t.Run("an absent mapping returns 404", func(t *testing.T) {
+		testutil.AssertEqual(t, promote("ghost alias promote").Code, http.StatusNotFound, "status")
+	})
+
+	t.Run("a blank name returns 400", func(t *testing.T) {
+		testutil.AssertEqual(t, promote("").Code, http.StatusBadRequest, "status")
+	})
 }

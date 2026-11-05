@@ -268,6 +268,9 @@
 								onmousedown={() => addTag(t.name)}
 							>
 								{t.name}
+								{#if t.matched_alias}
+									<span class="text-parchment-500"> · alias: {t.matched_alias}</span>
+								{/if}
 							</li>
 						{/each}
 					</ul>

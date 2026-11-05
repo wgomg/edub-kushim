@@ -134,8 +134,17 @@ onto the winner, the loser's own aliases are re-targeted (aliases never chain), 
 deleted while the alias table keeps the mapping. The alias therefore stops appearing as a tag in the
 vocabulary, but the system still knows the old spelling refers to the canonical value.
 
-Aliases have no dedicated screen today: the Vocabulary tab lists live values only. The fold actions —
-on every New tags entry and on every Vocabulary row — are the way to create and correct them by hand.
+There is no dedicated alias screen: aliases appear on the Vocabulary tab as chips under the value
+they resolve to, and the fold actions — on every New tags entry and on every Vocabulary row — are the
+way to create them by hand. Every non-seeded chip offers **remove** (the mapping is deleted, documents
+stay on the canonical, and a filter that still uses the old name stops matching) and **promote** (the
+name becomes a live tag of its own starting empty, its documents having stayed on the canonical).
+Seeded aliases — the shipped alternate spellings the startup seeder restores — refuse removal but can
+be promoted.
+
+Aliases resolve wherever names are matched: a tag filter using an alias name matches the canonical's
+documents, the Vocabulary `?q=` search finds a value by any of its aliases, and tag suggestions show
+the canonical tag with the alias that matched as a hint.
 
 ## Related review surfaces
 
@@ -144,8 +153,8 @@ on every New tags entry and on every Vocabulary row — are the way to create an
 - **Overlap** (`/tags#siblings`) — near-containment readings from the latest measurement pass. They are
   informational: nothing is merged or removed automatically.
 - **Deleted** (`/tags#deleted`) — the blocklist of rejected names, restorable.
-- **Vocabulary** (`/tags`) — every live tag with counts and standing; rename, fold, demote and delete
-  live there too.
+- **Vocabulary** (`/tags`) — every live tag with counts and standing; rename, fold, demote, delete and
+  the alias chip actions (remove, promote) live there too.
 
 Running the passes by hand and their schedules are described in
 [cli.md](cli.md#tag-passes); the configuration keys behind the judges and schedules

@@ -379,6 +379,44 @@ Request body (required) (`application/json`): [CreateTagRequest](#createtagreque
 | 500 | string |
 | 503 | object |
 
+#### `DELETE /api/v1/tags/aliases/{name}`
+
+RemoveAlias deletes one recorded alias, so the alias name stops resolving to its canonical tag.
+
+The canonical tag keeps its documents untouched; seeded aliases are refused, because the startup seeder would restore them.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `name` | path | string | yes | — |
+
+| Status | Body |
+|---|---|
+| 204 | no body |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
+#### `POST /api/v1/tags/aliases/{name}/promote`
+
+PromoteAlias turns one recorded alias into a live tag and answers with the created tag.
+
+The canonical keeps its documents, so the promoted name starts empty.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `name` | path | string | yes | — |
+
+| Status | Body |
+|---|---|
+| 200 | object |
+| 201 | [TagResponse](#tagresponse) |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+| 503 | object |
+
 #### `GET /api/v1/tags/audit/flags`
 
 ListAuditFlags serves the paged open coverage flags.
@@ -2965,6 +3003,15 @@ TagAdjudicatorLlmResponse is one LLM endpoint of the judged steps.
 | `request_delay` | number | yes |
 | `token` | string | no |
 
+### TagAliasResponse
+
+TagAliasResponse is one recorded alias of a tag: the alternate spelling of a name, and whether the startup seeder owns it. Seeded ownership keeps the removal action off the shipped inventory, since reseeding would restore it.
+
+| Field | Type | Required |
+|---|---|---|
+| `name` | string | yes |
+| `seeded` | boolean | yes |
+
 ### TagAuditConfigResponse
 
 TagAuditConfigResponse is the coverage audit section's API view.
@@ -3082,14 +3129,16 @@ TagReconcileReportResponse points at the task whose result holds the reconcile r
 
 ### TagResponse
 
-TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the operator-owned inventory the demote action must leave alone, while Compound marks the composition shape the split actions gate on.
+TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the operator-owned inventory the demote action must leave alone, while Compound marks the composition shape the split actions gate on. The vocabulary listing also fills Aliases and, when the listing is name-searched, the MatchedAlias that the search text prefix-matched; document surfaces leave both empty.
 
 | Field | Type | Required |
 |---|---|---|
+| `aliases` | array of [TagAliasResponse](#tagaliasresponse) | no |
 | `compound` | boolean | no |
 | `created_at` | string (date-time) | no |
 | `document_count` | integer | yes |
 | `id` | integer | yes |
+| `matched_alias` | string | no |
 | `name` | string | yes |
 | `promoted` | boolean | yes |
 | `seeded` | boolean | yes |

@@ -3652,6 +3652,133 @@ paths:
             text/plain; charset=utf-8:
               schema:
                 type: string
+  /api/v1/tags/aliases/{name}:
+    delete:
+      summary: RemoveAlias deletes one recorded alias, so the alias name stops resolving to its canonical tag.
+      description: |-
+        The
+        canonical tag keeps its documents untouched; seeded aliases are refused, because the startup seeder
+        would restore them.
+      operationId: deleteApiV1TagsAliasesByName
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+  /api/v1/tags/aliases/{name}/promote:
+    post:
+      summary: PromoteAlias turns one recorded alias into a live tag and answers with the created tag.
+      description: |-
+        The canonical
+        keeps its documents, so the promoted name starts empty.
+      operationId: postApiV1TagsAliasesByNamePromote
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  names:
+                    anyOf:
+                      - type: array
+                        items:
+                          type: string
+                      - type: "null"
+                required:
+                  - names
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResponse'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
   /api/v1/tags/audit/flags:
     get:
       summary: ListAuditFlags serves the paged open coverage flags.
@@ -7459,6 +7586,20 @@ components:
         - provider
         - model
         - request_delay
+    TagAliasResponse:
+      type: object
+      description: |-
+        TagAliasResponse is one recorded alias of a tag: the alternate spelling of a name, and whether the
+        startup seeder owns it. Seeded ownership keeps the removal action off the shipped inventory, since
+        reseeding would restore it.
+      properties:
+        name:
+          type: string
+        seeded:
+          type: boolean
+      required:
+        - name
+        - seeded
     TagAuditConfigResponse:
       type: object
       description: TagAuditConfigResponse is the coverage audit section's API view.
@@ -7675,8 +7816,14 @@ components:
         TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both
         DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
         operator-owned inventory the demote action must leave alone, while Compound marks the composition
-        shape the split actions gate on.
+        shape the split actions gate on. The vocabulary listing also fills Aliases and, when the listing is
+        name-searched, the MatchedAlias that the search text prefix-matched; document surfaces leave both
+        empty.
       properties:
+        aliases:
+          type: array
+          items:
+            $ref: '#/components/schemas/TagAliasResponse'
         compound:
           type: boolean
         created_at:
@@ -7686,6 +7833,8 @@ components:
           type: integer
         id:
           type: integer
+        matched_alias:
+          type: string
         name:
           type: string
         promoted:

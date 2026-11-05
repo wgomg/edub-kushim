@@ -75,6 +75,29 @@ const (
 	FoldSeeded
 )
 
+// AliasRemoveStatus reports how an operator alias removal resolved: the name carries no alias, the alias
+// belongs to the shipped inventory the seeder would restore, or the mapping was deleted.
+type AliasRemoveStatus int
+
+// The alias removal outcomes, in iota order.
+const (
+	AliasRemoveNotFound AliasRemoveStatus = iota
+	AliasRemoveSeeded
+	AliasRemoveRemoved
+)
+
+// AliasPromoteStatus reports how an operator alias promotion resolved: the name carries no alias, the
+// name could not be registered as a live tag, or the alias became a tag through the operator creation
+// path.
+type AliasPromoteStatus int
+
+// The alias promotion outcomes, in iota order.
+const (
+	AliasPromoteNotFound AliasPromoteStatus = iota
+	AliasPromoteNotApplied
+	AliasPromotePromoted
+)
+
 // CompositionStatus reports how an operator composition decision resolved: the tag is missing, it is
 // no longer provisional, it is seeded and cannot be replaced, it changed underneath the decision, the
 // decision or its parts are invalid, or it was applied.

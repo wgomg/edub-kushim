@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -103,7 +104,41 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.attachAliases(ctx, responses, q); err != nil {
+		writeServiceError(w, h.logger, reqID, "list tag aliases", err)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, TagListResponse{Results: responses, Total: total})
+}
+
+// attachAliases fills each listed tag with its recorded aliases and, when the listing is name-searched,
+// with the alias the query prefix-matched. The lookup runs only when the page has rows, so an empty
+// page costs no query.
+func (h *TagHandler) attachAliases(ctx context.Context, rows []TagResponse, query string) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	aliases, err := h.tag.AliasesByTagIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+
+	prefix := strings.ToLower(query)
+	for i := range rows {
+		for _, alias := range aliases[rows[i].ID] {
+			rows[i].Aliases = append(rows[i].Aliases, TagAliasResponse{Name: alias.AliasName, Seeded: alias.Seeded})
+			if rows[i].MatchedAlias == "" && prefix != "" && strings.HasPrefix(strings.ToLower(alias.AliasName), prefix) {
+				rows[i].MatchedAlias = alias.AliasName
+			}
+		}
+	}
+	return nil
 }
 
 // tagCreatedAt returns the recording time of a tag row, or nil when the column carries no value: the
@@ -534,6 +569,74 @@ func (h *TagHandler) FoldTag(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "Seeded values cannot be folded"})
 	default:
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "The target is gone or already an alias"})
+	}
+}
+
+// RemoveAlias deletes one recorded alias, so the alias name stops resolving to its canonical tag. The
+// canonical tag keeps its documents untouched; seeded aliases are refused, because the startup seeder
+// would restore them.
+func (h *TagHandler) RemoveAlias(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		http.Error(w, "Alias name is required", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.tag.RemoveAlias(ctx, name)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "remove tag alias", err)
+		return
+	}
+
+	switch status {
+	case types.AliasRemoveRemoved:
+		w.WriteHeader(http.StatusNoContent)
+	case types.AliasRemoveSeeded:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Seeded aliases cannot be removed"})
+	default:
+		http.Error(w, "Alias not found", http.StatusNotFound)
+	}
+}
+
+// PromoteAlias turns one recorded alias into a live tag and answers with the created tag. The canonical
+// keeps its documents, so the promoted name starts empty.
+func (h *TagHandler) PromoteAlias(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		http.Error(w, "Alias name is required", http.StatusBadRequest)
+		return
+	}
+
+	status, created, err := h.tag.PromoteAlias(ctx, name)
+	if err != nil {
+		if isMatcherUnavailable(err) {
+			matcherUnavailableResponse(w)
+			return
+		}
+		writeServiceError(w, h.logger, reqID, "promote tag alias", err)
+		return
+	}
+
+	switch status {
+	case types.AliasPromotePromoted:
+		writeJSON(w, http.StatusCreated, TagResponse{
+			ID:        created.ID,
+			Name:      created.Name,
+			Promoted:  created.PromotedAt.Valid,
+			Seeded:    created.Seeded,
+			Compound:  tags.ClassifyShape(created.Name) == tags.ShapeCompound,
+			CreatedAt: tagCreatedAt(created.CreatedAt),
+		})
+	case types.AliasPromoteNotFound:
+		http.Error(w, "Alias not found", http.StatusNotFound)
+	default:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "The alias cannot be promoted to a tag"})
 	}
 }
 

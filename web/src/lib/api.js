@@ -276,6 +276,10 @@ export const api = {
 				body: JSON.stringify({ name })
 			}),
 		delete: (id) => requestRaw(`/api/v1/tags/${id}`, { method: 'DELETE' }),
+		removeAlias: (name) =>
+			requestRaw(`/api/v1/tags/aliases/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+		promoteAlias: (name) =>
+			requestRaw(`/api/v1/tags/aliases/${encodeURIComponent(name)}/promote`, { method: 'POST' }),
 		deletedList: ({ q = '', limit = 50, offset = 0 } = {}) => {
 			const params = new URLSearchParams();
 			if (q) params.set('q', q);

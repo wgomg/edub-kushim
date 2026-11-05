@@ -77,7 +77,9 @@ ORDER BY promoted_at;
 SELECT COUNT(*) FROM tag;
 
 -- name: CountTagsByName :one
-SELECT COUNT(*) FROM tag WHERE name ILIKE $1;
+SELECT COUNT(*) FROM tag t
+WHERE (t.name ILIKE $1
+    OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id AND ta.alias_name ILIKE $1));
 
 -- name: SearchTagsByName :many
 SELECT * FROM tag WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3;
@@ -100,7 +102,8 @@ ORDER BY t.created_at DESC LIMIT $1 OFFSET $2;
 SELECT t.*, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
-WHERE t.name ILIKE $1
+WHERE (t.name ILIKE $1
+    OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id AND ta.alias_name ILIKE $1))
 GROUP BY t.id
 ORDER BY t.name ASC LIMIT $2 OFFSET $3;
 

@@ -345,9 +345,18 @@ whose fresh verdict flips back to `keep` **withdraws** the alias: the alias row 
 removed, the name is re-created, and the affected documents return to it. An alias onto a
 *different* canonical is left alone — the name still resolves.
 
-The tags page exposes vocabulary CRUD (rename, delete) and the provisional review; there
-is no merge queue. An operator delete records the name in `deleted_tag` as `blocked`, and
-the Deleted tab restores a name by clearing the row and re-creating the tag.
+Operators curate mappings directly from the vocabulary chips: `Tag.RemoveAlias` deletes a
+non-seeded `tag_alias` row (the name stops resolving, documents stay on the canonical, and a
+seeded row is refused because the seeder would restore it), and `Tag.PromoteAlias` deletes
+the mapping and registers the name through the operator creation path — one transaction,
+with the alias row removed before the plan resolves the name, so the name becomes its own
+tag instead of collapsing back onto the canonical. The promoted tag starts empty, its
+documents having stayed on the canonical, and its name enters the embedding store.
+
+The tags page exposes vocabulary CRUD (rename, delete), the alias chips (remove, promote)
+and the provisional review; there is no merge queue. An operator delete records the name in
+`deleted_tag` as `blocked`, and the Deleted tab restores a name by clearing the row and
+re-creating the tag.
 
 ## 9. Scheduled reconciliation
 

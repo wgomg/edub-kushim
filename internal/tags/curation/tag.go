@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -91,13 +92,22 @@ func (s *Tag) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// CountByName counts the tags whose names start with the prefix.
+// CountByName counts the tags whose name or recorded alias starts with the prefix; LIKE wildcards in
+// the prefix are matched literally.
 func (s *Tag) CountByName(ctx context.Context, prefix string) (int64, error) {
-	count, err := s.client.Queries.CountTagsByName(ctx, prefix+"%")
+	count, err := s.client.Queries.CountTagsByName(ctx, likePrefixPattern(prefix))
 	if err != nil {
 		return 0, errs.FromDB(err, "count tags by name")
 	}
 	return count, nil
+}
+
+// likePrefixPattern builds the ILIKE prefix pattern for a tag-name search. LIKE treats '\', '%' and '_'
+// specially, so they are escaped to keep the search text literal; the listing's matching-alias hint
+// compares the same literal prefix.
+func likePrefixPattern(prefix string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	return escaped + "%"
 }
 
 // ListAll returns every tag, promoted and provisional.
@@ -121,11 +131,11 @@ func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([
 	return tags, nil
 }
 
-// SearchByNameWithDocumentCount pages the tags whose names start with the
-// prefix, with their live document counts.
+// SearchByNameWithDocumentCount pages the tags whose name or recorded alias starts with the prefix,
+// with their live document counts; LIKE wildcards in the prefix are matched literally.
 func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.SearchTagsByNameWithDocumentCount(ctx, database.SearchTagsByNameWithDocumentCountParams{
-		Name:   prefix + "%",
+		Name:   likePrefixPattern(prefix),
 		Limit:  limit,
 		Offset: offset,
 	})

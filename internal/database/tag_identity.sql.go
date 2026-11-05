@@ -37,7 +37,7 @@ func (q *Queries) DeleteTagAliasByName(ctx context.Context, aliasName string) (i
 }
 
 const getTagAliasByName = `-- name: GetTagAliasByName :one
-SELECT id, alias_name, canonical_tag_id, rule_set_version, created_at FROM tag_alias WHERE alias_name = $1
+SELECT id, alias_name, canonical_tag_id, rule_set_version, created_at, seeded FROM tag_alias WHERE alias_name = $1
 `
 
 func (q *Queries) GetTagAliasByName(ctx context.Context, aliasName string) (TagAlias, error) {
@@ -49,6 +49,7 @@ func (q *Queries) GetTagAliasByName(ctx context.Context, aliasName string) (TagA
 		&i.CanonicalTagID,
 		&i.RuleSetVersion,
 		&i.CreatedAt,
+		&i.Seeded,
 	)
 	return i, err
 }
@@ -240,6 +241,42 @@ func (q *Queries) ListPendingTagIdentityEvents(ctx context.Context, arg ListPend
 			&i.Model,
 			&i.RuleSetVersion,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTagAliasesByCanonicalIDs = `-- name: ListTagAliasesByCanonicalIDs :many
+SELECT id, alias_name, canonical_tag_id, rule_set_version, created_at, seeded FROM tag_alias
+WHERE canonical_tag_id = ANY($1::bigint[])
+ORDER BY alias_name
+`
+
+func (q *Queries) ListTagAliasesByCanonicalIDs(ctx context.Context, tagIds []int64) ([]TagAlias, error) {
+	rows, err := q.db.QueryContext(ctx, listTagAliasesByCanonicalIDs, pq.Array(tagIds))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TagAlias
+	for rows.Next() {
+		var i TagAlias
+		if err := rows.Scan(
+			&i.ID,
+			&i.AliasName,
+			&i.CanonicalTagID,
+			&i.RuleSetVersion,
+			&i.CreatedAt,
+			&i.Seeded,
 		); err != nil {
 			return nil, err
 		}

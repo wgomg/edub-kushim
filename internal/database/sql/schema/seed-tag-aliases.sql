@@ -1,5 +1,5 @@
-INSERT INTO tag_alias (alias_name, canonical_tag_id, rule_set_version)
-SELECT a.alias, t.id, 'v0'
+INSERT INTO tag_alias (alias_name, canonical_tag_id, rule_set_version, seeded)
+SELECT a.alias, t.id, 'v0', true
 FROM (VALUES
     ('us', 'united states'),
     ('usa', 'united states'),

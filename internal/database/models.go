@@ -394,6 +394,7 @@ type TagAlias struct {
 	CanonicalTagID int64
 	RuleSetVersion string
 	CreatedAt      time.Time
+	Seeded         bool
 }
 
 type TagAuditRegister struct {

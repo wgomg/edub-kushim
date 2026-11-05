@@ -79,8 +79,10 @@ separate two labels, a fixed, versioned lexical order decides.
 **M5 — Alias mechanics.** The loser of a same-intent pair becomes an alias: it resolves
 to the canonical label in matching, suggestions, emitted names, and query input; it
 never surfaces as a value itself; its assignments are re-pointed and its counts merge.
-An alias is never deleted or blocklisted; its representation is schema work while these
-semantics are fixed here.
+Resolution never deletes or blocklists an alias; an operator may instead remove a
+non-seeded mapping outright or promote it back to a live tag, while a seeded alias
+refuses removal because the startup seeder would restore it. An alias's representation
+is schema work while these semantics are fixed here.
 
 **M6 — Measurement.** Extension comparison, near-containment, recurrence — raw counts
 computed for later confirmation of birth calls; no disposition is taken here. A pair

@@ -198,6 +198,123 @@ func (s *Tag) applyAliasAction(ctx context.Context, q *database.Queries, existin
 	return tags.AliasOutcome{Applied: true}, nil
 }
 
+// AliasesByTagIDs loads the recorded aliases of the given canonical tags, grouped by tag id and ordered
+// by alias name; an empty id list reads nothing.
+func (s *Tag) AliasesByTagIDs(ctx context.Context, tagIDs []int64) (map[int64][]database.TagAlias, error) {
+	out := make(map[int64][]database.TagAlias, len(tagIDs))
+	if len(tagIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.client.Queries.ListTagAliasesByCanonicalIDs(ctx, tagIDs)
+	if err != nil {
+		return nil, errs.FromDB(err, "list tag aliases")
+	}
+	for _, row := range rows {
+		out[row.CanonicalTagID] = append(out[row.CanonicalTagID], row)
+	}
+	return out, nil
+}
+
+// RemoveAlias deletes one recorded alias, so the name stops resolving to its canonical and leaves the
+// filter vocabulary; the canonical tag and its documents stay untouched, and no matcher-store entry
+// changes because alias names were never embedded. Seeded aliases are refused, since the startup seeder
+// would restore them and the removal could not stick. Removing an absent alias name is reported as not
+// found rather than as a failure, which makes a repeated removal harmless.
+func (s *Tag) RemoveAlias(ctx context.Context, name string) (types.AliasRemoveStatus, error) {
+	aliasName := textnorm.NormalizeTag(name)
+	if aliasName == "" {
+		return types.AliasRemoveNotFound, nil
+	}
+
+	row, err := s.client.Queries.GetTagAliasByName(ctx, aliasName)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.AliasRemoveNotFound, nil
+		}
+		return types.AliasRemoveNotFound, errs.FromDB(err, "get tag alias "+aliasName)
+	}
+	if row.Seeded {
+		return types.AliasRemoveSeeded, nil
+	}
+
+	removed, err := s.client.Queries.DeleteTagAliasByName(ctx, aliasName)
+	if err != nil {
+		return types.AliasRemoveNotFound, errs.FromDB(err, "delete tag alias "+aliasName)
+	}
+	if removed == 0 {
+		return types.AliasRemoveNotFound, nil
+	}
+
+	s.logger.Info("", "tag alias: removed %q (canonical_tag_id=%d)", aliasName, row.CanonicalTagID)
+	return types.AliasRemoveRemoved, nil
+}
+
+// PromoteAlias turns one recorded alias back into a live tag: the alias mapping is deleted and the name
+// is registered through the operator creation path, so it takes the standing a hand-created tag takes
+// and enters the matcher store, and its name is cleared from the deleted-tag blocklist. The canonical
+// keeps its documents — the fold that created the alias already re-pointed them — so the promoted tag
+// starts empty. The alias row is deleted inside the transaction before the registration is planned: the
+// plan resolves names through the alias table, and a live row would resolve this name back onto the
+// canonical instead of registering it. A name that the plan would alias or merge is not promoted; the
+// transaction rolls back and the mapping stays.
+func (s *Tag) PromoteAlias(ctx context.Context, name string) (types.AliasPromoteStatus, database.Tag, error) {
+	aliasName := textnorm.NormalizeTag(name)
+	if aliasName == "" {
+		return types.AliasPromoteNotFound, database.Tag{}, nil
+	}
+
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return types.AliasPromoteNotFound, database.Tag{}, errs.FromDB(err, "begin alias promote")
+	}
+	defer tx.Rollback()
+	txQ := s.client.Queries.WithTx(tx)
+
+	if _, err := txQ.GetTagAliasByName(ctx, aliasName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.AliasPromoteNotFound, database.Tag{}, nil
+		}
+		return types.AliasPromoteNotFound, database.Tag{}, errs.FromDB(err, "get tag alias "+aliasName)
+	}
+
+	removed, err := txQ.DeleteTagAliasByName(ctx, aliasName)
+	if err != nil {
+		return types.AliasPromoteNotApplied, database.Tag{}, errs.FromDB(err, "delete tag alias "+aliasName)
+	}
+	if removed == 0 {
+		return types.AliasPromoteNotFound, database.Tag{}, nil
+	}
+
+	plan, err := s.buildPlan(ctx, txQ, []string{aliasName}, true)
+	if err != nil {
+		return types.AliasPromoteNotApplied, database.Tag{}, err
+	}
+	results, newNames, err := s.CreatePlannedTx(ctx, txQ, plan, false)
+	if err != nil {
+		return types.AliasPromoteNotApplied, database.Tag{}, err
+	}
+	if len(results) != 1 || results[0].Status != types.Created {
+		return types.AliasPromoteNotApplied, database.Tag{}, nil
+	}
+
+	created, err := txQ.GetTagByName(ctx, aliasName)
+	if err != nil {
+		return types.AliasPromoteNotApplied, database.Tag{}, errs.FromDB(err, "get promoted tag "+aliasName)
+	}
+	if err := txQ.DeleteDeletedTag(ctx, aliasName); err != nil {
+		return types.AliasPromoteNotApplied, database.Tag{}, errs.FromDB(err, "clear deleted tag "+aliasName)
+	}
+	if err := tx.Commit(); err != nil {
+		return types.AliasPromoteNotApplied, database.Tag{}, errs.FromDB(err, "commit alias promote")
+	}
+
+	if len(newNames) > 0 {
+		s.encodeAndAddBatch(ctx, newNames)
+	}
+	s.logger.Info("", "tag alias: promoted %q to a tag (id=%d)", aliasName, created.ID)
+	return types.AliasPromotePromoted, created, nil
+}
+
 // RecordIdentityEvidence is the reconcile sweep's write path for pending identity evidence: rows are
 // normalized and versioned exactly as the emission path's, so the two writers stay interchangeable.
 func (s *Tag) RecordIdentityEvidence(ctx context.Context, rows []tags.EvidenceRow) error {

@@ -1470,3 +1470,131 @@ func TestTag_Separate(t *testing.T) {
 		testutil.AssertEqual(t, status, types.SeparateNotFound, "status")
 	})
 }
+
+// TestTag_RemoveAlias pins the operator removal: the mapping goes while the canonical keeps its
+// documents, a seeded mapping is refused because the startup seeder would restore it, and an absent
+// name reports not found rather than failing.
+func TestTag_RemoveAlias(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	t.Run("removes the mapping and leaves the canonical documents", func(t *testing.T) {
+		database.MustCreateTag(t, client.Queries, "remove alias canonical")
+		loserID := database.MustCreateTag(t, client.Queries, "remove alias loser")
+		docID := database.CreateUniqueDocument(t, client.Queries, "remove alias doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, loserID)
+		_, _, err := svc.Fold(ctx, "remove alias loser", "remove alias canonical")
+		testutil.AssertNoError(t, err, "fold")
+
+		status, err := svc.RemoveAlias(ctx, "remove alias loser")
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, status, types.AliasRemoveRemoved, "status")
+
+		if _, err := client.Queries.GetTagAliasByName(ctx, "remove alias loser"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the alias row should be gone, got err %v", err)
+		}
+		canonical, err := client.Queries.GetTagByName(ctx, "remove alias canonical")
+		testutil.AssertNoError(t, err, "the canonical survives the removal")
+		var assigned int64
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT tag_id FROM document_tag WHERE document_id = $1", docID).Scan(&assigned),
+			"read the document's tag")
+		testutil.AssertEqual(t, assigned, canonical.ID, "the document stays on the canonical")
+	})
+
+	t.Run("a seeded mapping is refused", func(t *testing.T) {
+		database.MustCreateTag(t, client.Queries, "remove seeded canonical")
+		database.MustCreateTag(t, client.Queries, "remove seeded loser")
+		_, _, err := svc.Fold(ctx, "remove seeded loser", "remove seeded canonical")
+		testutil.AssertNoError(t, err, "fold")
+		_, err = client.DB().ExecContext(ctx,
+			"UPDATE tag_alias SET seeded = true WHERE alias_name = $1", "remove seeded loser")
+		testutil.AssertNoError(t, err, "mark seeded")
+
+		status, err := svc.RemoveAlias(ctx, "remove seeded loser")
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, status, types.AliasRemoveSeeded, "status")
+
+		if _, err := client.Queries.GetTagAliasByName(ctx, "remove seeded loser"); err != nil {
+			t.Errorf("a refused removal may not delete the mapping: %v", err)
+		}
+	})
+
+	t.Run("an absent name reports not found", func(t *testing.T) {
+		status, err := svc.RemoveAlias(ctx, "ghost alias value")
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, status, types.AliasRemoveNotFound, "status")
+	})
+}
+
+// TestTag_PromoteAlias pins the promotion's ordering: the alias row leaves before the plan resolves
+// the name, so the name registers as its own promoted tag instead of collapsing back onto the
+// canonical; the documents stay on the canonical, the matcher store receives the name, and a seeded
+// alias remains promotable.
+func TestTag_PromoteAlias(t *testing.T) {
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+	embedder := testutil.NewMockEmbedder()
+	svc := NewTag(client, testutil.NewTestLogger(), embedder)
+	ctx := context.Background()
+
+	t.Run("promotes the alias into its own tag", func(t *testing.T) {
+		canonicalID := database.MustCreateTag(t, client.Queries, "promote alias canonical")
+		loserID := database.MustCreateTag(t, client.Queries, "promote alias loser")
+		docID := database.CreateUniqueDocument(t, client.Queries, "promote alias doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, loserID)
+		_, _, err := svc.Fold(ctx, "promote alias loser", "promote alias canonical")
+		testutil.AssertNoError(t, err, "fold")
+
+		status, created, err := svc.PromoteAlias(ctx, "promote alias loser")
+		testutil.AssertNoError(t, err, "promote")
+		testutil.AssertEqual(t, status, types.AliasPromotePromoted, "status")
+		testutil.AssertEqual(t, created.Name, "promote alias loser", "the created tag carries the alias name")
+
+		if _, err := client.Queries.GetTagAliasByName(ctx, "promote alias loser"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the alias row should be gone, got err %v", err)
+		}
+		promoted, err := client.Queries.GetTagByName(ctx, "promote alias loser")
+		testutil.AssertNoError(t, err, "the name registers as its own tag")
+		if promoted.ID == canonicalID {
+			t.Error("the name must not resolve back onto the canonical")
+		}
+		if !promoted.PromotedAt.Valid {
+			t.Error("the operator create path promotes the new tag")
+		}
+		if !embedder.Has("promote alias loser") {
+			t.Error("the matcher store must receive the promoted name")
+		}
+		var assigned int64
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT tag_id FROM document_tag WHERE document_id = $1", docID).Scan(&assigned),
+			"read the document's tag")
+		testutil.AssertEqual(t, assigned, canonicalID, "the document stays on the canonical")
+	})
+
+	t.Run("a seeded mapping is promotable", func(t *testing.T) {
+		database.MustCreateTag(t, client.Queries, "promote seeded canonical")
+		database.MustCreateTag(t, client.Queries, "promote seeded loser")
+		_, _, err := svc.Fold(ctx, "promote seeded loser", "promote seeded canonical")
+		testutil.AssertNoError(t, err, "fold")
+		_, err = client.DB().ExecContext(ctx,
+			"UPDATE tag_alias SET seeded = true WHERE alias_name = $1", "promote seeded loser")
+		testutil.AssertNoError(t, err, "mark seeded")
+
+		status, _, err := svc.PromoteAlias(ctx, "promote seeded loser")
+		testutil.AssertNoError(t, err, "promote")
+		testutil.AssertEqual(t, status, types.AliasPromotePromoted, "status")
+
+		if _, err := client.Queries.GetTagByName(ctx, "promote seeded loser"); err != nil {
+			t.Errorf("the seeded alias must exist as a tag after promotion: %v", err)
+		}
+	})
+
+	t.Run("an absent name reports not found", func(t *testing.T) {
+		status, _, err := svc.PromoteAlias(ctx, "ghost promote value")
+		testutil.AssertNoError(t, err, "promote")
+		testutil.AssertEqual(t, status, types.AliasPromoteNotFound, "status")
+	})
+}

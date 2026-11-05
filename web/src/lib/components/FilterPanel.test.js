@@ -56,6 +56,20 @@ describe('FilterPanel', () => {
 		await waitFor(() => expect(get(filterStore).tags).toEqual(['invoice']));
 	});
 
+	it('shows the matched alias hint and selects the canonical tag', async () => {
+		apiMocks.tags.mockResolvedValue([{ name: 'netherlands', matched_alias: 'holland' }]);
+		render(FilterPanel);
+
+		const input = screen.getByLabelText('Tags');
+		fireEvent.input(input, { target: { value: 'holl' } });
+		const option = await screen.findByRole('option', { name: /netherlands/ });
+		expect(option.textContent).toContain('netherlands');
+		expect(option.textContent).toContain('alias: holland');
+
+		fireEvent.keyDown(input, { key: 'Enter' });
+		await waitFor(() => expect(get(filterStore).tags).toEqual(['netherlands']));
+	});
+
 	it('shows a toast when tag autocomplete fails', async () => {
 		apiMocks.tags.mockRejectedValue(new Error('nope'));
 		render(FilterPanel);

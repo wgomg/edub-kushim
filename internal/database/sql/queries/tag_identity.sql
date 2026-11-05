@@ -6,6 +6,11 @@ ON CONFLICT (alias_name) DO NOTHING;
 -- name: GetTagAliasByName :one
 SELECT * FROM tag_alias WHERE alias_name = $1;
 
+-- name: ListTagAliasesByCanonicalIDs :many
+SELECT * FROM tag_alias
+WHERE canonical_tag_id = ANY(@tag_ids::bigint[])
+ORDER BY alias_name;
+
 -- name: DeleteTagAliasByName :execrows
 DELETE FROM tag_alias WHERE alias_name = $1;
 

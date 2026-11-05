@@ -210,6 +210,8 @@ POST /api/v1/documents/search
 - Autocomplete companions: `GET /api/v1/tags?q=`, `/api/v1/people?q=`,
   `/api/v1/people-types`, `/api/v1/document-types`, plus `GET /api/v1/filter-languages` and
   `GET /api/v1/supported-mime-types` for building filter UIs.
+- The tag list matches names and recorded aliases by prefix; every row carries its `aliases`
+  (name plus the `seeded` flag) and, on a `q` search, the `matched_alias` the text prefix-matched.
 
 ### Document management
 
@@ -277,10 +279,15 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
 2. **Decide**: `POST /api/v1/tags/{id}/promote` → `204` (already promoted → `409`). Rejecting
    uses `DELETE /api/v1/tags/{id}`, which blocklists the name. `POST /api/v1/tags/{id}/demote`
    withdraws a promoted tag's standing (seeded inventory cannot be demoted — `409`); its
-   assignments stay and it returns to the queue. Three operator decisions cover the holds:
+   assignments stay and it returns to the queue. Operator decisions cover the holds:
    `POST /api/v1/tags/fold` with `{"alias": "loser", "canonical": "winner"}` (`204`; `404` when the
    loser name is not a tag, `409` when the fold cannot apply — seeded inventory cannot be folded
    away) collapses two names;
+   `DELETE /api/v1/tags/aliases/{name}` (`204`; `404` unknown alias, `409` for a seeded alias the
+   startup seeder would restore) deletes a mapping without touching documents, and
+   `POST /api/v1/tags/aliases/{name}/promote` (`201` with the created tag; `404` unknown alias,
+   `400` a blank name, `409` when the name cannot be registered) turns a mapping back into a live
+   tag — documents stay on the canonical, so the promoted tag starts empty;
    `POST /api/v1/tags/{id}/composition` with `{"disposition": "split"|"keep", "parts": ["…"]}`
    (`204`; `404` unknown tag, `400` an invalid decision or too many components, `409` when the tag is
    already promoted) applies a split or keeps the compound whole, with parts applied alongside when
