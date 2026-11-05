@@ -7634,6 +7634,8 @@ components:
           type: integer
         provisional_grace_days:
           type: integer
+        reask_defer_days:
+          type: integer
         report_only:
           type: boolean
         retention_days:
@@ -7650,6 +7652,7 @@ components:
         - dead_tag_grace_days
         - provisional_grace_days
         - retention_days
+        - reask_defer_days
     TagReconcileReportResponse:
       type: object
       description: |-

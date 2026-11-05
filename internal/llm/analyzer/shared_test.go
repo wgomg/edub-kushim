@@ -911,7 +911,7 @@ func TestBuildTagPartPrompt(t *testing.T) {
 	if !strings.Contains(result, "cannot stand as a subject on its own") {
 		t.Error("parts criteria must give the judge a concrete fragment test")
 	}
-	if !strings.Contains(result, "do not infer a sense it might take from a phrase") {
+	if !strings.Contains(result, "never a sense inferred from a phrase") {
 		t.Error("parts criteria must anchor the value to its ordinary standalone sense")
 	}
 	if !strings.Contains(result, "Lexicalized derivations and gerunds stand") {
@@ -1128,6 +1128,138 @@ func TestParseTagCompoundResponse_InvalidJSON(t *testing.T) {
 	_, err := ParseTagCompoundResponse("not json", 1)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestParseTagConflictResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		n           int
+		wantActions []TagConflictAction
+		wantMissing []int
+	}{
+		{
+			name:        "all three actions",
+			content:     `{"items":[{"index":0,"action":"split"},{"index":1,"action":"keep"},{"index":2,"action":"defer"}]}`,
+			n:           3,
+			wantActions: []TagConflictAction{TagConflictSplit, TagConflictKeep, TagConflictDefer},
+		},
+		{
+			name:        "a bare array is the envelope",
+			content:     `[{"index":0,"action":"keep"}]`,
+			n:           1,
+			wantActions: []TagConflictAction{TagConflictKeep},
+		},
+		{
+			name:        "an entry without an index lands by position",
+			content:     `{"items":[{"action":"split"},{"action":"defer"}]}`,
+			n:           2,
+			wantActions: []TagConflictAction{TagConflictSplit, TagConflictDefer},
+		},
+		{
+			name:        "an unrecognized action counts as missing",
+			content:     `{"items":[{"index":0,"action":"maybe"}]}`,
+			n:           1,
+			wantActions: []TagConflictAction{""},
+			wantMissing: []int{0},
+		},
+		{
+			name:        "an out-of-range index is skipped and its slot stays missing",
+			content:     `{"items":[{"index":7,"action":"keep"}]}`,
+			n:           1,
+			wantActions: []TagConflictAction{""},
+			wantMissing: []int{0},
+		},
+		{
+			name:        "a truncated reply keeps what it returned and reports the rest",
+			content:     `{"items":[{"index":0,"action":"keep"}]}`,
+			n:           2,
+			wantActions: []TagConflictAction{TagConflictKeep, ""},
+			wantMissing: []int{1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseTagConflictResponse(tt.content, tt.n)
+			var incomplete *IncompleteReplyError
+			if len(tt.wantMissing) > 0 {
+				if !errors.As(err, &incomplete) {
+					t.Fatalf("err = %v, want an IncompleteReplyError", err)
+				}
+				if !reflect.DeepEqual(incomplete.Missing, tt.wantMissing) {
+					t.Errorf("Missing = %v, want %v", incomplete.Missing, tt.wantMissing)
+				}
+			} else if err != nil {
+				t.Fatalf("ParseTagConflictResponse: %v", err)
+			}
+			if len(got) != len(tt.wantActions) {
+				t.Fatalf("results = %d, want %d", len(got), len(tt.wantActions))
+			}
+			for i, want := range tt.wantActions {
+				if got[i].Action != want {
+					t.Errorf("results[%d].Action = %q, want %q", i, got[i].Action, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParseTagConflictResponse_InvalidJSON(t *testing.T) {
+	_, err := ParseTagConflictResponse("not json", 1)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestBuildTagConflictPrompt(t *testing.T) {
+	candidates := []TagConflictCandidate{
+		{Index: 0, Compound: "bodily autonomy", Class: "composition",
+			Parts: []TagConflictPart{{Term: "bodily", Dimensional: false}, {Term: "autonomy", Dimensional: true}}},
+		{Index: 1, Compound: "thesis summary", Class: "no_dimension",
+			Parts: []TagConflictPart{{Term: "thesis", Dimensional: true}, {Term: "summary", Dimensional: true}}},
+	}
+	prompt := BuildTagConflictPrompt(candidates)
+
+	if !strings.Contains(prompt, TagDefinition) {
+		t.Error("prompt missing the shared tag definition")
+	}
+	if !strings.Contains(prompt, "classification=composition") || !strings.Contains(prompt, "classification=no_dimension") {
+		t.Error("prompt must carry each item's compound classification so both disagreement shapes are visible")
+	}
+	if !strings.Contains(prompt, `"bodily" (not a tag on its own)`) || !strings.Contains(prompt, `"autonomy" (a tag on its own)`) {
+		t.Error("prompt must render each constituent with its standalone verdict")
+	}
+	for _, action := range []string{"split", "keep", "defer"} {
+		if !strings.Contains(prompt, fmt.Sprintf("%q", action)) {
+			t.Errorf("prompt missing the %q resolution class", action)
+		}
+	}
+	if !strings.Contains(prompt, `"items":[`) {
+		t.Error("prompt missing the response envelope")
+	}
+}
+
+// TestJudgedPromptsEmbedTagDefinition pins the shared-definition contract the split-gate alignment rests
+// on: every judged prompt that speaks of tags embeds the definition verbatim, so no pass can drift back to
+// its own sense of the word.
+func TestJudgedPromptsEmbedTagDefinition(t *testing.T) {
+	prompts := map[string]string{
+		"parts":      BuildTagPartPrompt([]string{"russia"}),
+		"compound":   BuildTagCompoundPrompt([]string{"cold war"}),
+		"quality":    BuildTagQualityPrompt("text", []TagQualityCandidate{{Index: 0, Term: "war"}}),
+		"identity":   BuildTagIdentityPrompt([]TagIdentityCandidate{{Index: 0, Term: "wars"}}),
+		"phrasefold": BuildTagPhraseFoldPrompt([]TagPhraseFoldCandidate{{Index: 0, Phrase: "civil war", Part: "civil", Anchor: "state"}}),
+		"adjudicate": BuildAdjudicationPrompt([]TagPairEvidence{{Query: "labour", Target: "labor"}}),
+		"audit":      BuildTagAuditPrompt("text", []TagAuditCandidate{{Index: 0, Term: "war"}}),
+		"conflict": BuildTagConflictPrompt([]TagConflictCandidate{
+			{Index: 0, Compound: "cold war", Class: "composition", Parts: []TagConflictPart{{Term: "cold"}}},
+		}),
+	}
+	for name, prompt := range prompts {
+		if !strings.Contains(prompt, TagDefinition) {
+			t.Errorf("%s prompt missing the shared tag definition", name)
+		}
 	}
 }
 
@@ -1525,7 +1657,7 @@ func TestBuildTagQualityPrompt_NarrowsTheDocumentToOneQuestion(t *testing.T) {
 		"1. subject_matter: is the tag a subject matter of the document",
 		"something this document is about",
 		"2. not_person: is the tag not a person?",
-		"3. atomic: is the tag one dimension, not a combination",
+		"3. atomic: is the tag one dimension rather than a pre-coordination",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("quality prompt missing v4 scope wording %q", want)

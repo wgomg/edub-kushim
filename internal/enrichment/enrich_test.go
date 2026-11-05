@@ -181,6 +181,10 @@ func (r *suggestionRecorder) JudgeTagCompounds(context.Context, []string) ([]ana
 	return nil, nil
 }
 
+func (r *suggestionRecorder) JudgeTagConflicts(context.Context, []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+	return nil, nil
+}
+
 func (r *suggestionRecorder) JudgeTagQuality(context.Context, string, []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
 	return nil, nil
 }

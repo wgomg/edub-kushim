@@ -139,11 +139,12 @@ func Run(c *container.Container, args []string) error {
 			DedupKey:      backup.MirrorDedupKey,
 			Preconditions: []task.Precondition{backup.MirrorPrecondition},
 		},
-		types.Task.Type.TagReconcile: {DedupKey: task.ConstantDedupKey(curation.TagReconcileDedupKey)},
-		types.Task.Type.TagMeasure:   {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
-		types.Task.Type.TagIdentity:  {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
-		types.Task.Type.TagAudit:     {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
-		types.Task.Type.TagRejudge:   {DedupKey: curation.TagRejudgeDedupKey},
+		types.Task.Type.TagReconcile:  {DedupKey: task.ConstantDedupKey(curation.TagReconcileDedupKey)},
+		types.Task.Type.TagMeasure:    {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
+		types.Task.Type.TagIdentity:   {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
+		types.Task.Type.TagAudit:      {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
+		types.Task.Type.TagSplitReask: {DedupKey: task.ConstantDedupKey(curation.TagSplitReaskDedupKey)},
+		types.Task.Type.TagRejudge:    {DedupKey: curation.TagRejudgeDedupKey},
 	})
 	if err != nil {
 		return fmt.Errorf("task catalog: %w", err)

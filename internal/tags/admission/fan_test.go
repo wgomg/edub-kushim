@@ -141,9 +141,10 @@ func TestPhraseFoldKeys(t *testing.T) {
 	})
 }
 
-// TestApplyPhraseFolds pins the single fold-application rule: a confirmed answer folds the word onto its
-// anchor, an abstention or a several-live-bases ambiguity defers it, and a missing verdict leaves it unfolded
-// for the judged identity path.
+// TestApplyPhraseFolds pins the fold-application rule: a confirmed answer folds the word onto its anchor;
+// with several live sibling senses the word resolves only on exactly one confirmed fold, while competing
+// confirmations, an abstention, or an unanswered anchor defer it, and answers that all decline leave it in
+// its own sense.
 func TestApplyPhraseFolds(t *testing.T) {
 	live := map[string]struct{}{tags.Key("state"): {}}
 
@@ -181,6 +182,90 @@ func TestApplyPhraseFolds(t *testing.T) {
 		}
 		if !reflect.DeepEqual(deferred, []string{"civil"}) {
 			t.Errorf("deferred = %v, want the ambiguous word", deferred)
+		}
+	})
+
+	ambiguous := map[string]struct{}{tags.Key("state"): {}, tags.Key("country"): {}}
+	key := func(anchor string) PhraseFoldKey {
+		return PhraseFoldKey{Phrase: "civil war", Part: "civil", Anchor: anchor}
+	}
+	// the fold application mutates the singles slice in place, so every call takes a fresh pair
+	newPair := func() (content, singles []string) {
+		return []string{"civil", "war"}, []string{"civil", "war"}
+	}
+	unfolded := []string{"civil", "war"}
+
+	t.Run("one confirmed fold resolves the sibling-sense word", func(t *testing.T) {
+		verdicts := map[PhraseFoldKey]PhraseFoldVerdict{
+			key("state"):   {Fold: true},
+			key("country"): {},
+		}
+		content, singles := newPair()
+		got, deferred := applyPhraseFolds(content, singles, "civil war", verdicts, ambiguous)
+		if !reflect.DeepEqual(got, []string{"state", "war"}) {
+			t.Errorf("singles = %v, want the single confirmed anchor applied", got)
+		}
+		if len(deferred) != 0 {
+			t.Errorf("deferred = %v, want none once exactly one anchor is confirmed", deferred)
+		}
+	})
+
+	t.Run("competing confirmations defer the sibling-sense word", func(t *testing.T) {
+		verdicts := map[PhraseFoldKey]PhraseFoldVerdict{
+			key("state"):   {Fold: true},
+			key("country"): {Fold: true},
+		}
+		content, singles := newPair()
+		got, deferred := applyPhraseFolds(content, singles, "civil war", verdicts, ambiguous)
+		if !reflect.DeepEqual(got, unfolded) {
+			t.Errorf("singles = %v, want the word left unfolded", got)
+		}
+		if !reflect.DeepEqual(deferred, []string{"civil"}) {
+			t.Errorf("deferred = %v, want the word held between competing anchors", deferred)
+		}
+	})
+
+	t.Run("an abstention among the siblings defers even with a confirmed fold", func(t *testing.T) {
+		verdicts := map[PhraseFoldKey]PhraseFoldVerdict{
+			key("state"):   {Fold: true},
+			key("country"): {Deferred: true},
+		}
+		content, singles := newPair()
+		got, deferred := applyPhraseFolds(content, singles, "civil war", verdicts, ambiguous)
+		if !reflect.DeepEqual(got, unfolded) {
+			t.Errorf("singles = %v, want the word left unfolded", got)
+		}
+		if !reflect.DeepEqual(deferred, []string{"civil"}) {
+			t.Errorf("deferred = %v, want the word held behind the abstention", deferred)
+		}
+	})
+
+	t.Run("an unanswered sibling defers even with a confirmed fold", func(t *testing.T) {
+		verdicts := map[PhraseFoldKey]PhraseFoldVerdict{
+			key("state"): {Fold: true},
+		}
+		content, singles := newPair()
+		got, deferred := applyPhraseFolds(content, singles, "civil war", verdicts, ambiguous)
+		if !reflect.DeepEqual(got, unfolded) {
+			t.Errorf("singles = %v, want the word left unfolded", got)
+		}
+		if !reflect.DeepEqual(deferred, []string{"civil"}) {
+			t.Errorf("deferred = %v, want the word held until every anchor is answered", deferred)
+		}
+	})
+
+	t.Run("all siblings declining leaves the word in its own sense", func(t *testing.T) {
+		verdicts := map[PhraseFoldKey]PhraseFoldVerdict{
+			key("state"):   {},
+			key("country"): {},
+		}
+		content, singles := newPair()
+		got, deferred := applyPhraseFolds(content, singles, "civil war", verdicts, ambiguous)
+		if !reflect.DeepEqual(got, unfolded) {
+			t.Errorf("singles = %v, want the word kept in its own sense", got)
+		}
+		if len(deferred) != 0 {
+			t.Errorf("deferred = %v, want none when every anchor declined", deferred)
 		}
 	})
 }

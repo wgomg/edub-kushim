@@ -75,12 +75,14 @@ func (c TagIdentityCriteria) String() string {
 const TagIdentitySystemMessage = "You are a tag-identity judge. Decide the canonical written form of each tag term."
 
 // BuildTagIdentityPrompt renders the canonical-form questions, with each
-// candidate's proposed fold where one exists.
+// candidate's proposed fold where one exists. The shared tag definition
+// supplies the canonicality property the questions enforce.
 func BuildTagIdentityPrompt(candidates []TagIdentityCandidate) string {
 	var sb strings.Builder
-	sb.WriteString("For each candidate tag term below, answer three yes/no questions about its canonical written form.\n")
+	sb.WriteString(TagDefinition + "\n")
+	sb.WriteString("For each candidate tag term below, answer three yes/no questions about its canonical written form, enforcing the definition's one-canonical-label-per-intent property.\n")
 	sb.WriteString("1. fold_to_base: should the term be written in its base form? A relational adjective falls to its noun when it denotes the same thing (chilean -> chile). A plural whose base form exists folds to the base unless the plural is the established name of the sense (railways -> railway; data stands). An inflected form stands when it is the established name of the sense (data, human rights) or denotes a different sense than the base (arms is not arm). Lexicalized derivations and gerunds stand (programming, learning, running); a derived word that names its own concept is never reduced to a root. Answer false when the term already stands or its proposed fold would cross denotation.\n")
-	sb.WriteString("2. fold_preserves_denotation: does the proposed fold preserve the term's denotation, without generalizing, specializing, or merging sibling concepts? Answer true when no fold is proposed.\n")
+	sb.WriteString("2. fold_preserves_denotation: does the proposed fold preserve the term's retrieval meaning, without generalizing, specializing, or merging sibling concepts? Answer true when no fold is proposed.\n")
 	sb.WriteString("3. conventional_form: is the term written in the conventional form its domain uses? Spelled-out symbols are not conventional (c plus plus should be c++). Answer true when the term is already conventional.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"terms\":[{\"index\":0,\"fold_to_base\":false,\"fold_preserves_denotation\":true,\"conventional_form\":true},...]}, one entry per candidate, no explanations.\n\n")
 	sb.WriteString("Candidate terms:\n")

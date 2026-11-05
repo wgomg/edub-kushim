@@ -110,7 +110,8 @@ const fullCfg = () => ({
 			max_rejudge: 250,
 			max_retag: 2000,
 			dead_tag_grace_days: 14,
-			retention_days: 90
+			retention_days: 90,
+			reask_defer_days: 10
 		}
 	},
 	storage: {
@@ -201,6 +202,7 @@ describe('Enrichment settings', () => {
 		expect(Number(document.getElementById('tag-reconcile-max-rejudge').value)).toBe(250);
 		expect(Number(document.getElementById('tag-reconcile-max-retag').value)).toBe(2000);
 		expect(Number(document.getElementById('tag-reconcile-dead-tag-grace').value)).toBe(14);
+		expect(Number(document.getElementById('tag-reconcile-reask-defer').value)).toBe(10);
 	});
 
 	it('fills the reconciliation defaults when the block is missing', async () => {
@@ -214,6 +216,7 @@ describe('Enrichment settings', () => {
 		expect(document.getElementById('tag-reconcile-time').value).toBe('02:00');
 		expect(Number(document.getElementById('tag-reconcile-max-rejudge').value)).toBe(200);
 		expect(Number(document.getElementById('tag-reconcile-dead-tag-grace').value)).toBe(7);
+		expect(Number(document.getElementById('tag-reconcile-reask-defer').value)).toBe(7);
 	});
 
 	it('fills the adjudicator defaults when the block is missing', async () => {
@@ -282,6 +285,7 @@ describe('Enrichment settings', () => {
 		expect(body['enricher.tag_reconcile.max_rejudge']).toBe(250);
 		expect(body['enricher.tag_reconcile.max_retag']).toBe(2000);
 		expect(body['enricher.tag_reconcile.dead_tag_grace_days']).toBe(14);
+		expect(body['enricher.tag_reconcile.reask_defer_days']).toBe(10);
 		expect(body['enricher.tag_quality.enabled']).toBe(false);
 		expect(body['enricher.tag_quality.timeout']).toBe(0);
 		expect(body['enricher.tag_quality.llm.adapter']).toBe('');

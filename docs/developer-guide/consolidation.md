@@ -299,9 +299,10 @@ admission decision admits with assignments on at least ten distinct **live** doc
 key makes the count distinct-document, so a single document re-enriching itself cannot
 promote a name. An identity-held name (a refused fold beside a live store value) and a
 composition-held name (a decided drop, defer, conflict, disagreement, reconstructible
-named unit, relational keep, or degraded `judge_unavailable` keep) are skipped by both the
-inline check and the sweep until an operator resolves them or a later verdict decides
-them.
+named unit, a substrate-reading relational keep, or degraded `judge_unavailable` keep) are
+skipped by both the inline check and the sweep until an operator resolves them or a later
+verdict decides them — a relational keep resting only on parts the store has not promoted
+yet is not held; it waits on store maturity like any admitted value.
 
 Influence is revocable (definition §6.4): a promoted value that stops qualifying is
 demoted, which clears `promoted_at`, records the reason, and removes the name from the

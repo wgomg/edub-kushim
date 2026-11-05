@@ -34,13 +34,14 @@ const (
 
 // AdjudicationSystemMessage is the system prompt of the pair
 // adjudication call.
-const AdjudicationSystemMessage = "You are a tag-taxonomy classifier. Decide whether pairs of tag terms denote one value."
+const AdjudicationSystemMessage = "You are a tag-pair judge. Decide whether pairs of tag terms are one tag under the definition in the user message."
 
-// BuildAdjudicationPrompt renders the same-intent pairs for the judging body: the faithful-replacement
-// framing and the two terms, with no similarity context.
+// BuildAdjudicationPrompt renders the same-intent pairs for the judging body: the definition's same-extension
+// rule and the two terms, with no similarity context.
 func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	var sb strings.Builder
-	sb.WriteString("For each pair below, decide whether the two terms denote one value: faithful replacement holds when either term can stand for the other without loss or change of meaning.\n")
+	sb.WriteString(TagDefinition + "\n")
+	sb.WriteString("For each pair below, decide whether the two terms are one tag: under that definition, labels with the same retrieval meaning are one value with one canonical label, and faithful replacement holds when either term can stand for the other without loss or change of meaning.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"pairs\":[{\"index\":0,\"verdict\":\"same\",\"direction\":\"query\"},...]}, one entry per pair, no explanations.\n")
 	sb.WriteString("Verdict must be exactly one of:\n")
 	sb.WriteString("- \"same\": the terms denote one value (morphographic variants, spelling variants, or intent-equivalent derivations)\n")

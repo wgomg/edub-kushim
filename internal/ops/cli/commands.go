@@ -143,9 +143,14 @@ var commandSets = map[string]map[string]Command{
 			Description: "Re-run one judge over one stored tag, refreshing the review queue's evidence",
 			Handler:     tagRejudgeHandler,
 		},
+		"tagsplitreask": {
+			Name:        "tagsplitreask",
+			Description: "Re-ask the split gate's cached abstentions so a stale deferral stops withholding a compound",
+			Handler:     tagSplitReaskHandler,
+		},
 		"tagmaintenance": {
 			Name:        "tagmaintenance",
-			Description: "Run the tag maintenance routine: reconcile, identity, audit and measure",
+			Description: "Run the tag maintenance routine: split re-ask, reconcile, identity, audit and measure",
 			Handler:     tagmaintenance.Run,
 		},
 	},

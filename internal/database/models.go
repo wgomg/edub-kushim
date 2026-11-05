@@ -215,6 +215,7 @@ const (
 	TaskTypeMigrateDb      TaskType = "migrate-db"
 	TaskTypeMigrateStorage TaskType = "migrate-storage"
 	TaskTypeTagrejudge     TaskType = "tagrejudge"
+	TaskTypeTagsplitreask  TaskType = "tagsplitreask"
 )
 
 func (e *TaskType) Scan(src interface{}) error {

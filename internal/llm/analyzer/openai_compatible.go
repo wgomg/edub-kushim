@@ -514,6 +514,11 @@ func (l *LlmOpenAiCompatible) JudgeTagCompounds(ctx context.Context, candidates 
 	return judgedOpenAI(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), judgedOutputBudget, ParseTagCompoundResponse)
 }
 
+// JudgeTagConflicts arbitrates the disagreeing compounds through the compatible API.
+func (l *LlmOpenAiCompatible) JudgeTagConflicts(ctx context.Context, candidates []TagConflictCandidate) ([]TagConflictResult, error) {
+	return judgedOpenAI(ctx, l, TagConflictSystemMessage, BuildTagConflictPrompt(candidates), "tag conflict arbiter", len(candidates), judgedOutputBudget, ParseTagConflictResponse)
+}
+
 // JudgeTagQuality scores candidates through the compatible API under the
 // quality judge's own wider budget.
 func (l *LlmOpenAiCompatible) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {

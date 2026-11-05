@@ -147,6 +147,10 @@ func (m *mockContentAnalyzer) JudgeTagCompounds(_ context.Context, _ []string) (
 	return nil, nil
 }
 
+func (m *mockContentAnalyzer) JudgeTagConflicts(_ context.Context, _ []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+	return nil, nil
+}
+
 func (m *mockContentAnalyzer) JudgeTagQuality(_ context.Context, _ string, _ []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
 	return nil, nil
 }

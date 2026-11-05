@@ -34,7 +34,8 @@ The task and batch status vocabulary used throughout is defined in
 | `kushim tagidentity` | Adjudicate pending tag-identity claims |
 | `kushim tagaudit` | Audit document coverage against the vocabulary |
 | `kushim tagrejudge` | Re-run one judge over one stored tag (queued by the review queue) |
-| `kushim tagmaintenance` | The full routine: reconcile → identity → audit → measure |
+| `kushim tagsplitreask` | Re-ask the split gate's cached abstentions |
+| `kushim tagmaintenance` | The full routine: split re-ask → reconcile → identity → audit → measure |
 | `kushim config` | View and edit `config.yaml` values (git-style get/set) |
 | `kushim llm` | View and edit the provider and model catalogs |
 | `kushim user create` | Create a user with a role |
@@ -345,8 +346,8 @@ Supported tasks:
 | `mirror` | `--path <dir>` (optional) |
 | `enrich` | one or more document ids, or `--all` / `--limit N` (same oldest-first selection as the direct command) |
 | `thumbnails` | none (all missing); `--from-batch <id>` or `--document <id>` for a subset |
-| `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` | none |
-| `tagmaintenance` | none — one batch chaining reconcile → identity → audit → measure as waiting successors |
+| `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `tagsplitreask` | none |
+| `tagmaintenance` | none — one batch chaining split re-ask → reconcile → identity → audit → measure as waiting successors |
 | `migrate-db` | `--host <h> --port <p> --user <u> --password <p> --database <db> [--sslmode <mode>]` |
 | `migrate-storage` | `--storage-dir <dir>`, `--consumption-dir <dir>` (at least one) |
 
@@ -407,7 +408,7 @@ thumbnail children activate as their consume parents complete.
 ## Tag passes
 
 The tag passes maintain the vocabulary described in [tags.md](tags.md): the badges, holds and review
-actions of the New tags queue come from the evidence these passes write. All five passes run two
+actions of the New tags queue come from the evidence these passes write. All six passes run two
 ways: **directly now** (manual `maintenance` hold, no queue rows, a printed report) or **queued** via
 `kushim batch create <verb>`, which the daemon forks in batch mode and whose report lands on the task
 row. The `--executor … --from-batch … --exec-token …` form is the
@@ -499,10 +500,28 @@ kushim tagrejudge --from-batch <id> --exec-token <id>   # dispatcher contract
 
 Each tag and scope has at most one live task: a repeated click collapses into the queued one.
 
+### `kushim tagsplitreask`
+
+Re-ask the split gate's cached abstentions: part and compound verdicts that deferred are judged
+again, so one noisy abstention cannot withhold a compound forever. An abstention older than
+`enricher.tag_reconcile.reask_defer_days` (default 7 days) is eligible, as is a younger part
+abstention that withholds more than one compound it was in force for; the fresh answer replaces the
+stale abstention in one transaction, a value the judge leaves unanswered keeps its abstention, and
+runs are bounded by `enricher.tag_reconcile.max_rejudge`.
+
+```bash
+kushim tagsplitreask                 # run now
+kushim batch create tagsplitreask    # enqueue for the daemon
+```
+
+The pass also runs on its own daily schedule — fixed 04:30, no config key, anchored on the most
+recent terminal `tagsplitreask` batch — gated on `enricher.tag_adjudicator.enabled`, and it is the
+first step of the maintenance routine below.
+
 ### `kushim tagmaintenance`
 
-The whole maintenance routine — reconciliation → identity resolution → coverage audit →
-measurement — as one chained batch, each pass a waiting successor of its predecessor:
+The whole maintenance routine — split re-ask → reconciliation → identity resolution → coverage
+audit → measurement — as one chained batch, each pass a waiting successor of its predecessor:
 
 ```bash
 kushim tagmaintenance                 # run the routine now
@@ -513,8 +532,8 @@ A failed pass discards its remaining branch and the batch settles failed;
 `kushim batch restart` retries the routine from its root. Run directly, the first failed pass
 stops the routine. Scheduling (`enricher.tag_maintenance`) is disabled by default and gates
 only automatic enqueuing; while it is enabled the individual reconcile, measure and audit
-schedules idle, and the daily identity pass keeps its own cadence — the routine's identity step
-is a catch-up, not the only path to identity.
+schedules idle, and the daily identity and split re-ask passes keep their own cadence — the
+routine's identity and re-ask steps are catch-ups, not the only path to either.
 
 ## Configuration and catalogs
 
@@ -747,7 +766,7 @@ kushim task list --type enrich --limit 50
 |---|---|---|
 | `--batch` | all | Filter by batch UUID |
 | `--status` | all | `waiting`, `pending`, `processing`, `completed`, `failed`, `cancelled`, `discarded`, or `active` (pending/processing/waiting) |
-| `--type` | all | `consume`, `enrich`, `thumbnail`, `thumbbackfill`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `tagrejudge`, `tagmaintenance`, `migrate-db`, `migrate-storage` |
+| `--type` | all | `consume`, `enrich`, `thumbnail`, `thumbbackfill`, `backup`, `mirror`, `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `tagsplitreask`, `tagrejudge`, `tagmaintenance`, `migrate-db`, `migrate-storage` |
 | `--limit` | `20` | Max results (1–100) |
 | `--offset` | `0` | Pagination offset |
 

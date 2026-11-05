@@ -279,6 +279,16 @@ func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, l
 	}
 
 	rows := make([]tags.CompositionRow, 0, len(candidates))
+	type judgedCandidate struct {
+		cv              CompoundVerdict
+		fan             Fan
+		parts           []string
+		decision        tags.CompositionDecision
+		reading         *tags.CompositionReading
+		reconstructible bool
+	}
+	judged := make([]judgedCandidate, len(candidates))
+	var conflicts []analyzer.TagConflictCandidate
 	for i, candidate := range candidates {
 		cv := compoundVerdicts[candidate]
 		fan := fans[candidate]
@@ -289,12 +299,54 @@ func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, l
 		}
 		features, readingRecord := compositionFeatures(parts, coverComplete[i], fan.DeferredSet(), partVerdicts, cv, promotedNames, reading)
 		decision := tags.DecideComposition(features)
-		reconstructible := features.Reconstructible
+		judged[i] = judgedCandidate{
+			cv:              cv,
+			fan:             fan,
+			parts:           parts,
+			decision:        decision,
+			reading:         readingRecord,
+			reconstructible: features.Reconstructible,
+		}
+		if decision.Reason == tags.CompositionReasonConflictingEvidence {
+			conflicts = append(conflicts, analyzer.TagConflictCandidate{
+				Index:    len(conflicts),
+				Compound: candidate,
+				Class:    string(cv.Status),
+				Parts:    conflictParts(parts, partVerdicts),
+			})
+		}
+	}
+
+	arbitration, err := a.arbitrateConflicts(ctx, conflicts, reqID)
+	if err != nil {
+		return nil, err
+	}
+	arbiterModel := a.config.ResolvedAdjudicatorLlm().Model
+
+	for i, candidate := range candidates {
+		jc := judged[i]
+		cv := jc.cv
+		fan := jc.fan
+		parts := jc.parts
+		decision := jc.decision
+		arbitrated := false
+		if arbitration[candidate] != "" && arbitration[candidate] != analyzer.TagConflictDefer {
+			arbitrated = true
+			switch arbitration[candidate] {
+			case analyzer.TagConflictSplit:
+				decision = tags.CompositionDecision{Disposition: tags.CompositionSplit, Reason: tags.CompositionReasonConflictArbitrated}
+			case analyzer.TagConflictKeep:
+				decision = tags.CompositionDecision{Disposition: tags.CompositionKeep, Reason: tags.CompositionReasonConflictArbitrated}
+			}
+			a.logger.Info(reqID, "tag split[%s]: arbitrated %s %q (action=%s arbiter=%s)",
+				analyzer.TagSplitVersion, decision.Disposition, candidate, arbitration[candidate], analyzer.TagConflictVersion)
+		}
+		reconstructible := jc.reconstructible
 		row := tags.CompositionRow{
 			Candidate:       candidate,
 			CriteriaVersion: analyzer.TagSplitVersion,
 			Reconstructible: &reconstructible,
-			Reading:         readingRecord,
+			Reading:         jc.reading,
 		}
 		switch decision.Disposition {
 		case tags.CompositionSplit:
@@ -311,7 +363,11 @@ func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, l
 			}
 			row.Disposition = tags.CompositionSplit
 			row.Parts = valid
-			row.Reason, row.Model = splitSource(cv)
+			if arbitrated {
+				row.Reason, row.Model = tags.CompositionReasonConflictArbitrated, arbiterModel
+			} else {
+				row.Reason, row.Model = splitSource(cv)
+			}
 			a.logger.Info(reqID, "tag split[%s]: split %q → %q", analyzer.TagSplitVersion, candidate, valid)
 		case tags.CompositionDrop:
 			row.Disposition = tags.CompositionDrop
@@ -322,6 +378,9 @@ func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, l
 			row.Disposition = tags.CompositionKeep
 			row.Reason = decision.Reason
 			row.Model = freshModel(cv)
+			if arbitrated {
+				row.Reason, row.Model = tags.CompositionReasonConflictArbitrated, arbiterModel
+			}
 			if parts := alongsideCover(fan, liveNames, partVerdicts, filter); len(parts) > 0 {
 				row.Parts = parts
 			}
@@ -330,6 +389,43 @@ func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, l
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// conflictParts pairs each judged constituent with its standalone verdict, so the arbiter sees which
+// words the parts pass withheld.
+func conflictParts(parts []string, verdicts map[string]PartVerdict) []analyzer.TagConflictPart {
+	out := make([]analyzer.TagConflictPart, 0, len(parts))
+	for _, part := range parts {
+		v, ok := verdicts[part]
+		out = append(out, analyzer.TagConflictPart{Term: part, Dimensional: ok && v.Dimensional && !v.Deferred})
+	}
+	return out
+}
+
+// arbitrateConflicts asks the conflict arbiter to resolve the compounds whose constituent verdicts
+// disagree with the compound reading, returning the decided actions by candidate. An unavailable
+// arbitration leaves the compound unresolved so its conflicting_evidence hold stands; credit exhaustion
+// escapes so the caller pauses the batch.
+func (a *Adjudicator) arbitrateConflicts(ctx context.Context, conflicts []analyzer.TagConflictCandidate, reqID string) (map[string]analyzer.TagConflictAction, error) {
+	out := make(map[string]analyzer.TagConflictAction, len(conflicts))
+	if len(conflicts) == 0 {
+		return out, nil
+	}
+	results, err := a.runner.JudgeTagConflicts(ctx, conflicts)
+	if err != nil {
+		if isCreditError(err) {
+			return nil, err
+		}
+		a.logger.Warn(reqID, "tag split[%s]: conflict arbitration unavailable: %v", analyzer.TagSplitVersion, err)
+		return out, nil
+	}
+	for i, result := range results {
+		if i >= len(conflicts) || !result.Action.Valid() {
+			continue
+		}
+		out[conflicts[i].Compound] = result.Action
+	}
+	return out, nil
 }
 
 // ConjunctionComponents disposes of an explicit coordination compound with no adjudicator: it splits on the
@@ -590,9 +686,11 @@ func phraseFoldKeys(content, singles []string, phrase string, liveNames map[stri
 }
 
 // applyPhraseFolds completes a fan's singles with its residual phrase-context folds: a word the caller left
-// unresolved is folded onto its anchor on a confirmed answer, and an abstention (or an ambiguity across
-// several live bases) leaves it unresolved and reports it deferred, so the compound holds for review instead
-// of landing on a wrong tag. The returned singles and deferred words are what the caller's fan carries.
+// unresolved is folded onto its anchor on a confirmed answer, and a deferral leaves it unresolved and
+// reports it deferred, so the compound holds for review instead of landing on a wrong tag. A word with
+// several live sibling senses is asked once per anchor in this phrase; a single confirmed fold resolves it,
+// competing confirmations or any abstention defer it, and answers with no confirmed fold leave it in its own
+// sense. The returned singles and deferred words are what the caller's fan carries.
 func applyPhraseFolds(content, singles []string, phrase string, verdicts map[PhraseFoldKey]PhraseFoldVerdict, liveNames map[string]struct{}) (resolved, deferred []string) {
 	resolved = singles
 	for i, word := range content {
@@ -602,8 +700,31 @@ func applyPhraseFolds(content, singles []string, phrase string, verdicts map[Phr
 		anchors := tags.ResidualFoldAnchors(word, liveNames)
 		switch {
 		case len(anchors) > 1:
-			// several live sibling senses: the phrase context cannot separate them, hold
-			deferred = append(deferred, word)
+			// every anchor was asked in this phrase's own call; the word resolves only when exactly one
+			// anchor is confirmed, and missing answers stay deferred like a single-anchor abstention
+			folded, conflict, answered := "", false, 0
+			for _, anchor := range anchors {
+				v, ok := verdicts[PhraseFoldKey{Phrase: phrase, Part: word, Anchor: anchor}]
+				if !ok {
+					continue
+				}
+				answered++
+				switch {
+				case v.Deferred:
+					conflict = true
+				case v.Fold:
+					if folded != "" && folded != anchor {
+						conflict = true
+					}
+					folded = anchor
+				}
+			}
+			switch {
+			case conflict || answered < len(anchors):
+				deferred = append(deferred, word)
+			case folded != "":
+				resolved[i] = folded
+			}
 		case len(anchors) == 1:
 			v := verdicts[PhraseFoldKey{Phrase: phrase, Part: word, Anchor: anchors[0]}]
 			switch {

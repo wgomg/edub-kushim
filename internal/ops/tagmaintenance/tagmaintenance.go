@@ -1,7 +1,7 @@
 // Package tagmaintenance is the kushim tagmaintenance verb: the direct mode that runs the tag maintenance
-// routine — reconciliation, identity resolution, coverage audit and measurement, in that order — right
-// under the maintenance lock, and the batch mode that executes one claimed maintenance batch whose four
-// tag tasks wait in a chain, each on its predecessor.
+// routine — split re-ask, reconciliation, identity resolution, coverage audit and measurement, in that
+// order — right under the maintenance lock, and the batch mode that executes one claimed maintenance batch
+// whose five tag tasks wait in a chain, each on its predecessor.
 package tagmaintenance
 
 import (
@@ -28,15 +28,15 @@ import (
 )
 
 const helpText = "Usage: kushim tagmaintenance [--from-batch <id> --exec-token <id>] [--no-wait]\n\n" +
-	"  Run the tag maintenance routine: reconcile, identity, coverage audit and\n" +
-	"  measurement, in that order.\n\n" +
+	"  Run the tag maintenance routine: split re-ask, reconcile, identity, coverage\n" +
+	"  audit and measurement, in that order.\n\n" +
 	"  Runs the routine immediately under the maintenance lock, creating no queue rows.\n" +
 	"  --from-batch <id>  execute one claimed batch (dispatcher and 'kushim batch run' contract)\n" +
 	"  --exec-token <id>  execution token passed with --from-batch\n" +
 	"  --no-wait          exit non-zero instead of waiting for a lock or in-flight work\n\n" +
 	"  To enqueue a run: kushim batch create tagmaintenance"
 
-// routineTimeout bounds one direct routine: four long but finite sweeps under a single lock hold.
+// routineTimeout bounds one direct routine: five long but finite sweeps under a single lock hold.
 const routineTimeout = 24 * time.Hour
 
 // Run is the kushim tagmaintenance verb. With --from-batch it executes one claimed maintenance batch under
@@ -74,7 +74,7 @@ func Run(c *container.Container, args []string) error {
 	return runDirect(c, noWait)
 }
 
-// runDirect runs the four passes in order under the reconcile type's manual lock policy, printing each
+// runDirect runs the five passes in order under the routine root's manual lock policy, printing each
 // report with its pass label. The first failed pass stops the routine: the passes after it would read the
 // state it was meant to repair.
 func runDirect(c *container.Container, noWait bool) error {
@@ -83,6 +83,7 @@ func runDirect(c *container.Container, noWait bool) error {
 		return fmt.Errorf("database: %w", err)
 	}
 
+	reaskHandler := newReaskHandler(c, client)
 	reconcileHandler, err := newReconcileHandler(c, client)
 	if err != nil {
 		return err
@@ -97,10 +98,15 @@ func runDirect(c *container.Container, noWait bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), routineTimeout)
 	defer cancel()
 
-	policy := task.DirectLockPolicyFor(types.Task.Type.TagReconcile)
+	policy := task.DirectLockPolicyFor(types.Task.Type.TagSplitReask)
 	return task.RunDirect(ctx, client, c.GetLogger(), "tagmaintenance", policy, !noWait, nil, func() error {
-		raw, err := reconcileHandler.Handle(ctx, task.Task{})
+		raw, err := reaskHandler.Handle(ctx, task.Task{})
 		if err != nil {
+			return err
+		}
+		fmt.Printf("reask: %s\n", raw)
+
+		if raw, err = reconcileHandler.Handle(ctx, task.Task{}); err != nil {
 			return err
 		}
 		fmt.Printf("reconcile: %s\n", raw)
@@ -141,6 +147,7 @@ func runBatchMode(c *container.Container, batchID, execTokenParam string) error 
 	}
 
 	registry := task.NewRegistry()
+	registry.Register(types.Task.Type.TagSplitReask, newReaskHandler(c, client))
 	registry.Register(types.Task.Type.TagReconcile, reconcileHandler)
 	registry.Register(types.Task.Type.TagIdentity, identityHandler)
 	registry.Register(types.Task.Type.TagAudit, newAuditHandler(c, client))
@@ -154,7 +161,7 @@ func runBatchMode(c *container.Container, batchID, execTokenParam string) error 
 // and batch run own the claim and pass the execution token, so this child adopts the lease, runs the batch's
 // chained tag tasks through the registry its command assembled and settles. The caller supplies the store
 // and the registry because the handlers act on the same store the run does. The catalog is this package's
-// own: it names the four tag types with their constant dedup keys, which waiting-successor activation
+// own: it names the five tag types with their constant dedup keys, which waiting-successor activation
 // derives through this process's catalog — a type without a hook here would be discarded instead of
 // activated. An error means the run was interrupted or could not start, and the process must exit non-zero.
 func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, store *task.Store, registry *task.Registry) (task.BatchRunResult, error) {
@@ -169,10 +176,11 @@ func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, sto
 	}
 
 	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
-		types.Task.Type.TagReconcile: {DedupKey: task.ConstantDedupKey(curation.TagReconcileDedupKey)},
-		types.Task.Type.TagIdentity:  {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
-		types.Task.Type.TagAudit:     {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
-		types.Task.Type.TagMeasure:   {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
+		types.Task.Type.TagSplitReask: {DedupKey: task.ConstantDedupKey(curation.TagSplitReaskDedupKey)},
+		types.Task.Type.TagReconcile:  {DedupKey: task.ConstantDedupKey(curation.TagReconcileDedupKey)},
+		types.Task.Type.TagIdentity:   {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
+		types.Task.Type.TagAudit:      {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
+		types.Task.Type.TagMeasure:    {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
 	})
 	if err != nil {
 		return task.BatchRunResult{}, fmt.Errorf("task catalog: %w", err)
@@ -241,6 +249,17 @@ func parseExecToken(value string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("invalid exec token %q: %w", value, err)
 	}
 	return token, nil
+}
+
+// newReaskHandler constructs the split re-ask handler over the command's judge runner.
+func newReaskHandler(c *container.Container, client *database.Client) task.Handler {
+	runner := reconcile.NewReaskRunner(
+		func() *config.Config { return c.GetConfig() },
+		c.GetLogger(),
+		client,
+		c.GetTagToolsRunner(),
+	)
+	return reconcile.NewReaskTaskHandler(runner)
 }
 
 // newReconcileHandler constructs the reconcile handler over the command's reconciler.

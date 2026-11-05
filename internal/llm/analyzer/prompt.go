@@ -10,6 +10,13 @@ import (
 // SystemMessage is the system prompt of the document analysis call.
 const SystemMessage = "You are a helpful assistant specialized in document analysis and metadata extraction"
 
+// TagDefinition is the system's definition of a tag, the form every judged prompt embeds verbatim so no pass
+// falls back to a dictionary or keyword sense of the word. It is docs/specs/tags/definition.md §3.1 with the
+// five properties of §3.4 compressed to one prompt-sized paragraph: subject-matter ownership, dimensionality,
+// canonicality, and atomicity. It states only what a judge can decide from the value or phrase in front of
+// it — recurrence and extension counts are promotion evidence and are deliberately left to the gates.
+const TagDefinition = "A tag is a reusable dimension of content-meaning: a broad, stable, canonical, non-decomposable unit of faceted retrieval; the vocabulary keeps one canonical label per retrieval intent. It names what a document is about and is the kind of value a searcher would filter by on its own, alone or in combination — never a one-off detail; precision comes from intersecting several tags, not from spelling a combination into one label. A phrase whose parts are each tags on their own is a pre-coordination of those tags, not one tag. A phrase whose parts are not dimensions — a lexical unit, an idiom, or a named thing — names a single subject and stands as one tag. A string that only compresses one document's unique content — a thesis, an argument, a plot — or names a generic container with no retrieval function (use, thought, knowledge, irony) is not a tag."
+
 const defaultPromptTemplate = `Analyze the excerpts of a document provided below and extract the following data:
 - Document title: The title as written in the document, in excerpts language, copied verbatim — never invent or append wording of your own; colons and subtitles are legitimate only when the original title itself has one. If no title line appears in the excerpts, use the first substantive line of the text as the title, still copied verbatim. Truncate to 127 characters if longer
 {{.DocTypePrompt}}

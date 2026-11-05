@@ -149,18 +149,20 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
   (`02:00`), `max_rejudge` (`200`), `max_retag` (`1000`), `dead_tag_grace_days` (`7` —
   days without a live document before the sweep removes the tag; assignments on trashed
   documents do not count), `provisional_grace_days` (`30`), `retention_days` (`90` —
-  days a decided non-value must stand before the sweep removes it).
+  days a decided non-value must stand before the sweep removes it), `reask_defer_days`
+  (`7` — days a cached split-gate abstention must stand before the re-ask pass judges it
+  again; high-volume stores lower it).
 - `tag_measure` — `enabled` (`false`), `interval` (days, `7`), `time` (`03:00`),
   `after_enrichment_batch` (`false` — additionally measure after every consume/enrich batch
   settles).
 - `tag_audit` — `enabled` (`false`), `interval` (days, `7`), `time` (`04:00`),
   `sample_size` (`150` documents per run).
-- `tag_maintenance` — the chained routine (reconcile → identity → audit → measure):
-  `enabled` (`false`), `interval` (days, `7`), `time` (`02:00`). While enabled, the
-  individual reconcile/measure/audit schedules idle; the daily identity pass keeps its own
-  cadence.
+- `tag_maintenance` — the chained routine (split re-ask → reconcile → identity → audit →
+  measure): `enabled` (`false`), `interval` (days, `7`), `time` (`02:00`). While enabled, the
+  individual reconcile/measure/audit schedules idle; the daily identity and split re-ask
+  passes keep their own cadence.
 
-Behavior of the five tag passes (direct vs queued, gating, no-op conditions) is documented
+Behavior of the six tag passes (direct vs queued, gating, no-op conditions) is documented
 in [cli.md](cli.md#tag-passes); the concepts the settings below govern — provisional standing,
 verdicts, holds, aliases and the review actions — are in [tags.md](tags.md). The underlying rules live in the
 [tag specs](../specs/tags/overview.md) and the

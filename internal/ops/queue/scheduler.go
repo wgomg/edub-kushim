@@ -30,6 +30,7 @@ const (
 	scheduleTagReconcile      = "tagreconcile"
 	scheduleTagMeasure        = "tagmeasure"
 	scheduleTagIdentity       = "tagidentity"
+	scheduleTagSplitReask     = "tagsplitreask"
 	scheduleTagAudit          = "tagaudit"
 	scheduleTagMaintenance    = "tagmaintenance"
 
@@ -147,6 +148,17 @@ func entriesFor(cfg *config.Config) []schedulerEntry {
 			},
 			produce: func(context.Context, *config.Config, *database.Client, *log.Logger) ([]task.TaskSpec, error) {
 				return curation.IdentitySpecs(), nil
+			},
+		},
+		schedulerEntry{
+			name:    scheduleTagSplitReask,
+			origin:  types.Batch.Origin.Schedule,
+			enabled: func(cfg *config.Config) bool { return cfg.Enricher.TagAdjudicator.Enabled },
+			timing: func(*config.Config) backup.ScheduleTiming {
+				return backup.ScheduleTiming{Interval: 1, Time: "04:30"}
+			},
+			produce: func(context.Context, *config.Config, *database.Client, *log.Logger) ([]task.TaskSpec, error) {
+				return curation.SplitReaskSpecs(), nil
 			},
 		},
 		schedulerEntry{

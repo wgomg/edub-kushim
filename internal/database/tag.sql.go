@@ -155,13 +155,15 @@ FROM (
             ELSE false END AS identity_hold,
             CASE WHEN $4::boolean THEN
                 EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason
+                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.reading
                             FROM tag_composition_event ce
                             WHERE ce.criteria_version = $7
                               AND ce.candidate = t.name
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) held
-                        WHERE held.reason = ANY($8::text[]))
+                        WHERE held.reason = ANY($8::text[])
+                          AND NOT (held.reason = 'relational_keep'
+                                   AND coalesce(held.reading ->> 'source', '') = 'proxy'))
             ELSE false END AS split_hold,
             CASE WHEN $4::boolean THEN
                 EXISTS (SELECT 1 FROM (
@@ -794,7 +796,9 @@ FROM (
     -- one cannot possibly diverge from the other: identity_pending mirrors PendingTagIdentityCountsByNames,
     -- identity_hold mirrors ListIdentityHeldNames plus the refusal pairing in IdentityHeldNames, and
     -- split_hold mirrors CompositionReview's compositionHolds reasons; the composition_blocks mirrors
-    -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests
+    -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests; a relational
+    -- keep resting on the promoted-parts proxy is store-maturity pending, not a review obligation, so the
+    -- split_hold predicate excludes it exactly as proxyRelationalKeep does in the Go read
     LEFT JOIN LATERAL (
         SELECT
             CASE WHEN $2::boolean THEN
@@ -820,13 +824,15 @@ FROM (
             ELSE false END AS identity_hold,
             CASE WHEN $2::boolean THEN
                 EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason
+                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.reading
                             FROM tag_composition_event ce
                             WHERE ce.criteria_version = $5
                               AND ce.candidate = t.name
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) held
-                        WHERE held.reason = ANY($6::text[]))
+                        WHERE held.reason = ANY($6::text[])
+                          AND NOT (held.reason = 'relational_keep'
+                                   AND coalesce(held.reading ->> 'source', '') = 'proxy'))
             ELSE false END AS split_hold,
             CASE WHEN $2::boolean THEN
                 EXISTS (SELECT 1 FROM (

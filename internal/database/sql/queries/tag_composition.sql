@@ -5,7 +5,7 @@ VALUES (@document_id, @candidate, @parts, @disposition, @reason, @criteria_versi
 
 -- name: LatestCompositionReasonsForNames :many
 SELECT DISTINCT ON (candidate)
-       candidate, disposition, reason,
+       candidate, disposition, reason, reading,
        COALESCE(
            MIN(created_at) FILTER (WHERE reason <> @degraded_reason::text) OVER (PARTITION BY candidate),
            MIN(created_at) OVER (PARTITION BY candidate)

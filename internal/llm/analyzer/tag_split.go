@@ -12,11 +12,12 @@ import (
 // generation's verdicts never apply. v3 ports the emission prompt's house-form rule (lexicalized derivations
 // and gerunds stand) and adds the abstract-field clause. v4 fans the parts pass over the decomposition fan
 // rather than single content words: a multi-word bigram segment is now a value the pass judges, so the input
-// class changes and the cached v3 verdicts never apply.
-const TagPartDimensionVersion = "v4"
+// class changes and the cached v3 verdicts never apply. v5 embeds TagDefinition so this pass and the
+// compound pass test the same property under the same words.
+const TagPartDimensionVersion = "v5"
 
 // TagPartSystemMessage is the system prompt of the parts pass.
-const TagPartSystemMessage = "You are a tag-dimension classifier. Decide whether each value, on its own, is a subject a searcher would filter by."
+const TagPartSystemMessage = "You are a tag-dimension judge. Decide, for each value, whether it is a tag under the definition in the user message."
 
 // TagPartResult is one value's answer from the parts pass: whether the value is a dimensional value on its
 // own, and the judge's abstention.
@@ -58,17 +59,18 @@ func (c TagPartCriteria) String() string {
 		c.Defer != nil && *c.Defer)
 }
 
-// BuildTagPartPrompt renders the parts pass's context-free dimensional question over the values: each
-// value is judged in its ordinary standalone sense, never a sense inferred from a phrase; a form that
-// cannot stand as a subject on its own is not a dimension, and a country or continent value counts.
+// BuildTagPartPrompt renders the parts pass's context-free dimensional question over the values: each value
+// is judged under the shared tag definition, on the value itself and in its ordinary standalone sense, never
+// in a sense inferred from a phrase. The definition owns what tag-hood is; the bullets apply it to the
+// classes this pass sees, so the criterion cannot drift from the compound pass's.
 func BuildTagPartPrompt(values []string) string {
 	var sb strings.Builder
-	sb.WriteString("For each value below, judge whether it names a subject a searcher would filter by in a document store: a broad, stable, reusable dimension of content.\n")
-	sb.WriteString("- A value that stands on its own as a subject counts, however rare it is in general text (repair, networking, philosophy, russia).\n")
-	sb.WriteString("- A value with no retrieval function does not: a generic container (use, thought, knowledge, irony), or a form that cannot stand as a subject on its own (an adjective, a verb form, a bare modifier).\n")
+	sb.WriteString(TagDefinition + "\n")
+	sb.WriteString("For each value below, decide whether it is a tag under that definition, judged on the value itself and in its ordinary standalone sense, never a sense inferred from a phrase.\n")
+	sb.WriteString("- A value that names a subject counts however specialized or uncommon it is (repair, networking, philosophy, russia, nut driver).\n")
+	sb.WriteString("- A form that cannot stand as a subject on its own is not a tag (an adjective, a verb form, a bare modifier).\n")
 	sb.WriteString("- Lexicalized derivations and gerunds stand and are judged as fields (programming, learning, running).\n")
 	sb.WriteString("- A noun whose standard sense names a field, domain, or discipline counts even when abstract (theory, state, economy); the generic-container exclusion applies only when no domain sense exists.\n")
-	sb.WriteString("- Judge the value in its ordinary standalone sense; do not infer a sense it might take from a phrase.\n")
 	sb.WriteString("Set defer true when you cannot decide; never guess.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"values\":[{\"index\":0,\"dimensional\":true,\"defer\":false},...]}, one entry per value, no explanations.\n\n")
 	for i, value := range values {
@@ -161,11 +163,13 @@ func (s TagCompoundStatus) Valid() bool {
 // branch, and any failing segment keeps the compound whole with its survivors alongside. v8 feeds the
 // retrospective reconstructibility reading into the decision: the sweep computes the substrate's reading
 // over each judged cover, the far band holds a judged composition whole as relational_keep, and composition
-// rows record the reading behind the decision. The judge's criteria text is unchanged throughout.
-const TagSplitVersion = "v8"
+// rows record the reading behind the decision. v9 embeds TagDefinition: the composition bullet's "works as
+// a tag on its own" now resolves against the system's definition instead of the common keyword sense, which
+// is what made the compound pass call composition where the parts pass withheld a dimension.
+const TagSplitVersion = "v9"
 
 // TagCompoundSystemMessage is the system prompt of the compound pass.
-const TagCompoundSystemMessage = "You are a tag-taxonomy classifier. Decide what a compound phrase denotes."
+const TagCompoundSystemMessage = "You are a tag-compound judge. Classify each phrase under the definition in the user message."
 
 // TagCompoundResult is one phrase's answer: its status and the judge's abstention.
 type TagCompoundResult struct {
@@ -214,16 +218,18 @@ func (c TagCompoundCriteria) String() string {
 	return fmt.Sprintf("status=%s defer=%t", status, c.Defer != nil && *c.Defer)
 }
 
-// BuildTagCompoundPrompt renders the compound pass's context-free trichotomy question over the phrases:
-// each phrase is judged independently — a shared head or shape with another phrase does not decide it.
+// BuildTagCompoundPrompt renders the compound pass's context-free classification over the phrases: each
+// phrase is judged independently — a shared head or shape with another phrase does not decide it — and the
+// three classes are the shared definition's own: a named unit, a pre-coordination of tags, or no dimension.
 func BuildTagCompoundPrompt(candidates []string) string {
 	var sb strings.Builder
-	sb.WriteString("For each phrase below, decide what it denotes.\n")
-	sb.WriteString("- \"named_unit\": the phrase names one subject its parts cannot compose ('internet of things', 'black bloc', 'cold war').\n")
-	sb.WriteString("- \"composition\": the phrase is just the combination of its content words, each of which works as a tag on its own ('russian history', 'labor movement', 'computer networking').\n")
-	sb.WriteString("- \"no_dimension\": the phrase names no subject a searcher would filter by (a thesis or a compression artifact).\n")
+	sb.WriteString(TagDefinition + "\n")
+	sb.WriteString("For each phrase below, classify it under that definition.\n")
+	sb.WriteString("- \"named_unit\": the phrase is a lexical or named unit whose parts are not dimensions on their own ('internet of things', 'black bloc', 'cold war'); it names a single subject and stands as one tag.\n")
+	sb.WriteString("- \"composition\": the phrase only conjoins dimensions that are each tags on their own — pre-coordination, not one tag ('russian history', 'labor movement', 'computer networking').\n")
+	sb.WriteString("- \"no_dimension\": the phrase compresses one document's unique content or names a generic container (a thesis, a compression artifact).\n")
 	sb.WriteString("Judge each phrase independently: a shared head or shape with another phrase does not decide it.\n")
-	sb.WriteString("Set defer true when the reading is unsettled; never force one.\n")
+	sb.WriteString("Set defer true when the classification is unsettled; never force one.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"compounds\":[{\"index\":0,\"status\":\"composition\",\"defer\":false},...]}, one entry per compound, no explanations.\n\n")
 	for i, candidate := range candidates {
 		fmt.Fprintf(&sb, "Compound %d: %q\n", i, candidate)

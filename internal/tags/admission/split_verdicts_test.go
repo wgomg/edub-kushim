@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/wgomg/edub-kushim/internal/config"
@@ -343,6 +344,208 @@ func TestVerdictStore_PartFalseGuard(t *testing.T) {
 		}
 		if adj.partCall != 2 {
 			t.Errorf("judge calls = %d, want 2 — the fresh false took one corroborating sample", adj.partCall)
+		}
+	})
+}
+
+// newTestVerdictStoreClient wires a store over a fresh client handle, which the supersede path needs to open
+// its transaction, after clearing the cache tables so a seeded abstention is the only row in play.
+func newTestVerdictStoreClient(t *testing.T, adj *mockAdjudicator) (*VerdictStore, *database.Client, int64) {
+	t.Helper()
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	logger := log.NewDiscardLogger()
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
+	})
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event"} {
+		if _, err := client.DB().ExecContext(context.Background(), "DELETE FROM "+table); err != nil {
+			t.Fatalf("reset %s: %v", table, err)
+		}
+	}
+	docID := database.CreateUniqueDocument(t, client.Queries, "supersede")
+	return NewVerdictStore(client.Queries, runner, logger, "test-model", nil), client, docID
+}
+
+// seedPartDefer writes a cached abstention as another worker would have left it, so the supersession must
+// delete it before its own insert can stand.
+func seedPartDefer(t *testing.T, client *database.Client, docID int64, value string) {
+	t.Helper()
+	if _, err := client.DB().ExecContext(context.Background(), `
+		INSERT INTO tag_part_dimension_event
+		    (document_id, value, criteria, dimensional, verdict_model, policy_version)
+		VALUES ($1, $2, '{"dimensional":false,"defer":true}'::jsonb, false, 'other-model', $3)`,
+		docID, value, analyzer.TagPartDimensionVersion); err != nil {
+		t.Fatalf("seed part defer for %q: %v", value, err)
+	}
+}
+
+// seedCompoundDefer writes a cached compound abstention the supersession must replace.
+func seedCompoundDefer(t *testing.T, client *database.Client, docID int64, candidate string) {
+	t.Helper()
+	if _, err := client.DB().ExecContext(context.Background(), `
+		INSERT INTO tag_compound_status_event
+		    (document_id, candidate, status, criteria, verdict_model, split_criteria_version)
+		VALUES ($1, $2, 'defer', '{"status":"defer","defer":true}'::jsonb, 'other-model', $3)`,
+		docID, candidate, analyzer.TagSplitVersion); err != nil {
+		t.Fatalf("seed compound defer for %q: %v", candidate, err)
+	}
+}
+
+// TestSupersedeParts pins the atomic supersession's two outcomes: a decided second answer replaces the
+// stale abstention in one transaction, and a value the judge leaves unanswered keeps the abstention it had —
+// the supersession never opens a transaction that could delete a row without re-inserting one.
+func TestSupersedeParts(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a decided answer replaces the stale abstention", func(t *testing.T) {
+		var asked []string
+		adj := &mockAdjudicator{partFn: func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+			asked = append(asked, values...)
+			results := make([]analyzer.TagPartResult, len(values))
+			for i := range values {
+				results[i] = analyzer.TagPartResult{Index: i, Dimensional: true}
+			}
+			return results, nil
+		}}
+		store, client, docID := newTestVerdictStoreClient(t, adj)
+		const value = "superseded value"
+		seedPartDefer(t, client, docID, value)
+
+		verdicts, err := store.SupersedeParts(ctx, client, []string{value}, docID, "")
+		if err != nil {
+			t.Fatalf("SupersedeParts: %v", err)
+		}
+		v, ok := verdicts[value]
+		if !ok {
+			t.Fatal("the answered value is missing from the supersede result")
+		}
+		if !v.Dimensional || v.Deferred {
+			t.Errorf("verdict = dimensional:%t defer:%t, want the decided second answer", v.Dimensional, v.Deferred)
+		}
+		if !reflect.DeepEqual(asked, []string{value}) {
+			t.Errorf("judge asked %v, want exactly the stale value", asked)
+		}
+		rows, err := client.Queries.LatestTagPartVerdictsForValues(ctx, database.LatestTagPartVerdictsForValuesParams{
+			PolicyVersion: analyzer.TagPartDimensionVersion,
+			PartValues:    []string{value},
+		})
+		if err != nil {
+			t.Fatalf("re-read superseded verdict: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("cached rows = %d, want 1: the stale abstention was deleted", len(rows))
+		}
+		if rows[0].VerdictModel.String != "test-model" || !rows[0].Dimensional {
+			t.Errorf("standing row = model %q dimensional %t, want this writer's decided verdict",
+				rows[0].VerdictModel.String, rows[0].Dimensional)
+		}
+	})
+
+	t.Run("an unanswered value keeps its abstention", func(t *testing.T) {
+		adj := &mockAdjudicator{partFn: func(_ context.Context, _ []string) ([]analyzer.TagPartResult, error) {
+			return nil, nil
+		}}
+		store, client, docID := newTestVerdictStoreClient(t, adj)
+		const value = "unanswered value"
+		seedPartDefer(t, client, docID, value)
+
+		verdicts, err := store.SupersedeParts(ctx, client, []string{value}, docID, "")
+		if err != nil {
+			t.Fatalf("SupersedeParts: %v", err)
+		}
+		if len(verdicts) != 0 {
+			t.Errorf("verdicts = %v, want none: the judge answered nothing", verdicts)
+		}
+		rows, err := client.Queries.LatestTagPartVerdictsForValues(ctx, database.LatestTagPartVerdictsForValuesParams{
+			PolicyVersion: analyzer.TagPartDimensionVersion,
+			PartValues:    []string{value},
+		})
+		if err != nil {
+			t.Fatalf("re-read abstention: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("cached rows = %d, want the abstention untouched", len(rows))
+		}
+		if rows[0].VerdictModel.String != "other-model" {
+			t.Errorf("standing row = model %q, want the original abstention still in place", rows[0].VerdictModel.String)
+		}
+	})
+}
+
+// TestSupersedeCompounds pins the compound twin: a decided reading replaces the stale abstention, while a
+// reply without a recognizable status counts as unanswered and leaves the abstention standing.
+func TestSupersedeCompounds(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a decided reading replaces the stale abstention", func(t *testing.T) {
+		adj := &mockAdjudicator{compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
+		store, client, docID := newTestVerdictStoreClient(t, adj)
+		const candidate = "superseded compound"
+		seedCompoundDefer(t, client, docID, candidate)
+
+		verdicts, err := store.SupersedeCompounds(ctx, client, []string{candidate}, docID, "")
+		if err != nil {
+			t.Fatalf("SupersedeCompounds: %v", err)
+		}
+		v, ok := verdicts[candidate]
+		if !ok {
+			t.Fatal("the answered candidate is missing from the supersede result")
+		}
+		if v.Status != analyzer.TagCompoundComposition || v.Deferred {
+			t.Errorf("verdict = status %q defer %t, want the decided second answer", v.Status, v.Deferred)
+		}
+		rows, err := client.Queries.LatestTagCompoundStatusForCandidates(ctx, database.LatestTagCompoundStatusForCandidatesParams{
+			SplitCriteriaVersion: analyzer.TagSplitVersion,
+			Candidates:           []string{candidate},
+		})
+		if err != nil {
+			t.Fatalf("re-read superseded status: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("cached rows = %d, want 1: the stale abstention was deleted", len(rows))
+		}
+		if rows[0].Status != string(analyzer.TagCompoundComposition) || rows[0].VerdictModel.String != "test-model" {
+			t.Errorf("standing row = status %q model %q, want this writer's decided verdict",
+				rows[0].Status, rows[0].VerdictModel.String)
+		}
+	})
+
+	t.Run("a reply without a status keeps the abstention", func(t *testing.T) {
+		adj := &mockAdjudicator{compoundFn: func(_ context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
+			results := make([]analyzer.TagCompoundResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagCompoundResult{Index: i, Status: analyzer.TagCompoundStatus("bogus")}
+			}
+			return results, nil
+		}}
+		store, client, docID := newTestVerdictStoreClient(t, adj)
+		const candidate = "statusless compound"
+		seedCompoundDefer(t, client, docID, candidate)
+
+		verdicts, err := store.SupersedeCompounds(ctx, client, []string{candidate}, docID, "")
+		if err != nil {
+			t.Fatalf("SupersedeCompounds: %v", err)
+		}
+		if len(verdicts) != 0 {
+			t.Errorf("verdicts = %v, want none: an unrecognized reply is unanswered, not an answer", verdicts)
+		}
+		rows, err := client.Queries.LatestTagCompoundStatusForCandidates(ctx, database.LatestTagCompoundStatusForCandidatesParams{
+			SplitCriteriaVersion: analyzer.TagSplitVersion,
+			Candidates:           []string{candidate},
+		})
+		if err != nil {
+			t.Fatalf("re-read abstention: %v", err)
+		}
+		if len(rows) != 1 || rows[0].VerdictModel.String != "other-model" {
+			t.Errorf("standing row = %+v, want the original abstention still in place", rows)
 		}
 	})
 }

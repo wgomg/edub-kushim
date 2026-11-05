@@ -18,7 +18,7 @@ runs in forked CLI commands).
 | `internal/ops/dispatch` | The dispatcher and launcher. One queue claimant per daemon; forks one executor per batch. |
 | `internal/ops/queue` | The `kushim queue` daemon: notify loop, declarative scheduler, reclamation. |
 | `internal/ops/consume` | The ingest batch executor (`RunClaimedBatch`), the shared batch-mode entry, and the consume CLI. |
-| `internal/ops/cli` | The batch-mode CLIs: enrich, thumbnails, backup, mirror, migrate, the four tag passes, and `tagrejudge`. |
+| `internal/ops/cli` | The batch-mode CLIs: enrich, thumbnails, backup, mirror, migrate, the five tag passes, and `tagrejudge`. |
 | `internal/types` | The closed vocabulary: task types, statuses, lock names, per-type declarations, the batch enum. |
 
 Two processes matter: the **launcher** claims a batch, inserts its lease, acquires its
@@ -313,7 +313,7 @@ Every task CLI has a **batch mode** (`kushim --executor <cli> --from-batch <id>
 and a **direct mode** (no flags: the action runs now, creating no batch or task rows):
 the ingest family (`internal/ops/consume`, `internal/ops/cli/enrich.go`,
 `internal/ops/cli/thumbnails.go`), `kushim backup`, `kushim mirror`, `kushim migrate`
-and the four tag passes (`internal/ops/cli/tag*.go`). `kushim tagrejudge`
+and the five tag passes (`internal/ops/cli/tag*.go`). `kushim tagrejudge`
 (`internal/ops/cli/tagrejudge.go`) has no direct mode: its payload names the tag and the scope, so
 it is reached only through a queued re-judge. One execution settles the whole
 batch, so a mixed ingest batch forks `consume` and runs every type in its batch through
@@ -559,9 +559,9 @@ Key formats in use:
 | thumbnail / thumbbackfill | `thumbnail:doc:<document_id>` (no key when the payload carries no document id) |
 | backup | `backup:<mode>:<UTC date>` (mode defaults to `full`) |
 | mirror | `mirror:<UTC date>` |
-| tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit` |
+| tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `tagsplitreask` |
 | tagrejudge | payload-derived: `tagrejudge:<tag_id>:<scope>` (one live re-judge per tag and scope) |
-| maintenance routine | the tag passes' fixed keys: the reconcile root at enqueue, each chained successor at activation |
+| maintenance routine | the tag passes' fixed keys: the split re-ask root at enqueue, each chained successor at activation |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
 Activation is the only path that puts a key on a waiting successor, and a conflicting
@@ -721,7 +721,7 @@ holder refreshes through 5-minute heartbeats. The two-level rule:
   batch-held locks promptly; the window is the manual holder's only mechanism).
 - `task.RunBatch` owns the lock-holding lifecycle: it starts the heartbeat and the drain
   for a batch whose types declare holds (§6) and dispatches pure handlers from its
-  worker sets. The backup handler and the tag task handlers — the four passes and
+  worker sets. The backup handler and the tag task handlers — the five passes and
   `tagrejudge` — are work functions under it; the `migrate-db` and `migrate-storage`
   handlers drain nothing themselves (the run has drained), and the work happens after
   claim and before settle.
@@ -764,7 +764,7 @@ configuration the daemon runs (watcher-applied, §5). Entries are type-blind: a 
 returns any task set, chained waiting children included, exactly like the ingest
 producers, and the enqueue validates it; the entry itself carries no task type. The table
 carries one entry per configured backup mode (names `backup:<mode>`, after the dedup-key
-vocabulary) plus mirror, thumbnail-backfill and the four tag passes (their earlier
+vocabulary) plus mirror, thumbnail-backfill and the five tag passes (their earlier
 schedule names, so scheduled batches already in the table keep anchoring their cadence),
 and one unnamed entry for the inbox poll: origin `polling`, no schedule name, enabled by
 `consumer.polling` (flag plus active windows), due on a plain interval —
@@ -797,7 +797,7 @@ claims when the locks free.
   can exceed the 30-minute staleness window, the handler refreshes the lock heartbeat
   every 5 minutes for the rsync itself — the gate never goes stale mid-mirror. The
   heartbeat is started by the runner *before* `WaitForTaskDrain` returns, so the
-  drain-wait is covered too; backup, the four tag passes, `tagrejudge` and the maintenance routine's
+  drain-wait is covered too; backup, the five tag passes, `tagrejudge` and the maintenance routine's
   handlers get that sequence — heartbeat, drain, body, settle — from the runner. The
   queued mirror handler is the pure `backup.RunMirrorAndRecord`; the direct `kushim
   mirror` runs under the manual holder path and writes the `.edub-mirror.json`
@@ -833,6 +833,15 @@ claims when the locks free.
   so an active run blocks the next trigger. The queue dispatches it always —
   `enricher.tag_reconcile.enabled` gates only the automatic schedule.
   [Consolidation](consolidation.md) §9 documents the pass itself.
+- **tagsplitreask** (`internal/tags/reconcile/reask.go`): lock-holding; the child re-judges
+  the split gate's cached abstentions — part values and compounds whose stored verdict
+  deferred — and reports the values selected, decided, deferred again and failed. The
+  eligibility window is `enricher.tag_reconcile.reask_defer_days` (default 7 days), with a
+  younger part abstention eligible when it withholds more than one compound; the fresh
+  answer replaces the stale abstention in one transaction, so an aborted run leaves the
+  cache intact. Dedups on the fixed key `tagsplitreask`; the queue dispatches it always,
+  the fixed daily 04:30 schedule gated on `enricher.tag_adjudicator.enabled` governs
+  automatic runs, and the maintenance routine runs it first.
 - **tagrejudge** (`internal/ops/cli/tagrejudge.go`): lock-holding; the child re-runs one judge
   over one stored tag — the quality judge from the value's first live document, or the
   composition judge over the compound — and stores the refreshed verdict or hold as the task
@@ -841,19 +850,21 @@ claims when the locks free.
   is the review queue's **Re-judge** / **Judge now** actions
   (`POST /api/v1/tags/{id}/rejudge`); there is no schedule, no `kushim batch create` variant
   and no direct mode.
-- **tagmaintenance** (`internal/ops/tagmaintenance`): chains the four passes into one
-  batch — `curation.MaintenanceSpecs` enqueues the reconcile task as the pending root
-  with identity, audit and measure waiting on their predecessor, so each pass activates
-  only after the one before it completes and measurement always closes the cycle on fresh
-  evidence. The dispatcher resolves any batch made only of tag types to the
-  `tagmaintenance` child, the way a mixed ingest batch resolves to `consume` (ADR 0003);
-  the child runs the four pass handlers in order through its own catalog, whose wiring
-  carries the passes' constant dedup keys so the waiting successors activate. A bare
-  `kushim tagmaintenance` runs the same four handlers directly under the manual holder
+- **tagmaintenance** (`internal/ops/tagmaintenance`): chains the five passes into one
+  batch — `curation.MaintenanceSpecs` enqueues the split re-ask task as the pending root
+  with reconcile, identity, audit and measure waiting on their predecessor, so each pass
+  activates only after the one before it completes (re-ask first, so the reconciliation
+  sweep re-disposes the compounds its re-ask released in the same routine) and measurement
+  always closes the cycle on fresh evidence. The dispatcher resolves a batch carrying more
+  than one distinct tag type to the `tagmaintenance` child, the way a mixed ingest batch
+  resolves to `consume` (ADR 0003); a single-type batch keeps its own command. The child
+  runs the five pass handlers in order through its own catalog, whose wiring carries the
+  passes' constant dedup keys so the waiting successors activate. A bare
+  `kushim tagmaintenance` runs the same five handlers directly under the manual holder
   path. The schedule (`enricher.tag_maintenance`, weekly at 02:00 by default) idles the
-  individual reconcile, measure and audit schedules while it is enabled; the identity
-  pass's daily schedule keeps its own cadence — the routine's identity step is a
-  catch-up, not the only path to identity.
+  individual reconcile, measure and audit schedules while it is enabled; the identity and
+  split re-ask passes' daily schedules keep their own cadence — the routine's identity and
+  re-ask steps are catch-ups, not the only paths to either.
 - **thumbbackfill**: holds its lock at batch level — the dispatcher's claim acquires
   `storage` for the whole run after verifying `maintenance` is free, and the forked
   `thumbnails` child drains in-flight thumbnail tasks before starting, runs the

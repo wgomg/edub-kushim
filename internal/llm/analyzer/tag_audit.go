@@ -9,11 +9,12 @@ import (
 // TagAuditVersion pins the completeness audit's applicability criteria and prompt. A criteria or prompt
 // change bumps it so cached verdicts never apply across the change; the cache is keyed by the document's
 // content hash and this version, so re-auditing unchanged text reads its verdict instead of re-judging.
-const TagAuditVersion = "v1"
+// v2 embeds TagDefinition so the audited dimensions are read as tags under the system's characterization.
+const TagAuditVersion = "v2"
 
-// TagAuditSystemMessage fixes the audit judge's criterion — a candidate is a subject the document is about —
-// while the per-document question lives in the user prompt.
-const TagAuditSystemMessage = "You are a tag-completeness judge. Decide whether each candidate dimension is a subject the document is about."
+// TagAuditSystemMessage fixes the audit judge's role; the definition and the per-document applicability
+// question live in the user prompt.
+const TagAuditSystemMessage = "You are a tag-completeness judge. Answer the applicability question in the user message for each candidate."
 
 // TagAuditCandidate is one dimension the audit flagged as a possible coverage gap: its index in the
 // document's flag list and the store value.
@@ -57,12 +58,14 @@ func (c TagAuditCriteria) Result() (TagAuditResult, bool) {
 	return TagAuditResult{Applies: *c.Applies, Defer: c.Defer != nil && *c.Defer}, true
 }
 
-// BuildTagAuditPrompt renders the applicability question over the document and the flagged dimensions: a
-// dimension applies when a searcher filtering by it would count the document a correct hit — about-ness, not
-// mention. The judge abstains when about-ness is genuinely unclear, deferring to review.
+// BuildTagAuditPrompt renders the applicability question over the document and the flagged values: a value
+// applies when it is a tag under the shared definition and the document is about it, so a searcher filtering
+// by it would count the document a correct hit — about-ness, not mention. The judge abstains when
+// about-ness is genuinely unclear, deferring to review.
 func BuildTagAuditPrompt(text string, candidates []TagAuditCandidate) string {
 	var sb strings.Builder
-	sb.WriteString("For each candidate dimension below, answer whether the document is about that dimension: a searcher filtering by it would count this document a correct hit. Judge about-ness, not mention — a passing reference is not about-ness.\n")
+	sb.WriteString(TagDefinition + "\n")
+	sb.WriteString("For each candidate below, answer whether it applies to the document as a tag under that definition: the document is about it, so a searcher filtering by it would count this document a correct hit. Judge about-ness, not mention — a passing reference is not about-ness.\n")
 	sb.WriteString("Also answer defer: set it true when you cannot decide whether the document is about the dimension. Uncertainty defers to review; it never forces a label.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"applies\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
 	sb.WriteString("Document:\n")

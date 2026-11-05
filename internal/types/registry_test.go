@@ -11,7 +11,7 @@ func TestAllCounts(t *testing.T) {
 	if got, want := len(AllBatchStatuses()), 6; got != want {
 		t.Errorf("AllBatchStatuses len = %d, want %d", got, want)
 	}
-	if got, want := len(AllTaskTypes()), 13; got != want {
+	if got, want := len(AllTaskTypes()), 14; got != want {
 		t.Errorf("AllTaskTypes len = %d, want %d", got, want)
 	}
 }
@@ -78,6 +78,7 @@ func TestHoldsLocks(t *testing.T) {
 		Task.Type.TagMeasure:     true,
 		Task.Type.TagIdentity:    true,
 		Task.Type.TagAudit:       true,
+		Task.Type.TagSplitReask:  true,
 		Task.Type.MigrateDB:      true,
 		Task.Type.MigrateStorage: true,
 		Task.Type.Consume:        false,

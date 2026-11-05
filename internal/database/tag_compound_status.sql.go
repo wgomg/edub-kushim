@@ -14,6 +14,29 @@ import (
 	"github.com/lib/pq"
 )
 
+const deleteDeferredCompoundStatuses = `-- name: DeleteDeferredCompoundStatuses :execrows
+DELETE FROM tag_compound_status_event
+WHERE split_criteria_version = $1
+  AND candidate = ANY($2::text[])
+  AND status = 'defer'
+  AND verdict_model IS NOT NULL
+`
+
+type DeleteDeferredCompoundStatusesParams struct {
+	SplitCriteriaVersion string
+	Candidates           []string
+}
+
+// removes the stale abstentions a re-ask supersedes; only model-backed defer rows under the current
+// criteria version are ever deleted
+func (q *Queries) DeleteDeferredCompoundStatuses(ctx context.Context, arg DeleteDeferredCompoundStatusesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteDeferredCompoundStatuses, arg.SplitCriteriaVersion, pq.Array(arg.Candidates))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const insertTagCompoundStatusEvent = `-- name: InsertTagCompoundStatusEvent :execrows
 INSERT INTO tag_compound_status_event
     (document_id, candidate, status, criteria, verdict_model, split_criteria_version)
@@ -88,6 +111,47 @@ func (q *Queries) LatestTagCompoundStatusForCandidates(ctx context.Context, arg 
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEligibleDeferredCompoundCandidates = `-- name: ListEligibleDeferredCompoundCandidates :many
+SELECT s.candidate
+FROM tag_compound_status_event s
+WHERE s.split_criteria_version = $1
+  AND s.status = 'defer'
+  AND s.verdict_model IS NOT NULL
+  AND s.verdict_at < $2
+ORDER BY s.verdict_at
+LIMIT $3
+`
+
+type ListEligibleDeferredCompoundCandidatesParams struct {
+	SplitCriteriaVersion string
+	StaleBefore          time.Time
+	PageLimit            int32
+}
+
+// the split re-ask pass's compound leg: cached abstentions that have stood past the retention window
+func (q *Queries) ListEligibleDeferredCompoundCandidates(ctx context.Context, arg ListEligibleDeferredCompoundCandidatesParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listEligibleDeferredCompoundCandidates, arg.SplitCriteriaVersion, arg.StaleBefore, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			return nil, err
+		}
+		items = append(items, candidate)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

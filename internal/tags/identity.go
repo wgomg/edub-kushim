@@ -38,8 +38,9 @@ import (
 // the residue routed to the phrase-context judged path) and consults the pinned variant classes at birth, so
 // a store-anchored orthographic or permutation twin resolves mechanically without a judge. v10 drops the
 // similarity context from the pair-adjudication prompt — the two terms are the gate's only evidence — so
-// the judged criteria are pinned under the new stamp.
-const IdentityRuleSetVersion = "v10"
+// the judged criteria are pinned under the new stamp. v11 embeds the shared tag definition in the identity
+// and pair-adjudication prompts, so both read "tag" under the system's characterization.
+const IdentityRuleSetVersion = "v11"
 
 // The IdentityKind* values name the evidence rows the identity machinery
 // records: base-form proposals, the fold gate, the conventional-form
@@ -166,6 +167,7 @@ const (
 	CompositionReasonPartialParts             = "partial_parts"
 	CompositionReasonOperator                 = "operator"
 	CompositionReasonOperatorKeep             = "operator_keep"
+	CompositionReasonConflictArbitrated       = "conflict_arbitrated"
 )
 
 // compositionHoldReasons is the single definition of which composition reasons withhold a compound
@@ -657,10 +659,29 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 	return held, nil
 }
 
+// proxyRelationalKeep reports whether a relational keep rests only on the promoted-parts proxy instead of
+// the substrate's far-band reading. Such a hold is store-maturity pending — its parts are not all promoted
+// yet — not a judgment the operator owes, so the review reads and the promotion gate both let it through;
+// the store's own sweep re-disposes it once the parts promote. A row whose reading cannot be read keeps the
+// hold, so malformed evidence never silently releases a compound.
+func proxyRelationalKeep(reason string, reading []byte) bool {
+	if reason != CompositionReasonRelationalKeep {
+		return false
+	}
+	var recorded struct {
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(reading, &recorded); err != nil {
+		return false
+	}
+	return recorded.Source == ReconstructibilitySourceProxy
+}
+
 // CompositionReview reads each named candidate's latest composition journal row under criteriaVersion once
 // and returns both views the stored-compound sweep consults: the hold reasons keyed like
 // CompositionHeldNames and the states keyed like CompositionStatesForNames. A caller needing both views pays
-// one journal read instead of two.
+// one journal read instead of two. A proxy-based relational keep is absent from the hold view: it waits on
+// store maturity, not on review.
 func CompositionReview(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, map[string]CompositionState, error) {
 	normalized := distinctNames(names, StoredName)
 	if len(normalized) == 0 {
@@ -678,7 +699,7 @@ func CompositionReview(ctx context.Context, q *database.Queries, names []string,
 	held := make(map[string]string, len(rows))
 	states := make(map[string]CompositionState, len(rows))
 	for _, row := range rows {
-		if compositionHolds(row.Reason) {
+		if compositionHolds(row.Reason) && !proxyRelationalKeep(row.Reason, row.Reading) {
 			held[row.Candidate] = row.Reason
 		}
 		states[row.Candidate] = CompositionState{

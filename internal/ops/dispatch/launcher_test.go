@@ -137,6 +137,12 @@ func TestResolveLaunchTarget(t *testing.T) {
 		types.Task.Type.TagIdentity: {
 			CLI: "tagidentity", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
 		},
+		types.Task.Type.TagReconcile: {
+			CLI: "tagreconcile", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
+		},
+		types.Task.Type.TagSplitReask: {
+			CLI: "tagsplitreask", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
+		},
 		types.Task.Type.MigrateDB: {
 			CLI: "migrate-db", BatchSelector: "--from-batch", Hosts: []types.Host{types.HostQueue},
 		},
@@ -183,6 +189,21 @@ func TestResolveLaunchTarget(t *testing.T) {
 			[]types.TaskType{types.Task.Type.TagMeasure}, types.HostQueue)
 		testutil.AssertNoError(t, err, "resolve a pure tagmeasure batch")
 		testutil.AssertEqual(t, target.cli, "tagmeasure", "the single tag type is not hijacked")
+	})
+
+	t.Run("a re-ask chain batch resolves to the routine command", func(t *testing.T) {
+		target, err := resolveLaunchTarget(catalog, batchID,
+			[]types.TaskType{types.Task.Type.TagSplitReask, types.Task.Type.TagReconcile}, types.HostQueue)
+		testutil.AssertNoError(t, err, "resolve a re-ask chain batch")
+		testutil.AssertEqual(t, target.cli, "tagmaintenance", "the routine owns a batch chaining the re-ask")
+		testutil.AssertEqual(t, target.selector, "--from-batch", "the batch selector")
+	})
+
+	t.Run("a pure re-ask batch keeps its own command", func(t *testing.T) {
+		target, err := resolveLaunchTarget(catalog, batchID,
+			[]types.TaskType{types.Task.Type.TagSplitReask}, types.HostQueue)
+		testutil.AssertNoError(t, err, "resolve a pure tagsplitreask batch")
+		testutil.AssertEqual(t, target.cli, "tagsplitreask", "the single tag type is not hijacked")
 	})
 
 	t.Run("a batch with no task types is refused", func(t *testing.T) {

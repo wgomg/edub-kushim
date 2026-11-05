@@ -631,6 +631,17 @@ func (r *Runner) JudgeTagCompounds(ctx context.Context, candidates []string) ([]
 	})
 }
 
+// JudgeTagConflicts asks the LLM adjudicator to arbitrate the compounds whose constituent verdicts
+// disagree with the compound reading. Returns an error when no adjudicator was configured.
+func (r *Runner) JudgeTagConflicts(ctx context.Context, candidates []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
+	}
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagConflictResult, error) {
+		return r.tagAdjudicator.JudgeTagConflicts(ctx, candidates)
+	})
+}
+
 // HasTagQualityJudge reports whether a tag quality judge is configured.
 func (r *Runner) HasTagQualityJudge() bool {
 	return r.tagQualityJudge != nil

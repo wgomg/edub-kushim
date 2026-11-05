@@ -7,10 +7,12 @@ import (
 )
 
 // TagPhraseFoldVersion pins the phrase-context fold pass's criteria; a criteria or prompt change bumps it.
-const TagPhraseFoldVersion = "v1"
+// v2 embeds TagDefinition in the prompt, and the ambiguity branch now consumes the per-anchor answers the
+// seam already asked instead of ignoring them.
+const TagPhraseFoldVersion = "v2"
 
 // TagPhraseFoldSystemMessage is the system prompt of the phrase-context fold pass.
-const TagPhraseFoldSystemMessage = "You are a tag-fold judge. Decide whether a word, in the context of one phrase, denotes the same thing as a candidate anchor value."
+const TagPhraseFoldSystemMessage = "You are a tag-fold judge. Decide whether a word, in the context of one phrase, names the same tag as a candidate anchor value."
 
 // TagPhraseFoldCandidate is one phrase-context fold question: the phrase the part appears in, the part, and
 // the anchor store value it might denote. The seam asks it when a multi-base part's primary-sense
@@ -62,10 +64,11 @@ func (c TagPhraseFoldCriteria) String() string {
 }
 
 // BuildTagPhraseFoldPrompt renders the phrase-context fold question over the candidates: for each, whether
-// the part, as it is used in the phrase, denotes the same thing as the anchor value.
+// the part, as it is used in the phrase, names the same tag as the anchor value under the shared definition.
 func BuildTagPhraseFoldPrompt(candidates []TagPhraseFoldCandidate) string {
 	var sb strings.Builder
-	sb.WriteString("For each item below, decide whether the word denotes the same thing as the anchor value as it is used in the phrase.\n")
+	sb.WriteString(TagDefinition + "\n")
+	sb.WriteString("For each item below, decide whether the word, as used in the phrase, names the same tag as the anchor value — the same retrieval meaning.\n")
 	sb.WriteString("Answer fold true only when the word, in this phrase, means the anchor value (a relational adjective that names the anchor entity, e.g. 'german' in 'german literature' denoting germany).\n")
 	sb.WriteString("Answer fold false when the word carries its own, different meaning in the phrase (e.g. 'civil' in 'civil war' does not denote a state).\n")
 	sb.WriteString("Set defer true when the phrase context does not settle it; never guess.\n")

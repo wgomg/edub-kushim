@@ -14,6 +14,29 @@ import (
 	"github.com/lib/pq"
 )
 
+const deleteDeferredPartVerdicts = `-- name: DeleteDeferredPartVerdicts :execrows
+DELETE FROM tag_part_dimension_event
+WHERE policy_version = $1
+  AND value = ANY($2::text[])
+  AND criteria->>'defer' = 'true'
+  AND verdict_model IS NOT NULL
+`
+
+type DeleteDeferredPartVerdictsParams struct {
+	PolicyVersion string
+	PartValues    []string
+}
+
+// removes the stale abstentions a re-ask supersedes; only model-backed defer rows under the current
+// policy version are ever deleted, so a decided verdict and any other generation's row stay put
+func (q *Queries) DeleteDeferredPartVerdicts(ctx context.Context, arg DeleteDeferredPartVerdictsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteDeferredPartVerdicts, arg.PolicyVersion, pq.Array(arg.PartValues))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const insertTagPartDimensionEvent = `-- name: InsertTagPartDimensionEvent :execrows
 INSERT INTO tag_part_dimension_event
     (document_id, value, criteria, dimensional, verdict_model, policy_version)
@@ -88,6 +111,103 @@ func (q *Queries) LatestTagPartVerdictsForValues(ctx context.Context, arg Latest
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRetentionStaleDeferredPartValues = `-- name: ListRetentionStaleDeferredPartValues :many
+SELECT pd.value
+FROM tag_part_dimension_event pd
+WHERE pd.policy_version = $1
+  AND pd.criteria->>'defer' = 'true'
+  AND pd.verdict_model IS NOT NULL
+  AND pd.verdict_at < $2
+ORDER BY pd.verdict_at
+LIMIT $3
+`
+
+type ListRetentionStaleDeferredPartValuesParams struct {
+	PolicyVersion string
+	StaleBefore   time.Time
+	PageLimit     int32
+}
+
+// the retention leg of the split re-ask pass: an abstention that has stood past the retention window; the
+// (policy_version, verdict_at) index serves both the filter and the ORDER BY, so LIMIT stops the scan
+func (q *Queries) ListRetentionStaleDeferredPartValues(ctx context.Context, arg ListRetentionStaleDeferredPartValuesParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listRetentionStaleDeferredPartValues, arg.PolicyVersion, arg.StaleBefore, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		items = append(items, value)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listYoungDeferredPartValues = `-- name: ListYoungDeferredPartValues :many
+SELECT pd.value
+FROM tag_part_dimension_event pd
+WHERE pd.policy_version = $1
+  AND pd.criteria->>'defer' = 'true'
+  AND pd.verdict_model IS NOT NULL
+  AND pd.verdict_at >= $2
+  AND (SELECT count(DISTINCT ce.candidate)
+       FROM tag_composition_event ce
+       WHERE ce.criteria_version = $3
+         AND ce.created_at >= pd.verdict_at
+         AND (' ' || ce.candidate || ' ') LIKE ('% ' || pd.value || ' %')) > 1
+ORDER BY pd.verdict_at
+LIMIT $4
+`
+
+type ListYoungDeferredPartValuesParams struct {
+	PolicyVersion        string
+	StaleBefore          time.Time
+	SplitCriteriaVersion string
+	PageLimit            int32
+}
+
+// the multi-compound leg, restricted to abstentions younger than the retention window (older ones are
+// already eligible above): a defer withholds more than one distinct compound among the composition events
+// judged while it was in force; the created_at bound keeps the correlated count inside the defer's own
+// lifetime instead of scanning the whole journal per row
+func (q *Queries) ListYoungDeferredPartValues(ctx context.Context, arg ListYoungDeferredPartValuesParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listYoungDeferredPartValues,
+		arg.PolicyVersion,
+		arg.StaleBefore,
+		arg.SplitCriteriaVersion,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		items = append(items, value)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

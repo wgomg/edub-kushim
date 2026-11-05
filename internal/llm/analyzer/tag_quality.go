@@ -100,11 +100,12 @@ func (c TagQualityCriteria) String() string {
 // components from question 2: places are ordinary dimension values judged by dimensionality and recurrence,
 // works are ordinary candidates, and the criterion asks the person question alone under the wire key
 // `not_person`; the whitelisted-place hint retires with it. Cache lookup is version-filtered, so v5 verdicts
-// never apply and the stored v5 rows are superseded evidence.
-const TagQualityVersion = "v6"
+// never apply and the stored v5 rows are superseded evidence. v7 embeds TagDefinition so the atomicity
+// question's "each work as tags on their own" resolves against the system's definition.
+const TagQualityVersion = "v7"
 
 // TagQualitySystemMessage is the system prompt of the quality judge.
-const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether each candidate tag is a reusable dimension for a shared document vocabulary."
+const TagQualitySystemMessage = "You are a tag-quality judge. Answer the rubric in the user message for each candidate tag."
 
 // BuildTagQualityPrompt renders the quality rubric over the document snippet and the candidate tags.
 // The snippet serves the subject-matter question (question 1) alone; the remaining criteria are answered
@@ -113,12 +114,13 @@ const TagQualitySystemMessage = "You are a tag-quality judge. Decide whether eac
 // so this rubric carries the document-scoped questions only.
 func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string {
 	var sb strings.Builder
-	sb.WriteString("For each candidate tag below, answer four yes/no questions. Question 1 asks whether the tag is a subject matter of the document; questions 2-4 ask about the tag on its own, and their answers do not depend on the document.\n")
+	sb.WriteString(TagDefinition + "\n")
+	sb.WriteString("For each candidate tag below, answer four yes/no questions against the definition above. Question 1 asks whether the tag is a subject matter of the document; questions 2-4 ask about the tag on its own, and their answers do not depend on the document.\n")
 	sb.WriteString("1. subject_matter: is the tag a subject matter of the document — something this document is about? A specialized document's technical subject counts even when the word is rare or field-specific (a repair guide about spudgers is about spudgers); a generic theme word the text merely mentions or embodies is not (air, love, nature). The document's language is never a subject matter: a language name (spanish, english) is form, not aboutness.\n")
 	sb.WriteString("2. not_person: is the tag not a person? Individuals belong to the separate people field, so a person's name fails this criterion. Places, works, and genres are ordinary subject candidates and pass it.\n")
-	sb.WriteString("3. atomic: is the tag one dimension, not a combination whose parts each work as tags on their own? A compound that survives decomposition as a named unit answers true.\n")
+	sb.WriteString("3. atomic: is the tag one dimension rather than a pre-coordination of dimensions that are each tags on their own? A lexical or named unit whose parts are not dimensions answers true.\n")
 	sb.WriteString("4. not_form_genre: is the tag not a publishing format? Publishing formats and containers (book, article, tutorial, manual, report, anthology, collected letters) describe what a document is as a publication, not what it is about — they fail this criterion. A genre or art form (poetry, drama, science fiction, horror, autobiography, memoir) is a subject-side content dimension, not a publishing format: it passes this criterion and is judged on the questions above.\n")
-	sb.WriteString("Also answer defer: set it true when you cannot decide whether the tag is a reusable dimension. Uncertainty defers to review; it never forces a label.\n")
+	sb.WriteString("Also answer defer: set it true when you cannot decide whether the tag satisfies the definition. Uncertainty defers to review; it never forces a label.\n")
 	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"not_person\":true,\"atomic\":true,\"not_form_genre\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
 	sb.WriteString("Document for question 1:\n")
 	sb.WriteString(text)

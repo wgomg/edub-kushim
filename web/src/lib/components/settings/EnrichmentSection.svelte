@@ -884,6 +884,16 @@
 					hint="Tags the current rules have decided are not values are removed once the decision is this many days old."
 					bind:value={cfg.enricher.tag_reconcile.retention_days}
 				/>
+				<UnitField
+					id="tag-reconcile-reask-defer"
+					label="Split abstention re-ask age"
+					unit="days"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					hint="Cached split-gate abstentions older than this many days are re-judged by the maintenance routine and the daily re-ask pass."
+					bind:value={cfg.enricher.tag_reconcile.reask_defer_days}
+				/>
 			</div>
 			<div class="mt-4">
 				<Note variant="info">

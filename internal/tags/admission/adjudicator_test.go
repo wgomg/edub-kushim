@@ -396,6 +396,7 @@ type mockAdjudicator struct {
 	identityFn      func(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)
 	partFn          func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
 	compoundFn      func(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error)
+	conflictFn      func(ctx context.Context, candidates []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error)
 	qualityFn       func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)
 	translationFn   func(ctx context.Context, values []string) ([]analyzer.TagTranslationResult, error)
 	phraseFoldFn    func(ctx context.Context, candidates []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error)
@@ -403,6 +404,7 @@ type mockAdjudicator struct {
 	identityCall    int
 	partCall        int
 	compoundCall    int
+	conflictCall    int
 	qualityCall     int
 	translationCall int
 	phraseFoldCall  int
@@ -436,6 +438,14 @@ func (m *mockAdjudicator) JudgeTagCompounds(ctx context.Context, candidates []st
 	m.compoundCall++
 	if m.compoundFn != nil {
 		return m.compoundFn(ctx, candidates)
+	}
+	return nil, nil
+}
+
+func (m *mockAdjudicator) JudgeTagConflicts(ctx context.Context, candidates []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+	m.conflictCall++
+	if m.conflictFn != nil {
+		return m.conflictFn(ctx, candidates)
 	}
 	return nil, nil
 }
@@ -2611,6 +2621,131 @@ func TestJudgeCompounds_RowContract(t *testing.T) {
 			if row.DocumentID != 0 {
 				t.Errorf("rows[%d].DocumentID = %d, want 0", i, row.DocumentID)
 			}
+		}
+	})
+}
+
+// partsMachineNotDimensional answers the parts pass with "machine" withheld and every other word granted,
+// which under a composition reading is the disagreement shape the arbiter arbitrates.
+func partsMachineNotDimensional(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	results := make([]analyzer.TagPartResult, len(values))
+	for i, value := range values {
+		results[i] = analyzer.TagPartResult{Index: i, Dimensional: value != "machine"}
+	}
+	return results, nil
+}
+
+// TestJudgeCompounds_ConflictArbitration pins the arbiter's contract on the disagreeing compound: a decided
+// action rewrites the row's reason and disposition, a defer or an unavailable arbiter leaves the
+// conflicting_evidence hold standing, a credit error escapes so the batch pauses, and the arbiter sees only
+// the candidates that actually disagree.
+func TestJudgeCompounds_ConflictArbitration(t *testing.T) {
+	ctx := context.Background()
+	filter := analyzer.NewTagFilter(nil, nil, nil)
+	conflictFixture := func(t *testing.T, fn func(context.Context, []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error)) (*Adjudicator, *mockAdjudicator) {
+		t.Helper()
+		adj := &mockAdjudicator{
+			partFn:     partsMachineNotDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+			conflictFn: fn,
+		}
+		a, _ := newSplitAdjudicator(t, adj, nil)
+		return a, adj
+	}
+
+	t.Run("a decided keep rewrites the row", func(t *testing.T) {
+		a, _ := conflictFixture(t, func(_ context.Context, _ []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+			return []analyzer.TagConflictResult{{Index: 0, Action: analyzer.TagConflictKeep}}, nil
+		})
+		rows, err := a.JudgeCompounds(ctx, []string{"machine learning"}, nil, nil, filter, 0, "")
+		if err != nil {
+			t.Fatalf("JudgeCompounds: %v", err)
+		}
+		row := rows[0]
+		if row.Disposition != tags.CompositionKeep {
+			t.Errorf("Disposition = %s, want keep", row.Disposition)
+		}
+		if row.Reason != tags.CompositionReasonConflictArbitrated {
+			t.Errorf("Reason = %q, want the arbitration reason", row.Reason)
+		}
+	})
+
+	t.Run("a decided split rewrites the row to a split", func(t *testing.T) {
+		a, _ := conflictFixture(t, func(_ context.Context, _ []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+			return []analyzer.TagConflictResult{{Index: 0, Action: analyzer.TagConflictSplit}}, nil
+		})
+		rows, err := a.JudgeCompounds(ctx, []string{"machine learning"}, nil, nil, filter, 0, "")
+		if err != nil {
+			t.Fatalf("JudgeCompounds: %v", err)
+		}
+		row := rows[0]
+		if row.Disposition != tags.CompositionSplit {
+			t.Errorf("Disposition = %s, want split", row.Disposition)
+		}
+		if row.Reason != tags.CompositionReasonConflictArbitrated {
+			t.Errorf("Reason = %q, want the arbitration reason", row.Reason)
+		}
+		if !reflect.DeepEqual(row.Parts, []string{"machine", "learning"}) {
+			t.Errorf("Parts = %v, want the split's components", row.Parts)
+		}
+	})
+
+	t.Run("a defer leaves the conflicting hold standing", func(t *testing.T) {
+		a, _ := conflictFixture(t, func(_ context.Context, _ []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+			return []analyzer.TagConflictResult{{Index: 0, Action: analyzer.TagConflictDefer}}, nil
+		})
+		rows, err := a.JudgeCompounds(ctx, []string{"machine learning"}, nil, nil, filter, 0, "")
+		if err != nil {
+			t.Fatalf("JudgeCompounds: %v", err)
+		}
+		row := rows[0]
+		if row.Disposition != tags.CompositionKeep {
+			t.Errorf("Disposition = %s, want keep", row.Disposition)
+		}
+		if row.Reason != tags.CompositionReasonConflictingEvidence {
+			t.Errorf("Reason = %q, want the conflicting-evidence hold", row.Reason)
+		}
+	})
+
+	t.Run("an unavailable arbiter leaves the conflicting hold standing", func(t *testing.T) {
+		a, _ := conflictFixture(t, nil)
+		rows, err := a.JudgeCompounds(ctx, []string{"machine learning"}, nil, nil, filter, 0, "")
+		if err != nil {
+			t.Fatalf("JudgeCompounds: %v", err)
+		}
+		if rows[0].Reason != tags.CompositionReasonConflictingEvidence {
+			t.Errorf("Reason = %q, want the conflicting-evidence hold", rows[0].Reason)
+		}
+	})
+
+	t.Run("a credit error escapes so the batch pauses", func(t *testing.T) {
+		a, _ := conflictFixture(t, func(_ context.Context, _ []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+			return nil, &analyzer.InsufficientCreditsError{Provider: "test", HTTPStatus: 402}
+		})
+		if _, err := a.JudgeCompounds(ctx, []string{"machine learning"}, nil, nil, filter, 0, ""); err == nil {
+			t.Fatal("JudgeCompounds returned nil error on credit exhaustion, want the error to escape")
+		}
+	})
+
+	t.Run("only the disagreeing candidate reaches the arbiter", func(t *testing.T) {
+		var asked []analyzer.TagConflictCandidate
+		a, _ := conflictFixture(t, func(_ context.Context, candidates []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+			asked = candidates
+			return nil, nil
+		})
+		candidates := []string{"machine learning", "mexican revolution"}
+		rows, err := a.JudgeCompounds(ctx, candidates, nil, nil, filter, 0, "")
+		if err != nil {
+			t.Fatalf("JudgeCompounds: %v", err)
+		}
+		if len(asked) != 1 || asked[0].Compound != "machine learning" {
+			t.Errorf("arbiter asked %+v, want only the disagreeing compound", asked)
+		}
+		if rows[1].Reason == tags.CompositionReasonConflictArbitrated {
+			t.Errorf("the agreeing compound's row carries the arbitration reason; the arbiter must not touch it")
+		}
+		if rows[1].Disposition != tags.CompositionSplit {
+			t.Errorf("the agreeing compound's disposition = %s, want the unarbitrated split", rows[1].Disposition)
 		}
 	})
 }

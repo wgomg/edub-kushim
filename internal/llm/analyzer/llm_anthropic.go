@@ -393,6 +393,11 @@ func (l *LlmAnthropic) JudgeTagCompounds(ctx context.Context, candidates []strin
 	return judgedAnthropic(ctx, l, TagCompoundSystemMessage, BuildTagCompoundPrompt(candidates), "tag compound judge", len(candidates), judgedOutputBudget, ParseTagCompoundResponse)
 }
 
+// JudgeTagConflicts arbitrates the disagreeing compounds through the Anthropic API.
+func (l *LlmAnthropic) JudgeTagConflicts(ctx context.Context, candidates []TagConflictCandidate) ([]TagConflictResult, error) {
+	return judgedAnthropic(ctx, l, TagConflictSystemMessage, BuildTagConflictPrompt(candidates), "tag conflict arbiter", len(candidates), judgedOutputBudget, ParseTagConflictResponse)
+}
+
 // JudgeTagQuality scores candidates through the Anthropic API under the
 // quality judge's own wider budget.
 func (l *LlmAnthropic) JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error) {

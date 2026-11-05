@@ -112,6 +112,12 @@ var staticDefinitions = map[types.TaskType]staticDefinition{
 		batchSelector: "--from-batch",
 		hosts:         []types.Host{types.HostQueue},
 	},
+	types.Task.Type.TagSplitReask: {
+		locks:         lockPolicy(types.Task.Type.TagSplitReask),
+		cli:           "tagsplitreask",
+		batchSelector: "--from-batch",
+		hosts:         []types.Host{types.HostQueue},
+	},
 	types.Task.Type.MigrateDB: {
 		locks:         lockPolicy(types.Task.Type.MigrateDB),
 		cli:           "migrate",

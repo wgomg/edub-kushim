@@ -44,6 +44,7 @@ var batchExecutorPrecedence = []types.TaskType{
 // the routine, whose root work the tagmaintenance command owns; a batch carrying any other type keeps its
 // own resolution.
 var tagGroupTypes = []types.TaskType{
+	types.Task.Type.TagSplitReask,
 	types.Task.Type.TagReconcile,
 	types.Task.Type.TagIdentity,
 	types.Task.Type.TagAudit,

@@ -1009,22 +1009,28 @@ func TestCompositionReview(t *testing.T) {
 
 	// a criteria version of this test's own keeps the rows out of every other read
 	const version = "review-test-v1"
-	seed := func(candidate, disposition, reason string) {
+	seed := func(candidate, disposition, reason, reading string) {
 		t.Helper()
 		if _, err := client.DB().ExecContext(ctx, `
 			INSERT INTO tag_composition_event
-			    (document_id, candidate, parts, disposition, reason, criteria_version)
-			VALUES ($1, $2, '[]'::jsonb, $3, $4, $5)`,
-			docID, candidate, disposition, reason, version); err != nil {
+			    (document_id, candidate, parts, disposition, reason, criteria_version, reading)
+			VALUES ($1, $2, '[]'::jsonb, $3, $4, $5, $6)`,
+			docID, candidate, disposition, reason, version, reading); err != nil {
 			t.Fatalf("seed composition row for %q: %v", candidate, err)
 		}
 	}
-	seed("heldsplit", string(CompositionKeep), CompositionReasonSplitDefer)
-	seed("degraded", string(CompositionKeep), CompositionReasonJudgeUnavailable)
-	seed("decideddrop", string(CompositionDrop), CompositionReasonNoDimension)
-	seed("unrelated", string(CompositionKeep), CompositionReasonNamedUnit)
+	seed("heldsplit", string(CompositionKeep), CompositionReasonSplitDefer, "{}")
+	seed("degraded", string(CompositionKeep), CompositionReasonJudgeUnavailable, "{}")
+	seed("decideddrop", string(CompositionDrop), CompositionReasonNoDimension, "{}")
+	seed("unrelated", string(CompositionKeep), CompositionReasonNamedUnit, "{}")
+	// a relational keep whose reading rests on the promoted-parts proxy waits on store maturity, so it must
+	// not reach the hold view; the substrate reading is the judgment a review still owes, and an unreadable
+	// reading keeps the hold rather than releasing a compound on malformed evidence
+	seed("proxyrel", string(CompositionKeep), CompositionReasonRelationalKeep, `{"source":"proxy"}`)
+	seed("substraterel", string(CompositionKeep), CompositionReasonRelationalKeep, `{"source":"substrate"}`)
+	seed("malformedrel", string(CompositionKeep), CompositionReasonRelationalKeep, `42`)
 
-	names := []string{"heldsplit", "degraded", "decideddrop", "unrelated", "unjudged"}
+	names := []string{"heldsplit", "degraded", "decideddrop", "unrelated", "unjudged", "proxyrel", "substraterel", "malformedrel"}
 	held, states, err := CompositionReview(ctx, q, names, version)
 	if err != nil {
 		t.Fatalf("CompositionReview: %v", err)
@@ -1062,6 +1068,18 @@ func TestCompositionReview(t *testing.T) {
 	}
 	if _, ok := held["unrelated"]; ok {
 		t.Errorf("held[unrelated] = %q, a clean keep is not a hold", held["unrelated"])
+	}
+	if _, ok := held["proxyrel"]; ok {
+		t.Errorf("held[proxyrel] = %q, a proxy relational keep waits on store maturity, not review", held["proxyrel"])
+	}
+	if held["substraterel"] != CompositionReasonRelationalKeep {
+		t.Errorf("held[substraterel] = %q, a substrate relational keep is the judgment a review owes", held["substraterel"])
+	}
+	if held["malformedrel"] != CompositionReasonRelationalKeep {
+		t.Errorf("held[malformedrel] = %q, an unreadable reading must keep the hold", held["malformedrel"])
+	}
+	if _, ok := states["proxyrel"]; !ok {
+		t.Error("states[proxyrel] missing: only the hold view narrows, the state read still carries the row")
 	}
 
 	emptyHeld, emptyStates, err := CompositionReview(ctx, q, nil, version)

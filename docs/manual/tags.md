@@ -74,10 +74,10 @@ matching section of the guide.
 | Reason | Meaning | Usual resolution |
 |---|---|---|
 | `split_defer` | the split judge abstained or the parts pass deferred | split now, or keep whole |
-| `conflicting_evidence` | parts and compound point in opposite directions | split now, or keep whole |
+| `conflicting_evidence` | parts and compound point in opposite directions; an arbiter call resolves it when the evidence settles, and only an arbiter defer keeps the hold | split now, or keep whole |
 | `sample_disagreement` | two corpus samples disagree about the compound | split now, or keep whole |
 | `named_unit_reconstructible` | the parts rebuild the compound, so it is a name in its own right | apply the parts alongside, or keep whole |
-| `relational_keep` | the compound selects more than its parts share, so it is not their product | apply the parts alongside, or keep whole |
+| `relational_keep` | the compound selects more than its parts share, so it is not their product; a keep resting only on parts the store has not promoted yet waits on store maturity instead of reaching review | apply the parts alongside, or keep whole |
 | `judge_unavailable` | no split judge answered; nothing was decided | re-judge once a judge is configured |
 | `no_dimension` | the compound was decided to name no dimension | retire it — approving does not stick for a decided drop |
 | `part_rejected` | every part of the split was rejected | retire it — approving does not stick for a decided drop |

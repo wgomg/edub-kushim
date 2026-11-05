@@ -100,7 +100,7 @@ func (q *Queries) LatestCompositionEventsForNames(ctx context.Context, candidate
 
 const latestCompositionReasonsForNames = `-- name: LatestCompositionReasonsForNames :many
 SELECT DISTINCT ON (candidate)
-       candidate, disposition, reason,
+       candidate, disposition, reason, reading,
        COALESCE(
            MIN(created_at) FILTER (WHERE reason <> $1::text) OVER (PARTITION BY candidate),
            MIN(created_at) OVER (PARTITION BY candidate)
@@ -121,6 +121,7 @@ type LatestCompositionReasonsForNamesRow struct {
 	Candidate   string
 	Disposition string
 	Reason      string
+	Reading     json.RawMessage
 	DecidedAt   time.Time
 }
 
@@ -137,6 +138,7 @@ func (q *Queries) LatestCompositionReasonsForNames(ctx context.Context, arg Late
 			&i.Candidate,
 			&i.Disposition,
 			&i.Reason,
+			&i.Reading,
 			&i.DecidedAt,
 		); err != nil {
 			return nil, err

@@ -20,7 +20,7 @@ import (
 )
 
 // fullScheduleConfig builds a configuration declaring every schedule the table can carry: the three
-// backup modes plus the six fixed schedules.
+// backup modes plus the seven fixed schedules.
 func fullScheduleConfig() *config.Config {
 	cfg := &config.Config{}
 	cfg.Backup.Enabled = true
@@ -44,8 +44,8 @@ func TestScheduleNamesAreUnique(t *testing.T) {
 		}
 		seen[entry.name] = true
 	}
-	if got, want := len(entries), 11; got != want {
-		t.Fatalf("entry count = %d, want %d (three backup modes plus the seven fixed schedules and polling)", got, want)
+	if got, want := len(entries), 12; got != want {
+		t.Fatalf("entry count = %d, want %d (three backup modes plus the eight fixed schedules and polling)", got, want)
 	}
 }
 

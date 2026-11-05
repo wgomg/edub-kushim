@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
 
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
@@ -196,19 +198,27 @@ func readCachedPartVerdicts(ctx context.Context, q *database.Queries, logger *lo
 	return verdicts
 }
 
-// writePartVerdict persists one fresh part verdict. On conflict the row another worker cached first wins, and
-// a stored answer differing from this sample sets the disagreement flag the decision reads.
+// writePartVerdict persists one fresh part verdict, gating the destructive direction through settlePartFalse
+// and then writing the row that stands.
 func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value string, r analyzer.TagPartResult, reqID string) (PartVerdict, error) {
 	r, serr := s.settlePartFalse(ctx, value, r, reqID)
 	if serr != nil {
 		return PartVerdict{}, serr
 	}
+	return s.insertPartVerdict(ctx, s.queries, docId, value, r, reqID), nil
+}
+
+// insertPartVerdict writes one settled part verdict through q, returning the row that stands: this writer's
+// answer when it wins the fresh-row conflict, otherwise the stored winner with the disagreement flag set. q
+// is the pool's handle or a transaction's, so a caller superseding cached rows can write inside its
+// transaction with the same conflict and disagreement handling.
+func (s *VerdictStore) insertPartVerdict(ctx context.Context, q *database.Queries, docId int64, value string, r analyzer.TagPartResult, reqID string) PartVerdict {
 	criteria, err := json.Marshal(r.Criteria())
 	if err != nil {
 		criteria = json.RawMessage("{}")
 	}
 	fresh := PartVerdict{Dimensional: r.Dimensional, Deferred: r.Defer}
-	n, err := s.queries.InsertTagPartDimensionEvent(ctx, database.InsertTagPartDimensionEventParams{
+	n, err := q.InsertTagPartDimensionEvent(ctx, database.InsertTagPartDimensionEventParams{
 		DocumentID:    sql.NullInt64{Int64: docId, Valid: docId != 0},
 		Value:         value,
 		Criteria:      criteria,
@@ -218,13 +228,13 @@ func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value 
 	})
 	if err != nil {
 		s.logger.Error(reqID, "tag split[%s]: part verdict insert failed for %q: %v", analyzer.TagPartDimensionVersion, value, err)
-		return fresh, nil
+		return fresh
 	}
 	if n > 0 {
-		return fresh, nil
+		return fresh
 	}
 
-	rows, err := s.queries.LatestTagPartVerdictsForValues(ctx, database.LatestTagPartVerdictsForValuesParams{
+	rows, err := q.LatestTagPartVerdictsForValues(ctx, database.LatestTagPartVerdictsForValuesParams{
 		PolicyVersion: analyzer.TagPartDimensionVersion,
 		PartValues:    []string{value},
 	})
@@ -232,7 +242,7 @@ func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value 
 		if err != nil {
 			s.logger.Error(reqID, "tag split[%s]: part verdict cache re-read after conflict failed: %v", analyzer.TagPartDimensionVersion, err)
 		}
-		return fresh, nil
+		return fresh
 	}
 	stored := partVerdictFromRow(rows[0], s.logger, reqID)
 	stored.Disagreement = stored.Dimensional != r.Dimensional || stored.Deferred != r.Defer
@@ -240,7 +250,7 @@ func (s *VerdictStore) writePartVerdict(ctx context.Context, docId int64, value 
 		s.logger.Warn(reqID, "tag split[%s]: part verdict disagreement for %q: fresh(%s) stored(dimensional=%t defer=%t)",
 			analyzer.TagPartDimensionVersion, value, r.Criteria(), stored.Dimensional, stored.Deferred)
 	}
-	return stored, nil
+	return stored
 }
 
 // settlePartFalse guards the destructive direction of a fresh part verdict: a model false on a value the
@@ -478,12 +488,20 @@ func (s *VerdictStore) Compounds(ctx context.Context, candidates []string, docId
 // writeCompoundVerdict persists one fresh compound verdict, mirroring writePartVerdict: the first writer's
 // row wins on conflict and a differing sample sets the disagreement flag.
 func (s *VerdictStore) writeCompoundVerdict(ctx context.Context, docId int64, candidate string, r analyzer.TagCompoundResult, reqID string) CompoundVerdict {
+	return s.insertCompoundVerdict(ctx, s.queries, docId, candidate, r, reqID)
+}
+
+// insertCompoundVerdict writes one compound verdict through q, returning the row that stands: this writer's
+// answer when it wins the fresh-row conflict, otherwise the stored winner with the disagreement flag set. q
+// is the pool's handle or a transaction's, so a caller superseding cached rows can write inside its
+// transaction with the same conflict and disagreement handling.
+func (s *VerdictStore) insertCompoundVerdict(ctx context.Context, q *database.Queries, docId int64, candidate string, r analyzer.TagCompoundResult, reqID string) CompoundVerdict {
 	criteria, err := json.Marshal(r.Criteria())
 	if err != nil {
 		criteria = json.RawMessage("{}")
 	}
 	fresh := CompoundVerdict{Status: r.Status, Deferred: r.Defer, Model: s.model}
-	n, err := s.queries.InsertTagCompoundStatusEvent(ctx, database.InsertTagCompoundStatusEventParams{
+	n, err := q.InsertTagCompoundStatusEvent(ctx, database.InsertTagCompoundStatusEventParams{
 		DocumentID:           sql.NullInt64{Int64: docId, Valid: docId != 0},
 		Candidate:            candidate,
 		Status:               compoundRowStatus(r),
@@ -499,7 +517,7 @@ func (s *VerdictStore) writeCompoundVerdict(ctx context.Context, docId int64, ca
 		return fresh
 	}
 
-	rows, err := s.queries.LatestTagCompoundStatusForCandidates(ctx, database.LatestTagCompoundStatusForCandidatesParams{
+	rows, err := q.LatestTagCompoundStatusForCandidates(ctx, database.LatestTagCompoundStatusForCandidatesParams{
 		SplitCriteriaVersion: analyzer.TagSplitVersion,
 		Candidates:           []string{candidate},
 	})
@@ -541,4 +559,112 @@ func (s *VerdictStore) compoundVerdictFromRow(row database.LatestTagCompoundStat
 		return CompoundVerdict{Deferred: true, Cached: true, Model: row.VerdictModel.String}
 	}
 	return CompoundVerdict{Status: analyzer.TagCompoundStatus(row.Status), Cached: true, Model: row.VerdictModel.String}
+}
+
+// SupersedeParts re-asks the named values regardless of their cached verdicts and replaces the stale
+// abstentions atomically. Every fresh answer is judged and settled before any write opens; the old defer
+// rows of the answered values are then deleted and their fresh rows inserted in one transaction, so an
+// aborted run — credit exhaustion, a failed commit — leaves every cached verdict in place. A value the judge
+// leaves unanswered keeps its cached abstention rather than losing it. The returned verdicts are the rows
+// that stand; a non-nil error is returned only for credit exhaustion or a failed transaction.
+func (s *VerdictStore) SupersedeParts(ctx context.Context, client *database.Client, values []string, docId int64, reqID string) (map[string]PartVerdict, error) {
+	settled := make(map[string]analyzer.TagPartResult, len(values))
+	if err := runVerdictBatches(ctx, s, reqID, analyzer.TagPartDimensionVersion, values,
+		func(ctx context.Context, batch []string) ([]analyzer.TagPartResult, error) {
+			return s.runner.JudgeTagParts(ctx, batch)
+		},
+		func(value string, r analyzer.TagPartResult) error {
+			final, serr := s.settlePartFalse(ctx, value, r, reqID)
+			if serr != nil {
+				return serr
+			}
+			settled[value] = final
+			return nil
+		}); err != nil {
+		return nil, err
+	}
+	answered := sortedKeys(settled)
+	if len(answered) == 0 {
+		return map[string]PartVerdict{}, nil
+	}
+
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin part supersede transaction: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+	if _, err := qtx.DeleteDeferredPartVerdicts(ctx, database.DeleteDeferredPartVerdictsParams{
+		PolicyVersion: analyzer.TagPartDimensionVersion,
+		PartValues:    answered,
+	}); err != nil {
+		return nil, fmt.Errorf("delete superseded part verdicts: %w", err)
+	}
+	verdicts := make(map[string]PartVerdict, len(answered))
+	for _, value := range answered {
+		verdicts[value] = s.insertPartVerdict(ctx, qtx, docId, value, settled[value], reqID)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit part supersede transaction: %w", err)
+	}
+	return verdicts, nil
+}
+
+// SupersedeCompounds re-asks the named candidates regardless of their cached verdicts and replaces the
+// stale abstentions atomically, mirroring SupersedeParts: the fresh answers are judged before any write
+// opens, then the old defer rows of the answered candidates are deleted and their fresh rows inserted in one
+// transaction. A candidate the judge leaves unanswered keeps its cached abstention. The returned verdicts
+// are the rows that stand; a non-nil error is returned only for credit exhaustion or a failed transaction.
+func (s *VerdictStore) SupersedeCompounds(ctx context.Context, client *database.Client, candidates []string, docId int64, reqID string) (map[string]CompoundVerdict, error) {
+	settled := make(map[string]analyzer.TagCompoundResult, len(candidates))
+	if err := runVerdictBatches(ctx, s, reqID, analyzer.TagSplitVersion, candidates,
+		func(ctx context.Context, batch []string) ([]analyzer.TagCompoundResult, error) {
+			return s.runner.JudgeTagCompounds(ctx, batch)
+		},
+		func(candidate string, r analyzer.TagCompoundResult) error {
+			if !r.Status.Valid() {
+				s.logger.Warn(reqID, "tag split[%s]: compound judge returned no status for %q", analyzer.TagSplitVersion, candidate)
+				return nil
+			}
+			settled[candidate] = r
+			return nil
+		}); err != nil {
+		return nil, err
+	}
+	answered := sortedKeys(settled)
+	if len(answered) == 0 {
+		return map[string]CompoundVerdict{}, nil
+	}
+
+	tx, err := client.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin compound supersede transaction: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+	if _, err := qtx.DeleteDeferredCompoundStatuses(ctx, database.DeleteDeferredCompoundStatusesParams{
+		SplitCriteriaVersion: analyzer.TagSplitVersion,
+		Candidates:           answered,
+	}); err != nil {
+		return nil, fmt.Errorf("delete superseded compound statuses: %w", err)
+	}
+	verdicts := make(map[string]CompoundVerdict, len(answered))
+	for _, candidate := range answered {
+		verdicts[candidate] = s.insertCompoundVerdict(ctx, qtx, docId, candidate, settled[candidate], reqID)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit compound supersede transaction: %w", err)
+	}
+	return verdicts, nil
+}
+
+// sortedKeys returns a map's keys in one deterministic order, so a supersede transaction writes its rows in
+// a stable sequence and its logs stay comparable across runs.
+func sortedKeys[R any](m map[string]R) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

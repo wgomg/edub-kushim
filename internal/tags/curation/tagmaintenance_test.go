@@ -8,15 +8,16 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// TestMaintenanceSpecs_ChainsRoutineOrder pins the maintenance routine's task shape: reconcile is the
-// pending root, identity, audit and measure wait on their predecessor in that order, every payload is a
-// non-nil JSON object (the enqueue discards a waiting child with a nil payload), and the task ids are
-// fresh across calls so a second routine never collides on the unique task-id constraint.
+// TestMaintenanceSpecs_ChainsRoutineOrder pins the maintenance routine's task shape: the split re-ask is
+// the pending root, reconciliation, identity, audit and measure wait on their predecessor in that order,
+// every payload is a non-nil JSON object (the enqueue discards a waiting child with a nil payload), and the
+// task ids are fresh across calls so a second routine never collides on the unique task-id constraint.
 func TestMaintenanceSpecs_ChainsRoutineOrder(t *testing.T) {
 	specs := MaintenanceSpecs()
-	testutil.AssertEqual(t, len(specs), 4, "one spec per routine pass")
+	testutil.AssertEqual(t, len(specs), 5, "one spec per routine pass")
 
 	wantTypes := []types.TaskType{
+		types.Task.Type.TagSplitReask,
 		types.Task.Type.TagReconcile,
 		types.Task.Type.TagIdentity,
 		types.Task.Type.TagAudit,
@@ -27,10 +28,10 @@ func TestMaintenanceSpecs_ChainsRoutineOrder(t *testing.T) {
 	}
 
 	if specs[0].Status != types.Task.Status.Pending {
-		t.Errorf("reconcile status = %s, want pending (the batch's root)", specs[0].Status)
+		t.Errorf("re-ask status = %s, want pending (the batch's root)", specs[0].Status)
 	}
 	if specs[0].ParentTaskID != "" {
-		t.Errorf("reconcile parent = %q, want empty (root)", specs[0].ParentTaskID)
+		t.Errorf("re-ask parent = %q, want empty (root)", specs[0].ParentTaskID)
 	}
 	for i := 1; i < len(specs); i++ {
 		if specs[i].Status != types.Task.Status.Waiting {

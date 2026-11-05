@@ -116,6 +116,14 @@ type AnalysisResult struct {
   outside the trichotomy is missing; a truncated reply carries its entries
   alongside `*IncompleteReplyError`). Used by the enricher's decomposition step
   and the reconciliation compound sweep under the same toggle.
+- `JudgeTagConflicts` — the split gate's conflict arbiter: settles the compounds
+  whose constituent verdicts disagree with the compound reading (`split` /
+  `keep` / `defer`) with a temperature-0 request built from
+  `BuildTagConflictPrompt` and parsed by `ParseTagConflictResponse` (an entry
+  without a recognized action is missing; a truncated reply carries its entries
+  alongside `*IncompleteReplyError`). Used by the composition gate when the parts
+  and compound passes disagree, under `enricher.tag_adjudicator.enabled`; a
+  defer or an unavailable arbiter keeps the `conflicting_evidence` hold.
 - `JudgeTagIdentity` — answers the three binary canonical-form criteria for a
   flagged candidate (`fold_to_base`, `fold_preserves_denotation`,
   `conventional_form`) with a temperature-0 request built from
@@ -425,14 +433,14 @@ log. The `AnalyzeDocType` fallback for a response with no `type` key re-parses
 through the same helper, so an object-shaped response still yields its
 `DocType`.
 
-The five judged parsers (`ParseAdjudicationResponse`, `ParseTagPartResponse`,
-`ParseTagCompoundResponse`, `ParseTagQualityResponse`, `ParseTagIdentityResponse`)
-run the same clean-then-decode steps with two tolerances for replies that drift
-from the prompt's envelope: a bare top-level JSON array is wrapped under the
-step's envelope key (`pairs`, `values`, `compounds`, `tags`, `terms`) before
+The six judged parsers (`ParseAdjudicationResponse`, `ParseTagPartResponse`,
+`ParseTagCompoundResponse`, `ParseTagConflictResponse`, `ParseTagQualityResponse`,
+`ParseTagIdentityResponse`) run the same clean-then-decode steps with two tolerances for
+replies that drift from the prompt's envelope: a bare top-level JSON array is wrapped under
+the step's envelope key (`pairs`, `values`, `compounds`, `items`, `tags`, `terms`) before
 decoding, and an entry that omits `index` is placed at its array position. A
 present index is still range-checked and entries beyond the candidate count are
-dropped; an entry that lacks a complete verdict counts as missing, and all five
+dropped; an entry that lacks a complete verdict counts as missing, and all six
 parsers return one result per entry alongside a shared `*IncompleteReplyError`
 (`Missing` lists the missing indices) whenever any is missing, so callers
 salvage the entries they did read and defer only the rest. Both bridges log a
