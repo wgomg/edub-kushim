@@ -167,20 +167,79 @@ func (s *Tag) applyOperatorSplit(ctx context.Context, compound database.Tag, par
 }
 
 // journalAppliedSplit records a split that already applied under the operator model and logs the full
-// reassignment, so both operator entry points leave the same audit trail; a journal write failure is
-// logged rather than returned, because the split itself is already committed.
+// reassignment, so both operator entry points leave the same audit trail; it also records the standing rule
+// future emissions apply. A journal or rule write failure is logged rather than returned, because the split
+// itself is already committed.
 func (s *Tag) journalAppliedSplit(ctx context.Context, name string, outcome SplitOutcome) types.CompositionStatus {
 	if err := s.recordOperatorComposition(ctx, name, tags.CompositionSplit,
 		tags.CompositionReasonOperator, outcome.Parts); err != nil {
 		s.logger.Error("", "tag service: record operator split %q: %v", name, err)
+	}
+	// the rule is what makes future emissions split the compound; the split itself is already committed, so
+	// a failed rule write is logged loudly rather than returned
+	if err := s.recordOperatorSplit(ctx, name, outcome.Parts); err != nil {
+		s.logger.Error("", "tag service: record operator split rule %q (future emissions will not split): %v", name, err)
 	}
 	s.logger.Info("", "tag composition: operator split %q -> %v (reason=human-split, reassigned=%d)",
 		name, outcome.Parts, outcome.Reassigned)
 	return types.CompositionApplied
 }
 
+// recordOperatorSplit persists the standing rule future emissions apply: the candidate is keyed by the
+// store's name recipe, exactly like the composition journal, and parts are the normalized names the split
+// applied. A later split of the same name overwrites the rule, and an operator keep deletes it.
+func (s *Tag) recordOperatorSplit(ctx context.Context, candidate string, parts []string) error {
+	return s.client.Queries.UpsertTagOperatorSplit(ctx, database.UpsertTagOperatorSplitParams{
+		Candidate: tags.StoredName(candidate),
+		Parts:     parts,
+	})
+}
+
+// ListOperatorSplits returns one page of standing operator split rules ordered by compound name, plus the
+// total rule count: the durable decisions the emission gate applies as substitutions. It is the read the
+// review surface lists, so an operator can revert a split after the compound row is gone.
+func (s *Tag) ListOperatorSplits(ctx context.Context, limit, offset int32) ([]database.TagOperatorSplit, int64, error) {
+	rows, err := s.client.Queries.ListTagOperatorSplits(ctx, database.ListTagOperatorSplitsParams{
+		PageLimit:  limit,
+		PageOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, errs.FromDB(err, "list operator split rules")
+	}
+	total, err := s.client.Queries.CountTagOperatorSplits(ctx)
+	if err != nil {
+		return nil, 0, errs.FromDB(err, "count operator split rules")
+	}
+	return rows, total, nil
+}
+
+// RevertOperatorSplit removes one recorded split rule and journals the inverse operator keep, returning the
+// outcome the API maps to its surface. The journal row is name-keyed and carries no document, so a stored
+// compound stops reading as a pending split and the store-existing skip applies it whole. A name without a
+// rule reports not found; the part tags and the documents already moved onto them are left untouched.
+func (s *Tag) RevertOperatorSplit(ctx context.Context, name string) (types.CompositionStatus, error) {
+	candidate := tags.StoredName(name)
+	if candidate == "" {
+		return types.CompositionNotFound, nil
+	}
+	deleted, err := s.client.Queries.DeleteTagOperatorSplit(ctx, candidate)
+	if err != nil {
+		return types.CompositionNotFound, errs.FromDB(err, "delete operator split rule")
+	}
+	if deleted == 0 {
+		return types.CompositionNotFound, nil
+	}
+	if err := s.recordOperatorComposition(ctx, candidate, tags.CompositionKeep,
+		tags.CompositionReasonOperatorKeep, nil); err != nil {
+		s.logger.Error("", "tag service: record reverted operator split %q: %v", candidate, err)
+	}
+	s.logger.Info("", "tag composition: reverted operator split %q (reason=human-revert)", candidate)
+	return types.CompositionReverted, nil
+}
+
 // applyOperatorKeep journals the operator's keep and, when parts are supplied, attaches them to the
-// compound's documents alongside it. The compound row stays, so it keeps its standing and its mass.
+// compound's documents alongside it. The compound row stays, so it keeps its standing and its mass, and any
+// recorded split rule is deleted because a keep reverses that decision for future emissions.
 // It normalizes the parts once here; a refused keep removes any part rows it created.
 func (s *Tag) applyOperatorKeep(ctx context.Context, compound database.Tag, parts []string) (types.CompositionStatus, error) {
 	cleaned := cleanCompositionParts(parts, compound.Name)
@@ -230,6 +289,11 @@ func (s *Tag) applyOperatorKeep(ctx context.Context, compound database.Tag, part
 		}
 	}
 
+	// a keep is the inverse decision of a recorded split: the rule goes, so the compound is applied whole
+	// again on future emissions; the keep itself already applied, so a failed delete is logged, not returned
+	if _, err := s.client.Queries.DeleteTagOperatorSplit(ctx, tags.StoredName(compound.Name)); err != nil {
+		s.logger.Error("", "tag service: delete operator split rule %q: %v", compound.Name, err)
+	}
 	if err := s.recordOperatorComposition(ctx, compound.Name, tags.CompositionKeep,
 		tags.CompositionReasonOperatorKeep, cleaned); err != nil {
 		return types.CompositionInvalid, err

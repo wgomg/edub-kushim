@@ -748,6 +748,28 @@ func CompositionStatesForNames(ctx context.Context, q *database.Queries, names [
 	return states, err
 }
 
+// OperatorSplitsForNames returns each named candidate's recorded operator split rule: the parts an operator
+// chose when splitting that name. The rule is durable rather than version-scoped, because it carries an
+// operator decision instead of model evidence, and the emission gate applies it before name classification,
+// so a re-emitted name resolves to these parts and never re-enters judgment. Names are normalized to the
+// store's name recipe (StoredName), matching the rule table's keys; candidates without a rule are absent from
+// the result, and empty input returns an empty map.
+func OperatorSplitsForNames(ctx context.Context, q *database.Queries, names []string) (map[string][]string, error) {
+	normalized := distinctNames(names, StoredName)
+	if len(normalized) == 0 {
+		return map[string][]string{}, nil
+	}
+	rows, err := q.ListTagOperatorSplitsForNames(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+	rules := make(map[string][]string, len(rows))
+	for _, row := range rows {
+		rules[row.Candidate] = row.Parts
+	}
+	return rules, nil
+}
+
 // ProposedFold proposes the lemma-folded form of a name, or "" when the
 // name is already in base form. In-dictionary tokens fold through the
 // lemmatizer; a token the dictionary does not know falls back to a

@@ -623,6 +623,39 @@ Request body (required) (`application/json`): [SplitTagRequest](#splittagrequest
 | 409 | object |
 | 500 | string |
 
+#### `GET /api/v1/tags/split-rules`
+
+ListSplitRules lists one page of the standing operator split rules the emission gate applies.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `limit` | query | integer | no | `50` |
+| `offset` | query | integer | no | `0` |
+
+| Status | Body |
+|---|---|
+| 200 | [SplitRuleListResponse](#splitrulelistresponse) |
+| 400 | object |
+| 404 | no body |
+| 409 | object |
+| 500 | string |
+
+#### `DELETE /api/v1/tags/split-rules/{name}`
+
+RevertSplitRule removes one recorded operator split rule, so future emissions of the compound are judged again instead of being replaced by the recorded parts.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `name` | path | string | yes | — |
+
+| Status | Body |
+|---|---|
+| 204 | no body |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
 #### `PUT /api/v1/tags/{id}`
 
 Update renames one tag.
@@ -2949,6 +2982,25 @@ SiblingReadingResponse is one near-contained tag pair, A holding nearly all of B
 | `gray` | boolean | yes |
 | `mass_a` | integer | yes |
 | `mass_b` | integer | yes |
+
+### SplitRuleListResponse
+
+SplitRuleListResponse is one page of standing operator split rules.
+
+| Field | Type | Required |
+|---|---|---|
+| `results` | array of [SplitRuleResponse](#splitruleresponse) (nullable) | yes |
+| `total` | integer | yes |
+
+### SplitRuleResponse
+
+SplitRuleResponse is one standing operator split rule: the compound future emissions replace and the parts applied in its place.
+
+| Field | Type | Required |
+|---|---|---|
+| `candidate` | string | yes |
+| `created_at` | string (date-time) | yes |
+| `parts` | array of string (nullable) | yes |
 
 ### SplitTagRequest
 

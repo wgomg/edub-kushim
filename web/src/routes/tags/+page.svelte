@@ -13,6 +13,7 @@
 	import CoverageReview from '#lib/components/tags/CoverageReview.svelte';
 	import SiblingReview from '#lib/components/tags/SiblingReview.svelte';
 	import DeletedTags from '#lib/components/tags/DeletedTags.svelte';
+	import SplitRules from '#lib/components/tags/SplitRules.svelte';
 	import {
 		EDIT_ICON,
 		DELETE_ICON,
@@ -29,7 +30,7 @@
 	import { api } from '#lib/api.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
 
-	const TABS = ['vocabulary', 'provisional', 'coverage', 'siblings', 'deleted'];
+	const TABS = ['vocabulary', 'provisional', 'coverage', 'siblings', 'deleted', 'split-rules'];
 
 	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip
 	// stick flush under the topbar instead of leaving a 24px band over the panel
@@ -50,12 +51,13 @@
 	let query = $state(new URL(window.location.href).searchParams.get('q') || '');
 	let refreshKey = $state(0);
 	let deletedRefreshKey = $state(0);
+	let splitRulesRefreshKey = $state(0);
 	let savingTag = $state(false);
 	let folding = $state(null);
 	let splitting = $state(null);
 	let activeTab = $state('vocabulary');
 	let vocabularyTotal = $state(null);
-	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0 });
+	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0, splitRules: 0 });
 
 	const compactButton =
 		'rounded p-0.5 text-parchment-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
@@ -156,16 +158,18 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 	}
 
 	async function refreshCounts() {
-		const [provisional, deleted, coverage] = await Promise.all([
+		const [provisional, deleted, coverage, splitRules] = await Promise.all([
 			api.tags.provisionalList(1, 0),
 			api.tags.deletedList({ limit: 1 }),
-			api.tags.auditFlags(1, 0)
+			api.tags.auditFlags(1, 0),
+			api.tags.splitRulesList({ limit: 1 })
 		]);
 		counts = {
 			...counts,
 			provisional: provisional.ok ? (provisional.data?.total ?? 0) : 0,
 			deleted: deleted?.total ?? 0,
-			coverage: coverage?.total ?? 0
+			coverage: coverage?.total ?? 0,
+			splitRules: splitRules?.total ?? 0
 		};
 	}
 
@@ -179,6 +183,7 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 	function onReviewChanged() {
 		refreshKey++;
 		deletedRefreshKey++;
+		splitRulesRefreshKey++;
 		refreshCounts();
 	}
 
@@ -416,6 +421,18 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 			{#if counts.deleted}<span class={tabBadge}>{formatNumber(counts.deleted)}</span>{/if}
 		</button>
 		<button
+			id="tab-split-rules"
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'split-rules'}
+			aria-controls="panel-split-rules"
+			onclick={() => selectTab('split-rules')}
+			class={tabClass('split-rules')}
+		>
+			Split rules
+			{#if counts.splitRules}<span class={tabBadge}>{formatNumber(counts.splitRules)}</span>{/if}
+		</button>
+		<button
 			id="tab-coverage"
 			type="button"
 			role="tab"
@@ -491,6 +508,10 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 {:else if activeTab === 'deleted'}
 	<div id="panel-deleted" role="tabpanel" aria-labelledby="tab-deleted">
 		<DeletedTags refreshKey={deletedRefreshKey} onchanged={onReviewChanged} />
+	</div>
+{:else if activeTab === 'split-rules'}
+	<div id="panel-split-rules" role="tabpanel" aria-labelledby="tab-split-rules">
+		<SplitRules refreshKey={splitRulesRefreshKey} onchanged={onReviewChanged} />
 	</div>
 {:else if activeTab === 'coverage'}
 	<div id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage">

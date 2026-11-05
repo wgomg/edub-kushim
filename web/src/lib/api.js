@@ -291,6 +291,14 @@ export const api = {
 		},
 		restoreDeleted: (name) =>
 			requestRaw(`/api/v1/tags/deleted/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+		splitRulesList: ({ limit = 50, offset = 0 } = {}) => {
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+			return request(`/api/v1/tags/split-rules?${params.toString()}`).then(
+				(data) => data ?? { results: [], total: 0 }
+			);
+		},
+		revertSplitRule: (name) =>
+			requestRaw(`/api/v1/tags/split-rules/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 		reconcileReport: () => requestRaw('/api/v1/tags/reconciliation/report'),
 		provisionalList: (
 			limit = 50,

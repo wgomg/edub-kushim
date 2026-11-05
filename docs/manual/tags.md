@@ -112,8 +112,8 @@ row, and the manual split on every compound entry and row, overriding whatever t
 | **Fold into…** | folds this tag onto any other live tag you pick: its documents move onto the kept value, this name becomes an alias and stops existing as a tag; seeded inventory cannot be folded away |
 | **Make canonical** | the reverse fold: the held value collapses onto this tag, losing its row and standing; this tag stays provisional until approved |
 | **Keep separate** | records that this tag names its own value: the identity hold clears, both values stay, and the tag keeps answering to its verdict and the promotion floor |
-| **Split now** | replaces the compound with the components you confirm: components are created, the compound's documents are attached to them, the compound is deleted |
-| **Split…** | replaces this compound with the components you choose, whatever the split judge decided: components are created, this tag's documents move onto them and it is deleted; seeded values cannot be split |
+| **Split now** | replaces the compound with the components you confirm: components are created, the compound's documents are attached to them, the compound is deleted; the split is recorded, so future emissions of that name are replaced by its recorded components instead of being judged again |
+| **Split…** | replaces this compound with the components you choose, whatever the split judge decided: components are created, this tag's documents move onto them and it is deleted, and the split is recorded the same way; seeded values cannot be split |
 | **Keep whole** | records that the compound is a value in its own right; the hold clears and nothing else changes |
 | **Apply the parts alongside** | keeps the compound and attaches its parts to the same documents, so both are searchable; no documents move |
 | **Re-judge** | queues a fresh composition judgment; the queue refreshes when the background task finishes |
@@ -153,6 +153,10 @@ the canonical tag with the alias that matched as a hint.
 - **Overlap** (`/tags#siblings`) — near-containment readings from the latest measurement pass. They are
   informational: nothing is merged or removed automatically.
 - **Deleted** (`/tags#deleted`) — the blocklist of rejected names, restorable.
+- **Split rules** (`/tags#split-rules`) — every recorded manual split: the name with the components
+  future emissions apply in its place. Editors can revert one: the record is dropped and future
+  emissions treat the name normally again — a stored tag applies whole, a name the store no longer
+  holds is judged afresh — while the components and the documents already on them stay as they are.
 - **Vocabulary** (`/tags`) — every live tag with counts and standing; rename, fold, demote, delete and
   the alias chip actions (remove, promote) live there too.
 

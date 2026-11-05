@@ -32,6 +32,9 @@ Already enforced elsewhere; listed so this spec does not restate them:
 - Normalized form: candidates arrive in the store's canonical shape (case folding and
   the canonical-form policy of [canonical-form](canonical-form.md) applied).
 - Single-word candidates carry no composition reading; they are not this spec's subject.
+- A name carrying a recorded operator split rule is substituted with its recorded components before
+  this mechanism runs: that is an application of an operator decision, not a disposition this spec
+  derives, and it writes no composition evidence.
 - Rows in the store that violate the givens (another language, longer than three words)
   are handled by separate cleanup work.
 

@@ -10,7 +10,9 @@ const apiMocks = vi.hoisted(() => ({
 	deletedList: vi.fn(),
 	auditFlags: vi.fn(),
 	siblings: vi.fn(),
-	split: vi.fn()
+	split: vi.fn(),
+	splitRulesList: vi.fn(),
+	revertSplitRule: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -25,7 +27,9 @@ vi.mock('#lib/api.js', () => ({
 			deletedList: apiMocks.deletedList,
 			auditFlags: apiMocks.auditFlags,
 			siblings: apiMocks.siblings,
-			split: apiMocks.split
+			split: apiMocks.split,
+			splitRulesList: apiMocks.splitRulesList,
+			revertSplitRule: apiMocks.revertSplitRule
 		}
 	}
 }));
@@ -59,6 +63,8 @@ beforeEach(() => {
 	apiMocks.auditFlags.mockResolvedValue({ results: [], total: 0 });
 	apiMocks.siblings.mockResolvedValue({ total: 0 });
 	apiMocks.split.mockResolvedValue({ ok: true, status: 204 });
+	apiMocks.splitRulesList.mockResolvedValue({ results: [], total: 0 });
+	apiMocks.revertSplitRule.mockResolvedValue({ ok: true, status: 204 });
 	authStore.logout();
 	authStore.setAuthEnabled(true);
 	authStore.setAuthResolved(true);

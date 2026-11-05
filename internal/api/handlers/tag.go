@@ -1139,10 +1139,83 @@ func (h *TagHandler) RestoreDeleted(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"name": row.Name, "kind": row.Kind})
 }
 
+// ListSplitRules lists one page of the standing operator split rules the emission gate applies.
+func (h *TagHandler) ListSplitRules(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	pb := GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	limit := pb.GetInt64("limit", 50, 1, 100)
+	offset := pb.GetInt64("offset", 0, 0, 100000)
+
+	rows, total, err := h.tag.ListOperatorSplits(ctx, int32(limit), int32(offset))
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "list split rules", err)
+		return
+	}
+
+	responses := make([]SplitRuleResponse, len(rows))
+	for i, row := range rows {
+		responses[i] = SplitRuleResponse{
+			Candidate: row.Candidate,
+			Parts:     row.Parts,
+			CreatedAt: row.CreatedAt,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, SplitRuleListResponse{Results: responses, Total: total})
+}
+
+// RevertSplitRule removes one recorded operator split rule, so future emissions of the compound are judged
+// again instead of being replaced by the recorded parts.
+func (h *TagHandler) RevertSplitRule(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		http.Error(w, "Tag name is required", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.tag.RevertOperatorSplit(ctx, name)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "revert split rule", err)
+		return
+	}
+
+	switch status {
+	case types.CompositionReverted:
+		w.WriteHeader(http.StatusNoContent)
+	case types.CompositionNotFound:
+		http.Error(w, "Split rule not found", http.StatusNotFound)
+	default:
+		http.Error(w, "Split rule cannot be reverted", http.StatusConflict)
+	}
+}
+
 // TagListResponse is one page of the tag listing.
 type TagListResponse struct {
 	Results []TagResponse `json:"results"`
 	Total   int64         `json:"total"`
+}
+
+// SplitRuleResponse is one standing operator split rule: the compound future emissions replace and the
+// parts applied in its place.
+type SplitRuleResponse struct {
+	Candidate string    `json:"candidate"`
+	Parts     []string  `json:"parts"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SplitRuleListResponse is one page of standing operator split rules.
+type SplitRuleListResponse struct {
+	Results []SplitRuleResponse `json:"results"`
+	Total   int64               `json:"total"`
 }
 
 // DeletedTagResponse is one deleted-tag record as the API shows it: the name, its kind (an operator

@@ -4125,6 +4125,70 @@ func TestSplitTag(t *testing.T) {
 	})
 }
 
+// TestSplitRuleHandlers pins the revert surface: a split leaves a rule the list endpoint shows, a revert
+// answers 204 while dropping it, a second revert answers 404, and a blank name answers 400.
+func TestSplitRuleHandlers(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "split rule handler compound")
+	w := rec()
+	raw, err := json.Marshal(SplitTagRequest{Name: "split rule handler compound", Parts: []string{"split rule handler part"}})
+	testutil.AssertNoError(t, err, "encode body")
+	h.SplitTag(w, req(t, "POST", "/api/v1/tags/split", raw))
+	testutil.AssertEqual(t, w.Code, http.StatusNoContent, "split status")
+
+	revert := func(name string) *httptest.ResponseRecorder {
+		w := rec()
+		// the handler reads the name from the path value, so the request target stays a plain token
+		r := req(t, "DELETE", "/api/v1/tags/split-rules/placeholder", nil)
+		r.SetPathValue("name", name)
+		h.RevertSplitRule(w, r)
+		return w
+	}
+	findRule := func(t *testing.T) *SplitRuleResponse {
+		t.Helper()
+		w := rec()
+		h.ListSplitRules(w, req(t, "GET", "/api/v1/tags/split-rules", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "list status")
+		var list SplitRuleListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&list), "decode list")
+		for i := range list.Results {
+			if list.Results[i].Candidate == tags.StoredName("split rule handler compound") {
+				return &list.Results[i]
+			}
+		}
+		return nil
+	}
+
+	t.Run("the list endpoint shows the recorded rule", func(t *testing.T) {
+		rule := findRule(t)
+		if rule == nil {
+			t.Fatal("the split must leave a rule the list endpoint shows")
+		}
+		testutil.AssertEqual(t, len(rule.Parts), 1, "rule parts count")
+		testutil.AssertEqual(t, rule.Parts[0], "split rule handler part", "rule part")
+	})
+
+	t.Run("a revert answers 204 and removes the rule", func(t *testing.T) {
+		w := revert("split rule handler compound")
+		testutil.AssertEqual(t, w.Code, http.StatusNoContent, "revert status")
+		if rule := findRule(t); rule != nil {
+			t.Errorf("the rule should be gone after a revert, got %+v", rule)
+		}
+	})
+
+	t.Run("reverting again answers 404", func(t *testing.T) {
+		w := revert("split rule handler compound")
+		testutil.AssertEqual(t, w.Code, http.StatusNotFound, "revert status")
+	})
+
+	t.Run("a blank name returns 400", func(t *testing.T) {
+		w := revert("  ")
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "revert status")
+	})
+}
+
 // TestRejudgeTag pins the re-judge endpoint: an accepted request enqueues once per tag and scope and
 // answers 202, a repeat collapses into the active task, and a request with nothing to judge answers
 // 409 instead of queueing noise.

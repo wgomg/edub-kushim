@@ -4463,6 +4463,103 @@ paths:
             text/plain; charset=utf-8:
               schema:
                 type: string
+  /api/v1/tags/split-rules:
+    get:
+      summary: ListSplitRules lists one page of the standing operator split rules the emission gate applies.
+      operationId: getApiV1TagsSplitRules
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: "50"
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: "0"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitRuleListResponse'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "404":
+          description: Not Found
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+  /api/v1/tags/split-rules/{name}:
+    delete:
+      summary: RevertSplitRule removes one recorded operator split rule, so future emissions of the compound are judged again instead of being replaced by the recorded parts.
+      operationId: deleteApiV1TagsSplitRulesByName
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/tasks:
     get:
       summary: ListTasks serves a batch's tasks, or with no batch filter the global task list.
@@ -7500,6 +7597,42 @@ components:
         - mass_a
         - mass_b
         - gray
+    SplitRuleListResponse:
+      type: object
+      description: SplitRuleListResponse is one page of standing operator split rules.
+      properties:
+        results:
+          anyOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/SplitRuleResponse'
+            - type: "null"
+        total:
+          type: integer
+      required:
+        - results
+        - total
+    SplitRuleResponse:
+      type: object
+      description: |-
+        SplitRuleResponse is one standing operator split rule: the compound future emissions replace and the
+        parts applied in its place.
+      properties:
+        candidate:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        parts:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: "null"
+      required:
+        - candidate
+        - parts
+        - created_at
     SplitTagRequest:
       type: object
       description: |-

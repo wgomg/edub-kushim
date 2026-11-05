@@ -100,7 +100,7 @@ const (
 
 // CompositionStatus reports how an operator composition decision resolved: the tag is missing, it is
 // no longer provisional, it is seeded and cannot be replaced, it changed underneath the decision, the
-// decision or its parts are invalid, or it was applied.
+// decision or its parts are invalid, it was applied, or a recorded split rule was reverted.
 type CompositionStatus int
 
 // The composition decision outcomes, in iota order.
@@ -111,6 +111,7 @@ const (
 	CompositionInvalid
 	CompositionApplied
 	CompositionSeeded
+	CompositionReverted
 )
 
 // RetireStatus reports how a retire resolved: the tag is missing, still promoted (demote owns that

@@ -133,7 +133,8 @@ func (r *Reconciler) hasDueWork(ctx context.Context, cfg *config.Config) (bool, 
 }
 
 // hasCompoundWork probes the stored-compound arm through the same membership rules the arm applies: any
-// non-seeded, non-period compound that owes an application, a demotion, or a judgment.
+// non-seeded, non-period compound that owes an application, a demotion, or a judgment, or that carries a
+// recorded operator split rule, which the arm applies ahead of the journal state.
 func (r *Reconciler) hasCompoundWork(ctx context.Context) (bool, error) {
 	rows, err := r.client.Queries.ListStoredCompoundCandidates(ctx)
 	if err != nil {
@@ -150,6 +151,16 @@ func (r *Reconciler) hasCompoundWork(ctx context.Context) (bool, error) {
 	}
 	if len(names) == 0 {
 		return false, nil
+	}
+
+	rules, err := tags.OperatorSplitsForNames(ctx, r.client.Queries, names)
+	if err != nil {
+		return false, fmt.Errorf("probe operator split rules: %w", err)
+	}
+	for _, name := range names {
+		if len(rules[tags.StoredName(name)]) > 0 {
+			return true, nil
+		}
 	}
 
 	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)

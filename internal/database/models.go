@@ -469,6 +469,12 @@ type TagMeasurement struct {
 	CreatedAt      time.Time
 }
 
+type TagOperatorSplit struct {
+	Candidate string
+	Parts     []string
+	CreatedAt time.Time
+}
+
 type TagPartDimensionEvent struct {
 	ID            int64
 	DocumentID    sql.NullInt64

@@ -164,7 +164,7 @@ A `paused` batch means an LLM credit/balance error — fix billing, then resume
 
 ### Tags
 
-The vocabulary workspace with five tabs, deep-linkable by hash (`/tags#provisional`):
+The vocabulary workspace with six tabs, deep-linkable by hash (`/tags#provisional`):
 
 ![The tags workspace on the Vocabulary tab](images/tags.png)
 
@@ -172,9 +172,10 @@ The vocabulary workspace with five tabs, deep-linkable by hash (`/tags#provision
 |---|---|
 | **Vocabulary** | All tags with counts, creation date and standing; editors can create, rename, fold and demote from here and remove or promote a tag's alias chips; `?q=` matches names and aliases |
 | **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote, reject, accept a deferral, fold a tag into any other live value, and the contextual hold actions; filters by name, rubric criteria and review state, with quick views and live per-state counts in the state menu |
+| **Deleted** | The blocklist of rejected names, restorable |
+| **Split rules** | Every recorded manual split — the name with the components future emissions apply in its place; editors can revert a rule, which leaves components and the documents already on them untouched |
 | **Coverage** | Open coverage flags from the audit pass — titles link to their documents; apply, dismiss, or register a missing name |
 | **Overlap** (siblings) | Near-containment pairs from the latest measurement; `gray` marks the review band |
-| **Deleted** | The blocklist of rejected names, restorable |
 
 Moderation actions require the editor role; the queue and reports are readable by viewers.
 What the badges mean, what each action does, and how tags move between provisional and promoted

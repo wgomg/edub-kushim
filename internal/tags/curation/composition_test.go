@@ -262,3 +262,89 @@ func TestTag_Split(t *testing.T) {
 		testutil.AssertEqual(t, status, types.CompositionNotFound, "status")
 	})
 }
+
+// TestTag_OperatorSplitRuleLifecycle pins the durable record behind an operator split: both split entry
+// points write the rule, an operator keep revokes it, and a revert removes it while journaling the inverse
+// keep — the state the emission gate reads instead of re-judging the name.
+func TestTag_OperatorSplitRuleLifecycle(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	assertRule := func(t *testing.T, name string, wantParts []string) {
+		t.Helper()
+		candidate := tags.StoredName(name)
+		rules, _, err := svc.ListOperatorSplits(ctx, 100, 0)
+		testutil.AssertNoError(t, err, "list rules")
+		for _, rule := range rules {
+			if rule.Candidate != candidate {
+				continue
+			}
+			if len(rule.Parts) != len(wantParts) {
+				t.Fatalf("rule parts = %v, want %v", rule.Parts, wantParts)
+			}
+			for i := range rule.Parts {
+				if rule.Parts[i] != wantParts[i] {
+					t.Errorf("rule parts = %v, want %v", rule.Parts, wantParts)
+				}
+			}
+			return
+		}
+		t.Fatalf("no operator split rule recorded for %q", candidate)
+	}
+	assertNoRule := func(t *testing.T, name string) {
+		t.Helper()
+		candidate := tags.StoredName(name)
+		rules, _, err := svc.ListOperatorSplits(ctx, 100, 0)
+		testutil.AssertNoError(t, err, "list rules")
+		for _, rule := range rules {
+			if rule.Candidate == candidate {
+				t.Fatalf("operator split rule for %q should be gone, got parts %v", candidate, rule.Parts)
+			}
+		}
+	}
+
+	t.Run("both split entry points record the rule", func(t *testing.T) {
+		newProvisionalCompound(t, client, "rule lifecycle compound")
+		status, err := svc.Split(ctx, "rule lifecycle compound", []string{"rule lifecycle alpha", "rule lifecycle beta"})
+		testutil.AssertNoError(t, err, "split")
+		testutil.AssertEqual(t, status, types.CompositionApplied, "status")
+		assertRule(t, "rule lifecycle compound", []string{"rule lifecycle alpha", "rule lifecycle beta"})
+
+		id, _ := newProvisionalCompound(t, client, "rule lifecycle decision compound")
+		status, err = svc.ApplyCompositionDecision(ctx, id, "split", []string{"rule lifecycle gamma"})
+		testutil.AssertNoError(t, err, "review-surface split")
+		testutil.AssertEqual(t, status, types.CompositionApplied, "status")
+		assertRule(t, "rule lifecycle decision compound", []string{"rule lifecycle gamma"})
+	})
+
+	t.Run("an operator keep revokes the rule", func(t *testing.T) {
+		id, _ := newProvisionalCompound(t, client, "rule lifecycle compound")
+
+		status, err := svc.ApplyCompositionDecision(ctx, id, "keep", nil)
+		testutil.AssertNoError(t, err, "keep")
+		testutil.AssertEqual(t, status, types.CompositionApplied, "status")
+		assertNoRule(t, "rule lifecycle compound")
+	})
+
+	t.Run("a revert removes the rule and journals the inverse keep", func(t *testing.T) {
+		status, err := svc.Split(ctx, "rule lifecycle compound", []string{"rule lifecycle alpha", "rule lifecycle beta"})
+		testutil.AssertNoError(t, err, "split")
+		testutil.AssertEqual(t, status, types.CompositionApplied, "status")
+		assertRule(t, "rule lifecycle compound", []string{"rule lifecycle alpha", "rule lifecycle beta"})
+
+		status, err = svc.RevertOperatorSplit(ctx, "rule lifecycle compound")
+		testutil.AssertNoError(t, err, "revert")
+		testutil.AssertEqual(t, status, types.CompositionReverted, "status")
+		assertNoRule(t, "rule lifecycle compound")
+
+		row := latestComposition(t, client, "rule lifecycle compound")
+		testutil.AssertEqual(t, row.Disposition, string(tags.CompositionKeep), "disposition")
+		testutil.AssertEqual(t, row.Reason, tags.CompositionReasonOperatorKeep, "reason")
+	})
+
+	t.Run("reverting an unknown name reports not found", func(t *testing.T) {
+		status, err := svc.RevertOperatorSplit(ctx, "rule lifecycle never split")
+		testutil.AssertNoError(t, err, "revert")
+		testutil.AssertEqual(t, status, types.CompositionNotFound, "status")
+	})
+}

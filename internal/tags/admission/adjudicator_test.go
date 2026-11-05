@@ -1316,22 +1316,39 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 	runner := &tools.Runner{}
 	setUnexportedField(t, runner, "logger", logger)
 	setUnexportedField(t, runner, "config", cfg)
-	if adj == nil {
-		return &Adjudicator{config: cfg, logger: logger, runner: runner}, 0
+	if adj != nil {
+		setUnexportedField(t, runner, "tagAdjudicator", adj)
 	}
-	setUnexportedField(t, runner, "tagAdjudicator", adj)
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 	q, db := database.NewTestQueries(t)
 	t.Cleanup(func() { db.Close() })
-	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event", "tag_composition_event", "tag_phrase_fold_event"} {
+	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event", "tag_composition_event", "tag_phrase_fold_event", "tag_operator_split"} {
 		if _, err := db.ExecContext(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("reset %s: %v", table, err)
 		}
 	}
 	docID := database.CreateUniqueDocument(t, q, "decompose-split")
 	return &Adjudicator{config: cfg, queries: q, logger: logger, runner: runner}, docID
+}
+
+// seedOperatorRule records one operator split rule under the store's name recipe and removes it again
+// when the test ends, so a rule cannot leak into another test sharing the package database.
+func seedOperatorRule(t *testing.T, a *Adjudicator, name string, parts []string) {
+	t.Helper()
+	candidate := tags.StoredName(name)
+	if err := a.queries.UpsertTagOperatorSplit(context.Background(), database.UpsertTagOperatorSplitParams{
+		Candidate: candidate,
+		Parts:     parts,
+	}); err != nil {
+		t.Fatalf("seed operator rule: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := a.queries.DeleteTagOperatorSplit(context.Background(), candidate); err != nil {
+			t.Errorf("cleanup operator rule: %v", err)
+		}
+	})
 }
 
 func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
@@ -1533,6 +1550,89 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 	if !strings.Contains(buf.String(), `skip "machine learning" (reason=store_existing disposition=keep)`) {
 		t.Errorf("skip must log its reason, got:\n%s", buf.String())
 	}
+}
+
+// TestDecomposeTags_OperatorRuleSubstitutesBeforeJudgment pins the operator split rule as an application:
+// the recorded parts replace the name before classification — no judge calls, no composition row — whether
+// or not the name is store-present or compound-shaped, and with or without an adjudicator configured.
+func TestDecomposeTags_OperatorRuleSubstitutesBeforeJudgment(t *testing.T) {
+	t.Run("a ruled compound is replaced by its parts without judgment", func(t *testing.T) {
+		adj := &mockAdjudicator{
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+		}
+		a, docID := newSplitAdjudicator(t, adj, nil)
+		seedOperatorRule(t, a, "machine learning", []string{"machine", "learning"})
+		filter := analyzer.NewTagFilter(nil, nil, nil)
+
+		got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+		if err != nil {
+			t.Fatalf("DecomposeTags: %v", err)
+		}
+		if !reflect.DeepEqual(got, []string{"machine", "learning"}) {
+			t.Errorf("DecomposeTags = %v, want the recorded parts", got)
+		}
+		adjAssertEqual(t, adj.partCall, 0, "part judge calls for a ruled name")
+		adjAssertEqual(t, adj.compoundCall, 0, "compound judge calls for a ruled name")
+		adjAssertEqual(t, len(rows), 0, "composition rows for an applied rule")
+	})
+
+	t.Run("a ruled single word is substituted too", func(t *testing.T) {
+		adj := &mockAdjudicator{
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+		}
+		a, docID := newSplitAdjudicator(t, adj, nil)
+		seedOperatorRule(t, a, "photosynthesis", []string{"photo", "synthesis"})
+		filter := analyzer.NewTagFilter(nil, nil, nil)
+
+		got, rows, err := a.DecomposeTags(context.Background(), []string{"photosynthesis"}, nil, nil, filter, docID, "")
+		if err != nil {
+			t.Fatalf("DecomposeTags: %v", err)
+		}
+		if !reflect.DeepEqual(got, []string{"photo", "synthesis"}) {
+			t.Errorf("DecomposeTags = %v, want the recorded parts", got)
+		}
+		adjAssertEqual(t, adj.partCall, 0, "part judge calls for a ruled single word")
+		adjAssertEqual(t, len(rows), 0, "composition rows for an applied rule")
+	})
+
+	t.Run("a rule outranks the store-existing skip", func(t *testing.T) {
+		adj := &mockAdjudicator{
+			partFn:     partsDimensional,
+			compoundFn: compoundsStatus(analyzer.TagCompoundComposition),
+		}
+		a, docID := newSplitAdjudicator(t, adj, nil)
+		seedOperatorRule(t, a, "machine learning", []string{"machine", "learning"})
+		filter := analyzer.NewTagFilter(nil, nil, nil)
+		storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
+
+		got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+		if err != nil {
+			t.Fatalf("DecomposeTags: %v", err)
+		}
+		if !reflect.DeepEqual(got, []string{"machine", "learning"}) {
+			t.Errorf("DecomposeTags = %v, want the recorded parts instead of the store value", got)
+		}
+		adjAssertEqual(t, adj.partCall, 0, "part judge calls when the rule outranks the store")
+		adjAssertEqual(t, adj.compoundCall, 0, "compound judge calls when the rule outranks the store")
+		adjAssertEqual(t, len(rows), 0, "composition rows when the rule outranks the store")
+	})
+
+	t.Run("a rule applies with the adjudicator disabled", func(t *testing.T) {
+		a, docID := newSplitAdjudicator(t, nil, nil)
+		seedOperatorRule(t, a, "machine learning", []string{"machine", "learning"})
+		filter := analyzer.NewTagFilter(nil, nil, nil)
+
+		got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+		if err != nil {
+			t.Fatalf("DecomposeTags: %v", err)
+		}
+		if !reflect.DeepEqual(got, []string{"machine", "learning"}) {
+			t.Errorf("DecomposeTags = %v, want the recorded parts", got)
+		}
+		adjAssertEqual(t, len(rows), 0, "composition rows for an applied rule")
+	})
 }
 
 // TestDecomposeTags_StoreExistingReJudgedUntilDecided pins the evidence-aware skip: a store-present

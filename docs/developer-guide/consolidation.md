@@ -170,6 +170,14 @@ things`, `black bloc`) stay whole, and a compound whose key already exists in th
   `judge_unavailable` keep, re-enters judgment until a verdict exists, and a decided keep
   applies its judged-dimensional parts alongside from the persisted cache on every
   emission, making no model call.
+- **Operator rules**: both operator split entry points (`POST /api/v1/tags/split` and the review
+  surface's split disposition) record the applied components in `tag_operator_split`. On every later
+  emission a name carrying a rule is replaced by its recorded components before classification — no
+  judge call, no composition evidence row, with the adjudicator disabled too — and the rule outlives
+  criteria-version bumps, since it is an operator decision rather than model evidence. An operator keep
+  revokes it; the split-rules revert endpoint (`DELETE /api/v1/tags/split-rules/{name}`) removes it and
+  journals the inverse keep, after which the next emission treats the name normally again. The only
+  conversion applied to recorded components is the identity plan's alias canonicalization.
 - **Evidence**: every judged compound appends one `tag_composition_event` verdict row —
   candidate, validated segments, disposition, reason, criteria version, judge model
   (NULL for cached verdicts and the conjunction fallback) — with a matching `tag
@@ -389,7 +397,10 @@ lock-drain-heartbeat discipline for the pass.
   current-version verdict already decided) is judged through the same composition
   decision the emission gate runs, reading the substrate reconstructibility of every
   judged cover so a far reading keeps whole as a relational keep. Only a split touches
-  the store immediately; a decided drop demotes the standing tag.
+  the store immediately; a decided drop demotes the standing tag. A stored compound
+  carrying an operator split rule instead applies its recorded components without
+  judging — whatever the current-version journal says — and the opening gate counts rule
+  carriers as due work.
 - **Twin arm** — the latest `tagmeasure` run's `≈` twin worklist: a pinned variant class
   aliases mechanically onto the `PreferCanonical` winner with no judge call; every other
   pair becomes pending same-intent evidence the identity pass settles.

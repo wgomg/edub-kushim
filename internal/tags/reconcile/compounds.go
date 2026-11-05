@@ -62,9 +62,28 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 		compositionHeld = map[string]string{}
 		states = map[string]tags.CompositionState{}
 	}
+	// a recorded operator split is the decision of record for a stored compound: it is applied with the
+	// operator's parts regardless of the journal state under the current criteria version, so a version bump
+	// or a later judge row can never judge the row back into a keep while emissions keep substituting
+	rules, err := tags.OperatorSplitsForNames(ctx, r.client.Queries, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: operator split rule lookup: %v", err)
+		rules = map[string][]string{}
+	}
 
 	entries := make([]*compoundEntry, 0, len(names))
 	for _, name := range names {
+		if parts := rules[tags.StoredName(name)]; len(parts) > 0 {
+			entries = append(entries, &compoundEntry{
+				name:         name,
+				docCount:     tagCounts[name],
+				pendingApply: true,
+				split:        true,
+				components:   parts,
+				reason:       "operator",
+			})
+			continue
+		}
 		entry, skip := compoundEntryFor(name, promoted[name], tagCounts[name], held, compositionHeld, states)
 		if entry != nil {
 			entries = append(entries, entry)
@@ -95,8 +114,9 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 
 // compoundEntryFor classifies one stored compound candidate into the work it represents: an application owed
 // for a decided split, a demotion owed for a decided drop still promoted, or a judgment owed otherwise. A nil
-// entry comes with the tally key naming why the sweep has nothing to do. The compound arm and the opening
-// gate's probe read membership through it, so the two cannot disagree about what work is due.
+// entry comes with the tally key naming why the sweep has nothing to do. A recorded operator split rule
+// outranks it on both paths, and for the journal-driven candidates that remain, the compound arm and the
+// opening gate's probe both read membership through it, so the two cannot disagree about what work is due.
 func compoundEntryFor(name string, promoted bool, docCount int64, held, compositionHeld map[string]string,
 	states map[string]tags.CompositionState) (*compoundEntry, string) {
 	if _, ok := held[name]; ok {
@@ -124,13 +144,14 @@ func compoundEntryFor(name string, promoted bool, docCount int64, held, composit
 
 // Stored compounds are judged through the same entry point the emission gate uses, so a verdict binds
 // identically on either path — including the substrate reading the judgment consults. Only a split acts here;
-// a decided drop belongs to demotion.
+// a decided drop belongs to demotion. An entry whose split parts a recorded operator rule already decided is
+// applied, not judged, so the operator's parts win over a re-derived disposition.
 func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Config, entries []*compoundEntry, promotedNames map[string]string, liveNames map[string]struct{}) {
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		componentFilter := analyzer.NewTagFilter(nil, nil, nil)
 		for _, e := range entries {
-			if e.demote {
-				// a decided drop read from the journal: planned for demotion, never judged
+			if e.demote || e.split {
+				// a demotion or a decided operator rule is not judged here
 				continue
 			}
 			if textnorm.SplitJointTag(e.name) == nil {
@@ -152,7 +173,7 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 	judged := make([]*compoundEntry, 0, len(entries))
 	candidates := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.demote {
+		if e.demote || e.split {
 			continue
 		}
 		judged = append(judged, e)

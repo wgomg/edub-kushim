@@ -339,6 +339,63 @@ func TestBuildCompoundWorklist_IncludesEveryCompound(t *testing.T) {
 	}
 }
 
+// TestBuildCompoundWorklist_OperatorRulePartsWin pins the sweep's rule authority: a stored compound
+// carrying a recorded operator rule is queued to apply the operator's parts even with no journal row under
+// the current criteria version, and the opening gate sees the same work — a criteria bump cannot re-judge
+// the row into a keep while emissions keep substituting the rule's parts.
+func TestBuildCompoundWorklist_OperatorRulePartsWin(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+	r := &Reconciler{client: client, logger: testutil.NewTestLogger()}
+
+	candidate := tags.StoredName("machine learning")
+	if err := client.Queries.UpsertTagOperatorSplit(ctx, database.UpsertTagOperatorSplitParams{
+		Candidate: candidate,
+		Parts:     []string{"machine", "learning"},
+	}); err != nil {
+		t.Fatalf("seed operator rule: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := client.Queries.DeleteTagOperatorSplit(ctx, candidate); err != nil {
+			t.Errorf("cleanup operator rule: %v", err)
+		}
+	})
+	tagID := database.MustCreateTag(t, client.Queries, "machine learning")
+	t.Cleanup(func() {
+		if err := client.Queries.DeleteTag(ctx, tagID); err != nil {
+			t.Errorf("cleanup tag: %v", err)
+		}
+	})
+
+	entries := r.buildCompoundWorklist(ctx, []database.Tag{{ID: tagID, Name: "machine learning"}}, nil, &Report{Skips: map[string]int{}})
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(entries))
+	}
+	entry := entries[0]
+	if !entry.split || entry.reason != "operator" || !entry.pendingApply {
+		t.Errorf("entry = %+v, want a pending operator split", entry)
+	}
+	wantParts := []string{"machine", "learning"}
+	if len(entry.components) != len(wantParts) {
+		t.Fatalf("components = %v, want the operator's parts %v", entry.components, wantParts)
+	}
+	for i := range wantParts {
+		if entry.components[i] != wantParts[i] {
+			t.Errorf("components = %v, want %v", entry.components, wantParts)
+		}
+	}
+
+	due, err := r.hasCompoundWork(ctx)
+	testutil.AssertNoError(t, err, "probe compound work")
+	if !due {
+		t.Error("hasCompoundWork = false, the rule carrier must count as due work")
+	}
+}
+
 func TestSampleNamesSuffix(t *testing.T) {
 	tests := []struct {
 		name  string

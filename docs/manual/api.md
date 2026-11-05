@@ -291,7 +291,13 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
    `POST /api/v1/tags/{id}/composition` with `{"disposition": "split"|"keep", "parts": ["…"]}`
    (`204`; `404` unknown tag, `400` an invalid decision or too many components, `409` when the tag is
    already promoted) applies a split or keeps the compound whole, with parts applied alongside when
-   supplied; and `POST /api/v1/tags/{id}/retire` (`204`; `404` unknown tag, `409` when promoted —
+   supplied. A split records a standing rule: every later emission of that name is replaced by the
+   recorded components instead of being judged again. `GET /api/v1/tags/split-rules?limit=50&offset=0`
+   (viewer) lists those rules as `{candidate, parts, created_at}` rows with `total`, and
+   `DELETE /api/v1/tags/split-rules/{name}` (`204`; `404` when no rule exists for the name, `400` a
+   blank name) drops the rule and journals the inverse keep, so the name returns to ordinary treatment
+   on its next emission — components and already-moved documents are untouched. The remaining
+   decisions: `POST /api/v1/tags/{id}/retire` (`204`; `404` unknown tag, `409` when promoted —
    demote owns that case) deletes a provisional tag *without* blocklisting its name.
    `POST /api/v1/tags/{id}/accept` (`204`; `404` unknown tag, `409` when promoted, already
    accepted, not deferred to review, or still held by an identity or composition hold) waives a

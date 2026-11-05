@@ -115,11 +115,32 @@ type CompoundVerdict struct {
 // the promoted tag names' Key→name view the fold resolution and the reconstructibility signal read — seam
 // fold resolution anchors only on promoted rows, and a resolved part is reconstructible only when it is
 // one. docId is the emitting document, stamped on fresh part and compound verdict rows (0 stores NULL
-// provenance, as the stored-compound sweep does). A non-nil error is returned when the provider account
-// cannot pay or the adjudication-state lookup fails; every other failure degrades to keeping the
-// compounds. Without a configured adjudicator the conjunction grammar fallback stands: explicit
-// coordination splits mechanically and every other compound keeps whole under judge_unavailable.
+// provenance, as the stored-compound sweep does). An operator split rule short-circuits judgment entirely:
+// a name carrying one is replaced by its recorded parts before classification, with alias canonicalization
+// left to the identity plan, and the application writes no composition row. A non-nil error is returned when
+// the provider account cannot pay, the adjudication-state lookup fails, or the operator rule lookup fails;
+// every other failure degrades to keeping the compounds. Without a configured adjudicator the conjunction
+// grammar fallback stands: explicit coordination splits mechanically and every other compound keeps whole
+// under judge_unavailable.
 func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]string, []tags.CompositionRow, error) {
+	// a recorded operator split is an application, not a judgment: it replaces the name before classification
+	// and reaches neither the store-existing skip nor the judges; the application writes no composition row
+	if len(names) > 0 {
+		rules, err := tags.OperatorSplitsForNames(ctx, a.queries, names)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(rules) > 0 {
+			for _, name := range names {
+				if parts, ruled := rules[tags.StoredName(name)]; ruled {
+					a.logger.Info(reqID, "tag split[%s]: apply operator rule %q → %q",
+						analyzer.TagSplitVersion, name, parts)
+				}
+			}
+			names = expandOperatorRules(names, rules)
+		}
+	}
+
 	var candidates []string
 	seenCandidates := make(map[string]bool, len(names))
 	var storeExisting []string
@@ -561,6 +582,33 @@ func compositionFeatures(parts []string, coverComplete bool, deferred map[string
 		f.PartsNotDimensional = true
 	}
 	return f, readingRecord
+}
+
+// expandOperatorRules rewrites a tag list under the recorded operator split rules: a ruled name is replaced
+// in place by its recorded parts, first-seen order and deduplicated, so the name leaves the list entirely and
+// its parts take its position. Order is preserved for every unruled name, and a part the list already carries
+// is not repeated.
+func expandOperatorRules(names []string, rules map[string][]string) []string {
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if parts, ruled := rules[tags.StoredName(name)]; ruled {
+			for _, part := range parts {
+				if seen[part] {
+					continue
+				}
+				seen[part] = true
+				out = append(out, part)
+			}
+			continue
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 // expandCandidates applies the split expansions and drops to the tag list in place, deduplicating; split
