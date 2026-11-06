@@ -15,6 +15,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
 	"github.com/wgomg/edub-kushim/internal/testutil"
+	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
@@ -803,7 +804,7 @@ func TestProvisionalOutcome(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			promote, deferred := r.provisionalOutcome("provisional tag", tc.decision, tc.docs)
+			promote, deferred := r.provisionalOutcome("provisional tag", tc.decision, tc.docs, 10)
 			testutil.AssertEqual(t, promote, tc.wantPromote, "promote")
 			testutil.AssertEqual(t, deferred, tc.wantDeferred, "deferred")
 		})
@@ -841,7 +842,7 @@ func TestSweepProvisionalTags_CompositionHold(t *testing.T) {
 
 	cfg := &config.Config{
 		Enricher: config.EnricherConfig{
-			TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30},
+			TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30, RecurrenceFloor: 10},
 		},
 	}
 	r := &Reconciler{
@@ -909,13 +910,13 @@ func TestSweepProvisionalTags_Acceptance(t *testing.T) {
 		return id
 	}
 
-	atFloor := seed(t, "accept sweep at floor", tags.RecurrenceFloor, true)
+	atFloor := seed(t, "accept sweep at floor", 10, true)
 	belowFloor := seed(t, "accept sweep below floor", 1, true)
-	unaccepted := seed(t, "accept sweep unaccepted", tags.RecurrenceFloor, false)
+	unaccepted := seed(t, "accept sweep unaccepted", 10, false)
 
 	cfg := &config.Config{
 		Enricher: config.EnricherConfig{
-			TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30},
+			TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30, RecurrenceFloor: 10},
 		},
 	}
 	r := &Reconciler{
@@ -1010,7 +1011,7 @@ func TestSweepPromotedTags_MassDecayDemotesAndSparesSeeded(t *testing.T) {
 	// the seed inventory is operator-owned and never reaches the demotion arm
 	seeded := database.MustCreateTag(t, client.Queries, "seeded standpoints")
 	if _, err := client.DB().ExecContext(ctx,
-		"UPDATE tag SET promoted_at = now() WHERE id = $1", decayed); err != nil {
+		"UPDATE tag SET promoted_at = now(), created_at = now() - interval '1 day' WHERE id = $1", decayed); err != nil {
 		t.Fatalf("set standing: %v", err)
 	}
 	if _, err := client.DB().ExecContext(ctx,
@@ -1020,7 +1021,7 @@ func TestSweepPromotedTags_MassDecayDemotesAndSparesSeeded(t *testing.T) {
 
 	cfg := &config.Config{
 		Enricher: config.EnricherConfig{
-			TagReconcile: config.TagReconcileConfig{MaxRejudge: 10},
+			TagReconcile: config.TagReconcileConfig{MaxRejudge: 10, RecurrenceFloor: 10},
 		},
 	}
 	r := &Reconciler{
@@ -1076,18 +1077,19 @@ func TestSweepPromotedTags_RunBoundIsSharedWithRejudge(t *testing.T) {
 	database.MustCreateTag(t, client.Queries, "decay standpoints one")
 	database.MustCreateTag(t, client.Queries, "decay standpoints two")
 	standing := database.MustCreateTag(t, client.Queries, "standing standpoints")
-	if _, err := client.DB().ExecContext(ctx, `UPDATE tag SET promoted_at = now()
+	if _, err := client.DB().ExecContext(ctx, `UPDATE tag SET promoted_at = now(),
+		created_at = now() - interval '1 day'
 		WHERE name IN ('decay standpoints one', 'decay standpoints two', 'standing standpoints')`); err != nil {
 		t.Fatalf("set standing: %v", err)
 	}
-	for range tags.RecurrenceFloor {
+	for range 10 {
 		docID := database.CreateUniqueDocument(t, client.Queries, "standing standpoints")
 		database.MustAddDocumentTag(t, client.Queries, docID, standing)
 	}
 
 	cfg := &config.Config{
 		Enricher: config.EnricherConfig{
-			TagReconcile: config.TagReconcileConfig{MaxRejudge: 1},
+			TagReconcile: config.TagReconcileConfig{MaxRejudge: 1, RecurrenceFloor: 10},
 		},
 	}
 	r := &Reconciler{
@@ -1116,4 +1118,79 @@ func TestSweepPromotedTags_RunBoundIsSharedWithRejudge(t *testing.T) {
 			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", standing).Scan(&stillPromoted),
 		"read the standing row")
 	testutil.AssertEqual(t, stillPromoted, true, "the value above the floor keeps its influence")
+}
+
+// TestSweepPromotedTags_MassDecayGraceAndFloor pins the two configurable knobs of the mass-decay demotion:
+// a tag younger than the demotion grace keeps its standing, a tag past it decays, and a tag at or above
+// a non-default recurrence floor is never revoked — a baked-in floor of 10 would demote it here.
+func TestSweepPromotedTags_MassDecayGraceAndFloor(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	young := database.MustCreateTag(t, client.Queries, "young decayed standpoints")
+	old := database.MustCreateTag(t, client.Queries, "old decayed standpoints")
+	above := database.MustCreateTag(t, client.Queries, "old standing standpoints")
+	if _, err := client.DB().ExecContext(ctx, `UPDATE tag SET promoted_at = now(),
+		created_at = now() - interval '5 days' WHERE id IN ($1, $2)`, old, above); err != nil {
+		t.Fatalf("set standing: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = now() WHERE id = $1", young); err != nil {
+		t.Fatalf("set standing: %v", err)
+	}
+	for range 4 {
+		database.MustAddDocumentTag(t, client.Queries,
+			database.CreateUniqueDocument(t, client.Queries, "standing standpoints"), above)
+	}
+
+	cfg := &config.Config{
+		Enricher: config.EnricherConfig{
+			TagReconcile: config.TagReconcileConfig{MaxRejudge: 10, RecurrenceFloor: 3, DemotionGraceDays: 3},
+		},
+	}
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		runner: &tools.Runner{},
+		logger: logger,
+	}
+	report := &Report{Skips: map[string]int{}}
+	r.sweepPromotedTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Skips["demotion_grace"], 1, "the young tag is spared by the grace")
+	testutil.AssertEqual(t, report.Demotion.MassDecay, 1, "only the past-grace tag decays")
+	testutil.AssertEqual(t, report.Demotion.Demoted, 1, "the revocation applied")
+	testutil.AssertEqual(t, report.Demotion.NoJudge, 1, "the above-floor tag has no verdict and no judge")
+
+	var promoted, demoted bool
+	var reason string
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			`SELECT promoted_at IS NOT NULL, demoted_at IS NOT NULL, coalesce(demoted_reason, '')
+			 FROM tag WHERE id = $1`, young).Scan(&promoted, &demoted, &reason),
+		"read the young row")
+	if !promoted || demoted {
+		t.Error("a tag inside the grace window keeps its standing")
+	}
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			`SELECT promoted_at IS NOT NULL, demoted_at IS NOT NULL, coalesce(demoted_reason, '')
+			 FROM tag WHERE id = $1`, old).Scan(&promoted, &demoted, &reason),
+		"read the old row")
+	if promoted || !demoted {
+		t.Error("a tag past the grace window loses its standing")
+	}
+	testutil.AssertEqual(t, reason, tags.DemotionMassDecay, "the row names the trigger")
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", above).Scan(&promoted),
+		"read the above-floor row")
+	testutil.AssertEqual(t, promoted, true, "four live documents clear a floor of three")
 }

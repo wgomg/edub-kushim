@@ -68,7 +68,7 @@ WHERE id = $1
   AND accepted_at IS NULL;
 
 -- name: ListPromotedTagsForDemotion :many
-SELECT id, name, promoted_at FROM tag
+SELECT id, name, promoted_at, created_at FROM tag
 WHERE promoted_at IS NOT NULL
   AND NOT seeded
 ORDER BY promoted_at;
@@ -538,6 +538,8 @@ SELECT EXISTS (
     SELECT 1 FROM tag t
     WHERE t.promoted_at IS NOT NULL
       AND NOT t.seeded
+      AND (sqlc.narg('demoted_before')::timestamptz IS NULL
+           OR coalesce(t.created_at, now()) <= sqlc.narg('demoted_before')::timestamptz)
       AND (SELECT COUNT(*)
            FROM document_tag dt
            JOIN document d ON d.id = dt.document_id

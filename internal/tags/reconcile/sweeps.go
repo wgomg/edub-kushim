@@ -242,8 +242,8 @@ type provisionalEntry struct {
 // decision at or above the live-mass floor promotes; a reject or defer
 // logs once and stays for review; an admit below the floor stays a silent
 // pending candidate.
-func (r *Reconciler) provisionalOutcome(name string, decision tags.AdmissionDecision, docs int64) (promote, deferred bool) {
-	if tags.DecidePromotion(decision.Outcome, docs) {
+func (r *Reconciler) provisionalOutcome(name string, decision tags.AdmissionDecision, docs int64, floor int64) (promote, deferred bool) {
+	if tags.DecidePromotion(decision.Outcome, docs, floor) {
 		return true, false
 	}
 	if decision.Outcome != tags.AdmissionAdmit {
@@ -255,6 +255,7 @@ func (r *Reconciler) provisionalOutcome(name string, decision tags.AdmissionDeci
 
 func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Config, report *Report) {
 	graceDays := cfg.Enricher.TagReconcile.ProvisionalGraceDays
+	floor := int64(cfg.Enricher.TagReconcile.RecurrenceFloor)
 	cutoff := time.Now().Add(-time.Duration(graceDays) * 24 * time.Hour)
 
 	worklist, err := r.client.ListProvisionalTagsOlderThan(ctx, cutoff)
@@ -337,14 +338,14 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		}
 		decision := admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
 		decision = tags.WithAcceptance(decision, t.AcceptedAt.Time, row.FreshVerdictAt)
-		if promote, _ := r.provisionalOutcome(t.Name, decision, docs); !promote {
+		if promote, _ := r.provisionalOutcome(t.Name, decision, docs, floor); !promote {
 			continue
 		}
 
 		if report.ReportOnly {
 			report.Provisional.Promoted++
 			r.logger.Info("", "tag reconcile (report-only): would promote %q (docs=%d model=%s rule_set=decision-%s floor=%d)",
-				t.Name, docs, verdictModelLabel(row.VerdictModel), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
+				t.Name, docs, verdictModelLabel(row.VerdictModel), tags.DecisionRuleSetVersion, floor)
 			continue
 		}
 		if _, status, err := r.tag.Promote(ctx, t.ID, "sweep"); err != nil {
@@ -352,7 +353,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		} else if status == types.PromotePromoted {
 			report.Provisional.Promoted++
 			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s rule_set=decision-%s floor=%d)",
-				t.Name, docs, verdictModelLabel(row.VerdictModel), tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
+				t.Name, docs, verdictModelLabel(row.VerdictModel), tags.DecisionRuleSetVersion, floor)
 		}
 	}
 
@@ -453,6 +454,7 @@ func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, 
 }
 
 func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Config, entries []*provisionalEntry, report *Report) {
+	floor := int64(cfg.Enricher.TagReconcile.RecurrenceFloor)
 	for _, e := range entries {
 		decision, finalModel, err := r.rejudgeStoredName(ctx, cfg, e.id, e.name)
 		if err != nil {
@@ -466,7 +468,7 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		}
 		report.Provisional.Rejudged++
 
-		if promote, deferred := r.provisionalOutcome(e.name, decision, e.docs); !promote {
+		if promote, deferred := r.provisionalOutcome(e.name, decision, e.docs, floor); !promote {
 			if deferred {
 				report.Provisional.Deferred++
 			}
@@ -477,16 +479,20 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		} else if status == types.PromotePromoted {
 			report.Provisional.Promoted++
 			r.logger.Info("", "tag reconcile: promoted %q (docs=%d model=%s rule_set=decision-%s floor=%d)",
-				e.name, e.docs, finalModel, tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
+				e.name, e.docs, finalModel, tags.DecisionRuleSetVersion, floor)
 		}
 	}
 }
 
 // sweepPromotedTags withdraws the standing of values the current rules no longer back: their live mass fell
-// below the recurrence floor, or a stale verdict re-judges to reject or defer. A current-version verdict is
-// respected as it stands, so an operator's promotion survives until the next criteria version; held names
-// and judge failures stay promoted.
+// below the configured recurrence floor, or a stale verdict re-judges to reject or defer. A value younger
+// than the demotion grace keeps its standing instead of decaying. A current-version verdict is respected as
+// it stands, so an operator's promotion survives until the next criteria version; held names and judge
+// failures stay promoted.
 func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, report *Report) {
+	floor := int64(cfg.Enricher.TagReconcile.RecurrenceFloor)
+	graceDays := cfg.Enricher.TagReconcile.DemotionGraceDays
+	cutoff := time.Now().Add(-graceWindow(graceDays))
 	worklist, err := r.client.ListPromotedTagsForDemotion(ctx)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: list promoted tags for demotion: %v", err)
@@ -545,7 +551,12 @@ func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, 
 			continue
 		}
 
-		if tags.DecideMassDemotion(liveCounts[t.ID]) {
+		if tags.DecideMassDemotion(liveCounts[t.ID], floor) {
+			if graceDays > 0 && (!t.CreatedAt.Valid || t.CreatedAt.Time.After(cutoff)) {
+				report.Skips["demotion_grace"]++
+				r.logger.Debug("", "tag reconcile: %q is younger than the demotion grace — left promoted", t.Name)
+				continue
+			}
 			massDecay = append(massDecay, t)
 			continue
 		}

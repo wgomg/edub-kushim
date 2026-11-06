@@ -212,30 +212,20 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // the dimension question and the language guard, the feature set and the pinned combination rules stay
 // unchanged. v6 rides the quality-v6 generation: the not_person_place_work feature becomes not_person,
 // the place and work components leaving the rubric, the combination rules unchanged. v7 adds the demotion
-// rules to the set: a decayed live mass below RecurrenceFloor, a decided no-dimension drop, and a fresh
-// reject or defer under the current versions revoke influence, the admission rules unchanged. v8 adds the
-// retention rules to the set: a current-version decided drop or reject standing past the retention window
-// removes the stored row, the admission and demotion rules unchanged. v9 structures the admission rules:
-// a candidate judged neither subject matter nor a dimension rejects with its own no_dimension reason, and
-// a rejection requires at least one judge-owned failing signal — a failure set of deterministic signals
-// alone defers as deterministic_only — the demotion and retention rules unchanged. v10 adds the operator
-// acceptance: a review deferral waived by an editor admits the value to the ordinary promotion paths, the
-// admission, demotion and retention rules unchanged.
+// rules to the set: a decayed live mass below the configured recurrence floor, a decided no-dimension drop,
+// and a fresh reject or defer under the current versions revoke influence, the admission rules unchanged.
+// v8 adds the retention rules to the set: a current-version decided drop or reject standing past the
+// retention window removes the stored row, the admission and demotion rules unchanged. v9 structures
+// the admission rules: a candidate judged neither subject matter nor a dimension rejects with its own
+// no_dimension reason, and a rejection requires at least one judge-owned failing signal — a failure set of
+// deterministic signals alone defers as deterministic_only — the demotion and retention rules unchanged.
+// v10 adds the operator acceptance: a review deferral waived by an editor admits the value to the ordinary
+// promotion paths, the admission, demotion and retention rules unchanged.
 const DecisionRuleSetVersion = "v10"
 
-// RecurrenceFloor is the promotion minimum of docs/specs/tags/definition.md §4.3 (P2), in live
-// documents: ten until its calibration exists (operator decision D8, 2026-09-30). Same-batch mass
-// counts — ten documents from one batch remain a systematic proposal, where two are a compression
-// artifact.
-const RecurrenceFloor = 10
-
-// DecidePromotion reports whether an admitted candidate accrues enough
-// live recurrence to leave provisional standing. Admission below the
-// floor is a pending candidate; a deferred or rejected candidate never
-// promotes here — the review queue arbitrates those through the human
-// action.
-func DecidePromotion(outcome AdmissionOutcome, liveMass int64) bool {
-	return outcome == AdmissionAdmit && liveMass >= RecurrenceFloor
+// DecidePromotion reports whether an admitted candidate at or above the configured floor promotes.
+func DecidePromotion(outcome AdmissionOutcome, liveMass int64, floor int64) bool {
+	return outcome == AdmissionAdmit && liveMass >= floor
 }
 
 // WithAcceptance resolves one derived decision against an operator acceptance: a review deferral waived
@@ -251,11 +241,9 @@ func WithAcceptance(derived AdmissionDecision, acceptedAt, freshVerdictAt time.T
 	return AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonOperatorAccept}
 }
 
-// DecideMassDemotion treats the recurrence floor as a standing condition (P2): a value whose live mass has
-// fallen below it is a pending candidate again, and a recovered mass re-admits it through the ordinary
-// promotion paths.
-func DecideMassDemotion(liveMass int64) bool {
-	return liveMass < RecurrenceFloor
+// DecideMassDemotion reports whether live mass below the configured recurrence floor drops standing.
+func DecideMassDemotion(liveMass int64, floor int64) bool {
+	return liveMass < floor
 }
 
 // RetentionFeatures is the evidence the retention rule reads for one stored row: whether the current

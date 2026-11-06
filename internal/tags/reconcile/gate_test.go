@@ -2,8 +2,10 @@ package reconcile
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -216,5 +218,70 @@ func TestRunRearmsSignalWhenRunFails(t *testing.T) {
 	}
 	if got := reconcileFlagValue(t, client); got != tags.SignalSet {
 		t.Errorf("flag after a failed run = %q, want it re-armed", got)
+	}
+}
+
+// TestPromotedTagMassDecayProbe_AgeAndFloor pins the mass-decay due-work probe against the arm's demotion
+// rule: a NULL cutoff counts every promoted tag below the floor, an age cutoff excludes tags younger
+// than the grace, and a mass at or above the floor never counts.
+func TestPromotedTagMassDecayProbe_AgeAndFloor(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	client := database.NewTestClient(t)
+	quietGateStore(t, client)
+	ctx := context.Background()
+
+	// no documents and no backdate: below any positive floor, created just now
+	tagID := database.MustCreateTag(t, client.Queries, "grace probe decay")
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = now() WHERE id = $1", tagID); err != nil {
+		t.Fatalf("set standing: %v", err)
+	}
+
+	ungated, err := client.Queries.PromotedTagMassDecayProbe(ctx,
+		database.PromotedTagMassDecayProbeParams{Floor: 3})
+	if err != nil {
+		t.Fatalf("probe with a NULL cutoff: %v", err)
+	}
+	if !ungated {
+		t.Error("a NULL cutoff must count every promoted tag below the floor")
+	}
+
+	graceCutoff := sql.NullTime{Time: time.Now().Add(-3 * 24 * time.Hour), Valid: true}
+	gated, err := client.Queries.PromotedTagMassDecayProbe(ctx,
+		database.PromotedTagMassDecayProbeParams{DemotedBefore: graceCutoff, Floor: 3})
+	if err != nil {
+		t.Fatalf("probe behind the grace cutoff: %v", err)
+	}
+	if gated {
+		t.Error("a tag inside the grace window must not count as due work")
+	}
+
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET created_at = now() - interval '5 days' WHERE id = $1", tagID); err != nil {
+		t.Fatalf("backdate the tag: %v", err)
+	}
+	gated, err = client.Queries.PromotedTagMassDecayProbe(ctx,
+		database.PromotedTagMassDecayProbeParams{DemotedBefore: graceCutoff, Floor: 3})
+	if err != nil {
+		t.Fatalf("probe behind the grace cutoff: %v", err)
+	}
+	if !gated {
+		t.Error("a tag past the grace window with mass below the floor is due work")
+	}
+
+	for range 4 {
+		database.MustAddDocumentTag(t, client.Queries,
+			database.CreateUniqueDocument(t, client.Queries, "grace probe decay"), tagID)
+	}
+	gated, err = client.Queries.PromotedTagMassDecayProbe(ctx,
+		database.PromotedTagMassDecayProbeParams{DemotedBefore: graceCutoff, Floor: 3})
+	if err != nil {
+		t.Fatalf("probe behind the grace cutoff: %v", err)
+	}
+	if gated {
+		t.Error("mass at or above the floor must never count, whatever the cutoff")
 	}
 }

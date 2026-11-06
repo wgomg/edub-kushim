@@ -819,9 +819,10 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	var eligible []candidate
 	var promoteIDs []int64
 	heldSkips := 0
+	floor := int64(e.config.Enricher.TagReconcile.RecurrenceFloor)
 	for _, c := range candidates {
 		decision, ok := decisionByName[c.name]
-		if !ok || !tags.DecidePromotion(decision.Outcome, counts[c.id]) {
+		if !ok || !tags.DecidePromotion(decision.Outcome, counts[c.id], floor) {
 			continue
 		}
 		if anchor, ok := held[c.name]; ok {
@@ -840,7 +841,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		promoteIDs = append(promoteIDs, c.id)
 	}
 	e.logger.Debug(reqID, "tagquality[%s]: promotion run considered=%d promoted=%d held=%d (rule_set=decision-%s floor=%d)",
-		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), heldSkips, tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
+		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), heldSkips, tags.DecisionRuleSetVersion, floor)
 	if len(promoteIDs) == 0 {
 		return nil
 	}
@@ -853,7 +854,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 	promoted := make([]string, len(eligible))
 	for i, c := range eligible {
 		e.logger.Info(reqID, "tagquality[%s]: promote %q (docs=%d reason=%s rule_set=decision-%s floor=%d)",
-			analyzer.TagQualityVersion, c.name, counts[c.id], decisionByName[c.name].Reason, tags.DecisionRuleSetVersion, tags.RecurrenceFloor)
+			analyzer.TagQualityVersion, c.name, counts[c.id], decisionByName[c.name].Reason, tags.DecisionRuleSetVersion, floor)
 		promoted[i] = c.name
 	}
 	return promoted

@@ -844,8 +844,8 @@ for i := range 2 {
     with the layer on births land provisional, `promoteEligible` runs inside the
     transaction (the emission's admission decision, or the cached verdict row
     for provisionals already in the store, plus assignments that clear the
-    promotion floor — `tags.RecurrenceFloor`, 10 live documents →
-    `PromoteTags`; trashed carriers do not count, and the same rule backs the
+    promotion floor — `enricher.tag_reconcile.recurrence_floor` (default 10 live
+    documents) → `PromoteTags`; trashed carriers do not count, and the same rule backs the
     reconciliation sweep), and only the promoted names are added to the store.
     Verdict-less provisionals are resolved later by the scheduled sweep or the
     review queue (see the
@@ -881,7 +881,7 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `tagmatcher.min_suggestion_similarity` | model-derived (`0.52` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
-| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; the decision thresholds are internal pinned constants (`no_anchor_similarity = 0.60`, promotion floor of 10 live documents), not config keys |
+| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; `no_anchor_similarity = 0.60` is an internal pinned constant, and the promotion floor is `enricher.tag_reconcile.recurrence_floor` (default 10 live documents) |
 
 Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three

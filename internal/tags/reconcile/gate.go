@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -117,7 +118,14 @@ func (r *Reconciler) hasDueWork(ctx context.Context, cfg *config.Config) (bool, 
 		return true, nil
 	}
 
-	decayed, err := q.PromotedTagMassDecayProbe(ctx, tags.RecurrenceFloor)
+	var demotedBefore sql.NullTime
+	if grace := cfg.Enricher.TagReconcile.DemotionGraceDays; grace > 0 {
+		demotedBefore = sql.NullTime{Time: time.Now().Add(-graceWindow(grace)), Valid: true}
+	}
+	decayed, err := q.PromotedTagMassDecayProbe(ctx, database.PromotedTagMassDecayProbeParams{
+		DemotedBefore: demotedBefore,
+		Floor:         int64(cfg.Enricher.TagReconcile.RecurrenceFloor),
+	})
 	if err != nil {
 		return false, fmt.Errorf("probe demoted promoted tags: %w", err)
 	}

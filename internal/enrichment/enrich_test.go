@@ -348,7 +348,7 @@ func TestPromoteEligible_CompositionHold(t *testing.T) {
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
 	ctx := context.Background()
-	e := NewEnricher(&config.Config{}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
+	e := NewEnricher(&config.Config{Enricher: config.EnricherConfig{TagReconcile: config.TagReconcileConfig{RecurrenceFloor: 10}}}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
 
 	admit := tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: tags.ReasonAdmitted}
 	seedCandidate := func(name string) types.CreateResult[database.Tag] {
@@ -356,7 +356,7 @@ func TestPromoteEligible_CompositionHold(t *testing.T) {
 		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
 			t.Fatalf("set provisional: %v", err)
 		}
-		for range tags.RecurrenceFloor {
+		for range 10 {
 			database.MustAddDocumentTag(t, client.Queries, database.CreateUniqueDocument(t, client.Queries, name), id)
 		}
 		return types.CreateResult[database.Tag]{Entity: database.Tag{ID: id, Name: name}, Status: types.Created}
@@ -396,6 +396,62 @@ func TestPromoteEligible_CompositionHold(t *testing.T) {
 	assertPromoted("free compound", free.Entity.ID, true)
 }
 
+// TestPromoteEligible_ConfigurableFloor pins the enrichment path's read of the configured floor: at a
+// floor of 3 a candidate with three documents promotes and one with two does not — the shipped default
+// of 10 would leave both provisional.
+func TestPromoteEligible_ConfigurableFloor(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	logger := log.NewDiscardLogger()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	e := NewEnricher(&config.Config{Enricher: config.EnricherConfig{
+		TagReconcile: config.TagReconcileConfig{RecurrenceFloor: 3},
+	}}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
+
+	admit := tags.AdmissionDecision{Outcome: tags.AdmissionAdmit, Reason: tags.ReasonAdmitted}
+	seed := func(name string, docs int) types.CreateResult[database.Tag] {
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		for range docs {
+			database.MustAddDocumentTag(t, client.Queries, database.CreateUniqueDocument(t, client.Queries, name), id)
+		}
+		return types.CreateResult[database.Tag]{Entity: database.Tag{ID: id, Name: name}, Status: types.Created}
+	}
+	above := seed("above configured floor", 3)
+	below := seed("below configured floor", 2)
+
+	promoted := e.promoteEligible(ctx, client.Queries,
+		[]types.CreateResult[database.Tag]{above, below},
+		map[string]tags.AdmissionDecision{above.Entity.Name: admit, below.Entity.Name: admit},
+		"configurable-floor-test")
+
+	if want := []string{above.Entity.Name}; !slices.Equal(promoted, want) {
+		t.Fatalf("promoted = %v, want %v: the configured floor of 3 must decide", promoted, want)
+	}
+	for _, tc := range []struct {
+		label string
+		id    int64
+		want  bool
+	}{
+		{"above the floor", above.Entity.ID, true},
+		{"below the floor", below.Entity.ID, false},
+	} {
+		var got bool
+		if err := client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", tc.id).Scan(&got); err != nil {
+			t.Fatalf("%s: read promoted state: %v", tc.label, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: promoted = %v, want %v", tc.label, got, tc.want)
+		}
+	}
+}
+
 // TestPromoteEligible_Acceptance pins the enrichment promotion path's half of the operator
 // acceptance: two floor-mass candidates carrying the same cached defer verdict differ only in the
 // acceptance stamp, and only the accepted one promotes — without the stamp the deferred value never
@@ -408,7 +464,7 @@ func TestPromoteEligible_Acceptance(t *testing.T) {
 	client := database.NewTestClient(t)
 	database.ResetTestDatabase(client.DB())
 	ctx := context.Background()
-	e := NewEnricher(&config.Config{}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
+	e := NewEnricher(&config.Config{Enricher: config.EnricherConfig{TagReconcile: config.TagReconcileConfig{RecurrenceFloor: 10}}}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
 
 	const deferCriteria = `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`
 	seed := func(t *testing.T, name string, accepted bool) types.CreateResult[database.Tag] {
@@ -419,7 +475,7 @@ func TestPromoteEligible_Acceptance(t *testing.T) {
 		}
 		verdictDoc := database.CreateUniqueDocument(t, client.Queries, name)
 		database.MustAddDocumentTag(t, client.Queries, verdictDoc, id)
-		for i := 1; i < tags.RecurrenceFloor; i++ {
+		for i := 1; i < 10; i++ {
 			database.MustAddDocumentTag(t, client.Queries,
 				database.CreateUniqueDocument(t, client.Queries, fmt.Sprintf("%s doc %d", name, i)), id)
 		}

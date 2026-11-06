@@ -424,7 +424,8 @@ twin arm for the run rather than degrading its safety gates.
 
 **Provisional hygiene** — the same run re-checks provisional tags older than
 `provisional_grace_days` (default 30), oldest first. A stored verdict the decision
-re-derives as admit plus ≥10 live documents promotes the name with no judge call; defer
+re-derives as admit plus at least the configured `recurrence_floor` (default 10) live
+documents promotes the name with no judge call; defer
 and reject verdicts stay queued for review, except a defer an operator has accepted,
 which follows the same floor rule; verdict-less names are re-judged one at a
 time (the tag's first live document, reduced with the tag-matcher arithmetic, one retry
@@ -434,9 +435,10 @@ no live text, count as skipped, and the orphan sweep removes them once the windo
 elapses.
 
 **Demotion** — the same run withdraws the standing of promoted values the current rules
-no longer back: live mass below the promotion floor (`mass_decay`), or a stale verdict
-that re-judges to reject or defer. A value carrying a current-version verdict is
-respected as it stands; seeded values never enter the worklist; identity- or
+no longer back: live mass below the configured promotion floor (`mass_decay`, default 10),
+subject to `demotion_grace_days` (default 0, disabled) — a younger tag keeps its standing —
+or a stale verdict that re-judges to reject or defer. A value carrying a current-version
+verdict is respected as it stands; seeded values never enter the worklist; identity- or
 composition-held names, a missing judge, and a failed lookup leave the value promoted.
 Each demotion goes through `Tag.Demote`, which clears `promoted_at`, records the reason,
 and removes the name from the embedding store.
@@ -533,6 +535,8 @@ enricher:
   #   max_retag: 1000            # max documents re-pointed per run
   #   dead_tag_grace_days: 7     # days a tag must stay without documents before the sweep removes it
   #   provisional_grace_days: 30 # days a provisional tag may stay unreviewed before the sweep re-checks it
+  #   recurrence_floor: 10       # live documents to promote, and below which a promoted tag is demoted
+  #   demotion_grace_days: 0     # days since creation before the mass-decay demotion may hit a tag (0 disables)
 ```
 
 All three blocks are also editable on the Settings page ("Tag adjudicator", "Tag quality",
@@ -570,7 +574,8 @@ quality band constants are internals; see the
 - **Quarantined tags are invisible to the vocabulary** — a newborn is attached and
   searchable from birth but stays out of the embedding store — and therefore out of
   suggestions, consolidation targets, and the all-names fallback — until the admission
-  decision admits it and its assignments clear the promotion floor (10 live documents).
+  decision admits it and its assignments clear the promotion floor (`recurrence_floor`,
+  10 live documents by default).
 - **The first reconciliation run is always report-only**, even with `report_only: false`
   — flip behavior only starts with the second run.
 - **`identity_candidate_similarity: 0` disables candidate generation** — `Rank` returns

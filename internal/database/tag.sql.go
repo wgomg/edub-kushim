@@ -682,7 +682,7 @@ func (q *Queries) ListPromotedTagNames(ctx context.Context) ([]string, error) {
 }
 
 const listPromotedTagsForDemotion = `-- name: ListPromotedTagsForDemotion :many
-SELECT id, name, promoted_at FROM tag
+SELECT id, name, promoted_at, created_at FROM tag
 WHERE promoted_at IS NOT NULL
   AND NOT seeded
 ORDER BY promoted_at
@@ -692,6 +692,7 @@ type ListPromotedTagsForDemotionRow struct {
 	ID         int64
 	Name       string
 	PromotedAt sql.NullTime
+	CreatedAt  sql.NullTime
 }
 
 func (q *Queries) ListPromotedTagsForDemotion(ctx context.Context) ([]ListPromotedTagsForDemotionRow, error) {
@@ -703,7 +704,12 @@ func (q *Queries) ListPromotedTagsForDemotion(ctx context.Context) ([]ListPromot
 	var items []ListPromotedTagsForDemotionRow
 	for rows.Next() {
 		var i ListPromotedTagsForDemotionRow
-		if err := rows.Scan(&i.ID, &i.Name, &i.PromotedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.PromotedAt,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1304,15 +1310,22 @@ SELECT EXISTS (
     SELECT 1 FROM tag t
     WHERE t.promoted_at IS NOT NULL
       AND NOT t.seeded
+      AND ($1::timestamptz IS NULL
+           OR coalesce(t.created_at, now()) <= $1::timestamptz)
       AND (SELECT COUNT(*)
            FROM document_tag dt
            JOIN document d ON d.id = dt.document_id
-           WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) < $1::bigint
+           WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) < $2::bigint
 )
 `
 
-func (q *Queries) PromotedTagMassDecayProbe(ctx context.Context, floor int64) (bool, error) {
-	row := q.db.QueryRowContext(ctx, promotedTagMassDecayProbe, floor)
+type PromotedTagMassDecayProbeParams struct {
+	DemotedBefore sql.NullTime
+	Floor         int64
+}
+
+func (q *Queries) PromotedTagMassDecayProbe(ctx context.Context, arg PromotedTagMassDecayProbeParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, promotedTagMassDecayProbe, arg.DemotedBefore, arg.Floor)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

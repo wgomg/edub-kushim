@@ -748,6 +748,59 @@ func TestFinalizeConfig_TagReconcile(t *testing.T) {
 			t.Errorf("ProvisionalGraceDays = %d, want 30", cfg.Enricher.TagReconcile.ProvisionalGraceDays)
 		}
 	})
+	t.Run("zero recurrence_floor defaults to 10", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.RecurrenceFloor = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.RecurrenceFloor != 10 {
+			t.Errorf("RecurrenceFloor = %d, want 10", cfg.Enricher.TagReconcile.RecurrenceFloor)
+		}
+	})
+	t.Run("negative recurrence_floor defaults to 10", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.RecurrenceFloor = -1
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.RecurrenceFloor != 10 {
+			t.Errorf("RecurrenceFloor = %d, want 10", cfg.Enricher.TagReconcile.RecurrenceFloor)
+		}
+	})
+	t.Run("zero demotion_grace_days preserved", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.DemotionGraceDays = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.DemotionGraceDays != 0 {
+			t.Errorf("DemotionGraceDays = %d, want 0: zero means the protection is disabled",
+				cfg.Enricher.TagReconcile.DemotionGraceDays)
+		}
+	})
+	t.Run("negative demotion_grace_days defaults to 0", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.DemotionGraceDays = -1
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.DemotionGraceDays != 0 {
+			t.Errorf("DemotionGraceDays = %d, want 0", cfg.Enricher.TagReconcile.DemotionGraceDays)
+		}
+	})
+	t.Run("explicit floor and grace preserved", func(t *testing.T) {
+		cfg := DefaultConfig(t.TempDir())
+		cfg.Enricher.TagReconcile.RecurrenceFloor = 3
+		cfg.Enricher.TagReconcile.DemotionGraceDays = 2
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Fatalf("finalizeConfig: %v", err)
+		}
+		if cfg.Enricher.TagReconcile.RecurrenceFloor != 3 || cfg.Enricher.TagReconcile.DemotionGraceDays != 2 {
+			t.Errorf("explicit values overwritten: floor=%d grace=%d",
+				cfg.Enricher.TagReconcile.RecurrenceFloor, cfg.Enricher.TagReconcile.DemotionGraceDays)
+		}
+	})
 	t.Run("empty time defaults to 02:00", func(t *testing.T) {
 		cfg := DefaultConfig(t.TempDir())
 		cfg.Enricher.TagReconcile.Time = ""

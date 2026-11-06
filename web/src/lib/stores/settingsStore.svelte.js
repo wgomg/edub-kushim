@@ -109,7 +109,9 @@ function ensureTagReconcileBlock() {
 		dead_tag_grace_days: 7,
 		provisional_grace_days: 30,
 		retention_days: 90,
-		reask_defer_days: 7
+		reask_defer_days: 7,
+		recurrence_floor: 10,
+		demotion_grace_days: 0
 	};
 }
 
@@ -280,6 +282,10 @@ function bodyFromConfig() {
 		),
 		'enricher.tag_reconcile.retention_days': Number(cfg.enricher.tag_reconcile.retention_days),
 		'enricher.tag_reconcile.reask_defer_days': Number(cfg.enricher.tag_reconcile.reask_defer_days),
+		'enricher.tag_reconcile.recurrence_floor': Number(cfg.enricher.tag_reconcile.recurrence_floor),
+		'enricher.tag_reconcile.demotion_grace_days': Number(
+			cfg.enricher.tag_reconcile.demotion_grace_days
+		),
 		'enricher.tag_measure.enabled': cfg.enricher.tag_measure.enabled,
 		'enricher.tag_measure.interval': Number(cfg.enricher.tag_measure.interval),
 		'enricher.tag_measure.time': cfg.enricher.tag_measure.time,

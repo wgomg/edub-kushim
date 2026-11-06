@@ -237,9 +237,9 @@ This is exactly what the system's multi-tag filter does. Three properties follow
 
 ### 4.3 The predicates
 
-Written as properties of extensions. Let `m` be a recurrence floor (the current system
-uses 10 as its promotion minimum; axis health in a mature vocabulary wants higher floors
-for the core).
+Written as properties of extensions. Let `m` be the recurrence floor
+(`enricher.tag_reconcile.recurrence_floor`, default 10; axis health in a mature vocabulary
+wants higher floors for the core).
 
 **(P1) Facet ownership** — precondition, not a set test: `t` belongs to the subject
 facet; persons and form/genre are excluded by the facet machinery. Works and places are
@@ -592,11 +592,12 @@ The questions the definition leaves to policy, and their decided answers:
    benefits (threshold fairness, coverage visibility) live at the query and reporting
    layer, while it would demand trustworthy per-document membership the system does not
    have, multiply thresholds and review surfaces, and split the scarce label pool.
-9. **Thresholds — calibration-owned.** The recurrence floor `m`, the set-equality
-   threshold for `≈`, and the containment threshold for redundancy stay unnamed by design:
-   they are fitted on labels, and nothing conceptual remains open. Until calibration
-   exists the mechanisms run on pinned defaults — a missing threshold is never a reason a
-   mechanism cannot operate.
+9. **Thresholds — calibration-owned.** The set-equality threshold for `≈` and the
+   containment threshold for redundancy stay unnamed by design: they are fitted on labels,
+   and nothing conceptual remains open. The recurrence floor `m` is operator-tunable
+   (`enricher.tag_reconcile.recurrence_floor`); its default of 10 live documents is the
+   pinned value until calibration fits a replacement. A missing threshold is never a
+   reason a mechanism cannot operate.
 10. **Decision layer — staged.** A pinned, versioned rule set over the features is the
     operating mode: it runs with zero labels and is never gated on data. The review
     surfaces and audit verdicts produce labels as a byproduct of operation, and a fitted

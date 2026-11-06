@@ -401,13 +401,15 @@ The enrichment pipeline:
    missing candidates with `judge_unavailable` (no verdict row; re-judged on
    re-emission); every other non-credit failure keeps every novel tag with a
    defer decision, and a credit-exhaustion failure pauses the batch; the
-   decision thresholds are internal pinned constants, not config keys.
+   rubric thresholds are internal pinned constants, while the recurrence floor
+   is configurable (`enricher.tag_reconcile.recurrence_floor`).
    Under the same gate the kept
    set is quarantined: newborns are attached and searchable from birth but stay
    provisional (`tag.promoted_at` NULL) and out of the embedding store, so
    they never reach suggestions or consolidation targets. A provisional name
    is promoted inline — inside the persist transaction — when the admission
-   decision admits it and it has assignments on ≥10 distinct live documents
+   decision admits it and it has assignments on at least the configured
+   recurrence floor (default 10) of distinct live documents
     (trashed carriers do not count); provisionals already in the store are
     decided from their cached verdict row, unless an operator acceptance waives
     the recorded deferral. Influence is revocable: a promoted value

@@ -1174,6 +1174,8 @@ type TagReconcileConfigResponse struct {
 	ProvisionalGraceDays int     `json:"provisional_grace_days"`
 	RetentionDays        int     `json:"retention_days"`
 	ReaskDeferDays       int     `json:"reask_defer_days"`
+	RecurrenceFloor      int     `json:"recurrence_floor"`
+	DemotionGraceDays    int     `json:"demotion_grace_days"`
 }
 
 // TagMeasureConfigResponse is the measure section's API view.
@@ -1403,6 +1405,8 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagReconcile.ProvisionalGraceDays = cfg.Enricher.TagReconcile.ProvisionalGraceDays
 	resp.Enricher.TagReconcile.RetentionDays = cfg.Enricher.TagReconcile.RetentionDays
 	resp.Enricher.TagReconcile.ReaskDeferDays = cfg.Enricher.TagReconcile.ReaskDeferDays
+	resp.Enricher.TagReconcile.RecurrenceFloor = cfg.Enricher.TagReconcile.RecurrenceFloor
+	resp.Enricher.TagReconcile.DemotionGraceDays = cfg.Enricher.TagReconcile.DemotionGraceDays
 	resp.Enricher.TagMeasure.Enabled = cfg.Enricher.TagMeasure.Enabled
 	resp.Enricher.TagMeasure.Interval = cfg.Enricher.TagMeasure.Interval
 	resp.Enricher.TagMeasure.Time = cfg.Enricher.TagMeasure.Time

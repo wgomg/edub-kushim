@@ -7898,6 +7898,8 @@ components:
       properties:
         dead_tag_grace_days:
           type: integer
+        demotion_grace_days:
+          type: integer
         enabled:
           type: boolean
         interval:
@@ -7909,6 +7911,8 @@ components:
         provisional_grace_days:
           type: integer
         reask_defer_days:
+          type: integer
+        recurrence_floor:
           type: integer
         report_only:
           type: boolean
@@ -7927,6 +7931,8 @@ components:
         - provisional_grace_days
         - retention_days
         - reask_defer_days
+        - recurrence_floor
+        - demotion_grace_days
     TagReconcileReportResponse:
       type: object
       description: |-

@@ -315,7 +315,8 @@ type TagQualityConfig struct {
 
 // TagReconcileConfig is the scheduled reconciliation section: enablement, report-only mode, schedule,
 // per-run caps, the grace periods of dead and provisional tags, the retention window of decided
-// non-values, and the age at which a cached split-gate abstention becomes eligible for re-ask.
+// non-values, the age at which a cached split-gate abstention becomes eligible for the re-ask pass,
+// the recurrence floor, and the mass-decay demotion grace.
 type TagReconcileConfig struct {
 	Enabled              bool    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	ReportOnly           bool    `mapstructure:"report_only" yaml:"report_only" json:"report_only"`
@@ -327,6 +328,8 @@ type TagReconcileConfig struct {
 	ProvisionalGraceDays int     `mapstructure:"provisional_grace_days" yaml:"provisional_grace_days" json:"provisional_grace_days"`
 	RetentionDays        int     `mapstructure:"retention_days" yaml:"retention_days" json:"retention_days"`
 	ReaskDeferDays       int     `mapstructure:"reask_defer_days" yaml:"reask_defer_days" json:"reask_defer_days"`
+	RecurrenceFloor      int     `mapstructure:"recurrence_floor" yaml:"recurrence_floor" json:"recurrence_floor"`
+	DemotionGraceDays    int     `mapstructure:"demotion_grace_days" yaml:"demotion_grace_days" json:"demotion_grace_days"`
 }
 
 // TagMeasureConfig is the measurement section: enablement and schedule for the standalone run, plus whether
@@ -742,6 +745,8 @@ func DefaultConfig(configDir string) *Config {
 				ProvisionalGraceDays: 30,
 				RetentionDays:        90,
 				ReaskDeferDays:       7,
+				RecurrenceFloor:      10,
+				DemotionGraceDays:    0,
 			},
 			TagMeasure: TagMeasureConfig{
 				Enabled:              false,
@@ -936,6 +941,13 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.TagReconcile.ReaskDeferDays <= 0 {
 		cfg.Enricher.TagReconcile.ReaskDeferDays = 7
+	}
+	if cfg.Enricher.TagReconcile.RecurrenceFloor <= 0 {
+		cfg.Enricher.TagReconcile.RecurrenceFloor = 10
+	}
+	// zero is a valid "protection disabled" value, unlike the sibling heals' unset zero
+	if cfg.Enricher.TagReconcile.DemotionGraceDays < 0 {
+		cfg.Enricher.TagReconcile.DemotionGraceDays = 0
 	}
 	if cfg.Enricher.TagReconcile.Time == "" {
 		cfg.Enricher.TagReconcile.Time = "02:00"

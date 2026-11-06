@@ -111,7 +111,9 @@ const fullCfg = () => ({
 			max_retag: 2000,
 			dead_tag_grace_days: 14,
 			retention_days: 90,
-			reask_defer_days: 10
+			reask_defer_days: 10,
+			recurrence_floor: 10,
+			demotion_grace_days: 0
 		}
 	},
 	storage: {

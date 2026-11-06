@@ -3159,12 +3159,14 @@ TagReconcileConfigResponse is the reconcile section's API view.
 | Field | Type | Required |
 |---|---|---|
 | `dead_tag_grace_days` | integer | yes |
+| `demotion_grace_days` | integer | yes |
 | `enabled` | boolean | yes |
 | `interval` | number | yes |
 | `max_rejudge` | integer | yes |
 | `max_retag` | integer | yes |
 | `provisional_grace_days` | integer | yes |
 | `reask_defer_days` | integer | yes |
+| `recurrence_floor` | integer | yes |
 | `report_only` | boolean | yes |
 | `retention_days` | integer | yes |
 | `time` | string | yes |

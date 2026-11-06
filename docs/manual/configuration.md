@@ -151,7 +151,10 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
   documents do not count), `provisional_grace_days` (`30`), `retention_days` (`90` —
   days a decided non-value must stand before the sweep removes it), `reask_defer_days`
   (`7` — days a cached split-gate abstention must stand before the re-ask pass judges it
-  again; high-volume stores lower it).
+  again; high-volume stores lower it), `recurrence_floor` (`10` — live documents a tag
+  needs to be promoted, and below which a promoted tag is demoted), `demotion_grace_days`
+  (`0` — days since creation before the mass-decay demotion may hit a tag; `0` disables
+  the protection).
 - `tag_measure` — `enabled` (`false`), `interval` (days, `7`), `time` (`03:00`),
   `after_enrichment_batch` (`false` — additionally measure after every consume/enrich batch
   settles).

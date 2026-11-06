@@ -17,12 +17,14 @@ queue for review.
 A tag leaves provisional standing in two ways:
 
 - **Promotion** — the admission decision admits it *and* enough live documents carry it to clear the
-  promotion floor (ten live documents under the current rules). Assignments on trashed documents do
-  not count. Approval by an editor promotes a tag immediately, whatever the floor and verdicts say.
+  promotion floor (the configured `recurrence_floor`, ten live documents by default). Assignments on
+  trashed documents do not count. Approval by an editor promotes a tag immediately, whatever the floor
+  and verdicts say.
 - **Removal** — a rejected or retired tag is deleted; rejection also records the name in the
   blocklist so enrichment never proposes it again.
 
-A promoted tag can lose its standing again (**demotion**): its live mass may fall below the floor, a
+A promoted tag can lose its standing again (**demotion**): its live mass may fall below the floor (the
+mass-decay sweep waits until the tag is older than `demotion_grace_days`, disabled by default), a
 fresh judgment may reject or defer it, a decided compound drop may go through, or an editor may demote
 it from the Vocabulary tab. A demoted value keeps its documents and its history and returns to the
 review queue, where approving it restores its standing. Decided non-values that stay unchallenged for

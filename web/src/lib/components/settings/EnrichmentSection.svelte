@@ -894,6 +894,26 @@
 					hint="Cached split-gate abstentions older than this many days are re-judged by the maintenance routine and the daily re-ask pass."
 					bind:value={cfg.enricher.tag_reconcile.reask_defer_days}
 				/>
+				<UnitField
+					id="tag-reconcile-recurrence-floor"
+					label="Recurrence floor"
+					unit="docs"
+					type="number"
+					inputmode="numeric"
+					min="1"
+					hint="Live documents a tag needs to be promoted, and below which a promoted tag decays back to provisional."
+					bind:value={cfg.enricher.tag_reconcile.recurrence_floor}
+				/>
+				<UnitField
+					id="tag-reconcile-demotion-grace"
+					label="Demotion grace period"
+					unit="days"
+					type="number"
+					inputmode="numeric"
+					min="0"
+					hint="Tags younger than this many days are never demoted by falling below the recurrence floor. Set 0 to disable the protection."
+					bind:value={cfg.enricher.tag_reconcile.demotion_grace_days}
+				/>
 			</div>
 			<div class="mt-4">
 				<Note variant="info">

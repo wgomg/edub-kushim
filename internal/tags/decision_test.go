@@ -109,7 +109,7 @@ func TestDecidePromotion(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := DecidePromotion(tc.outcome, tc.live); got != tc.want {
+			if got := DecidePromotion(tc.outcome, tc.live, 10); got != tc.want {
 				t.Errorf("DecidePromotion(%v, %d) = %v, want %v", tc.outcome, tc.live, got, tc.want)
 			}
 		})
@@ -123,17 +123,37 @@ func TestDecideMassDemotion(t *testing.T) {
 		want bool
 	}{
 		{"zero mass demotes", 0, true},
-		{"one below the floor demotes", RecurrenceFloor - 1, true},
-		{"mass at the floor keeps standing", RecurrenceFloor, false},
-		{"mass above the floor keeps standing", RecurrenceFloor + 1, false},
+		{"one below the floor demotes", 10 - 1, true},
+		{"mass at the floor keeps standing", 10, false},
+		{"mass above the floor keeps standing", 10 + 1, false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := DecideMassDemotion(tc.live); got != tc.want {
+			if got := DecideMassDemotion(tc.live, 10); got != tc.want {
 				t.Errorf("DecideMassDemotion(%d) = %v, want %v", tc.live, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDecideRulesHonorConfiguredFloor pins that the floor argument decides, not a baked-in default:
+// at a floor of 3 the promotion minimum and the demotion threshold move with it.
+func TestDecideRulesHonorConfiguredFloor(t *testing.T) {
+	if got := DecidePromotion(AdmissionAdmit, 3, 3); !got {
+		t.Error("mass at a configured floor of 3 must promote")
+	}
+	if got := DecidePromotion(AdmissionAdmit, 2, 3); got {
+		t.Error("mass below a configured floor of 3 must not promote")
+	}
+	if got := DecidePromotion(AdmissionDefer, 5, 3); got {
+		t.Error("a deferred candidate never promotes, whatever the floor")
+	}
+	if got := DecideMassDemotion(2, 3); !got {
+		t.Error("mass below a configured floor of 3 must demote")
+	}
+	if got := DecideMassDemotion(3, 3); got {
+		t.Error("mass at a configured floor of 3 must keep standing")
 	}
 }
 
