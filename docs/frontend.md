@@ -63,15 +63,18 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
 - **`src/lib/components/tags/`** — the tag review surfaces: `ProvisionalReview.svelte` with its
   filter bar in `ProvisionalFilters.svelte` (search, review-state menu with facet counts, rubric
   menu, chips, quick views), `TagReviewHelp.svelte` (the in-app guide the queue's Help button
-  opens), `FoldTagModal.svelte` and `SplitTagModal.svelte` (the shared fold and split dialogs both
-  the queue and the Vocabulary table open), `CoverageReview.svelte`, `DeletedTags.svelte`,
-  `SiblingReview.svelte` and `TagReconcileStrip.svelte`.
+  opens), `TagDefinitionPanel.svelte` (the definition panel a queue tag name opens, fed by
+  `termLookup.js`), `FoldTagModal.svelte` and `SplitTagModal.svelte` (the shared fold and split
+  dialogs both the queue and the Vocabulary table open), `CoverageReview.svelte`,
+  `DeletedTags.svelte`, `SiblingReview.svelte` and `TagReconcileStrip.svelte`.
 - **`src/lib/components/TagReconcileReport.svelte`** — the full reconciliation report rendered on
   `tagreconcile` task pages.
 - **`src/lib/pdf/`** — the pdf.js loader singleton, the worker wrapper with its polyfills, and the
   shared `Promise.withResolvers` shim.
 - **`src/lib/utils/`** — `html.js` (escaping, size/number/duration/relative formatting),
-  `statusChip.js` (status to chip classes) and `tagReconcile.js` (report phrase maps and totals).
+  `statusChip.js` (status to chip classes), `tagReconcile.js` (report phrase maps and totals) and
+  `termLookup.js` (definition lookup across Wikipedia, Wiktionary and the Free Dictionary API with
+  its session cache).
 
 Tests live beside their sources as `*.test.js`; the web test tiers are documented in
 [tests.md](tests.md).

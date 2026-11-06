@@ -10,6 +10,7 @@
 	import FoldTagModal from '#lib/components/tags/FoldTagModal.svelte';
 	import ProvisionalFilters from '#lib/components/tags/ProvisionalFilters.svelte';
 	import SplitTagModal from '#lib/components/tags/SplitTagModal.svelte';
+	import TagDefinitionPanel from '#lib/components/tags/TagDefinitionPanel.svelte';
 	import TagReviewHelp from '#lib/components/tags/TagReviewHelp.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
@@ -129,6 +130,8 @@
 
 	let helpOpen = $state(false);
 	let helpSection = $state('overview');
+	let defineOpen = $state(false);
+	let defineTerm = $state('');
 	let renaming = $state(null);
 	let renameName = $state('');
 	let renameError = $state('');
@@ -321,6 +324,11 @@
 	function openHelp(section) {
 		helpSection = section;
 		helpOpen = true;
+	}
+
+	function openDefinition(name) {
+		defineTerm = name;
+		defineOpen = true;
 	}
 
 	async function approve(tag) {
@@ -766,7 +774,15 @@
 			<li class={cardClass}>
 				<div class={contentClass}>
 					<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-						<span class="text-[0.9375rem] font-semibold text-parchment-200">{tag.name}</span>
+						<button
+							type="button"
+							class="inline-flex items-center gap-1.5 text-left text-[0.9375rem] font-semibold text-parchment-200 underline-offset-[3px] hover:text-lapis-300 hover:underline hover:decoration-lapis-300/40 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							title="Look up this term"
+							onclick={() => openDefinition(tag.name)}
+						>
+							<Icon name="search" size={13} class="shrink-0 text-lapis-400" />
+							{tag.name}
+						</button>
 						<a href={resolve(documentsForTagHref(tag.name))} class={countLink}>
 							<Icon name="external-link" size={12} class="text-lapis-400" />
 							{documentsLabel(tag.document_count)}
@@ -1050,6 +1066,10 @@
 
 <SlideOver open={helpOpen} title="Tag review guide" onClose={() => (helpOpen = false)}>
 	<TagReviewHelp section={helpSection} />
+</SlideOver>
+
+<SlideOver open={defineOpen} title="Tag definition" onClose={() => (defineOpen = false)}>
+	<TagDefinitionPanel term={defineTerm} />
 </SlideOver>
 
 <Modal

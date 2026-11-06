@@ -16,7 +16,9 @@ const {
 	rejudgeTag,
 	updateTag,
 	confirmMock,
-	toastMock
+	toastMock,
+	lookupTerm,
+	forgetTerm
 } = vi.hoisted(() => ({
 	provisionalList: vi.fn(),
 	promoteTag: vi.fn(),
@@ -31,7 +33,9 @@ const {
 	rejudgeTag: vi.fn(),
 	updateTag: vi.fn(),
 	confirmMock: vi.fn(),
-	toastMock: { success: vi.fn(), error: vi.fn() }
+	toastMock: { success: vi.fn(), error: vi.fn() },
+	lookupTerm: vi.fn(),
+	forgetTerm: vi.fn()
 }));
 
 vi.mock('$app/state', () => ({
@@ -63,6 +67,7 @@ vi.mock('#lib/api.js', async (importOriginal) => {
 });
 vi.mock('#lib/stores/confirmStore.svelte.js', () => ({ confirmStore: { confirm: confirmMock } }));
 vi.mock('#lib/stores/toastStore.svelte.js', () => ({ toastStore: toastMock }));
+vi.mock('#lib/utils/termLookup.js', () => ({ forgetTerm, lookupTerm }));
 
 import { page } from '$app/state';
 import { goto } from '$app/navigation';
@@ -137,6 +142,14 @@ beforeEach(() => {
 	confirmMock.mockResolvedValue(true);
 	toastMock.success.mockReset();
 	toastMock.error.mockReset();
+	forgetTerm.mockReset();
+	lookupTerm.mockReset();
+	lookupTerm.mockResolvedValue({
+		wikipedia: { status: 'not-found' },
+		wiktionary: { status: 'not-found' },
+		dictionary: { status: 'not-found' },
+		suggestions: []
+	});
 	goto.mockClear();
 	page.url.searchParams = new URLSearchParams();
 	page.url.hash = '';
@@ -736,5 +749,18 @@ describe('ProvisionalReview review actions', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
 
 		expect(await screen.findByRole('dialog', { name: 'Tag review guide' })).toBeTruthy();
+	});
+});
+
+describe('ProvisionalReview definition lookup', () => {
+	it('opens the definition panel from the tag name', async () => {
+		provisionalList.mockResolvedValue({ ok: true, data: { results: [tag()], total: 1 } });
+		render(ProvisionalReview);
+		await screen.findByText('sample tag');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'sample tag' }));
+
+		expect(await screen.findByRole('dialog', { name: 'Tag definition' })).toBeTruthy();
+		expect(lookupTerm).toHaveBeenCalledWith('sample tag');
 	});
 });

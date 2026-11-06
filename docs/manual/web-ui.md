@@ -182,6 +182,10 @@ What the badges mean, what each action does, and how tags move between provision
 standing are explained in [tags.md](tags.md); the queue's **Help** button opens the same reference
 in-app. Review decisions are described in the [tag review workflow](api.md#tag-review).
 
+Clicking a tag name (magnifier icon) opens a definition panel drawn from Wikipedia, Wiktionary and
+the Free Dictionary, so an unfamiliar compound can be judged without leaving the queue. Lookups run
+only on click; when no source has an entry, the panel says so.
+
 ![The New tags tab: the provisional review queue with rubric verdicts](images/tags-provisional.png)
 
 ### People and Document Types

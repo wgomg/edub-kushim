@@ -348,8 +348,10 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
 
 - `unit` (node env) — pure logic and runes stores: `searchFilter.js` (tokenizer,
   query-string parser, size/date parsing, serialize round-trip), `utils/html.js`
-  (escaping, size/duration/relative formatting), `filterStore.js`, `toastStore.svelte.js`,
-  `confirmStore.svelte.js`.
+  (escaping, size/duration/relative formatting), `utils/termLookup.js` (definition
+  lookup: three-source normalization, a miss falling back to search suggestions, the
+  disambiguation flag, memoization and failure eviction, `forgetTerm` refetch),
+  `filterStore.js`, `toastStore.svelte.js`, `confirmStore.svelte.js`.
 - `components` (jsdom + `svelteTesting()` from `@testing-library/svelte/vite` for
   auto-cleanup) — `authStore.svelte.js` and `api.js` (both touch `localStorage` at import
   time, so they need the DOM), plus the component tests: `DataTable.svelte` (rows,
@@ -369,7 +371,11 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   matching states, the server's `state_values` gating the offered states, the name-search
   input → `q` argument with paging reset and `prov_q` sync, URL round-trip with
   invalid entries dropped, pager end states, last-page clamp after a reject, and the
-  `pending_identity_total`-driven reevaluate button),
+  `pending_identity_total`-driven reevaluate button, and the tag name opening the
+  Tag definition panel with the tag's name),
+  `tags/TagDefinitionPanel.svelte` (the extract with its attribution link, the
+  suggestions for a missing term querying the picked title, and the explicit
+  no-definition vs. unreachable terminal states),
   `tags/CoverageReview.svelte` (the flagged document title links to its detail page by public
   uuid), `tags/SiblingReview.svelte` (pair rendering with the `.ui-symbol` separator, the
   gray band, run totals and the empty state), `tags/FoldTagModal.svelte` (the fold target
@@ -389,6 +395,9 @@ so `eslint.config.js` needed no changes. Mocking conventions:
 -   `#lib/api.js` is mocked with `vi.hoisted` factories in component tests (`FilterPanel`,
   `UploadModal`, `ProvisionalReview`, `SiblingReview`, `CoverageReview`, `FoldTagModal`,
   `SplitTagModal`, the `routes/tags` page) so no network calls escape.
+- `#lib/utils/termLookup.js` is mocked with the same `vi.hoisted` pattern in the
+  `TagDefinitionPanel` and `ProvisionalReview` tests; its own unit test stubs the
+  global `fetch` (`vi.stubGlobal`) like `api.test.js`.
 - `api.test.js` stubs the global `fetch` (`vi.stubGlobal`) and asserts the Bearer
   header, 401 → logout + redirect, null propagation, `requestRaw` shape, and the
   `supportedMimeTypes` cache.
