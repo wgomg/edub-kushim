@@ -71,6 +71,7 @@ type ContentAnalyzer interface {
   JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
   JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
   JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
+  JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error)
   Name() string
 }
 
@@ -131,6 +132,14 @@ type AnalysisResult struct {
   candidate without a complete verdict is missing, and a truncated reply
   returns its answers alongside `*IncompleteReplyError`). Used by the tag gate
   when `enricher.tag_adjudicator.enabled` is true.
+- `JudgeTagRelations` — screens a mechanically proposed fold pair for semantic
+  relatedness (`related` / `unrelated`) with a temperature-0 request built from
+  `BuildTagRelationPrompt` and parsed by `ParseTagRelationResponse` (a pair without
+  a complete verdict is missing, and a truncated reply returns its answers alongside
+  `*IncompleteReplyError`). The prompt carries the proposal class and, when the
+  anchor ranked, the matcher similarity as weak evidence. An `unrelated` answer drops
+  the proposal and writes no fold evidence; only `related` candidates reach
+  `JudgeTagIdentity`. Used by the tag gate when `enricher.tag_adjudicator.enabled` is true.
 - `JudgeTagQuality` — judges novel tags against the dimension rubric
   (`subject_matter`, `dimension`, `not_person`, `atomic`,
   `not_form_genre`, plus the optional `defer` abstention) with a temperature-0
@@ -778,8 +787,10 @@ for i := range 2 {
 11. **Identity** (`enricher.go`, `identity.go`): `Runner.RankTags` ranks LLM
     tags against canonical existing tags, then the identity pipeline applies
     house form, aliases, and key equality, and `policy.Evaluate` generates
-    identity + gate subjects. Proposed folds are confirmed by the **identity
-    judge** and every remaining candidate neighbour is resolved by **tag
+    identity + gate subjects. Proposed folds are first screened by the **relation
+    gate** (`Runner.JudgeTagRelations`): an unrelated pair is dropped and the
+    candidate registers as its own value, while related pairs are confirmed by the
+    **identity judge** and every remaining candidate neighbour is resolved by **tag
     adjudication** when `enricher.tag_adjudicator.enabled` is true
     (`Runner.JudgeTagIdentity` / `Runner.AdjudicateTags`: caches → evidence →
     batched LLM calls; `same` aliases the losing name, `variant`/`related`

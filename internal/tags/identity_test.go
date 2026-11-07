@@ -275,6 +275,64 @@ func TestProposedMorphologicalFold(t *testing.T) {
 	}
 }
 
+// TestFoldProposal pins the class label the relation gate receives as its proposal evidence: the label must
+// name the proposer that actually produced the anchor, and the order — lemma, derivational, morphographic —
+// decides which class a pair carrying more than one reach reports.
+func TestFoldProposal(t *testing.T) {
+	cases := []struct {
+		name       string
+		input      string
+		storeNames map[string]string
+		wantFold   string
+		wantSource string
+	}{
+		{
+			name:       "a lemma strip reports the lemma proposer",
+			input:      "servlets",
+			storeNames: map[string]string{},
+			wantFold:   "servlet",
+			wantSource: FoldProposalLemma,
+		},
+		{
+			name:       "a store-anchored suffix transform reports the derivational proposer",
+			input:      "russian",
+			storeNames: map[string]string{"russia": "russia"},
+			wantFold:   "russia",
+			wantSource: FoldProposalDerivational,
+		},
+		{
+			name:       "edit distance reports the morphographic proposer",
+			input:      "mexican",
+			storeNames: map[string]string{"mexico": "mexico"},
+			wantFold:   "mexico",
+			wantSource: FoldProposalMorphographic,
+		},
+		{
+			name:       "the derivational proposer wins when both reach the store",
+			input:      "chilean",
+			storeNames: map[string]string{"chile": "chile"},
+			wantFold:   "chile",
+			wantSource: FoldProposalDerivational,
+		},
+		{
+			name:       "no proposer reaches the store reports no fold and no class",
+			input:      "spudging",
+			storeNames: map[string]string{"spudger": "spudger"},
+			wantFold:   "",
+			wantSource: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fold, source := FoldProposal(tc.input, tc.storeNames)
+			if fold != tc.wantFold || source != tc.wantSource {
+				t.Errorf("FoldProposal(%q) = (%q, %q), want (%q, %q)",
+					tc.input, fold, source, tc.wantFold, tc.wantSource)
+			}
+		})
+	}
+}
+
 func TestAnchoredFold(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -523,7 +581,6 @@ func TestPlanDeterministic(t *testing.T) {
 		wantName   string
 		wantResolv string
 		wantProv   bool
-		wantFold   string
 		wantKinds  map[string]int
 	}{
 		{
@@ -577,12 +634,9 @@ func TestPlanDeterministic(t *testing.T) {
 			wantDisp: DispositionRegister,
 			wantName: "buildings",
 			wantKinds: map[string]int{
-				IdentityKindBaseForm:         1,
-				IdentityKindFoldGate:         1,
-				IdentityKindConventionalForm: 1,
+				IdentityKindRelationGate: 1,
 			},
 			wantProv: true,
-			wantFold: "building",
 		},
 		{
 			name:     "shape relation records pending evidence without adjudicating",
@@ -594,7 +648,6 @@ func TestPlanDeterministic(t *testing.T) {
 				IdentityKindSameIntent: 1,
 			},
 			wantProv: true,
-			wantFold: "",
 		},
 		{
 			name:     "derivational base proposes onto the store noun",
@@ -603,12 +656,9 @@ func TestPlanDeterministic(t *testing.T) {
 			wantDisp: DispositionRegister,
 			wantName: "russian",
 			wantKinds: map[string]int{
-				IdentityKindBaseForm:         1,
-				IdentityKindFoldGate:         1,
-				IdentityKindConventionalForm: 1,
+				IdentityKindRelationGate: 1,
 			},
 			wantProv: true,
-			wantFold: "russia",
 		},
 	}
 
@@ -631,9 +681,6 @@ func TestPlanDeterministic(t *testing.T) {
 			}
 			if reg.Provisional != tc.wantProv {
 				t.Errorf("provisional = %v, want %v", reg.Provisional, tc.wantProv)
-			}
-			if reg.Fold != tc.wantFold {
-				t.Errorf("fold = %q, want %q", reg.Fold, tc.wantFold)
 			}
 			if len(plan.Aliases) != 0 {
 				t.Errorf("aliases = %v, want none: the deterministic phase never makes aliases", plan.Aliases)

@@ -159,6 +159,10 @@ func (m *mockContentAnalyzer) JudgeTagIdentity(_ context.Context, _ []analyzer.T
 	return nil, nil
 }
 
+func (m *mockContentAnalyzer) JudgeTagRelations(_ context.Context, _ []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+	return nil, nil
+}
+
 func (m *mockContentAnalyzer) JudgeTagTranslations(_ context.Context, _ []string) ([]analyzer.TagTranslationResult, error) {
 	return nil, nil
 }

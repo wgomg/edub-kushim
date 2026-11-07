@@ -402,6 +402,10 @@ func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, r
 		if row.Model != "" {
 			model = sql.NullString{String: row.Model, Valid: true}
 		}
+		version := row.RuleSetVersion
+		if version == "" {
+			version = tags.IdentityRuleSetVersion
+		}
 		if _, err := q.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
 			Kind:           row.Kind,
 			Candidate:      candidate,
@@ -409,7 +413,7 @@ func (s *Tag) recordIdentityEvidence(ctx context.Context, q *database.Queries, r
 			Criteria:       criteria,
 			Verdict:        verdict,
 			Model:          model,
-			RuleSetVersion: tags.IdentityRuleSetVersion,
+			RuleSetVersion: version,
 		}); err != nil {
 			return errs.FromDB(err, "insert tag identity event "+candidate)
 		}

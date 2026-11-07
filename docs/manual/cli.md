@@ -455,10 +455,11 @@ gates only the automatic scheduled enqueue.
 
 ### `kushim tagidentity`
 
-Resolve pending tag-identity evidence: flagged candidates' canonical-form criteria are judged,
-same-intent claims are adjudicated, and dispositions are applied — confirmed folds rename (or
-alias) a name, a losing name becomes an alias of its winner, unanswered claims stay pending for
-the next run.
+Resolve pending tag-identity evidence: pending relation gates are judged (an unrelated
+proposal registers as its own value), flagged candidates' canonical-form criteria are
+judged, same-intent claims are adjudicated, and dispositions are applied — confirmed folds
+rename (or alias) a name, a losing name becomes an alias of its winner, unanswered claims
+stay pending for the next run.
 
 ```bash
 kushim tagidentity                 # run now

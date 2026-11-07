@@ -19,13 +19,16 @@ import (
 const identityBatchSize = 40
 
 type identityCandidate struct {
-	input      string
-	name       string
-	fold       string
-	resolved   string
-	aliasOf    string
-	gray       bool
-	reviewHold bool
+	input       string
+	name        string
+	fold        string
+	source      string
+	rankedIndex int
+	resolved    string
+	aliasOf     string
+	gray        bool
+	reviewHold  bool
+	gatePending bool
 }
 
 type identityPair struct {
@@ -75,7 +78,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 
 	candidates := make([]*identityCandidate, len(in.Names))
 	for i, input := range in.Names {
-		cand := &identityCandidate{input: input, name: tags.StoredName(input)}
+		cand := &identityCandidate{input: input, name: tags.StoredName(input), rankedIndex: i}
 		candidates[i] = cand
 		if canonical, ok := aliasMap[cand.name]; ok {
 			cand.name = canonical
@@ -123,14 +126,9 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		if cand.resolved != "" {
 			continue
 		}
-		if fold := tags.ProposedFold(cand.name); fold != "" && fold != cand.name {
+		if fold, source := tags.FoldProposal(cand.name, byKey); fold != "" {
 			cand.fold = fold
-			flagged[cand.name] = true
-		} else if fold := tags.ProposedDerivationalFold(cand.name, byKey); fold != "" {
-			cand.fold = fold
-			flagged[cand.name] = true
-		} else if fold := tags.ProposedMorphologicalFold(cand.name, byKey); fold != "" {
-			cand.fold = fold
+			cand.source = source
 			flagged[cand.name] = true
 		}
 		// a shape relation or a pinned variant class (orthographic spelling or literal token permutation)
@@ -187,6 +185,30 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			flagged[a.name] = true
 			flagged[b.name] = true
 			addPair(a.name, b.name, 0)
+		}
+	}
+
+	gate, gateRows, err := a.relationGateAnswers(ctx, candidates, in.Ranked, reqID)
+	if err != nil {
+		return nil, tags.Plan{}, nil, err
+	}
+	plan.Evidence = append(plan.Evidence, gateRows...)
+	for _, cand := range candidates {
+		if cand.fold == "" {
+			continue
+		}
+		related, answered := gate[cand.name]
+		if !answered {
+			// a dropped proposal must not reach the fold judge: the fold cache is keyed by candidate only, so
+			// reusing it here would reintroduce the anchor without a gate verdict
+			cand.fold = ""
+			cand.gatePending = true
+			delete(flagged, cand.name)
+			continue
+		}
+		if !related {
+			cand.fold = ""
+			delete(flagged, cand.name)
 		}
 	}
 
@@ -339,7 +361,6 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			reg.Resolved = cand.resolved
 		default:
 			reg.Name = cand.name
-			reg.Fold = cand.fold
 			if cand.gray {
 				reg.Disposition = tags.DispositionDefer
 				reg.Provisional = true
@@ -354,6 +375,9 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 				reg.Provisional = true
 			}
 			if cand.reviewHold {
+				reg.Provisional = true
+			}
+			if cand.gatePending {
 				reg.Provisional = true
 			}
 			if judgeUnavailable[cand.name] {
@@ -389,6 +413,180 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 	}
 
 	return outputs, plan, decisions, nil
+}
+
+// relationSimilarity returns the matcher score for the anchor when the rank results carry it. The rank
+// results are index-aligned with the analysis names, and an absent anchor simply omits the estimate.
+func relationSimilarity(ranked []matcher.RankResult, cand *identityCandidate) *float64 {
+	if cand.rankedIndex < 0 || cand.rankedIndex >= len(ranked) {
+		return nil
+	}
+	for _, candidate := range ranked[cand.rankedIndex].Candidates {
+		if candidate.Tag == cand.fold {
+			score := candidate.Similarity
+			return &score
+		}
+	}
+	return nil
+}
+
+// relationGateAnswers resolves the fold proposals through the relation gate, from the cache or batched
+// judge calls. Only a positive answer lets the caller keep that proposal and mint fold evidence: an
+// unanswered candidate stays pending and never reaches the fold judge, so a gate outage can neither hold
+// nor separate a tag. A non-nil error is returned only when the provider account cannot pay.
+func (a *Adjudicator) relationGateAnswers(ctx context.Context, candidates []*identityCandidate, ranked []matcher.RankResult, reqID string) (map[string]bool, []tags.EvidenceRow, error) {
+	out := make(map[string]bool)
+	var rows []tags.EvidenceRow
+
+	proposed := make([]*identityCandidate, 0, len(candidates))
+	for _, cand := range candidates {
+		if cand.resolved == "" && cand.fold != "" {
+			proposed = append(proposed, cand)
+		}
+	}
+	if len(proposed) == 0 {
+		return out, rows, nil
+	}
+
+	names := make([]string, len(proposed))
+	for i, cand := range proposed {
+		names[i] = cand.name
+	}
+	cachedRows, err := a.queries.LatestRelationGatesForCandidates(ctx, database.LatestRelationGatesForCandidatesParams{
+		RelationRuleSetVersion: tags.RelationRuleSetVersion,
+		Candidates:             names,
+	})
+	if err != nil {
+		a.logger.Error(reqID, "relation gate[%s]: cache lookup failed: %v", tags.RelationRuleSetVersion, err)
+	}
+	cached := make(map[string]database.LatestRelationGatesForCandidatesRow, len(cachedRows))
+	for _, row := range cachedRows {
+		if row.Verdict.Valid {
+			cached[row.Candidate] = row
+		}
+	}
+
+	criteria := make(map[string]json.RawMessage, len(proposed))
+	for _, cand := range proposed {
+		criteria[cand.name] = tags.RelationGateCriteriaRecord(cand.fold, cand.source, relationSimilarity(ranked, cand))
+	}
+
+	var uncached []*identityCandidate
+	for _, cand := range proposed {
+		row, ok := cached[cand.name]
+		// a cached verdict only answers the anchor it actually judged; a changed proposal is judged again
+		if !ok || row.Anchor == "" || row.Anchor != cand.fold {
+			uncached = append(uncached, cand)
+			continue
+		}
+		switch row.Verdict.String {
+		case tags.IdentityVerdictRelated:
+			out[cand.name] = true
+		case tags.IdentityVerdictUnrelated:
+			out[cand.name] = false
+		default:
+			uncached = append(uncached, cand)
+		}
+	}
+
+	if len(uncached) == 0 {
+		return out, rows, nil
+	}
+	if !a.runner.HasTagIdentityJudge() {
+		a.logger.Info(reqID, "relation gate[%s]: judge not configured — %d proposals stay pending", tags.RelationRuleSetVersion, len(uncached))
+		for _, cand := range uncached {
+			rows = append(rows, tags.EvidenceRow{
+				Kind:           tags.IdentityKindRelationGate,
+				Candidate:      cand.name,
+				Criteria:       criteria[cand.name],
+				RuleSetVersion: tags.RelationRuleSetVersion,
+			})
+		}
+		return out, rows, nil
+	}
+
+	model := a.config.ResolvedAdjudicatorLlm().Model
+	record := func(cand *identityCandidate, related bool) {
+		verdict := tags.IdentityVerdictUnrelated
+		if related {
+			verdict = tags.IdentityVerdictRelated
+		}
+		out[cand.name] = related
+		rows = append(rows, tags.EvidenceRow{
+			Kind:           tags.IdentityKindRelationGate,
+			Candidate:      cand.name,
+			Criteria:       criteria[cand.name],
+			Verdict:        verdict,
+			Model:          model,
+			RuleSetVersion: tags.RelationRuleSetVersion,
+		})
+	}
+	recordPending := func(cand *identityCandidate) {
+		rows = append(rows, tags.EvidenceRow{
+			Kind:           tags.IdentityKindRelationGate,
+			Candidate:      cand.name,
+			Criteria:       criteria[cand.name],
+			RuleSetVersion: tags.RelationRuleSetVersion,
+		})
+	}
+
+	for start := 0; start < len(uncached); start += identityBatchSize {
+		end := min(start+identityBatchSize, len(uncached))
+		batch := uncached[start:end]
+		inputs := make([]analyzer.TagRelationCandidate, len(batch))
+		for i, cand := range batch {
+			inputs[i] = analyzer.TagRelationCandidate{
+				Index:      i,
+				Term:       cand.name,
+				Anchor:     cand.fold,
+				Source:     cand.source,
+				Similarity: relationSimilarity(ranked, cand),
+			}
+		}
+		results, err := a.runner.JudgeTagRelations(ctx, inputs)
+		if err != nil && retryableJudgeFailure(err) {
+			a.logger.Warn(reqID, "relation gate[%s]: judge attempt failed, retrying once: %v", tags.RelationRuleSetVersion, err)
+			results, err = a.runner.JudgeTagRelations(ctx, inputs)
+		}
+		if err == nil && len(results) != len(batch) {
+			err = fmt.Errorf("relation gate returned %d verdicts for %d candidates", len(results), len(batch))
+		}
+		if err != nil {
+			if isCreditError(err) {
+				return nil, nil, err
+			}
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				names := make([]string, len(batch))
+				for i, cand := range batch {
+					names[i] = cand.name
+				}
+				a.logger.Warn(reqID, "relation gate[%s]: judge failed for %q, leaving them pending: %v", tags.RelationRuleSetVersion, names, err)
+				for _, cand := range batch {
+					recordPending(cand)
+				}
+				continue
+			}
+			missing := incomplete.MissingSet()
+			salvaged, deferred := 0, 0
+			for i := range batch {
+				if missing[i] {
+					deferred++
+					recordPending(batch[i])
+					continue
+				}
+				record(batch[i], results[i].Related)
+				salvaged++
+			}
+			a.logger.Warn(reqID, "relation gate[%s]: partial reply, salvaged %d of %d candidates and left %d pending: %v",
+				tags.RelationRuleSetVersion, salvaged, len(batch), deferred, err)
+			continue
+		}
+		for i, result := range results {
+			record(batch[i], result.Related)
+		}
+	}
+	return out, rows, nil
 }
 
 // identityAnswers resolves the flagged candidates' fold answers from the cache or batched judge calls. A

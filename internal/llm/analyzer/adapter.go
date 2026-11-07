@@ -76,6 +76,9 @@ type ContentAnalyzer interface {
 	// JudgeTagIdentity decides the canonical written form of candidate
 	// tags: folds, denotation preservation, conventional form.
 	JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
+	// JudgeTagRelations gates fold proposals: it decides only whether the candidate and its store anchor are
+	// semantically related enough for a canonical-form judgment, never whether the fold itself is correct.
+	JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error)
 	// Name identifies the implementation.
 	Name() string
 }

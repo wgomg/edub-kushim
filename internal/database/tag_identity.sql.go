@@ -106,6 +106,52 @@ func (q *Queries) InsertTagIdentityEvent(ctx context.Context, arg InsertTagIdent
 	return result.RowsAffected()
 }
 
+const latestRelationGatesForCandidates = `-- name: LatestRelationGatesForCandidates :many
+SELECT DISTINCT ON (candidate) candidate, verdict, (criteria ->> 'proposed_fold')::text AS anchor
+FROM tag_identity_event
+WHERE kind = 'relation_gate'
+  AND rule_set_version = $1
+  AND verdict IS NOT NULL
+  AND candidate = ANY($2::text[])
+ORDER BY candidate, created_at DESC
+`
+
+type LatestRelationGatesForCandidatesParams struct {
+	RelationRuleSetVersion string
+	Candidates             []string
+}
+
+type LatestRelationGatesForCandidatesRow struct {
+	Candidate string
+	Verdict   sql.NullString
+	Anchor    string
+}
+
+// LatestRelationGatesForCandidates returns the newest resolved relation-gate verdict per candidate under
+// the gate's own rule-set stamp; the anchor is the proposed fold the gate judged.
+func (q *Queries) LatestRelationGatesForCandidates(ctx context.Context, arg LatestRelationGatesForCandidatesParams) ([]LatestRelationGatesForCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, latestRelationGatesForCandidates, arg.RelationRuleSetVersion, pq.Array(arg.Candidates))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestRelationGatesForCandidatesRow
+	for rows.Next() {
+		var i LatestRelationGatesForCandidatesRow
+		if err := rows.Scan(&i.Candidate, &i.Verdict, &i.Anchor); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const latestTagIdentityEventsForCandidates = `-- name: LatestTagIdentityEventsForCandidates :many
 SELECT DISTINCT ON (kind, candidate, COALESCE(partner, ''))
        id, kind, candidate, partner, criteria, verdict, model, rule_set_version, created_at

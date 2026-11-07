@@ -356,8 +356,8 @@ rebuildable data (the migration recreates the empty table and the daemon repopul
    (matches above the injection bar become `tagSuggestions`; on error or zero matches the
    enricher falls back to the promoted-name list); `Runner.RankTags` after the LLM pass,
    feeding the identity pipeline ([consolidation](consolidation.md) §2); the judge calls
-   (`JudgeTagIdentity`, `AdjudicateTags`, `JudgeTagQuality`) ride the same runner and
-   timeout discipline.
+   (`JudgeTagRelations`, `JudgeTagIdentity`, `AdjudicateTags`, `JudgeTagQuality`) ride the
+   same runner and timeout discipline.
 4. **API tag creation** triggers a store refresh through the same service.
 
 ## 12. Gotchas

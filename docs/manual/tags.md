@@ -65,7 +65,7 @@ matching section of the guide.
 | `deferred to review` | amber | the judge abstained or the evidence was inconclusive |
 | `accepted — awaiting promotion floor` | green | an operator waived the deferral; the value waits for the promotion floor |
 | `judge rejected` | amber | the judge found the value failing the rubric |
-| `identity pending` | amber | a same-intent claim about this tag awaits the identity pass |
+| `identity pending` | amber | a fold proposal's relation gate or a same-intent claim about this tag awaits the identity pass |
 | `identity hold → *value*` | amber | the identity judge refused to fold this tag onto that value |
 | `split hold → *reason*` | amber | the composition judge could not settle the compound |
 | `composition → judge_unavailable` | grey | the last composition decision predates the current rules and needs a re-judge |

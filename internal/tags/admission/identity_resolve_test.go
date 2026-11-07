@@ -78,6 +78,111 @@ func pendingIdentityCount(t *testing.T, client *database.Client) int64 {
 	return count
 }
 
+func seedPendingRelationGate(t *testing.T, client *database.Client, candidate, anchor string) {
+	t.Helper()
+	if _, err := client.Queries.InsertTagIdentityEvent(context.Background(), database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindRelationGate,
+		Candidate:      candidate,
+		Criteria:       tags.RelationGateCriteriaRecord(anchor, tags.FoldProposalLemma, nil),
+		RuleSetVersion: tags.RelationRuleSetVersion,
+	}); err != nil {
+		t.Fatalf("seed pending relation gate: %v", err)
+	}
+}
+
+// TestResolvePending_RelationGateUnrelated pins the resolver's no-fold invariant: an unrelated gate verdict
+// settles the proposal with no fold evidence and never wakes the fold judge, while the candidate keeps its
+// own tag row.
+func TestResolvePending_RelationGateUnrelated(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "buildings")
+	seedPendingRelationGate(t, client, "buildings", "building")
+
+	adj.relationFn = func(_ context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+		results := make([]analyzer.TagRelationResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagRelationResult{Index: i, Related: false}
+		}
+		return results, nil
+	}
+
+	report, err := resolver.ResolvePending(ctx, 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 1, "gate row read")
+	testutil.AssertEqual(t, report.Resolved, 1, "gate row resolved")
+	testutil.AssertEqual(t, report.Gated, 1, "unrelated verdict counted as gated")
+	testutil.AssertEqual(t, report.Folded, 0, "no fold applied")
+	testutil.AssertEqual(t, adj.relationCall, 1, "one batched gate call")
+	testutil.AssertEqual(t, adj.identityCall, 0, "the fold judge never runs for an unrelated proposal")
+
+	if _, err := client.Queries.GetTagByName(ctx, "buildings"); err != nil {
+		t.Errorf("the candidate keeps its own tag row: %v", err)
+	}
+	var verdict string
+	err = client.DB().QueryRowContext(ctx,
+		"SELECT verdict FROM tag_identity_event WHERE kind = $1 AND candidate = $2",
+		tags.IdentityKindRelationGate, "buildings").Scan(&verdict)
+	testutil.AssertNoError(t, err, "read the resolved gate verdict")
+	testutil.AssertEqual(t, verdict, tags.IdentityVerdictUnrelated, "verdict persisted")
+
+	var foldRows int
+	err = client.DB().QueryRowContext(ctx,
+		"SELECT count(*) FROM tag_identity_event WHERE candidate = $1 AND kind = $2",
+		"buildings", tags.IdentityKindBaseForm).Scan(&foldRows)
+	testutil.AssertNoError(t, err, "count fold rows")
+	testutil.AssertEqual(t, foldRows, 0, "no fold evidence for an unrelated proposal")
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
+}
+
+// TestResolvePending_RelationGateRelated pins the release path: a related verdict hands the candidate to the
+// fold judge in the same pass, and a confirmed answer writes the three verdict rows and applies the fold.
+func TestResolvePending_RelationGateRelated(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "buildings")
+	seedPendingRelationGate(t, client, "buildings", "building")
+
+	adj.relationFn = func(_ context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+		results := make([]analyzer.TagRelationResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagRelationResult{Index: i, Related: true}
+		}
+		return results, nil
+	}
+	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		results := make([]analyzer.TagIdentityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagIdentityResult{
+				Index:                   i,
+				FoldToBase:              true,
+				FoldPreservesDenotation: true,
+				ConventionalForm:        true,
+			}
+		}
+		return results, nil
+	}
+
+	report, err := resolver.ResolvePending(ctx, 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 1, "gate row read")
+	testutil.AssertEqual(t, report.Resolved, 4, "gate row plus the three fold verdict rows")
+	testutil.AssertEqual(t, report.Gated, 0, "a related verdict is not a gated proposal")
+	testutil.AssertEqual(t, report.Folded, 1, "confirmed fold applied")
+	testutil.AssertEqual(t, adj.relationCall, 1, "one batched gate call")
+	testutil.AssertEqual(t, adj.identityCall, 1, "one batched fold-judge call")
+
+	if _, err := client.Queries.GetTagByName(ctx, "buildings"); err == nil {
+		t.Error("unreduced tag row must be gone after the fold")
+	}
+	if _, err := client.Queries.GetTagByName(ctx, "building"); err != nil {
+		t.Errorf("folded tag missing: %v", err)
+	}
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
+}
+
 func TestResolvePending_Fold(t *testing.T) {
 	resolver, client, adj := newIdentityResolver(t, true)
 	ctx := context.Background()

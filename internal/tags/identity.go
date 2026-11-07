@@ -39,17 +39,26 @@ import (
 // a store-anchored orthographic or permutation twin resolves mechanically without a judge. v10 drops the
 // similarity context from the pair-adjudication prompt — the two terms are the gate's only evidence — so
 // the judged criteria are pinned under the new stamp. v11 embeds the shared tag definition in the identity
-// and pair-adjudication prompts, so both read "tag" under the system's characterization.
+// and pair-adjudication prompts. The relation gate that now precedes fold evidence carries its own stamp
+// (RelationRuleSetVersion) because it is an additive precondition: gating a proposal must not retire the
+// fold verdicts recorded under this version.
 const IdentityRuleSetVersion = "v11"
 
-// The IdentityKind* values name the evidence rows the identity machinery
-// records: base-form proposals, the fold gate, the conventional-form
-// check, and same-intent shape flags.
+// RelationRuleSetVersion pins the relation gate's prompt and criteria text, the judged precondition a fold
+// proposal passes before any fold evidence exists. It is a separate stamp because the gate is additive: an
+// unrelated verdict drops a proposal without invalidating the fold verdicts already recorded under the
+// identity rule set, so a gate change never releases the holds those verdicts withhold.
+const RelationRuleSetVersion = "v1"
+
+// The IdentityKind* values name the evidence rows the identity machinery records: base-form proposals,
+// the fold gate, the conventional-form check, same-intent shape flags, and the relation gate that decides
+// whether a fold proposal reaches the fold judge at all.
 const (
 	IdentityKindBaseForm         = "base_form"
 	IdentityKindFoldGate         = "fold_gate"
 	IdentityKindConventionalForm = "conventional_form"
 	IdentityKindSameIntent       = "same_intent"
+	IdentityKindRelationGate     = "relation_gate"
 )
 
 // The verdict values an identity evidence row carries. Separate is the operator's separation verdict
@@ -62,6 +71,8 @@ const (
 	IdentityVerdictStands    = "stands"
 	IdentityVerdictDefer     = "defer"
 	IdentityVerdictSeparate  = "separate"
+	IdentityVerdictRelated   = "related"
+	IdentityVerdictUnrelated = "unrelated"
 )
 
 // allIdentityHoldKinds is the single definition of which evidence kinds can withhold a tag: the hold
@@ -107,28 +118,29 @@ type AliasOutcome struct {
 	Reassigned int64
 }
 
-// Registration is the plan's outcome for one candidate name: the raw
-// input, its normalized and house-formed form, the disposition, whether
-// it registers provisionally, and the fold the gate should judge.
+// Registration is the plan's outcome for one candidate name: the raw input, its normalized and house-formed
+// form, the disposition, and whether it registers provisionally. Fold proposals ride in the plan's own
+// relation-gate evidence, not on the registration.
 type Registration struct {
 	Input       string
 	Name        string
 	Resolved    string
 	Disposition Disposition
 	Provisional bool
-	Fold        string
 }
 
-// EvidenceRow is one pending identity judgment: its kind, the candidate
-// and partner names, the criteria the judging body receives (JSON), the
-// verdict once judged, and the model that judged.
+// EvidenceRow is one pending identity judgment: its kind, the candidate and partner names, the criteria the
+// judging body receives (JSON), the verdict once judged, the model that judged, and the rule-set stamp the
+// row carries. An empty RuleSetVersion takes IdentityRuleSetVersion; the relation gate stamps its rows
+// under RelationRuleSetVersion.
 type EvidenceRow struct {
-	Kind      string
-	Candidate string
-	Partner   string
-	Criteria  json.RawMessage
-	Verdict   string
-	Model     string
+	Kind           string
+	Candidate      string
+	Partner        string
+	Criteria       json.RawMessage
+	Verdict        string
+	Model          string
+	RuleSetVersion string
 }
 
 // CompositionDisposition is what the composition machinery decides to do with one compound: split it
@@ -924,6 +936,42 @@ func ProposedMorphologicalFold(name string, storeNames map[string]string) string
 	return hit
 }
 
+// The proposal classes the relation gate receives as evidence of why the machinery paired a candidate with
+// an anchor. They name the proposer that matched, in the order FoldProposal tries them.
+const (
+	FoldProposalLemma         = "lemma"
+	FoldProposalDerivational  = "derivational"
+	FoldProposalMorphographic = "morphographic"
+)
+
+// FoldProposal returns the fold the deterministic proposers make for name and the proposal class that
+// produced it, or an empty fold when none matches. The relation gate records the class as evidence of why
+// the pair exists; it is not a verdict.
+func FoldProposal(name string, storeNames map[string]string) (fold, source string) {
+	if fold := ProposedFold(name); fold != "" && fold != name {
+		return fold, FoldProposalLemma
+	}
+	if fold := ProposedDerivationalFold(name, storeNames); fold != "" && fold != name {
+		return fold, FoldProposalDerivational
+	}
+	if fold := ProposedMorphologicalFold(name, storeNames); fold != "" && fold != name {
+		return fold, FoldProposalMorphographic
+	}
+	return "", ""
+}
+
+// RelationGateCriteriaRecord renders the criteria a relation-gate row carries: the judged proposal, the
+// deterministic class that produced the pair, and the matcher similarity when the anchor ranked. The
+// similarity is omitted when absent rather than recorded as zero.
+func RelationGateCriteriaRecord(fold, source string, similarity *float64) json.RawMessage {
+	criteria := map[string]any{"proposed_fold": fold, "proposal_source": source}
+	if similarity != nil {
+		criteria["similarity"] = *similarity
+	}
+	raw, _ := json.Marshal(criteria)
+	return raw
+}
+
 // AnchoredFold resolves a split component through the promoted store view. A single-base part folds onto its
 // attested base through the shared storeAnchor rule. A part with more than one attested base is
 // sense-ambiguous: it folds mechanically only onto its primary-sense base (the attestation table's first
@@ -1295,21 +1343,15 @@ func PlanDeterministic(names []string, view StoreView) Plan {
 				Partner:   existing,
 			})
 		}
-		fold := ProposedFold(name)
-		if fold == "" || fold == name {
-			fold = ProposedDerivationalFold(name, byKey)
-		}
-		if fold == "" {
-			fold = ProposedMorphologicalFold(name, byKey)
-		}
+		fold, source := FoldProposal(name, byKey)
 		if fold != "" {
 			flagged = true
-			reg.Fold = fold
-			plan.Evidence = append(plan.Evidence,
-				EvidenceRow{Kind: IdentityKindBaseForm, Candidate: name},
-				EvidenceRow{Kind: IdentityKindFoldGate, Candidate: name},
-				EvidenceRow{Kind: IdentityKindConventionalForm, Candidate: name},
-			)
+			plan.Evidence = append(plan.Evidence, EvidenceRow{
+				Kind:           IdentityKindRelationGate,
+				Candidate:      name,
+				Criteria:       RelationGateCriteriaRecord(fold, source, nil),
+				RuleSetVersion: RelationRuleSetVersion,
+			})
 		}
 		if flagged {
 			reg.Provisional = true

@@ -121,18 +121,17 @@ func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
 	}
 	reg := plan.Registrations[0]
 	adjAssertEqual(t, reg.Name, "buildings", "unreduced name registers")
-	adjAssertEqual(t, reg.Fold, "building", "fold stays proposed")
-	adjAssertEqual(t, reg.Provisional, true, "unresolved fold registers provisionally")
+	adjAssertEqual(t, reg.Provisional, true, "an unanswered gate registers provisionally")
 	adjAssertEqual(t, len(plan.Aliases), 0, "no alias without a verdict")
 
 	kinds := map[string]int{}
 	for _, row := range plan.Evidence {
 		if row.Verdict != "" {
-			t.Errorf("evidence[%s] carries verdict %q; the criteria are unresolved", row.Kind, row.Verdict)
+			t.Errorf("evidence[%s] carries verdict %q; the gate is unresolved", row.Kind, row.Verdict)
 		}
 		kinds[row.Kind]++
 	}
-	for _, kind := range []string{tags.IdentityKindBaseForm, tags.IdentityKindFoldGate, tags.IdentityKindConventionalForm} {
+	for _, kind := range []string{tags.IdentityKindRelationGate} {
 		adjAssertEqual(t, kinds[kind], 1, "pending criterion row "+kind)
 	}
 }
@@ -290,10 +289,10 @@ func TestPlanIdentity_ConfirmedFoldAppliesWithoutPendingRows(t *testing.T) {
 	}
 	reg := plan.Registrations[0]
 	adjAssertEqual(t, reg.Name, "railway", "confirmed fold registers the base name")
-	adjAssertEqual(t, reg.Fold, "", "an applied fold is settled, not left proposed")
 	adjAssertEqual(t, reg.Provisional, false, "a decided fold-birth is not provisional")
 
 	wantVerdicts := map[string]string{
+		tags.IdentityKindRelationGate:     tags.IdentityVerdictRelated,
 		tags.IdentityKindBaseForm:         tags.IdentityVerdictFold,
 		tags.IdentityKindFoldGate:         tags.IdentityVerdictConfirmed,
 		tags.IdentityKindConventionalForm: tags.IdentityVerdictStands,
@@ -307,11 +306,235 @@ func TestPlanIdentity_ConfirmedFoldAppliesWithoutPendingRows(t *testing.T) {
 		}
 		adjAssertEqual(t, row.Verdict, want, "verdict for "+row.Kind)
 	}
-	adjAssertEqual(t, len(plan.Evidence), len(wantVerdicts), "a fold-birth mints no pending rows for the folded name")
+	adjAssertEqual(t, len(plan.Evidence), len(wantVerdicts), "a decided fold records the gate and its three verdicts")
 
 	if out := buf.String(); !strings.Contains(out, `fold applied "railways" -> "railway"`) {
 		t.Errorf("expected applied-fold log line, got:\n%s", out)
 	}
+}
+
+// TestPlanIdentity_GateUnrelatedDropsFold pins the routing contract: an unrelated gate verdict journals its
+// own row under the gate stamp, mints no fold evidence, and keeps the fold judge out of the call, so a junk
+// proposal never reaches the state that can hold the tag.
+func TestPlanIdentity_GateUnrelatedDropsFold(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
+
+	logger := log.NewDiscardLogger()
+	adj := &mockAdjudicator{
+		relationFn: func(_ context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+			results := make([]analyzer.TagRelationResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagRelationResult{Index: i, Related: false}
+			}
+			return results, nil
+		},
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
+	})
+	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"buildings"},
+		DBNames: map[string]struct{}{},
+	}, "")
+
+	adjAssertEqual(t, len(plan.Registrations), 1, "registration minted")
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Name, "buildings", "the candidate registers under its own name")
+	adjAssertEqual(t, reg.Provisional, false, "an unrelated pair settles as an ordinary registration")
+	adjAssertEqual(t, adj.relationCall, 1, "one batched gate call")
+	adjAssertEqual(t, adj.identityCall, 0, "the fold judge never sees an unrelated proposal")
+
+	kinds := map[string]int{}
+	var gateRow *tags.EvidenceRow
+	for i := range plan.Evidence {
+		kinds[plan.Evidence[i].Kind]++
+		if plan.Evidence[i].Kind == tags.IdentityKindRelationGate {
+			gateRow = &plan.Evidence[i]
+		}
+	}
+	adjAssertEqual(t, kinds[tags.IdentityKindRelationGate], 1, "the gate verdict is journaled")
+	adjAssertEqual(t, kinds[tags.IdentityKindBaseForm], 0, "no base-form evidence for an unrelated proposal")
+	adjAssertEqual(t, kinds[tags.IdentityKindFoldGate], 0, "no fold-gate evidence for an unrelated proposal")
+	adjAssertEqual(t, kinds[tags.IdentityKindConventionalForm], 0, "no conventional-form evidence for an unrelated proposal")
+	if gateRow == nil {
+		t.Fatal("the gate row must be journaled with the plan")
+	}
+	adjAssertEqual(t, gateRow.Verdict, tags.IdentityVerdictUnrelated, "gate verdict recorded")
+	adjAssertEqual(t, gateRow.RuleSetVersion, tags.RelationRuleSetVersion, "gate rows carry the gate stamp")
+	var criteria map[string]any
+	if err := json.Unmarshal(gateRow.Criteria, &criteria); err != nil {
+		t.Fatalf("gate criteria: %v", err)
+	}
+	adjAssertEqual(t, criteria["proposed_fold"], "building", "the judged proposal is the anchor")
+}
+
+// TestPlanIdentity_CachedGateUnrelatedSkipsJudge pins the cache contract: a persisted unrelated verdict for
+// the same candidate and anchor drops the proposal with no judge call at all, and mints no new evidence.
+func TestPlanIdentity_CachedGateUnrelatedSkipsJudge(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
+	if _, err := q.InsertTagIdentityEvent(context.Background(), database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindRelationGate,
+		Candidate:      "buildings",
+		Criteria:       tags.RelationGateCriteriaRecord("building", tags.FoldProposalLemma, nil),
+		Verdict:        sql.NullString{String: tags.IdentityVerdictUnrelated, Valid: true},
+		Model:          sql.NullString{String: "seeded-model", Valid: true},
+		RuleSetVersion: tags.RelationRuleSetVersion,
+	}); err != nil {
+		t.Fatalf("seed resolved gate row: %v", err)
+	}
+
+	logger := log.NewDiscardLogger()
+	adj := &mockAdjudicator{
+		relationFn: func(_ context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+			results := make([]analyzer.TagRelationResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagRelationResult{Index: i, Related: true}
+			}
+			return results, nil
+		},
+		identityFn: func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+			results := make([]analyzer.TagIdentityResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagIdentityResult{
+					Index:                   i,
+					FoldToBase:              true,
+					FoldPreservesDenotation: true,
+					ConventionalForm:        true,
+				}
+			}
+			return results, nil
+		},
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
+	})
+	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"buildings"},
+		DBNames: map[string]struct{}{},
+	}, "")
+
+	adjAssertEqual(t, adj.relationCall, 0, "a matching cached verdict needs no gate call")
+	adjAssertEqual(t, adj.identityCall, 0, "the fold judge stays out for a cached unrelated verdict")
+	adjAssertEqual(t, len(plan.Evidence), 0, "a cached verdict mints no new evidence")
+	adjAssertEqual(t, len(plan.Registrations), 1, "registration minted")
+	adjAssertEqual(t, plan.Registrations[0].Name, "buildings", "the candidate registers under its own name")
+	adjAssertEqual(t, plan.Registrations[0].Provisional, false, "a cached unrelated verdict is settled")
+}
+
+// TestPlanIdentity_CachedGateAnchorMismatchRejudges pins the anchor check on the cache: a verdict answering
+// a proposal the store no longer makes must be re-judged instead of silently applied to the new anchor.
+func TestPlanIdentity_CachedGateAnchorMismatchRejudges(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
+	if _, err := q.InsertTagIdentityEvent(context.Background(), database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindRelationGate,
+		Candidate:      "buildings",
+		Criteria:       tags.RelationGateCriteriaRecord("edifice", tags.FoldProposalLemma, nil),
+		Verdict:        sql.NullString{String: tags.IdentityVerdictUnrelated, Valid: true},
+		Model:          sql.NullString{String: "seeded-model", Valid: true},
+		RuleSetVersion: tags.RelationRuleSetVersion,
+	}); err != nil {
+		t.Fatalf("seed resolved gate row: %v", err)
+	}
+
+	logger := log.NewDiscardLogger()
+	adj := &mockAdjudicator{
+		relationFn: func(_ context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+			results := make([]analyzer.TagRelationResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagRelationResult{Index: i, Related: false}
+			}
+			return results, nil
+		},
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
+	})
+	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"buildings"},
+		DBNames: map[string]struct{}{},
+	}, "")
+
+	adjAssertEqual(t, adj.relationCall, 1, "a proposal answering a different anchor is judged again")
+	adjAssertEqual(t, adj.identityCall, 0, "the fold judge stays out for the re-judged unrelated verdict")
+
+	kinds := map[string]int{}
+	for _, row := range plan.Evidence {
+		kinds[row.Kind]++
+	}
+	adjAssertEqual(t, kinds[tags.IdentityKindRelationGate], 1, "the re-judged verdict is journaled")
+	adjAssertEqual(t, kinds[tags.IdentityKindBaseForm], 0, "no fold evidence survives the mismatch")
 }
 
 func TestPlanIdentity_DerivationalFoldResolvesOntoStoreNoun(t *testing.T) {
@@ -394,6 +617,7 @@ func mkRanked(candTag string, sim float64) matcher.RankResult {
 type mockAdjudicator struct {
 	adjudicateFn    func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
 	identityFn      func(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error)
+	relationFn      func(ctx context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error)
 	partFn          func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
 	compoundFn      func(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error)
 	conflictFn      func(ctx context.Context, candidates []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error)
@@ -402,6 +626,7 @@ type mockAdjudicator struct {
 	phraseFoldFn    func(ctx context.Context, candidates []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error)
 	called          int
 	identityCall    int
+	relationCall    int
 	partCall        int
 	compoundCall    int
 	conflictCall    int
@@ -464,6 +689,18 @@ func (m *mockAdjudicator) JudgeTagIdentity(ctx context.Context, candidates []ana
 		return m.identityFn(ctx, candidates)
 	}
 	return nil, nil
+}
+
+func (m *mockAdjudicator) JudgeTagRelations(ctx context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+	m.relationCall++
+	if m.relationFn != nil {
+		return m.relationFn(ctx, candidates)
+	}
+	results := make([]analyzer.TagRelationResult, len(candidates))
+	for i := range results {
+		results[i] = analyzer.TagRelationResult{Index: i, Related: true}
+	}
+	return results, nil
 }
 
 func (m *mockAdjudicator) JudgeTagTranslations(ctx context.Context, values []string) ([]analyzer.TagTranslationResult, error) {

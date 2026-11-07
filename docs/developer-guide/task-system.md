@@ -816,7 +816,7 @@ claims when the locks free.
   one live run by the constant key.
 - **tagidentity** (`internal/tags/admission/tagidentity.go`): same shape; the child
   resolves pending identity evidence through `admission.IdentityResolver`, whose report
-  (pending/resolved/folded/aliased/deferred/failed) is the task result. The review
+  (pending/resolved/gated/folded/aliased/deferred/failed) is the task result. The review
   surface's reevaluate action, `kushim batch create tagidentity`, and the scheduled run
   all create the same queued task. The queue dispatches it always; the schedule (a fixed
   daily 03:30 pass with no config keys) fires only while

@@ -424,6 +424,11 @@ func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIde
 	return judgedAnthropic(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), judgedOutputBudget, ParseTagIdentityResponse)
 }
 
+// JudgeTagRelations gates fold proposals through the Anthropic API before the fold judge sees them.
+func (l *LlmAnthropic) JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error) {
+	return judgedAnthropic(ctx, l, TagRelationSystemMessage, BuildTagRelationPrompt(candidates), "tag relation gate", len(candidates), judgedOutputBudget, ParseTagRelationResponse)
+}
+
 // Name identifies the Anthropic implementation.
 func (l *LlmAnthropic) Name() string {
 	return "anthropic"

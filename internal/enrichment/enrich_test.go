@@ -193,6 +193,10 @@ func (r *suggestionRecorder) JudgeTagIdentity(context.Context, []analyzer.TagIde
 	return nil, nil
 }
 
+func (r *suggestionRecorder) JudgeTagRelations(context.Context, []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+	return nil, nil
+}
+
 func (r *suggestionRecorder) JudgeTagTranslations(context.Context, []string) ([]analyzer.TagTranslationResult, error) {
 	return nil, nil
 }

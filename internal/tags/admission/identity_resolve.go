@@ -69,8 +69,8 @@ func (h *IdentityTaskHandler) Handle(ctx context.Context, _ task.Task) (json.Raw
 	if err != nil {
 		return nil, fmt.Errorf("marshal tag identity report: %w", err)
 	}
-	h.resolver.logger.Info("", "tag identity run: pending=%d resolved=%d folded=%d aliased=%d deferred=%d failed=%d",
-		report.Pending, report.Resolved, report.Folded, report.Aliased, report.Deferred, report.Failed)
+	h.resolver.logger.Info("", "tag identity run: pending=%d resolved=%d gated=%d folded=%d aliased=%d deferred=%d failed=%d",
+		report.Pending, report.Resolved, report.Gated, report.Folded, report.Aliased, report.Deferred, report.Failed)
 	return raw, nil
 }
 
@@ -79,6 +79,7 @@ func (h *IdentityTaskHandler) Handle(ctx context.Context, _ task.Task) (json.Raw
 type IdentityReport struct {
 	Pending  int `json:"pending"`
 	Resolved int `json:"resolved"`
+	Gated    int `json:"gated"`
 	Folded   int `json:"folded"`
 	Aliased  int `json:"aliased"`
 	Deferred int `json:"deferred"`
@@ -145,6 +146,7 @@ func (r *IdentityResolver) ResolvePending(ctx context.Context, budget int) (*Ide
 		entry.rows[event.Kind] = event
 	}
 
+	r.resolveGateCandidates(ctx, cfg, candidates, report)
 	r.resolveCandidates(ctx, cfg, candidates, report)
 	r.resolvePairs(ctx, cfg, pairs, pairRows, report)
 	return report, nil
@@ -161,8 +163,16 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 	}
 
 	names := make([]string, 0, len(candidates))
-	for name := range candidates {
+	for name, entry := range candidates {
+		// gate rows are settled by resolveGateCandidates; a candidate whose gate is still pending must never
+		// reach the fold judge directly
+		if _, gate := entry.rows[tags.IdentityKindRelationGate]; gate {
+			continue
+		}
 		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return
 	}
 	sort.Strings(names)
 
@@ -188,26 +198,7 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 			boolVerdict(result.FoldPreservesDenotation, tags.IdentityVerdictConfirmed, tags.IdentityVerdictRejected), criteria, model, report)
 		r.resolveRow(ctx, entry, tags.IdentityKindConventionalForm,
 			boolVerdict(result.ConventionalForm, tags.IdentityVerdictStands, tags.IdentityVerdictDefer), criteria, model, report)
-
-		if !result.ConventionalForm {
-			report.Deferred++
-			return
-		}
-		if !result.FoldToBase || !result.FoldPreservesDenotation {
-			return
-		}
-		folded := tags.HouseForm(proposal)
-		if folded == "" || folded == name {
-			return
-		}
-		if applied, err := r.applyFold(ctx, name, folded); err != nil {
-			r.logger.Error("", "tag identity: fold %q -> %q failed: %v", name, folded, err)
-			report.Failed++
-			return
-		} else if applied {
-			report.Folded++
-			r.logger.Info("", "tag identity: fold %q -> %q", name, folded)
-		}
+		r.applySettledFold(ctx, name, proposal, result, report)
 	}
 	for start := 0; start < len(names); start += identityBatchSize {
 		end := min(start+identityBatchSize, len(names))
@@ -252,6 +243,249 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 		for i, result := range results {
 			resolveCandidate(batch[i], proposals[i], result)
 		}
+	}
+}
+
+// relationGateProposal is the fold proposal a pending relation-gate row recorded at emission time, with its
+// anchor, class, and similarity when the matcher ranked it.
+type relationGateProposal struct {
+	ProposedFold   string   `json:"proposed_fold"`
+	ProposalSource string   `json:"proposal_source"`
+	Similarity     *float64 `json:"similarity"`
+}
+
+type relatedFold struct {
+	name     string
+	proposal string
+}
+
+// resolveGateCandidates settles the pending relation gates: an unrelated verdict closes the proposal with
+// no fold evidence, and a related verdict hands the candidate to the identity judge in the same pass. A
+// gate that cannot answer stays pending; a related gate whose fold judge cannot answer writes pending fold
+// rows so the next pass retries, and no fold evidence is ever written before a related verdict.
+func (r *IdentityResolver) resolveGateCandidates(ctx context.Context, cfg *config.Config, candidates map[string]*pendingCandidate, report *IdentityReport) {
+	names := make([]string, 0, len(candidates))
+	for name, entry := range candidates {
+		if _, ok := entry.rows[tags.IdentityKindRelationGate]; ok {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	if !r.runner.HasTagIdentityJudge() {
+		report.Deferred += len(names)
+		r.logger.Info("", "tag identity: identity judge not configured — %d relation gates stay pending", len(names))
+		return
+	}
+	sort.Strings(names)
+
+	type gateItem struct {
+		name     string
+		proposal relationGateProposal
+	}
+	items := make([]gateItem, 0, len(names))
+	for _, name := range names {
+		row := candidates[name].rows[tags.IdentityKindRelationGate]
+		var proposal relationGateProposal
+		if len(row.Criteria) > 0 {
+			if err := json.Unmarshal(row.Criteria, &proposal); err != nil {
+				r.logger.Warn("", "tag identity: relation gate criteria for %q is invalid: %v", name, err)
+			}
+		}
+		items = append(items, gateItem{name: name, proposal: proposal})
+	}
+
+	model := cfg.ResolvedAdjudicatorLlm().Model
+	resolveGate := func(item gateItem, verdict string) {
+		row := candidates[item.name].rows[tags.IdentityKindRelationGate]
+		if _, err := r.client.Queries.ResolveTagIdentityEvent(ctx, database.ResolveTagIdentityEventParams{
+			ID:       row.ID,
+			Verdict:  sql.NullString{String: verdict, Valid: true},
+			Model:    sql.NullString{String: model, Valid: model != ""},
+			Criteria: row.Criteria,
+		}); err != nil {
+			r.logger.Error("", "tag identity: resolve relation gate %q failed: %v", item.name, err)
+			report.Failed++
+			return
+		}
+		report.Resolved++
+		if verdict == tags.IdentityVerdictUnrelated {
+			report.Gated++
+		}
+	}
+
+	var judgeable []gateItem
+	for _, item := range items {
+		// a proposal whose anchor vanished cannot be judged; closing it as unrelated releases the candidate
+		if item.proposal.ProposedFold == "" {
+			resolveGate(item, tags.IdentityVerdictUnrelated)
+			continue
+		}
+		judgeable = append(judgeable, item)
+	}
+
+	var related []relatedFold
+	for start := 0; start < len(judgeable); start += identityBatchSize {
+		end := min(start+identityBatchSize, len(judgeable))
+		batch := judgeable[start:end]
+		inputs := make([]analyzer.TagRelationCandidate, len(batch))
+		for i, item := range batch {
+			inputs[i] = analyzer.TagRelationCandidate{
+				Index:      i,
+				Term:       item.name,
+				Anchor:     item.proposal.ProposedFold,
+				Source:     item.proposal.ProposalSource,
+				Similarity: item.proposal.Similarity,
+			}
+		}
+		results, err := r.runner.JudgeTagRelations(ctx, inputs)
+		if err == nil && len(results) != len(batch) {
+			err = fmt.Errorf("relation gate returned %d verdicts for %d candidates", len(results), len(batch))
+		}
+		if err != nil {
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				r.logger.Error("", "tag identity: relation gate failed for %d candidates: %v", len(batch), err)
+				report.Failed += len(batch)
+				continue
+			}
+			missing := incomplete.MissingSet()
+			for i := range batch {
+				if missing[i] {
+					report.Deferred++
+					continue
+				}
+				if results[i].Related {
+					resolveGate(batch[i], tags.IdentityVerdictRelated)
+					related = append(related, relatedFold{name: batch[i].name, proposal: batch[i].proposal.ProposedFold})
+					continue
+				}
+				resolveGate(batch[i], tags.IdentityVerdictUnrelated)
+			}
+			continue
+		}
+		for i, result := range results {
+			if result.Related {
+				resolveGate(batch[i], tags.IdentityVerdictRelated)
+				related = append(related, relatedFold{name: batch[i].name, proposal: batch[i].proposal.ProposedFold})
+				continue
+			}
+			resolveGate(batch[i], tags.IdentityVerdictUnrelated)
+		}
+	}
+
+	r.settleRelatedFolds(ctx, model, related, report)
+}
+
+// settleRelatedFolds judges the fold questions for the candidates a related gate released and writes the
+// three verdict rows directly, matching the birth path. A failed or partial fold judgment writes pending
+// rows instead, so the next pass retries without losing the candidate.
+func (r *IdentityResolver) settleRelatedFolds(ctx context.Context, model string, items []relatedFold, report *IdentityReport) {
+	if len(items) == 0 {
+		return
+	}
+	for start := 0; start < len(items); start += identityBatchSize {
+		end := min(start+identityBatchSize, len(items))
+		batch := items[start:end]
+		inputs := make([]analyzer.TagIdentityCandidate, len(batch))
+		for i, item := range batch {
+			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: item.name, ProposedFold: item.proposal}
+		}
+		results, err := r.runner.JudgeTagIdentity(ctx, inputs)
+		if err == nil && len(results) != len(batch) {
+			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
+		}
+		if err != nil {
+			var incomplete *analyzer.IncompleteReplyError
+			if !errors.As(err, &incomplete) {
+				r.logger.Error("", "tag identity: judge failed for %d gate-related candidates: %v", len(batch), err)
+				r.writePendingFoldRows(ctx, batch, report)
+				report.Failed += len(batch)
+				continue
+			}
+			missing := incomplete.MissingSet()
+			var pending []relatedFold
+			for i := range batch {
+				if missing[i] {
+					pending = append(pending, batch[i])
+					report.Deferred++
+					continue
+				}
+				r.settleFold(ctx, model, batch[i], results[i], report)
+			}
+			r.writePendingFoldRows(ctx, pending, report)
+			continue
+		}
+		for i, result := range results {
+			r.settleFold(ctx, model, batch[i], result, report)
+		}
+	}
+}
+
+// settleFold writes the three resolved verdict rows for a gate-released candidate and applies the fold
+// when all three answers confirm it.
+func (r *IdentityResolver) settleFold(ctx context.Context, model string, item relatedFold, result analyzer.TagIdentityResult, report *IdentityReport) {
+	criteria := result.CriteriaRecord(item.proposal)
+	rows := []tags.EvidenceRow{
+		{Kind: tags.IdentityKindBaseForm, Candidate: item.name, Criteria: criteria,
+			Verdict: boolVerdict(result.FoldToBase, tags.IdentityVerdictFold, tags.IdentityVerdictStand), Model: model},
+		{Kind: tags.IdentityKindFoldGate, Candidate: item.name, Criteria: criteria,
+			Verdict: boolVerdict(result.FoldPreservesDenotation, tags.IdentityVerdictConfirmed, tags.IdentityVerdictRejected), Model: model},
+		{Kind: tags.IdentityKindConventionalForm, Candidate: item.name, Criteria: criteria,
+			Verdict: boolVerdict(result.ConventionalForm, tags.IdentityVerdictStands, tags.IdentityVerdictDefer), Model: model},
+	}
+	if err := r.tag.RecordIdentityEvidence(ctx, rows); err != nil {
+		r.logger.Error("", "tag identity: record gate-related fold rows for %q failed: %v", item.name, err)
+		report.Failed++
+		return
+	}
+	report.Resolved += len(rows)
+	r.applySettledFold(ctx, item.name, item.proposal, result, report)
+}
+
+// writePendingFoldRows records the three fold questions as pending for candidates a related gate released
+// but whose fold judgment failed, so the next pass retries them.
+func (r *IdentityResolver) writePendingFoldRows(ctx context.Context, items []relatedFold, report *IdentityReport) {
+	if len(items) == 0 {
+		return
+	}
+	rows := make([]tags.EvidenceRow, 0, 3*len(items))
+	for _, item := range items {
+		rows = append(rows,
+			tags.EvidenceRow{Kind: tags.IdentityKindBaseForm, Candidate: item.name},
+			tags.EvidenceRow{Kind: tags.IdentityKindFoldGate, Candidate: item.name},
+			tags.EvidenceRow{Kind: tags.IdentityKindConventionalForm, Candidate: item.name},
+		)
+	}
+	if err := r.tag.RecordIdentityEvidence(ctx, rows); err != nil {
+		r.logger.Error("", "tag identity: record pending fold rows for %d gate-related candidates failed: %v", len(items), err)
+		report.Failed += len(items)
+	}
+}
+
+// applySettledFold applies a judged fold when the answer confirms all three conditions, and accounts for a
+// conventional-form deferral. Writing the verdict rows is the caller's responsibility: the resolver
+// updates the pending rows it found, while the gate path writes them resolved directly.
+func (r *IdentityResolver) applySettledFold(ctx context.Context, name, proposal string, result analyzer.TagIdentityResult, report *IdentityReport) {
+	if !result.ConventionalForm {
+		report.Deferred++
+		return
+	}
+	if !result.FoldToBase || !result.FoldPreservesDenotation {
+		return
+	}
+	folded := tags.HouseForm(proposal)
+	if folded == "" || folded == name {
+		return
+	}
+	if applied, err := r.applyFold(ctx, name, folded); err != nil {
+		r.logger.Error("", "tag identity: fold %q -> %q failed: %v", name, folded, err)
+		report.Failed++
+		return
+	} else if applied {
+		report.Folded++
+		r.logger.Info("", "tag identity: fold %q -> %q", name, folded)
 	}
 }
 

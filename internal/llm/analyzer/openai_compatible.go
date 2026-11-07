@@ -545,6 +545,11 @@ func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates [
 	return judgedOpenAI(ctx, l, TagIdentitySystemMessage, BuildTagIdentityPrompt(candidates), "tag identity judge", len(candidates), judgedOutputBudget, ParseTagIdentityResponse)
 }
 
+// JudgeTagRelations gates fold proposals through the compatible API before the fold judge sees them.
+func (l *LlmOpenAiCompatible) JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error) {
+	return judgedOpenAI(ctx, l, TagRelationSystemMessage, BuildTagRelationPrompt(candidates), "tag relation gate", len(candidates), judgedOutputBudget, ParseTagRelationResponse)
+}
+
 // Name identifies the OpenAI-compatible implementation.
 func (l *LlmOpenAiCompatible) Name() string {
 	return "openai-compatible"

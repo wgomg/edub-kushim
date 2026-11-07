@@ -348,15 +348,18 @@ The enrichment pipeline:
    without an LLM; similarity never replaces a name. Candidates with a
    mechanically proposed fold and other candidate neighbours become gate
    subjects, resolved by **tag adjudication** when
-   `enricher.tag_adjudicator.enabled` is true: the identity judge confirms base
-   form, fold preservation, and conventional written form; the pair
-   adjudicator answers `same`/`variant`/`related` with a direction for `same`
-   (`same` aliases the losing name onto the winner, `variant`/`related` keep;
-   a partial reply decides the claims it returned and leaves only the missing
-   ones pending as identity evidence, with the candidate born provisional;
-   other failures and a disabled adjudicator leave the claim pending the same
-   way; a credit-exhaustion failure pauses the batch). Verdicts are cached in
-   `tag_identity_event` at the identity rule-set version; the identity pass
+   `enricher.tag_adjudicator.enabled` is true: a proposed fold first passes a
+   relation gate, which drops a pair it finds unrelated so the candidate
+   registers as its own value, and the identity judge then confirms base form,
+   fold preservation, and conventional written form for the related ones; the
+   pair adjudicator answers `same`/`variant`/`related` with a direction for
+   `same` (`same` aliases the losing name onto the winner, `variant`/`related`
+   keep; a partial reply decides the claims it returned and leaves only the
+   missing ones pending as identity evidence, with the candidate born
+   provisional; other failures and a disabled adjudicator leave the claim
+   pending the same way; a credit-exhaustion failure pauses the batch). Verdicts
+   are cached in `tag_identity_event` at the identity rule-set version, gate
+   verdicts under their own `RelationRuleSetVersion`; the identity pass
    (`kushim tagidentity`, enqueued by
    `POST /api/v1/tags/identity/reevaluate`, a manual run, or its own daily
    schedule) resolves pending claims — the scheduled reconciliation never

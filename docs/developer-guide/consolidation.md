@@ -63,7 +63,7 @@ Per enrichment, after the LLM emits its tags:
 | Alias lookup — the name is a `tag_alias` row | apply the canonical value | names that already lost a same-intent decision |
 | Key equality (M3) — house form matches a store tag | apply the store label | style variants (`nineteenth century` / `19th century`) |
 | Exact identity with a store tag | apply the store label | casing, hyphenation, and symbol-form fixes after normalization |
-| Flagged fold — a mechanically proposed reduction (M2) | judged: base form (J1), fold gate (J2), conventional form (J5); the fold applies only when all three confirm | inflections, relational adjectives (`chilean` → `chile`), bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
+| Flagged fold — a mechanically proposed reduction (M2) | judged: relation gate (J0), then base form (J1), fold gate (J2), and conventional form (J5); an unrelated proposal is dropped and the candidate registers as its own value, and the fold applies only when all three fold answers confirm | inflections, relational adjectives (`chilean` → `chile`), bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
 | Pinned variant class — an orthographic spelling variant or a literal token permutation | mechanical `same`, no judge call: the deterministic tie-break (M4) picks the winner, the other name aliases | `decolonisation`/`decolonization`, `military history`/`history military` |
 | Any other candidate neighbour — the same-intent gate | judged (J3) with a direction (J4): `same` aliases the loser onto the winner (a store label that loses becomes the alias), `variant`/`related` register both | the residual band and shape-related pairs |
 | No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
@@ -101,12 +101,16 @@ registration paths ([spec](../specs/tags/canonical-form.md) §3.2):
 `IdentityRuleSetVersion` is stamped on every alias row and identity-evidence row; it pins
 the mechanical fold proposals, the pair judge's criteria text, the variant-class table,
 the birth-time canonical direction, and the split-seam fold source. Bumping it retires
-every cached identity verdict at once.
+every cached identity verdict at once. The **relation gate** that screens fold proposals
+before the fold judge carries its own stamp, `RelationRuleSetVersion`. It is an additive
+precondition: a gate change retires gate verdicts without retiring the fold verdicts
+cached under the identity rule set.
 
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization, M1
   rewrites, alias lookup, key equality, and M2 flagging. It never applies a fold, never
-  adjudicates, and never makes an alias; flagged relations register provisionally with
-  pending evidence.
+  adjudicates, and never makes an alias; a flagged fold registers provisionally with a
+  pending relation-gate row, and other flagged relations with their pending identity
+  evidence.
 - **`ResolveAliases`** — the single alias resolver: normalizes and dedupes names and
   resolves them to canonical names in one query. It backs registration, suggestions,
   structured search, and the enricher.
@@ -119,18 +123,20 @@ candidates), **identity** (exact equality with a store tag → replace; the bulk
 traffic), **band subjects** (everything else: the query keeps its name and the top
 candidate is recorded as a gate subject). `policy.Version` is the policy version stamped
 on stored verdicts — bumping it marks all stored verdicts stale to the reconciler. The
-judge sees only the two terms of a pair; the similarity that selected the pair is never
-part of the prompt.
+pair judge sees only the two terms of a pair; the similarity that selected the pair is
+never part of its prompt.
 
 The gate resolves flagged candidates and band subjects before the persist transaction —
 adjudication stays outside it:
 
-- **Folds (J1/J2/J5)** — one identity-judge call per flagged candidate answers three
-  binary criteria: fold to base form, fold preserves denotation, conventional written
-  form. A fold applies only when all three confirm. A refused fold whose proposal
-  targeted a live store value is the disjoint-twin risk: the birth is held for review —
-  provisional plus an evidence-derived promotion hold that blocks inline and sweep
-  promotion until an operator resolves it.
+- **Folds (J0/J1/J2/J5)** — a fold proposal first passes the relation gate (J0): an
+  unrelated pair is dropped and the candidate registers as its own value, so no fold
+  evidence or hold exists for it. A related pair reaches one identity-judge call per
+  flagged candidate that answers three binary criteria: fold to base form, fold preserves
+  denotation, conventional written form. A fold applies only when all three confirm. A
+  refused fold whose proposal targeted a live store value is the disjoint-twin risk: the
+  birth is held for review — provisional plus an evidence-derived promotion hold that
+  blocks inline and sweep promotion until an operator resolves it.
 - **Same-intent pairs (J3/J4)** — pinned variant classes resolve `same` mechanically;
   the rest go to the pair adjudicator (`same` / `variant` / `related`, plus a direction
   for `same`). `same` yields the alias disposition.
@@ -208,17 +214,18 @@ folds and candidate neighbours with LLM calls. Inheritance is resolved at use ti
 content analyzer's `llm`/`timeout` when the block's own values are empty, so analyzer
 model changes keep propagating.
 
-- **Folds**: one identity call per flagged candidate answers the three binary
-  canonical-form criteria; the fold applies only when all three confirm.
+- **Folds**: a related relation-gate verdict releases a candidate to one identity call
+  answering the three binary canonical-form criteria; the fold applies only when all
+  three confirm.
 - **Verdicts**: `same` (one value → the losing name becomes an alias), `variant`
   (broader/narrower → keep), `related` (different concepts → keep); for `same` the call
   also names the precise term (`query`, `target`, or `tie`, with M4 breaking ties).
-- **Resolution order per document**: identity criteria cache (`tag_identity_event` at the
-  current rule-set version) → pair cache → deterministic variant class → one batched
-  evidence rank → batched verdict calls. A pair with no parseable verdict — a missing
-  entry, an unknown verdict string, an out-of-range index — is treated as missing, never
-  as a rejection; a truncated reply returns the verdicts it did read, and only the
-  omitted pairs stay pending.
+- **Resolution order per document**: relation-gate cache (`tag_identity_event` at
+  `RelationRuleSetVersion`) → identity criteria cache → pair cache → deterministic variant
+  class → one batched evidence rank → batched verdict calls. A pair with no parseable
+  verdict — a missing entry, an unknown verdict string, an out-of-range index — is treated
+  as missing, never as a rejection; a truncated reply returns the verdicts it did read, and
+  only the omitted pairs stay pending.
 - **Cache**: every verdict is stored keyed by `(query, target, policy_version)` in
   `tag_verdict_event` (fresh rows carry the judging model; cache-applied rows store NULL).
   Decided pairs are also recorded as document-anchored rows so the reconciler's pair view

@@ -75,3 +75,14 @@ FROM (
     SELECT partner AS name FROM tag_identity_event WHERE verdict IS NULL AND partner = ANY(@names::text[])
 ) pending
 GROUP BY name;
+
+-- LatestRelationGatesForCandidates returns the newest resolved relation-gate verdict per candidate under
+-- the gate's own rule-set stamp; the anchor is the proposed fold the gate judged.
+-- name: LatestRelationGatesForCandidates :many
+SELECT DISTINCT ON (candidate) candidate, verdict, (criteria ->> 'proposed_fold')::text AS anchor
+FROM tag_identity_event
+WHERE kind = 'relation_gate'
+  AND rule_set_version = @relation_rule_set_version
+  AND verdict IS NOT NULL
+  AND candidate = ANY(@candidates::text[])
+ORDER BY candidate, created_at DESC;

@@ -111,6 +111,15 @@ Every call here is model-adjudicated with pinned binary criteria, cached per can
 or pair, and versioned with the rule set; split criterion answers are gray-band review,
 never a forced call.
 
+**J0 — Relation gate.** Screens a mechanically proposed fold pair for semantic
+relatedness before any canonical-form judgment; it does not decide the fold. `related`
+sends the proposal to J1/J2/J5, while `unrelated` drops it and the candidate registers as
+its own value, with no fold evidence and no review hold. A missing answer or a failed call
+leaves the proposal pending — an unanswered gate is never read as `unrelated`. The gate
+receives the proposal class (lemma, derivational, or morphographic) and, when the anchor
+was ranked, the matcher similarity as weak evidence, never as a verdict. Verdicts are
+cached per candidate and anchor under `RelationRuleSetVersion`.
+
 **J1 — Base-form decisions.**
 
 - Relational adjectives fall to their noun when it denotes the same thing (`chilean` →
@@ -156,7 +165,8 @@ map exists in the mechanism (an operator override, if any, is configuration).
 - **Code decides the mechanical cases; the judging body concludes the semantic ones.**
   M2 computes shape signatures; M3 resolves identity on equal keys; M8 resolves the pinned
   variant classes mechanically; every other semantic fold and shape-related pair goes to
-  the judging body (J2, J3). A proposed semantic fold is never written unconfirmed.
+  the judging body (J0, J2, J3). A proposed semantic fold is never written unconfirmed:
+  the relation gate must first find the pair related, and the fold gate must then confirm it.
 - **Emission-first.** House form is primarily produced at emission: the typed contract
   asks the generator for labels already in house form, so J1/J5 decisions happen where
   the document is read. The mechanical body converts and validates what arrives; the gate
@@ -193,11 +203,12 @@ blocklisted.
 
 ### 3.6 Evidence record
 
-Per candidate or pair: the key; the proposed fold and its gate result; the J3 verdict
-with criteria and model versions (the M8 class, with no model, for a mechanically resolved
-pair); the J4 direction and reason; any alias made; the rule-set version; the review
-outcome when deferred; and the operator's separation row over a refused fold, which clears
-the hold without applying the fold. Consumers are D1's canonicalization work, the review
+Per candidate or pair: the key; the proposed fold, its relation-gate verdict under
+`RelationRuleSetVersion`, and its J1/J2/J5 result; the J3 verdict with criteria and model
+versions (the M8 class, with no model, for a mechanically resolved pair); the J4 direction
+and reason; any alias made; the identity rule-set version; the review outcome when deferred;
+and the operator's separation row over a refused fold, which clears the hold without
+applying the fold. Consumers are D1's canonicalization work, the review
 surfaces, and later calibration — it is evidence, not a verdict machine.
 
 ## 4. Scenarios and worked examples
@@ -219,7 +230,8 @@ Behavior references; the gray rows are where review lands.
 
 | Candidate(s) | Outcome | Rule |
 |---|---|---|
-| `repairing` | `repair` — fold proposed and gated | M2 + J2 |
+| `repairing` | `repair` — fold proposed, related, and gated | M2 + J0 + J2 |
+| `brexit` vs `credit` | `brexit` stands as its own value; no fold evidence, no hold | J0 unrelated |
 | `chilean` | `chile` | J1 relational adjective |
 | `programming` | stands | J1 lexicalized gerund |
 | `data` | stands | J1 established plural |

@@ -709,6 +709,18 @@ func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []analyzer.Tag
 	})
 }
 
+// JudgeTagRelations gates fold proposals against the existing vocabulary through the same judge the
+// identity step uses, so both share a single adjudicator configuration and timeout; it returns an error
+// when no judge was configured.
+func (r *Runner) JudgeTagRelations(ctx context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+	if r.tagIdentityJudge == nil {
+		return nil, fmt.Errorf("tag relation gate not configured")
+	}
+	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagRelationResult, error) {
+		return r.tagIdentityJudge.JudgeTagRelations(ctx, candidates)
+	})
+}
+
 func isProviderError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
