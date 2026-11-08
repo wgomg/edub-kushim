@@ -132,3 +132,98 @@ func TestReduce_ContentAtOrBelowChunkWindowUnchanged(t *testing.T) {
 		t.Errorf("empty content changed: got %q", *empty)
 	}
 }
+
+func TestJaccardIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b []uint32
+		want float64
+	}{
+		{name: "both empty", a: nil, b: nil, want: 0},
+		{name: "left empty", a: nil, b: []uint32{1, 2}, want: 0},
+		{name: "right empty", a: []uint32{1, 2}, b: nil, want: 0},
+		{name: "disjoint", a: []uint32{1, 2}, b: []uint32{3, 4}, want: 0},
+		{name: "partial overlap", a: []uint32{1, 2, 3}, b: []uint32{2, 3, 4}, want: 2.0 / 4.0},
+		{name: "identical", a: []uint32{1, 2, 3}, b: []uint32{1, 2, 3}, want: 1},
+		{name: "single match", a: []uint32{5}, b: []uint32{5}, want: 1},
+		{name: "subset", a: []uint32{1}, b: []uint32{1, 2, 3}, want: 1.0 / 3.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := jaccardIDs(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("jaccardIDs(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// vocabularyWords renders n words drawn from a small rotating vocabulary so successive chunks share
+// tokens.
+func vocabularyWords(n int) string {
+	parts := make([]string, n)
+	for i := range n {
+		parts[i] = fmt.Sprintf("term%d", i%200)
+	}
+	return strings.Join(parts, " ")
+}
+
+// referenceJaccard recomputes Jaccard from unique-token maps, the pre-refactor set semantics the new
+// merge must reproduce exactly.
+func referenceJaccard(a, b map[string]int) float64 {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	intersection := 0
+	for token := range a {
+		if _, ok := b[token]; ok {
+			intersection++
+		}
+	}
+	return float64(intersection) / float64(len(a)+len(b)-intersection)
+}
+
+func TestCreateChunks_UniqueIDInvariants(t *testing.T) {
+	content := vocabularyWords(1200) + " " + numberedSentences(300)
+	chunks := createChunks(strings.Fields(cleanUp(content)), ReduceChunkSize)
+	if len(chunks) < 2 {
+		t.Fatalf("expected several chunks, got %d", len(chunks))
+	}
+
+	for _, chunk := range chunks {
+		if len(chunk.UniqueIDs) != len(chunk.TokenFrequencies) {
+			t.Errorf("chunk %d: %d unique IDs for %d unique tokens",
+				chunk.Id, len(chunk.UniqueIDs), len(chunk.TokenFrequencies))
+		}
+		for i := 1; i < len(chunk.UniqueIDs); i++ {
+			if chunk.UniqueIDs[i] <= chunk.UniqueIDs[i-1] {
+				t.Errorf("chunk %d: IDs not strictly ascending: %v", chunk.Id, chunk.UniqueIDs)
+				break
+			}
+		}
+	}
+}
+
+func TestJaccardIDSEqualsSetJaccard(t *testing.T) {
+	corpora := map[string]string{
+		"overlapping vocabulary": vocabularyWords(1200),
+		"punctuated sentences":   numberedSentences(300),
+		"run-on words":           numberedWords(1200),
+	}
+
+	for name, content := range corpora {
+		t.Run(name, func(t *testing.T) {
+			chunks := createChunks(strings.Fields(cleanUp(content)), ReduceChunkSize)
+			for i := range chunks {
+				for j := i + 1; j < len(chunks); j++ {
+					want := referenceJaccard(chunks[i].TokenFrequencies, chunks[j].TokenFrequencies)
+					got := jaccardIDs(chunks[i].UniqueIDs, chunks[j].UniqueIDs)
+					if got != want {
+						t.Fatalf("chunks %d,%d: jaccardIDs = %v, reference = %v", i, j, got, want)
+					}
+				}
+			}
+		})
+	}
+}

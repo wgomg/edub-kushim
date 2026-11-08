@@ -69,7 +69,7 @@ algorithm: **TF-IDF weighting** as an additional signal, and a **position
 bias** (documents often put the key content at the start/end), blended into a
 final score; then a **greedy selection** pass that penalizes redundancy.
 
-The whole pipeline, in `Reduce` (`textrank.go:68-139`):
+The whole pipeline, in `Reduce` (`textrank.go:67-137`):
 
 ```go
 cleanedUpContent := cleanUp(content)
@@ -83,14 +83,14 @@ chunks = calculateFinalScore(chunks, TfWeight, GraphWeight, PositionWeight, dete
 ```
 
 Weights are constants at the top of `Reduce`
-(`textrank.go:69-73`): TF 0.4, graph 0.4, position 0.2 — the classic
+(`textrank.go:68-72`): TF 0.4, graph 0.4, position 0.2 — the classic
 "lexical + graph + position" blend.
 
 ---
 
 ## 3. Preprocessing
 
-Before anything else, the text is cleaned (`textrank.go:75-76`):
+Before anything else, the text is cleaned (`textrank.go:74-75`):
 
 ```go
 cleanedUpContent := cleanUp(content)
@@ -138,13 +138,13 @@ for len(words) > chunkSize {
 }
 ```
 
-`createChunks` (`textrank.go:188-228`) packs the sentences into chunks of
+`createChunks` (`textrank.go:187-228`) packs the sentences into chunks of
 roughly `chunkSize` words, carrying the trailing sentence over as overlap:
 
 ```go
 if len(currentWords)+len(sentenceWords) > chunkSize && len(currentWords) > 0 {
     lastSentence := lastSentenceWords(currentWords, overlapWords)
-    chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe))
+    chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe, vocabulary))
     chunkId++
     currentWords = append(lastSentence, sentenceWords...)   // overlap
     overlapWords = len(lastSentence)
@@ -153,22 +153,25 @@ if len(currentWords)+len(sentenceWords) > chunkSize && len(currentWords) > 0 {
 }
 ```
 
-`lastSentenceWords` (`textrank.go:263-271`) finds that trailing sentence by
+`lastSentenceWords` (`textrank.go:272-280`) finds that trailing sentence by
 scanning backward for `.`, `!` or `?`, never past the carried overlap (which
 would compound window after window), falling back to the final word when the
 range is punctuation-free (word windows); `OverlapWords` lets the
 reconstruction (§10) drop the duplicates.
 
-Each chunk is tokenized (`buildChunk`, `textrank.go:230-258`): words are split
+Each chunk is tokenized (`buildChunk`, `textrank.go:230-267`): words are split
 on any non-letter/non-digit run
 (`tokenRe := regexp.MustCompile(`[^\p{L}\p{N}]+`)`), and the chunk stores its
-tokens, unique tokens, and a frequency map — all the inputs for TF scoring.
+tokens, a frequency map, and its unique tokens as sorted `uint32` IDs. The IDs
+are interned once per reduction from a vocabulary shared by every chunk in
+`createChunks`, so a token has the same ID everywhere; the similarity stage
+(§6) relies on those ID slices being ascending and duplicate-free.
 
 ---
 
 ## 5. TF-IDF chunk scoring
 
-`tfScores` (`textrank.go:304-345`) treats each chunk as a "document" and the
+`tfScores` (`textrank.go:313-354`) treats each chunk as a "document" and the
 whole text as the corpus — classic TF-IDF, per chunk:
 
 ```go
@@ -184,17 +187,17 @@ chunk.TFScore = totalWeight
 The `+1` smoothing keeps `idf` defined for tokens in every chunk and
 down-weights *stopword-like* tokens that appear everywhere. Document
 frequency counts a token **once per chunk** (`seen` map,
-`textrank.go:309-314`).
+`textrank.go:318-323`).
 
 Scores are then normalized to sum to 1 across chunks
-(`NormalizedTFScore`, `textrank.go:339-342`) so the three score components
+(`NormalizedTFScore`, `textrank.go:348-351`) so the three score components
 are comparable in the blend.
 
 ---
 
 ## 6. The similarity graph and weighted PageRank
 
-`buildGraph` (`textrank.go:347-371`) creates the chunk-similarity graph:
+`buildGraph` (`textrank.go:356-380`) creates the chunk-similarity graph:
 
 ```go
 // self-similarity
@@ -202,7 +205,7 @@ graph.Adjacency[i][i] = 1.0
 
 for i := range chunksLength {
     for j := i + 1; j < chunksLength; j++ {
-        similarity := jaccardSimilarity(chunks[i].UniqueTokens, chunks[j].UniqueTokens)
+        similarity := jaccardIDs(chunks[i].UniqueIDs, chunks[j].UniqueIDs)
         if similarity > 0 {
             graph.Adjacency[i][j] = similarity
             graph.Adjacency[j][i] = similarity
@@ -211,31 +214,32 @@ for i := range chunksLength {
 }
 ```
 
-- Similarity is **Jaccard on unique tokens** (`jaccardSimilarity`,
-  `textrank.go:373-394`): `|A ∩ B| / |A ∪ B|`, with an explicit empty/empty
-  → 0 guard.
+- Similarity is **Jaccard on sorted unique token IDs** (`jaccardIDs`,
+  `textrank.go:384-406`): `|A ∩ B| / |A ∪ B|`, computed by a linear merge over
+  two ascending, duplicate-free `[]uint32` slices, with an explicit
+  empty/empty → 0 guard. No map is allocated per pair.
 - The diagonal is 1.0 (self-similarity), which anchors the graph and keeps
   every node with a nonzero outbound sum.
 - Edges with similarity 0 are omitted (adjacency stays 0), so the graph is
   sparse for dissimilar chunks.
 
-`weightedPageRank` (`textrank.go:396-451`) is the iteration, run with
+`weightedPageRank` (`textrank.go:408-463`) is the iteration, run with
 **damping 0.85, max 100 iterations, tolerance 1e-4**
-(`textrank.go:406-417`): scores start uniform (`1/N`), outgoing weight sums are
+(`textrank.go:408-413,467`): scores start uniform (`1/N`), outgoing weight sums are
 precomputed, and each iteration recomputes
 `newScores[i] = (1−damping)/N + damping · Σ_j score[j] · (edge[j][i] / outgoingSums[j])`
 — a node's importance flows to its neighbors *proportionally to edge weight*.
 The random jump (`(1-damping)/N`) keeps the chain ergodic. Convergence is
 checked on total absolute change.
 
-`calculateGraphScores` (`textrank.go:453-473`) normalizes the PageRank
+`calculateGraphScores` (`textrank.go:465-485`) normalizes the PageRank
 scores to sum 1 (guarding `sumScores > 0`).
 
 ---
 
 ## 7. Position bias
 
-`detectPositionBias` (`textrank.go:290-302`) picks a bias profile from the
+`detectPositionBias` (`textrank.go:299-311`) picks a bias profile from the
 text's newline density — a cheap proxy for "structured document vs prose":
 
 ```go
@@ -246,7 +250,7 @@ if density > 20 {
 return "cosine"
 ```
 
-`positionScore` (`textrank.go:277-288`) then weights a chunk's normalized
+`positionScore` (`textrank.go:286-297`) then weights a chunk's normalized
 position (`i/len(chunks)`, 0 = start, 1 = end):
 
 - **`"cosine"`** (prose): `0.5 + 0.5·|cos(pos·2π)|` — peaks at the very
@@ -262,7 +266,7 @@ Position scores are normalized to sum 1 before blending.
 
 ## 8. The final score blend
 
-`calculateFinalScore` (`textrank.go:475-499`) combines the three normalized
+`calculateFinalScore` (`textrank.go:487-511`) combines the three normalized
 components with the weights 0.4 / 0.4 / 0.2:
 
 ```go
@@ -272,14 +276,14 @@ chunks[i].FinalScore = (tf_weight * chunks[i].NormalizedTFScore) +
 ```
 
 All three components sum to 1 individually, so `FinalScore` is a proper
-weighted average. `cmpChunk` (`textrank.go:501-503`) sorts chunks by
+weighted average. `cmpChunk` (`textrank.go:513-515`) sorts chunks by
 `FinalScore` descending (`cmp.Compare(b.FinalScore, a.FinalScore)`).
 
 ---
 
 ## 9. Greedy selection with diversity penalty
 
-The selection loop (`textrank.go:88-114`) is a greedy knapsack with an
+The selection loop (`textrank.go:87-113`) is a greedy knapsack with an
 anti-redundancy twist:
 
 ```go
@@ -298,7 +302,7 @@ for len(remainingChunks) > 0 && currentWordCount < targetWordCount {
     remainingChunks = remainingChunks[1:]
 
     for i := range remainingChunks {
-        similarity := jaccardSimilarity(selected.UniqueTokens, remainingChunks[i].UniqueTokens)
+        similarity := jaccardIDs(selected.UniqueIDs, remainingChunks[i].UniqueIDs)
         if similarity > DiversityThreshold {              // 0.15
             penalty := 1.0 - (similarity * (1.0 - MinPenalty))   // MinPenalty 0.1
             remainingChunks[i].FinalScore *= penalty
@@ -325,7 +329,7 @@ for len(remainingChunks) > 0 && currentWordCount < targetWordCount {
 ## 10. Reconstruction
 
 `Reduce` reassembles the selected chunks back into text, in original order
-(`textrank.go:116-137`):
+(`textrank.go:115-136`):
 
 ```go
 slices.SortFunc(selectedChunks, func(a, b Chunk) int {
@@ -502,7 +506,7 @@ token estimate is what drives that loop. See
 ## 15. Gotchas
 
 - **`Reduce` returns the original content unchanged** when there are no
-  chunks (`textrank.go:80-82`) — empty input is not an error.
+  chunks (`textrank.go:79-81`) — empty input is not an error.
 - **The first chunk is unconditionally kept** (§9). For documents with
   front-matter noise (copyright pages), that noise is always in the
   reduction.
@@ -528,10 +532,11 @@ token estimate is what drives that loop. See
   the estimate's exact value.
 - **`truncate` returns `"Unknown"` for whitespace-only input** — callers must
   not assume a non-empty return.
-- **Regex-heavy helpers are compiled at package level** (`sentenceBreak`,
-  `tokenRe`, `nonAlphaSpace`, `multiSpace`, `spaceRE`) — never inside the
-  per-chunk loops, where compilation would dominate runtime.
+- **Regex-heavy helpers are compiled outside the per-chunk loops**
+  (`sentenceBreak` at package level; `tokenRe` once per `createChunks` call;
+  `cleanUp`'s symbol regex once per `Reduce`) — compilation never happens per
+  chunk, where it would dominate runtime.
 
 ---
 
-*Last verified against the tree: 2026-09-11. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-11-08. If code and doc disagree, code wins.*

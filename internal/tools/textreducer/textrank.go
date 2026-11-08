@@ -3,7 +3,6 @@ package textreducer
 import (
 	"cmp"
 	"context"
-	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -34,7 +33,7 @@ type Chunk struct {
 	WordCount            int
 	OverlapWords         int
 	Tokens               []string
-	UniqueTokens         []string
+	UniqueIDs            []uint32
 	TokenFrequencies     map[string]int
 	TFScore              float64
 	NormalizedTFScore    float64
@@ -102,7 +101,7 @@ func (t *TextRank) Reduce(ctx context.Context, content string, chunkSize int, ta
 		remainingChunks = remainingChunks[1:]
 
 		for i := range remainingChunks {
-			similarity := jaccardSimilarity(selected.UniqueTokens, remainingChunks[i].UniqueTokens)
+			similarity := jaccardIDs(selected.UniqueIDs, remainingChunks[i].UniqueIDs)
 
 			if similarity > DiversityThreshold {
 				penalty := 1.0 - (similarity * (1.0 - MinPenalty))
@@ -196,6 +195,7 @@ func createChunks(words []string, chunkSize int) []Chunk {
 	var currentWords []string
 	chunkId := 0
 	overlapWords := 0
+	vocabulary := make(map[string]uint32)
 
 	for _, sentence := range sentences {
 		sentenceWords := strings.Fields(sentence)
@@ -205,7 +205,7 @@ func createChunks(words []string, chunkSize int) []Chunk {
 
 		if len(currentWords)+len(sentenceWords) > chunkSize && len(currentWords) > 0 {
 			lastSentence := lastSentenceWords(currentWords, overlapWords)
-			chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe))
+			chunks = append(chunks, buildChunk(chunkId, currentWords, len(lastSentence), tokenRe, vocabulary))
 			chunkId++
 
 			currentWords = append(lastSentence, sentenceWords...)
@@ -216,7 +216,7 @@ func createChunks(words []string, chunkSize int) []Chunk {
 	}
 
 	if len(currentWords) > 0 {
-		chunks = append(chunks, buildChunk(chunkId, currentWords, 0, tokenRe))
+		chunks = append(chunks, buildChunk(chunkId, currentWords, 0, tokenRe, vocabulary))
 	}
 
 	total := float64(len(chunks))
@@ -227,7 +227,7 @@ func createChunks(words []string, chunkSize int) []Chunk {
 	return chunks
 }
 
-func buildChunk(id int, words []string, overlapWords int, tokenRe *regexp.Regexp) Chunk {
+func buildChunk(id int, words []string, overlapWords int, tokenRe *regexp.Regexp, vocabulary map[string]uint32) Chunk {
 	var tokens []string
 	for _, w := range words {
 		parts := tokenRe.Split(w, -1)
@@ -241,7 +241,16 @@ func buildChunk(id int, words []string, overlapWords int, tokenRe *regexp.Regexp
 	tokenFrequencies := make(map[string]int)
 	for _, t := range tokens {
 		tokenFrequencies[t]++
+		if _, ok := vocabulary[t]; !ok {
+			vocabulary[t] = uint32(len(vocabulary))
+		}
 	}
+
+	uniqueIDs := make([]uint32, 0, len(tokenFrequencies))
+	for token := range tokenFrequencies {
+		uniqueIDs = append(uniqueIDs, vocabulary[token])
+	}
+	slices.Sort(uniqueIDs)
 
 	return Chunk{
 		Id:               id,
@@ -252,7 +261,7 @@ func buildChunk(id int, words []string, overlapWords int, tokenRe *regexp.Regexp
 		WordCount:        len(words),
 		OverlapWords:     overlapWords,
 		Tokens:           tokens,
-		UniqueTokens:     slices.Collect(maps.Keys(tokenFrequencies)),
+		UniqueIDs:        uniqueIDs,
 		TokenFrequencies: tokenFrequencies,
 	}
 }
@@ -358,7 +367,7 @@ func buildGraph(chunks []Chunk) Graph {
 
 	for i := range chunksLength {
 		for j := i + 1; j < chunksLength; j++ {
-			similarity := jaccardSimilarity(chunks[i].UniqueTokens, chunks[j].UniqueTokens)
+			similarity := jaccardIDs(chunks[i].UniqueIDs, chunks[j].UniqueIDs)
 
 			if similarity > 0 {
 				graph.Adjacency[i][j] = similarity
@@ -370,24 +379,27 @@ func buildGraph(chunks []Chunk) Graph {
 	return graph
 }
 
-func jaccardSimilarity(a, b []string) float64 {
+// jaccardIDs intersects two ascending unique-ID slices by merge; each input must be sorted ascending
+// and duplicate-free.
+func jaccardIDs(a, b []uint32) float64 {
 	if len(a) == 0 && len(b) == 0 {
 		return 0.0
 	}
 
-	set := make(map[string]bool)
-	for _, v := range a {
-		set[v] = true
-	}
-
-	intersection := 0
-	for _, v := range b {
-		if set[v] {
+	i, j, intersection := 0, 0, 0
+	for i < len(a) && j < len(b) {
+		switch {
+		case a[i] < b[j]:
+			i++
+		case a[i] > b[j]:
+			j++
+		default:
 			intersection++
+			i++
+			j++
 		}
 	}
 
-	// union = |A| + |B| - intersection
 	union := len(a) + len(b) - intersection
 
 	return float64(intersection) / float64(union)
