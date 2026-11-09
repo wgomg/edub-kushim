@@ -4529,7 +4529,7 @@ func TestListProvisionalCompositionAction(t *testing.T) {
 		want        tags.CompositionAction
 	}{
 		{"action undecided split hold", tags.CompositionKeep, tags.CompositionReasonSplitDefer, tags.CompositionActionUndecided},
-		{"action named unit keep", tags.CompositionKeep, tags.CompositionReasonNamedUnitReconstructible, tags.CompositionActionKeep},
+		{"action reconstructible named unit keep is final", tags.CompositionKeep, tags.CompositionReasonNamedUnitReconstructible, ""},
 		{"action decided drop", tags.CompositionDrop, tags.CompositionReasonNoDimension, tags.CompositionActionDrop},
 		{"action degraded keep", tags.CompositionKeep, tags.CompositionReasonJudgeUnavailable, tags.CompositionActionDegraded},
 		{"action final keep", tags.CompositionKeep, tags.CompositionReasonOperatorKeep, ""},

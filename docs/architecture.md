@@ -429,9 +429,9 @@ The enrichment pipeline:
     rejection there is a normal tag delete and lands in the blocklist, and an
     accepted deferral returns to the floor rule. An identity-held name — a fold the gate refused
    beside a live store value — and a composition-held name — its latest
-   composition verdict under the current split criteria version defers,
-   conflicts, disagrees, is a reconstructible named unit, is a relational
-   keep, is a degraded `judge_unavailable` keep, or is a decided drop — are likewise
+    composition verdict under the current split criteria version defers,
+    conflicts, disagrees, is a relational keep, is a degraded
+    `judge_unavailable` keep, or is a decided drop — are likewise
    provisional and blocked from inline and sweep promotion until an operator
    resolves them or a later verdict decides them; the degraded keep is
    re-judged on the next emission until then. With the layer off, births are trusted as before.

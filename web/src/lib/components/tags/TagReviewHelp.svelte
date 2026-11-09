@@ -42,11 +42,6 @@
 			resolve: 'Split now, or keep whole'
 		},
 		{
-			reason: 'named_unit_reconstructible',
-			meaning: 'the parts rebuild the compound, so it is a name in its own right',
-			resolve: 'Apply the parts alongside, or keep whole'
-		},
-		{
 			reason: 'relational_keep',
 			meaning: 'the compound selects more than its parts share, so it is not their product',
 			resolve: 'Apply the parts alongside, or keep whole'
@@ -172,6 +167,13 @@
 			it and enough live documents carry it to clear the promotion floor. Values the judges are unsure
 			about — or that identity and split decisions left held — wait here for a person to decide. Approve
 			promotes a tag into the shared vocabulary; reject deletes it and blocks the name.
+		</p>
+		<p class="{text} mt-2">
+			A fresh collection fills this queue quickly — every name is new and the judges have no stored
+			decision yet. Most entries settle without review: the scheduled passes promote values that
+			clear the recurrence floor, merge near-duplicates, and retire decided non-values, while later
+			emissions reuse the recorded decisions. The queue shrinks as the vocabulary grows, leaving the
+			genuinely novel or unresolved names.
 		</p>
 	</section>
 

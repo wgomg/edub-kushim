@@ -1025,8 +1025,8 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 
 // TestTag_CreatePlannedTx_HousesCompositionCandidate pins the store-name namespace for the
 // composition journal: an emitted compound whose house form differs from its normalized form
-// (roman numerals, ordinal words) must be persisted under the house form, so the promotion hold
-// and the review surface — which look a compound up by its store tag name — can match it.
+// (roman numerals, ordinal words) must be persisted under the house form, so the composition
+// state read — which looks a compound up by its store tag name — can match it.
 func TestTag_CreatePlannedTx_HousesCompositionCandidate(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()
@@ -1055,10 +1055,12 @@ func TestTag_CreatePlannedTx_HousesCompositionCandidate(t *testing.T) {
 		"read composition candidate")
 	testutil.AssertEqual(t, candidate, "world war 2", "candidate keyed by the store house form")
 
-	held, err := tags.CompositionHeldNames(ctx, client.Queries, []string{"world war 2"}, analyzer.TagSplitVersion)
-	testutil.AssertNoError(t, err, "composition held names")
-	testutil.AssertEqual(t, held["world war 2"], tags.CompositionReasonNamedUnitReconstructible,
-		"the promotion hold matches the compound by its store tag name")
+	states, err := tags.CompositionStatesForNames(ctx, client.Queries, []string{"world war 2"}, analyzer.TagSplitVersion)
+	testutil.AssertNoError(t, err, "composition states")
+	state, ok := states["world war 2"]
+	testutil.AssertEqual(t, ok, true, "the composition row is keyed by the compound's store tag name")
+	testutil.AssertEqual(t, state.Disposition, tags.CompositionKeep, "the composition row reads as a keep")
+	testutil.AssertEqual(t, state.Decided, true, "the composition row reads as a decision")
 }
 
 func decodeParts(t *testing.T, raw string) []string {

@@ -340,10 +340,10 @@ func TestCreditPause(t *testing.T) {
 	}
 }
 
-// TestPromoteEligible_CompositionHold pins D24 on the enrichment promotion path: a compound whose
-// composition verdict withholds promotion stays provisional in the same run where an otherwise
-// identical candidate promotes — both are admitted and at the recurrence floor, so the hold alone
-// decides between them.
+// TestPromoteEligible_CompositionHold pins D24 on the enrichment promotion path: a compound whose composition
+// verdict withholds promotion stays provisional in the same run where otherwise identical candidates
+// promote — one with no composition row, one carrying the released reconstructible named-unit keep —
+// so the hold alone decides between them.
 func TestPromoteEligible_CompositionHold(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -367,22 +367,27 @@ func TestPromoteEligible_CompositionHold(t *testing.T) {
 	}
 	held := seedCandidate("held split compound")
 	free := seedCandidate("free split compound")
+	gray := seedCandidate("gray named unit compound")
 
 	eventDoc := database.CreateUniqueDocument(t, client.Queries, "composition-hold-event")
 	if _, err := client.DB().ExecContext(ctx, `
 		INSERT INTO tag_composition_event
 		    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
-		VALUES ($1, $2, '[]'::jsonb, 'keep', $3, $4, now())`,
-		eventDoc, held.Entity.Name, tags.CompositionReasonSplitDefer, analyzer.TagSplitVersion); err != nil {
-		t.Fatalf("seed composition event: %v", err)
+		VALUES ($1, $2, '[]'::jsonb, 'keep', $3, $4, now()),
+		       ($1, $5, '[]'::jsonb, 'keep', $6, $4, now())`,
+		eventDoc, held.Entity.Name, tags.CompositionReasonSplitDefer, analyzer.TagSplitVersion,
+		gray.Entity.Name, tags.CompositionReasonNamedUnitReconstructible); err != nil {
+		t.Fatalf("seed composition events: %v", err)
 	}
 
 	promoted := e.promoteEligible(ctx, client.Queries,
-		[]types.CreateResult[database.Tag]{held, free},
-		map[string]tags.AdmissionDecision{held.Entity.Name: admit, free.Entity.Name: admit},
+		[]types.CreateResult[database.Tag]{held, free, gray},
+		map[string]tags.AdmissionDecision{
+			held.Entity.Name: admit, free.Entity.Name: admit, gray.Entity.Name: admit,
+		},
 		"composition-hold-test")
 
-	if want := []string{free.Entity.Name}; !slices.Equal(promoted, want) {
+	if want := []string{free.Entity.Name, gray.Entity.Name}; !slices.Equal(promoted, want) {
 		t.Fatalf("promoted = %v, want %v (the composition hold alone must decide)", promoted, want)
 	}
 	assertPromoted := func(label string, id int64, want bool) {
@@ -398,6 +403,7 @@ func TestPromoteEligible_CompositionHold(t *testing.T) {
 	}
 	assertPromoted("held compound", held.Entity.ID, false)
 	assertPromoted("free compound", free.Entity.ID, true)
+	assertPromoted("reconstructible named unit", gray.Entity.ID, true)
 }
 
 // TestPromoteEligible_ConfigurableFloor pins the enrichment path's read of the configured floor: at a

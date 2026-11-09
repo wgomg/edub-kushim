@@ -224,9 +224,9 @@ func TestDecideComposition(t *testing.T) {
 			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnit},
 		},
 		{
-			"a reconstructible named unit holds in the gray class",
+			"a reconstructible named unit keeps and leaves standing to the floor",
 			CompositionFeatures{CompoundNamedUnit: true, PartsDimensional: true, Reconstructible: true},
-			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnitReconstructible, Hold: true},
+			CompositionDecision{Disposition: CompositionKeep, Reason: CompositionReasonNamedUnitReconstructible},
 		},
 		{
 			"a named unit over dimensional parts holds as a relational keep",

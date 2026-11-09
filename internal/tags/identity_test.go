@@ -842,13 +842,13 @@ func TestCompositionHeldNames(t *testing.T) {
 	now := time.Now()
 	// the read takes the latest row under one criteria version, so the seeds cover every reason that can
 	// hold — including a decided drop, which withholds promotion until a criteria bump or an operator
-	// override — a candidate a newer verdict settles, and a hold written under another
-	// version that must stay invisible to this read; a degraded keep holds too — no promotion without a
-	// decision
+	// override — a candidate a newer verdict settles, a final keep whose reason no longer withholds, and a
+	// hold written under another version that must stay invisible to this read; a degraded keep holds too —
+	// no promotion without a decision
 	seed("heldsplit", CompositionReasonSplitDefer, version, now)
 	seed("heldconflict", CompositionReasonConflictingEvidence, version, now)
 	seed("helddisagree", CompositionReasonSampleDisagreement, version, now)
-	seed("heldgray", CompositionReasonNamedUnitReconstructible, version, now)
+	seed("graykeep", CompositionReasonNamedUnitReconstructible, version, now)
 	seed("heldrelational", CompositionReasonRelationalKeep, version, now)
 	seed("cleankeep", CompositionReasonNamedUnit, version, now)
 	seed("degraded", CompositionReasonJudgeUnavailable, version, now)
@@ -858,7 +858,7 @@ func TestCompositionHeldNames(t *testing.T) {
 	seed("stale", CompositionReasonSplitDefer, staleVersion, now)
 
 	held, err := CompositionHeldNames(ctx, q, []string{
-		"  HeldSplit ", "heldconflict", "helddisagree", "heldgray", "heldrelational",
+		"  HeldSplit ", "heldconflict", "helddisagree", "graykeep", "heldrelational",
 		"cleankeep", "degraded", "dropped", "settled", "stale", "unjudged",
 	}, version)
 	if err != nil {
@@ -868,7 +868,6 @@ func TestCompositionHeldNames(t *testing.T) {
 		"heldsplit":      CompositionReasonSplitDefer,
 		"heldconflict":   CompositionReasonConflictingEvidence,
 		"helddisagree":   CompositionReasonSampleDisagreement,
-		"heldgray":       CompositionReasonNamedUnitReconstructible,
 		"heldrelational": CompositionReasonRelationalKeep,
 		"degraded":       CompositionReasonJudgeUnavailable,
 		"dropped":        CompositionReasonNoDimension,
@@ -880,6 +879,9 @@ func TestCompositionHeldNames(t *testing.T) {
 		if held[name] != reason {
 			t.Errorf("held[%q] = %q, want %q", name, held[name], reason)
 		}
+	}
+	if _, ok := held["graykeep"]; ok {
+		t.Errorf("graykeep candidate held = %q, a final keep must not withhold promotion", held["graykeep"])
 	}
 	if _, ok := held["settled"]; ok {
 		t.Errorf("settled candidate held = %q, a newer non-held verdict must clear the hold", held["settled"])
@@ -1139,8 +1141,9 @@ func TestCompositionReview(t *testing.T) {
 }
 
 // TestCompositionActionFor pins the actionability class the review queue derives from one journal
-// row: a decided drop only retires, a degraded keep needs a re-judge, the named-unit keeps apply
-// their parts, the undecided holds split or keep, and a final decision needs no action.
+// row: a decided drop only retires, a degraded keep needs a re-judge, the relational keep applies its
+// parts, the reconstructible named unit is final, the undecided holds split or keep, and a final
+// decision needs no action.
 func TestCompositionActionFor(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1154,7 +1157,7 @@ func TestCompositionActionFor(t *testing.T) {
 		{"a deferred split splits", CompositionKeep, CompositionReasonSplitDefer, CompositionActionUndecided},
 		{"conflicting evidence splits", CompositionKeep, CompositionReasonConflictingEvidence, CompositionActionUndecided},
 		{"a sample disagreement splits", CompositionKeep, CompositionReasonSampleDisagreement, CompositionActionUndecided},
-		{"a reconstructible named unit applies its parts", CompositionKeep, CompositionReasonNamedUnitReconstructible, CompositionActionKeep},
+		{"a reconstructible named unit needs nothing", CompositionKeep, CompositionReasonNamedUnitReconstructible, ""},
 		{"a relational keep applies its parts", CompositionKeep, CompositionReasonRelationalKeep, CompositionActionKeep},
 		{"a decided keep needs nothing", CompositionKeep, CompositionReasonNamedUnit, ""},
 		{"an operator keep needs nothing", CompositionKeep, CompositionReasonOperatorKeep, ""},

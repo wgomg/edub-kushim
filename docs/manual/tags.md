@@ -30,6 +30,28 @@ it from the Vocabulary tab. A demoted value keeps its documents and its history 
 review queue, where approving it restores its standing. Decided non-values that stay unchallenged for
 the retention window are eventually removed by the scheduled sweep.
 
+## The queue settles over time
+
+A fresh collection produces the largest queue it will ever have: every name is novel, the judges have
+no stored decision to lean on, and candidates accumulate faster than a person can review them. That
+surge is expected and mostly does not need a person.
+
+- **Stored decisions are reused.** Quality and composition judgments are recorded with the criteria
+  version that produced them, and identity resolutions are stored as aliases or holds; the same name
+  emitted again is answered from the stored decision instead of a fresh judge call, and a name already
+  in the tag table is not even novel.
+- **The scheduled passes dispose of the backlog.** Reconciliation promotes provisional values that
+  clear the recurrence floor, demotes values whose live mass decayed, applies recorded folds and
+  splits, re-asks stale compound judgments, and retires decided non-values once the retention window
+  passes.
+- **New emissions follow what the vocabulary already holds.** Once a value is in the store, later
+  emissions resolve to it — by name, normalized form or alias — instead of proposing another variant.
+
+Review effort therefore falls off over time: values the judges and the sweeps can settle leave the
+queue on their own, and the entries that remain are the genuinely novel or genuinely unresolved ones.
+Leaving the queue unattended is safe — provisional tags are searchable without influencing the
+vocabulary, and the sweeps keep working.
+
 ## Where tags come from
 
 - **Enrichment** — the pipeline's analyzer proposes tags while processing a document; the tag quality
@@ -78,7 +100,6 @@ matching section of the guide.
 | `split_defer` | the split judge abstained or the parts pass deferred | split now, or keep whole |
 | `conflicting_evidence` | parts and compound point in opposite directions; an arbiter call resolves it when the evidence settles, and only an arbiter defer keeps the hold | split now, or keep whole |
 | `sample_disagreement` | two corpus samples disagree about the compound | split now, or keep whole |
-| `named_unit_reconstructible` | the parts rebuild the compound, so it is a name in its own right | apply the parts alongside, or keep whole |
 | `relational_keep` | the compound selects more than its parts share, so it is not their product; a keep resting only on parts the store has not promoted yet waits on store maturity instead of reaching review | apply the parts alongside, or keep whole |
 | `judge_unavailable` | no split judge answered; nothing was decided | re-judge once a judge is configured |
 | `no_dimension` | the compound was decided to name no dimension | retire it — approving does not stick for a decided drop |

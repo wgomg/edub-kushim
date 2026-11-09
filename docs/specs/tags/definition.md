@@ -273,7 +273,9 @@ The disposition depends on whether the parts are themselves values:
 
 - **Parts are values (dimensions):**
   - `S(c) ≈ ⋂ S(pᵢ)` → `c` is **redundant**: it adds nothing to the algebra. **Split**
-    into the parts (or drop if the parts are below mass).
+    into the parts (or drop if the parts are below mass). A phrase the compound reading
+    still identifies as a named unit is the gray exception: it keeps whole on recurrence
+    instead (§8 item 2).
   - `S(c) ⊊ ⋂ S(pᵢ)` (materially smaller than the parts' intersection) → `c` selects a
     relation or narrowing the conjunction does not express. This is the *relational*
     case: `ritual violence` is not `ritual` ∩ `violence`; `palestine solidarity` is not
@@ -558,7 +560,10 @@ The questions the definition leaves to policy, and their decided answers:
    like any provisional value. Their parts remain valid values applied alongside, so a
    unit like `spanish civil war` is still found through `spain` + `civil war` or broader
    intersections; the overlap is accepted. The utility threshold, not a parts-failure
-   test, separates a named unit from pre-coordination.
+   test, separates a named unit from pre-coordination. The same rule decides a named-unit
+   reading over parts that are themselves values: the unit keeps whole as a provisional
+   candidate whose parts apply alongside, the measured overlap with the parts'
+   intersection is accepted, and the recurrence threshold alone decides standing.
 3. **Canonical form.** Labels are shaped and identified at birth: the lemma form, the
    conventional written form, same-intent resolution with the alias disposition, and
    direction by sense-fit, then the house form/language, then a deterministic tie-break.
@@ -623,8 +628,8 @@ The questions the definition leaves to policy, and their decided answers:
    and whose retrieval precision comes from intersecting it with other tags.
 2. **The three-way test.** A candidate that names one dimension is admitted; a candidate
    that conjoins dimensions is split; a candidate that names no dimension is dropped.
-   Lexical, idiomatic, and recurring named units whose parts are not dimensions are
-   admitted whole on recurrence.
+   Lexical, idiomatic, and recurring named units — including a named-unit reading over
+   parts that are themselves values — are admitted whole on recurrence.
 3. **Meaning is extension.** Same extension, one label; reconstructible by intersection,
    not a tag; singleton extension, not a tag.
 4. **The vocabulary is sized by dimensions, not by queries.** Pre-coordination enumerates

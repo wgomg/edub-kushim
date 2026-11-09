@@ -167,8 +167,10 @@ things`, `black bloc`) stay whole, and a compound whose key already exists in th
   a plain composition, or a phrase with no retrievable dimension — and the two answer sets
   fold into one decision (`tags.DecideComposition`). The parts verdict selects the branch;
   the compound reading disposes within it; a `named_unit` reading over all-dimensional
-  parts is the held gray keep (`named_unit_reconstructible`, or `relational_keep` when
-  the parts are not all promoted) whose parts apply alongside. With the adjudicator
+  parts keeps whole with its parts applied alongside — `named_unit_reconstructible` when
+  the reconstructibility reading is firm or gray (or every part is a promoted store
+  value), a final keep whose standing the recurrence floor and mass decay decide, and the
+  held `relational_keep` otherwise. With the adjudicator
   disabled, only conjunction joints (`and`, `or`, `vs`, `versus`; after normalization `&`
   is stripped) split deterministically; every other compound passes whole.
 - **Store-keyed compounds**: a compound already in the store skips judgment only when a
@@ -313,8 +315,8 @@ admission decision admits with assignments on at least ten distinct **live** doc
 `promoted_at = now()` and enters the store after the commit. The `document_tag` primary
 key makes the count distinct-document, so a single document re-enriching itself cannot
 promote a name. An identity-held name (a refused fold beside a live store value) and a
-composition-held name (a decided drop, defer, conflict, disagreement, reconstructible
-named unit, a substrate-reading relational keep, or degraded `judge_unavailable` keep) are
+composition-held name (a decided drop, defer, conflict, disagreement, a substrate-reading
+relational keep, or degraded `judge_unavailable` keep) are
 skipped by both the inline check and the sweep until an operator resolves them or a later
 verdict decides them — a relational keep resting only on parts the store has not promoted
 yet is not held; it waits on store maturity like any admitted value.

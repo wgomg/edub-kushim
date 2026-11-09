@@ -133,7 +133,8 @@ For a multi-part candidate `c` whose content sequence has a decomposition cover 
 segments `p₁…p_k` from the fan (definition §3.6, §4.3 P4; atomicity §3.1):
 
 - **Parts are values, `S(c) ≈ ⋂ S(pᵢ)`** → redundant reading: the compound adds nothing
-  to the algebra; it decomposes into its parts.
+  to the algebra; it decomposes into its parts, unless the compound reading names a unit
+  (a named-unit reading over value parts keeps whole on recurrence — definition §8 item 2).
 - **Parts are values, `S(c) ⊊ ⋂ S(pᵢ)`** → relational reading (`ritual violence` is not
   `ritual` ∩ `violence`): a distinct value only if the relation is itself a recurring
   subject of the corpus; otherwise it splits and the relation falls back to free text.

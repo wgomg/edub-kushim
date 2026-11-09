@@ -995,6 +995,42 @@ func TestBuildCompoundWorklist_DecidedDropQueuesDemotion(t *testing.T) {
 	testutil.AssertEqual(t, report.Skips["decided"], 1, "the provisional drop has no standing to revoke")
 }
 
+// TestBuildCompoundWorklist_DecidedKeepSkipsJudgment pins the released named-unit keep's path through
+// the worklist: with the reason no longer a hold, a decided named_unit_reconstructible keep must land
+// on the decided skip rather than the judgment queue — re-judging it every sweep would append rows for
+// a keep that is already final.
+func TestBuildCompoundWorklist_DecidedKeepSkipsJudgment(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	r := &Reconciler{client: client, logger: testutil.NewTestLogger()}
+
+	database.MustCreateTag(t, client.Queries, "cold war")
+	if _, err := client.DB().ExecContext(ctx, `
+		INSERT INTO tag_composition_event
+		    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+		VALUES (NULL, $1, '[]'::jsonb, 'keep', $2, $3, now())`,
+		tags.StoredName("cold war"), tags.CompositionReasonNamedUnitReconstructible,
+		analyzer.TagSplitVersion); err != nil {
+		t.Fatalf("seed decided keep: %v", err)
+	}
+	allTags, err := client.Queries.ListAllTags(ctx)
+	testutil.AssertNoError(t, err, "list tags")
+
+	report := &Report{Skips: map[string]int{}}
+	entries := r.buildCompoundWorklist(ctx, allTags, nil, report)
+
+	if len(entries) != 0 {
+		t.Fatalf("entries = %v, want none: a decided keep owes no judgment", entries)
+	}
+	testutil.AssertEqual(t, report.Skips["decided"], 1, "the released reason lands on the decided skip")
+}
+
 func TestSweepPromotedTags_MassDecayDemotesAndSparesSeeded(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")

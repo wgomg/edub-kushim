@@ -182,15 +182,14 @@ const (
 	CompositionReasonConflictArbitrated       = "conflict_arbitrated"
 )
 
-// compositionHoldReasons is the single definition of which composition reasons withhold a compound
-// from promotion until review or a criteria-version bump (docs/specs/tags/atomicity.md §3.5): the
-// cross-sample, conflict, and deferred outcomes, the reconstructible and relational named-unit keeps,
-// a degraded keep no judge answered, and a decided drop, which mass must not resurrect.
+// compositionHoldReasons is the single definition of which composition reasons withhold a compound from
+// promotion until review or a criteria-version bump (docs/specs/tags/atomicity.md §3.5): the cross-sample,
+// conflict, and deferred outcomes, the relational named-unit keep, a degraded keep no judge answered, and
+// a decided drop, which mass must not resurrect.
 var compositionHoldReasons = []string{
 	CompositionReasonSplitDefer,
 	CompositionReasonConflictingEvidence,
 	CompositionReasonSampleDisagreement,
-	CompositionReasonNamedUnitReconstructible,
 	CompositionReasonRelationalKeep,
 	CompositionReasonJudgeUnavailable,
 	CompositionReasonNoDimension,
@@ -222,9 +221,9 @@ const (
 	CompositionActionDrop      CompositionAction = "drop"
 )
 
-// CompositionActionFor classifies one journal row for the review queue: a decided drop can only be
-// retired, a degraded keep must be judged again, the named-unit keeps are applied alongside, and the
-// remaining holds split or keep. A final keep reports the empty action.
+// CompositionActionFor classifies one journal row for the review queue: a decided drop can only be retired,
+// a degraded keep must be judged again, the relational named-unit keep applies its parts alongside, and
+// the remaining holds split or keep. A final keep reports the empty action.
 func CompositionActionFor(disposition CompositionDisposition, reason string) CompositionAction {
 	if disposition == CompositionDrop {
 		return CompositionActionDrop
@@ -235,7 +234,7 @@ func CompositionActionFor(disposition CompositionDisposition, reason string) Com
 	if !compositionHolds(reason) {
 		return ""
 	}
-	if reason == CompositionReasonNamedUnitReconstructible || reason == CompositionReasonRelationalKeep {
+	if reason == CompositionReasonRelationalKeep {
 		return CompositionActionKeep
 	}
 	return CompositionActionUndecided
@@ -725,12 +724,11 @@ func CompositionReview(ctx context.Context, q *database.Queries, names []string,
 
 // CompositionHeldNames maps each held compound candidate to the reason its latest composition verdict
 // withheld promotion: a deferred split, conflicts between the parts and compound passes, cross-sample
-// disagreement, the reconstructible named-unit gray class, the combination-branch relational keep, or a
-// degraded keep whose judge never answered (no promotion without a decision;
-// docs/specs/tags/atomicity.md §3.5). Only rows carrying criteriaVersion count, so a criteria-version
-// bump clears stale holds. Names are normalized to the store's name recipe (StoredName), matching the
-// journal's keys and the sibling state read. It is one view of CompositionReview. Unheld candidates are
-// absent from the result; empty input returns an empty map.
+// disagreement, the combination-branch relational keep, or a degraded keep whose judge never answered
+// (no promotion without a decision; docs/specs/tags/atomicity.md §3.5). Only rows carrying criteriaVersion
+// count, so a criteria-version bump clears stale holds. Names are normalized to the store's name recipe
+// (StoredName), matching the journal's keys and the sibling state read. It is one view of CompositionReview.
+// Unheld candidates are absent from the result; empty input returns an empty map.
 func CompositionHeldNames(ctx context.Context, q *database.Queries, names []string, criteriaVersion string) (map[string]string, error) {
 	held, _, err := CompositionReview(ctx, q, names, criteriaVersion)
 	return held, err

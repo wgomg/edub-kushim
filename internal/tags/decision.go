@@ -166,11 +166,13 @@ type CompositionDecision struct {
 // reading disposes within it. In the combination branch a composition reading splits, unless a sufficient
 // reconstruction reading lands far from the intersection: the whole is then not its parts' product and the
 // compound holds as relational_keep for review (atomicity §3.3 step B's far leg). A no-dimension reading
-// conflicts to review, and a named_unit reading is a held gray keep with its parts applied alongside —
-// named_unit_reconstructible when the reading is firm or gray (or, with no reading established, every part
-// is a promoted store value), relational_keep otherwise. In the unit branch a named_unit reading keeps
-// whole and a composition reading conflicts to review. An unrecognized combination falls to the fail-safe
-// split_defer hold.
+// conflicts to review, and a named_unit reading keeps with its parts applied alongside; the reason recorded
+// is named_unit_reconstructible, a final keep whose standing the recurrence floor and mass decay decide,
+// when the reading is firm or gray (or, with no reading established, every part is a promoted store
+// value), and relational_keep otherwise. A relational keep is held for review on a substrate reading;
+// one resting on the promoted-parts proxy without promoted parts is store-maturity pending and unheld
+// until the sweep re-disposes it. In the unit branch a named_unit reading keeps whole and a composition
+// reading conflicts to review. An unrecognized combination falls to the fail-safe split_defer hold.
 func DecideComposition(f CompositionFeatures) CompositionDecision {
 	var decision CompositionDecision
 	switch {
@@ -220,8 +222,11 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // no_dimension reason, and a rejection requires at least one judge-owned failing signal — a failure set of
 // deterministic signals alone defers as deterministic_only — the demotion and retention rules unchanged.
 // v10 adds the operator acceptance: a review deferral waived by an editor admits the value to the ordinary
-// promotion paths, the admission, demotion and retention rules unchanged.
-const DecisionRuleSetVersion = "v10"
+// promotion paths, the admission, demotion and retention rules unchanged. v11 releases the reconstructible
+// named-unit composition keep from the promotion hold: the compound is a final keep that promotes at the
+// recurrence floor and demotes on mass decay like any provisional candidate, the admission, demotion and
+// retention rules unchanged.
+const DecisionRuleSetVersion = "v11"
 
 // DecidePromotion reports whether an admitted candidate at or above the configured floor promotes.
 func DecidePromotion(outcome AdmissionOutcome, liveMass int64, floor int64) bool {

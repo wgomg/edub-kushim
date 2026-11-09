@@ -4,7 +4,7 @@
 
 A self-hosted document management system. Point it at a folder of PDFs and it organizes them for you: every document automatically gets a title, a document type, tags, and a list of the people it mentions — no manual filing, no catalogs to maintain.
 
-Tags stay clean without effort: near-duplicate labels are merged as your vocabulary grows, so you never end up with `car repair`, `car-repair`, and `repairing a car` fighting over the same idea. And nothing needs babysitting — if a run is interrupted by a crash or a restart, the unfinished work is detected and retried automatically.
+Tags stay clean without effort: near-duplicate labels are merged as your vocabulary grows, so you never end up with `car repair`, `car-repair`, and `repairing a car` fighting over the same idea. Expect a large tag review queue on a fresh collection — the judges have no stored decisions yet — and watch it shrink as the scheduled passes promote, merge and retire candidates while later emissions reuse the decisions already made. And nothing needs babysitting — if a run is interrupted by a crash or a restart, the unfinished work is detected and retried automatically.
 
 Classification runs on an LLM of your choice. A starter catalog of providers and models ships with the app, and you can bring your own — manage both on the **AI providers & models** settings page, using [models.dev/providers](https://models.dev/providers/) as the reference for what to enter. **Before adding anything to the catalog, check it:** the entry is exactly how the app talks to that model, so verify the endpoint and key work and that what you record about the model (context window, output limits, structured-output support) matches reality — a wrong entry surfaces as failed or degraded classification.
 

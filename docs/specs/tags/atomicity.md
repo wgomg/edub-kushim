@@ -114,6 +114,10 @@ passes → combination branch. If some part fails → unit branch.
   - Otherwise the phrase is either covered by the parts' intersection (redundant) or too
     specific — **drop**; free text finds it.
 - **Middle** → gray: order test and criteria pass, then review (see "Fallback signals").
+  A named-unit reading over value parts resolves the gray band without review when the
+  reconstructibility reading is firm or gray, or every part is a promoted store value:
+  the unit keeps whole as a provisional candidate with its parts alongside, and the
+  recurrence floor decides standing (definition §8 item 2).
 
 **Step C — unit branch** (some part is not a dimension):
 
@@ -152,6 +156,10 @@ influence, reversible) · **drop** · **review**.
   and a criteria-version bump re-judges it — while a stored decided drop demotes and is
   removed after the retention window (definition §8 item 11). The gray cases are exactly
   the label supply the later decision layer needs. Reject only the clear drops.
+- **The reconstructible named unit is a decided keep.** A named-unit reading over value
+  parts that reconstructs the compound keeps provisional with its parts applied
+  alongside; the overlap is accepted and the recurrence floor and mass decay decide
+  standing (definition §8 item 2). It is not routed to review.
 
 ### 3.6 Evidence record
 
