@@ -7852,9 +7852,9 @@ components:
           anyOf:
             - type: boolean
             - type: "null"
-        not_person:
+        person_class:
           anyOf:
-            - type: boolean
+            - type: string
             - type: "null"
         subject_matter:
           anyOf:
@@ -7863,7 +7863,7 @@ components:
       required:
         - subject_matter
         - dimension
-        - not_person
+        - person_class
         - atomic
         - not_form_genre
         - defer

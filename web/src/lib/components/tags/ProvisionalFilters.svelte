@@ -14,12 +14,7 @@
 		onfacetsclose = null
 	} = $props();
 
-	const SEGMENTS = [
-		{ value: '', label: 'Any', text: 'any' },
-		{ value: 'pass', label: '✓', text: 'pass' },
-		{ value: 'fail', label: '✗', text: 'fail' },
-		{ value: 'absent', label: '—', text: 'absent' }
-	];
+	const ANY_SEGMENT = { value: '', label: 'Any', text: 'any' };
 
 	const PRESETS = [
 		{
@@ -90,7 +85,8 @@
 	let activeCriteria = $derived(criteria.filter((c) => criteriaStates[c.key]));
 	let hasActiveChips = $derived(states.length > 0 || activeCriteria.length > 0);
 
-	const mark = (value) => (value === 'pass' ? '✓' : value === 'fail' ? '✗' : '—');
+	const mark = (criterion, value) =>
+		criterion.states.find((state) => state.value === value)?.label ?? '—';
 
 	function emitStates(nextStates) {
 		if (onchange) onchange({ q, criteria: criteriaStates, states: nextStates });
@@ -171,7 +167,7 @@
 				<div class="flex items-center justify-between gap-2 px-2 py-1">
 					<span class="text-xs text-parchment-300">{c.label}</span>
 					<div class="inline-flex overflow-hidden rounded border border-clay-700">
-						{#each SEGMENTS as segment, index (segment.value)}
+						{#each [ANY_SEGMENT, ...c.states] as segment, index (segment.value)}
 							<button
 								type="button"
 								class="{segmentClass} {index > 0
@@ -238,7 +234,7 @@
 			{#each activeCriteria as c (c.key)}
 				<span class={chipClass}>
 					{c.label}
-					{mark(criteriaStates[c.key])}
+					{mark(c, criteriaStates[c.key])}
 					<button
 						type="button"
 						class={chipRemoveClass}

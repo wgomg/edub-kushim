@@ -249,19 +249,24 @@ born. With `enricher.tag_quality.enabled: true` (default `false`), the novel tag
 survive consolidation — names absent from the vocabulary — are decided before they are
 created (`Adjudicator.ApplyTagQuality`):
 
-- **Features**: the judge's rubric answers — `subject_matter`, `not_person`, `atomic`,
+- **Features**: the judge's rubric answers — `subject_matter`, `person_class` (the
+  five-class person answer: `not_person`, `real_individual`,
+  `mythological_or_legendary`, `fictional`, `uncertain`), `atomic`,
   `not_form_genre` — plus the `dimension` verdict the parts pass owns (read from the
   shared parts cache, judged on a miss), the judge's optional `defer` abstention, and the
   emission's deterministic signals: a typed detail annotated `other`, and a best store
   similarity below the internal no-anchor floor (0.60).
 - **Decision**: the pinned rule set (`tags.DecideAdmission`) defers on the judge's
   abstention, rejects a candidate judged neither subject matter nor a dimension with reason
-  `no_dimension` (definition §3.6's drop leg), rejects two or more failing signals when at
-  least one is judge-owned, defers on a failure set of deterministic signals alone or on
-  exactly one failing signal (the gray band — no single signal decides), and admits when
-  nothing fails. Rejected names are dropped for that document and never stored — their plan
-  registrations and pending identity evidence are removed before persist. A missing detail
-  or similarity is absence of evidence, not a failing signal.
+  `no_dimension` (definition §3.6's drop leg), then resolves the person class: a documented
+  individual rejects as `person_facet` independent of subject matter, while mythological,
+  legendary, fictional and undecided readings defer as `person_review`. Only a tag naming
+  no person reaches the corroborated rules, which reject two or more failing signals when
+  at least one is judge-owned, defer on a failure set of deterministic signals alone or on
+  exactly one failing signal (the gray band — no single boolean signal decides), and admit
+  when nothing fails. Rejected names are dropped for that document and never stored — their
+  plan registrations and pending identity evidence are removed before persist. A missing
+  detail or similarity is absence of evidence, not a failing signal.
 - **Judge call**: uncached candidates are judged in temperature-0 LLM calls over batches
   of up to 40 candidates per document; the reduced document text serves the
   `subject_matter` question alone, the other criteria answering on the candidate.

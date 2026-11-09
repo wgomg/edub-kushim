@@ -110,7 +110,7 @@ import { goto } from '$app/navigation';
 const rubric = {
 	subject_matter: true,
 	dimension: true,
-	not_person: true,
+	person_class: 'not_person',
 	atomic: true,
 	not_form_genre: true,
 	defer: false
@@ -256,6 +256,14 @@ describe('ProvisionalReview verdict labels', () => {
 		expect(within(screen.getByRole('listitem')).queryByText(/not publishing format/)).toBeNull();
 		expect(within(screen.getByRole('listitem')).queryByText(/defer\s*[✗—]/)).toBeNull();
 	});
+
+	it('renders the person class as its value, not a boolean mark', async () => {
+		await renderLabel(
+			tag({ verdict: verdict({ criteria: { ...rubric, person_class: 'real_individual' } }) }),
+			'rubric 4/5'
+		);
+		expect(screen.getByText(/person class\s*real individual/)).toBeTruthy();
+	});
 });
 
 describe('ProvisionalReview filters and paging', () => {
@@ -286,6 +294,34 @@ describe('ProvisionalReview filters and paging', () => {
 			replace: true
 		});
 		expect(await screen.findByText('No tags match the current filters.')).toBeTruthy();
+	});
+
+	it('sends a person class as its class value and syncs it to the URL', async () => {
+		page.url.hash = '#provisional';
+		provisionalList.mockResolvedValue({ ok: true, data: { results: [], total: 0 } });
+		render(ProvisionalReview);
+		await waitFor(() => expect(provisionalList).toHaveBeenCalledTimes(1));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Rubric' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'person class: real_individual' }));
+
+		await waitFor(() =>
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({
+					criteria: [{ key: 'person_class', state: 'real_individual' }],
+					states: [],
+					q: '',
+					sort: 'newest',
+					facets: false
+				})
+			)
+		);
+		expect(goto).toHaveBeenLastCalledWith('/tags?prov_criteria=person_class%3Areal_individual#provisional', {
+			shallow: true,
+			replace: true
+		});
 	});
 
 	it('sends a review state to the API and syncs it to the URL', async () => {

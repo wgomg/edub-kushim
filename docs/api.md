@@ -3137,7 +3137,7 @@ TagQualityCriteriaView is the API view of the judge's rubric answers; a nil answ
 | `defer` | boolean (nullable) | yes |
 | `dimension` | boolean (nullable) | yes |
 | `not_form_genre` | boolean (nullable) | yes |
-| `not_person` | boolean (nullable) | yes |
+| `person_class` | string (nullable) | yes |
 | `subject_matter` | boolean (nullable) | yes |
 
 ### TagQualityVerdictInfo

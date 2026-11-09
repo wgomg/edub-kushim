@@ -133,8 +133,8 @@ func TestJudgedOpenAI_EnvelopeAndFencedParse(t *testing.T) {
 	if results[0].Verdict != types.TagVerdicts.Same {
 		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
 	}
-	if results[0].Direction != TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, TagDirectionQuery)
+	if results[0].Direction != types.TagDirectionQuery {
+		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
 	}
 
 	var body map[string]any
@@ -313,8 +313,8 @@ func TestJudgedAnthropic_EnvelopeAndFencedParse(t *testing.T) {
 	if results[0].Verdict != types.TagVerdicts.Same {
 		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
 	}
-	if results[0].Direction != TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, TagDirectionQuery)
+	if results[0].Direction != types.TagDirectionQuery {
+		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
 	}
 
 	var req anthropicRequest
@@ -429,8 +429,8 @@ func TestJudgedOpenAI_BareArrayReply(t *testing.T) {
 	if results[0].Verdict != types.TagVerdicts.Same {
 		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
 	}
-	if results[0].Direction != TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, TagDirectionQuery)
+	if results[0].Direction != types.TagDirectionQuery {
+		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
 	}
 }
 
@@ -469,8 +469,8 @@ func TestJudgedAnthropic_BareArrayReply(t *testing.T) {
 	if results[0].Verdict != types.TagVerdicts.Same {
 		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
 	}
-	if results[0].Direction != TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, TagDirectionQuery)
+	if results[0].Direction != types.TagDirectionQuery {
+		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
 	}
 }
 
@@ -494,7 +494,7 @@ func TestJudgedAnthropic_ParseErrorCarriesModelAndRaw(t *testing.T) {
 
 // partialQualityResponse answers the first of two candidates: the reply is
 // valid JSON with a hole, the omission class a capped model produces.
-const partialQualityResponse = `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
+const partialQualityResponse = `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}]}`
 
 func twoQualityCandidates() []TagQualityCandidate {
 	return []TagQualityCandidate{

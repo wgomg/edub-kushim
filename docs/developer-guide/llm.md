@@ -141,8 +141,10 @@ type AnalysisResult struct {
   the proposal and writes no fold evidence; only `related` candidates reach
   `JudgeTagIdentity`. Used by the tag gate when `enricher.tag_adjudicator.enabled` is true.
 - `JudgeTagQuality` — judges novel tags against the dimension rubric
-  (`subject_matter`, `dimension`, `not_person`, `atomic`,
-  `not_form_genre`, plus the optional `defer` abstention) with a temperature-0
+  (`subject_matter`, `dimension`, `person_class`, `atomic`,
+  `not_form_genre`, plus the optional `defer` abstention); `person_class` answers one of
+  `not_person`, `real_individual`, `mythological_or_legendary`, `fictional` or `uncertain`,
+  and any other value counts as missing. It uses a temperature-0
   request built from
   `BuildTagQualityPrompt` (the reduced document text scoped to the
   `subject_matter` question, plus one line per candidate
@@ -807,21 +809,27 @@ for i := range 2 {
     per document) plus the emission's
     deterministic signals (a detail annotated `other`, and a best store
     similarity below the internal `no_anchor_similarity` 0.60 cut). The rubric
-    asks `subject_matter`, `not_person`, `atomic` and
+    asks `subject_matter`, `person_class`, `atomic` and
     `not_form_genre`, with `defer` as the judge's abstention, while the
     `dimension` verdict is the parts pass's (read from the shared parts cache,
     judged on a miss, and stamped onto the row; a missing or abstained verdict
     defers); the decision defers on abstention, rejects a candidate judged
     neither subject matter nor a dimension as `no_dimension` (definition §3.6's
-    drop leg), rejects two or more failing signals when at least one is
-    judge-owned, defers on a failure set of deterministic signals alone or on
-    exactly one failing signal (the gray band), and admits when nothing fails.
+    drop leg), then resolves the person class — a documented individual rejects
+    as `person_facet` independent of subject matter, while mythological,
+    legendary, fictional and undecided readings defer as `person_review` — and
+    only a tag naming no person reaches the corroborated rules, which reject two
+    or more failing signals when at least one is judge-owned, defer on a failure
+    set of deterministic signals alone or on exactly one failing signal (the gray
+    band), and admit when nothing fails.
     Rejections drop the tag for that document — the registration and its pending
-    identity evidence never reach the store — and log `tagquality[v6]: reject …
-    (reason=corroborated_failures|no_dimension source=judge|cache …)`; defers are
+    identity evidence never reach the store — and log `tagquality[v8]: reject …
+    (reason=corroborated_failures|no_dimension|person_facet source=judge|cache …)`; defers are
     kept and logged too, and admitted
     candidates journal at DEBUG. Works and places are judged by the ordinary
-    dimension criteria, so neither is rejected for being that kind of tag. Fresh verdicts
+    dimension criteria, so neither is rejected for being that kind of tag; the person
+    class is judged on the tag itself, store-globally, and does not depend on the document.
+    Fresh verdicts
     record the judging model and the recorded outcome, cache-applied ones a
     NULL model; cached rows re-run the decision over the stored rubric with the
     current emission's deterministic signals. A transient judge failure retries

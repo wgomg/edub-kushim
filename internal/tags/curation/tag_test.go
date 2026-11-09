@@ -396,7 +396,7 @@ func TestTag_ListProvisionalFilters(t *testing.T) {
 	}
 
 	admitID := seed("prov-filter-admit",
-		`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`,
+		`{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`,
 		true, "admit")
 	failID := seed("prov-filter-fail", `{"atomic":false}`, false, "")
 	deferredID := seed("prov-filter-deferred", `{"defer":true}`, false, "")
@@ -558,7 +558,7 @@ func TestTag_CountProvisionalStateFacets(t *testing.T) {
 
 	// MustCreateTag normalizes names, so the scope prefix carries spaces like the stored names.
 	seed("prov facets admit",
-		`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`,
+		`{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`,
 		true, "admit")
 	seed("prov facets deferred", `{"defer":true}`, false, "")
 	seed("prov facets reject", `{"atomic":false}`, false, "reject")
@@ -644,7 +644,7 @@ func TestTag_LatestQualityEventsForNames(t *testing.T) {
 	database.MustAddDocumentTag(t, client.Queries, docID, tagID)
 
 	// Insert a quality event.
-	criteria := []byte(`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`)
+	criteria := []byte(`{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`)
 	_, err := client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
 		TagName:       "quality-events-tag",
@@ -1268,7 +1268,7 @@ func TestTag_Retire(t *testing.T) {
 
 // deferCriteria is a complete rubric with exactly one failing answer, so
 // DecisionFromStored re-derives the stored defer outcome it was written with.
-const deferCriteria = `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`
+const deferCriteria = `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":false}`
 
 func TestTag_Accept(t *testing.T) {
 	svc, client := newTestTag(t)

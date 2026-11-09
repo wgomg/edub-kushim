@@ -3033,6 +3033,19 @@ func TestListProvisionalFilters(t *testing.T) {
 
 	unjudgedID := seedTag("prov filter unjudged")
 
+	personID := seedTag("prov filter person")
+	personTag, err := env.client.Queries.GetTag(ctx, personID)
+	testutil.AssertNoError(t, err, "read fixture tag")
+	_, err = env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+		DocumentID:    docID,
+		TagName:       personTag.Name,
+		Criteria:      json.RawMessage(`{"subject_matter":true,"dimension":true,"person_class":"real_individual","atomic":true,"not_form_genre":true,"defer":false}`),
+		Pass:          false,
+		VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+		PolicyVersion: analyzer.TagQualityVersion,
+	})
+	testutil.AssertNoError(t, err, "insert quality event")
+
 	contains := func(results []ProvisionalTagResponse, id int64) bool {
 		for _, r := range results {
 			if r.ID == id {
@@ -3084,6 +3097,56 @@ func TestListProvisionalFilters(t *testing.T) {
 		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
 		if !contains(resp.Results, failID) {
 			t.Errorf("atomic:fail + verdict=reject must include tag %d", failID)
+		}
+	})
+
+	t.Run("person_class narrows by class value", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=person_class:real_individual", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
+		if !contains(resp.Results, personID) {
+			t.Errorf("person_class:real_individual must include tag %d", personID)
+		}
+		if contains(resp.Results, failID) || contains(resp.Results, unjudgedID) {
+			t.Errorf("person_class:real_individual must exclude the other fixture tags")
+		}
+	})
+
+	t.Run("person_class absent keeps tags without a class", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=person_class:absent", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(2), "filtered total")
+		if !contains(resp.Results, unjudgedID) {
+			t.Errorf("person_class:absent must include the unjudged tag %d", unjudgedID)
+		}
+		if contains(resp.Results, personID) {
+			t.Errorf("person_class:absent must exclude tag %d", personID)
+		}
+	})
+
+	t.Run("person_class rejects a non-rubric class", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=person_class:maybe", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if !strings.Contains(w.Body.String(), "Invalid criteria filter") {
+			t.Errorf("body = %q, want the criteria error", w.Body.String())
+		}
+	})
+
+	t.Run("the retired not_person key is rejected", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=not_person:pass", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+		if !strings.Contains(w.Body.String(), "Invalid criteria filter") {
+			t.Errorf("body = %q, want the criteria error", w.Body.String())
 		}
 	})
 
@@ -3163,7 +3226,7 @@ func TestListProvisionalFilters(t *testing.T) {
 
 		var resp ProvisionalTagListResponse
 		testutil.AssertNoError(t, json.Unmarshal(body, &resp), "decode")
-		testutil.AssertEqual(t, resp.Total, int64(2), "unfiltered total counts only the linked fixtures")
+		testutil.AssertEqual(t, resp.Total, int64(3), "unfiltered total counts only the linked fixtures")
 		wantPending, err := env.client.Queries.CountPendingTagIdentityEvents(ctx)
 		testutil.AssertNoError(t, err, "count pending identity events")
 		if resp.PendingIdentityTotal != wantPending {
@@ -3817,7 +3880,7 @@ func TestAcceptTag(t *testing.T) {
 		}
 		docID := database.CreateUniqueDocument(t, env.client.Queries, name)
 		database.MustInsertTagQualityEvent(t, env.client.Queries, docID, name,
-			`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`,
+			`{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":false}`,
 			outcome, analyzer.TagQualityVersion)
 		return id
 	}
@@ -4323,7 +4386,7 @@ func TestListProvisionalStateFilter(t *testing.T) {
 		})
 		testutil.AssertNoError(t, err, "insert quality event")
 	}
-	allPass := `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`
+	allPass := `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`
 
 	deferredID := seed("state filter deferred")
 	seedVerdict(deferredID, `{"defer":true}`, false, "")

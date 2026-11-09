@@ -3,10 +3,12 @@ package tags
 import (
 	"testing"
 	"time"
+
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func TestDecideAdmission(t *testing.T) {
-	admissible := AdmissionFeatures{SubjectMatter: true, Dimension: true, NotPerson: true, Atomic: true, NotFormGenre: true}
+	admissible := AdmissionFeatures{SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassNotPerson, Atomic: true, NotFormGenre: true}
 
 	cases := []struct {
 		name        string
@@ -78,6 +80,57 @@ func TestDecideAdmission(t *testing.T) {
 			f.NoAnchor = true
 			return f
 		}(), AdmissionReject, ReasonCorroborated},
+		{"a documented individual rejects as person_facet", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassRealIndividual
+			return f
+		}(), AdmissionReject, ReasonPersonFacet},
+		{"person_facet does not depend on subject_matter", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassRealIndividual
+			f.SubjectMatter = false
+			return f
+		}(), AdmissionReject, ReasonPersonFacet},
+		{"a mythological class defers as person_review", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassMythologicalOrLegendary
+			return f
+		}(), AdmissionDefer, ReasonPersonReview},
+		{"a fictional class defers as person_review", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassFictional
+			return f
+		}(), AdmissionDefer, ReasonPersonReview},
+		{"an undecided class defers as person_review", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassUncertain
+			return f
+		}(), AdmissionDefer, ReasonPersonReview},
+		{"a missing class defers as person_review", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = ""
+			return f
+		}(), AdmissionDefer, ReasonPersonReview},
+		{"person_review outranks corroborated failures", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassMythologicalOrLegendary
+			f.Atomic = false
+			f.NotFormGenre = false
+			return f
+		}(), AdmissionDefer, ReasonPersonReview},
+		{"judge abstention outranks person_facet", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassRealIndividual
+			f.JudgeDefer = true
+			return f
+		}(), AdmissionDefer, ReasonJudgeDefer},
+		{"no_dimension outranks person_facet", func() AdmissionFeatures {
+			f := admissible
+			f.PersonClass = types.PersonClassRealIndividual
+			f.SubjectMatter = false
+			f.Dimension = false
+			return f
+		}(), AdmissionReject, ReasonNoDimension},
 	}
 
 	for _, tc := range cases {

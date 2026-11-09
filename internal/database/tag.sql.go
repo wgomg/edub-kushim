@@ -194,7 +194,7 @@ FROM (
       AND ($11::text = ''
            OR coalesce(qe.criteria ->> 'dimension', 'absent') = $11::text)
       AND ($12::text = ''
-           OR coalesce(qe.criteria ->> 'not_person', 'absent') = $12::text)
+           OR coalesce(qe.criteria ->> 'person_class', 'absent') = $12::text)
       AND ($13::text = ''
            OR coalesce(qe.criteria ->> 'atomic', 'absent') = $13::text)
       AND ($14::text = ''
@@ -216,7 +216,7 @@ type CountProvisionalTagsParams struct {
 	NamePrefix             string
 	SubjectMatterState     string
 	DimensionState         string
-	NotPersonState         string
+	PersonClass            string
 	AtomicState            string
 	NotFormGenreState      string
 	DeferState             string
@@ -255,7 +255,7 @@ func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisional
 		arg.NamePrefix,
 		arg.SubjectMatterState,
 		arg.DimensionState,
-		arg.NotPersonState,
+		arg.PersonClass,
 		arg.AtomicState,
 		arg.NotFormGenreState,
 		arg.DeferState,
@@ -871,7 +871,7 @@ FROM (
       AND ($9::text = ''
            OR coalesce(qe.criteria ->> 'dimension', 'absent') = $9::text)
       AND ($10::text = ''
-           OR coalesce(qe.criteria ->> 'not_person', 'absent') = $10::text)
+           OR coalesce(qe.criteria ->> 'person_class', 'absent') = $10::text)
       AND ($11::text = ''
            OR coalesce(qe.criteria ->> 'atomic', 'absent') = $11::text)
       AND ($12::text = ''
@@ -929,7 +929,7 @@ type ListProvisionalTagsWithDocumentCountParams struct {
 	NamePrefix             string
 	SubjectMatterState     string
 	DimensionState         string
-	NotPersonState         string
+	PersonClass            string
 	AtomicState            string
 	NotFormGenreState      string
 	DeferState             string
@@ -964,7 +964,7 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 		arg.NamePrefix,
 		arg.SubjectMatterState,
 		arg.DimensionState,
-		arg.NotPersonState,
+		arg.PersonClass,
 		arg.AtomicState,
 		arg.NotFormGenreState,
 		arg.DeferState,

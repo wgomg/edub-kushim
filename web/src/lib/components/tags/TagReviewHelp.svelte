@@ -69,6 +69,8 @@
 		'part_rejected',
 		'judge_defer',
 		'corroborated_failures',
+		'person_facet',
+		'person_review',
 		'deterministic_only',
 		'single_signal',
 		'operator'

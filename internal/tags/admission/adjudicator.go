@@ -1107,7 +1107,7 @@ func DecisionFromStored(criteria json.RawMessage, pass bool, features tags.Admis
 func JudgeFeatures(r analyzer.TagQualityResult, f tags.AdmissionFeatures) tags.AdmissionFeatures {
 	f.SubjectMatter = r.SubjectMatter
 	f.Dimension = r.Dimension
-	f.NotPerson = r.NotPerson
+	f.PersonClass = r.PersonClass
 	f.Atomic = r.Atomic
 	f.NotFormGenre = r.NotFormGenre
 	f.JudgeDefer = r.Defer

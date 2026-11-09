@@ -881,7 +881,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
-				results[i] = analyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Same, Direction: analyzer.TagDirectionQuery}
+				results[i] = analyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Same, Direction: types.TagDirectionQuery}
 			}
 			return results, nil
 		}
@@ -891,7 +891,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
-		adjAssertEqual(t, p.direction, analyzer.TagDirectionQuery, "direction recorded")
+		adjAssertEqual(t, p.direction, types.TagDirectionQuery, "direction recorded")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "cached verdict rows")
 	})
 
@@ -930,7 +930,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		a, q, adj := newTestAdjudicator(t)
 		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
-			results[0] = analyzer.TagVerdictResult{Index: 0, Verdict: types.TagVerdicts.Same, Direction: analyzer.TagDirectionQuery}
+			results[0] = analyzer.TagVerdictResult{Index: 0, Verdict: types.TagVerdicts.Same, Direction: types.TagDirectionQuery}
 			return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
 		}
 
@@ -1045,7 +1045,7 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 		t.Fatalf("create test document: %v", err)
 	}
 
-	criteria := json.RawMessage(`{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`)
+	criteria := json.RawMessage(`{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`)
 
 	n, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 		DocumentID:    docID,
@@ -1135,15 +1135,15 @@ func TestTagQualityEvent_InsertAndCacheRead(t *testing.T) {
 }
 
 func TestDecisionFromStored(t *testing.T) {
-	rubric := func(subject, dimension, notPersonPlace, atomic, deferJudge bool) json.RawMessage {
+	rubric := func(subject, dimension, atomic, deferJudge bool) json.RawMessage {
 		return json.RawMessage(`{"subject_matter":` + boolJSON(subject) +
 			`,"dimension":` + boolJSON(dimension) +
-			`,"not_person":` + boolJSON(notPersonPlace) +
+			`,"person_class":"not_person"` +
 			`,"atomic":` + boolJSON(atomic) +
 			`,"not_form_genre":true` +
 			`,"defer":` + boolJSON(deferJudge) + `}`)
 	}
-	legacy := json.RawMessage(`{"subject_matter":true,"standard_term":true,"not_person":true,"appropriately_broad":true}`)
+	legacy := json.RawMessage(`{"subject_matter":true,"standard_term":true,"person_class":"not_person","appropriately_broad":true}`)
 
 	cases := []struct {
 		name       string
@@ -1153,12 +1153,12 @@ func TestDecisionFromStored(t *testing.T) {
 		want       tags.AdmissionOutcome
 		wantReason string
 	}{
-		{"rubric with no failures admits whatever pass says", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{}, tags.AdmissionAdmit, tags.ReasonAdmitted},
-		{"one failing rubric answer defers whatever pass says", rubric(true, false, true, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonSingleSignal},
-		{"two failing rubric answers reject as no_dimension", rubric(false, false, true, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionReject, tags.ReasonNoDimension},
-		{"stored abstention defers", rubric(true, true, true, true, true), false, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonJudgeDefer},
-		{"caller deterministic signal joins the rubric", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true}, tags.AdmissionDefer, tags.ReasonSingleSignal},
-		{"caller deterministic signals alone defer the rubric", rubric(true, true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true, NoAnchor: true}, tags.AdmissionDefer, tags.ReasonDeterministicOnly},
+		{"rubric with no failures admits whatever pass says", rubric(true, true, true, false), false, tags.AdmissionFeatures{}, tags.AdmissionAdmit, tags.ReasonAdmitted},
+		{"one failing rubric answer defers whatever pass says", rubric(true, false, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonSingleSignal},
+		{"two failing rubric answers reject as no_dimension", rubric(false, false, true, false), true, tags.AdmissionFeatures{}, tags.AdmissionReject, tags.ReasonNoDimension},
+		{"stored abstention defers", rubric(true, true, true, true), false, tags.AdmissionFeatures{}, tags.AdmissionDefer, tags.ReasonJudgeDefer},
+		{"caller deterministic signal joins the rubric", rubric(true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true}, tags.AdmissionDefer, tags.ReasonSingleSignal},
+		{"caller deterministic signals alone defer the rubric", rubric(true, true, true, false), false, tags.AdmissionFeatures{CategoryOther: true, NoAnchor: true}, tags.AdmissionDefer, tags.ReasonDeterministicOnly},
 		{"legacy rubric maps pass to admit", legacy, true, tags.AdmissionFeatures{}, tags.AdmissionAdmit, reasonLegacyPass},
 		{"legacy rubric maps pass to reject", legacy, false, tags.AdmissionFeatures{}, tags.AdmissionReject, reasonLegacyReject},
 		{"malformed criteria map pass to reject", json.RawMessage("not json"), false, tags.AdmissionFeatures{}, tags.AdmissionReject, reasonLegacyReject},
@@ -1192,7 +1192,7 @@ func TestApplyTagQuality(t *testing.T) {
 				Index:         i,
 				SubjectMatter: true,
 				Dimension:     true,
-				NotPerson:     true,
+				PersonClass:   types.PersonClassNotPerson,
 				Atomic:        true,
 				NotFormGenre:  true,
 			}
@@ -1286,7 +1286,7 @@ func TestApplyTagQuality(t *testing.T) {
 		if _, err := q2.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
 			DocumentID:    docID,
 			TagName:       "cached candidate",
-			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":false,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}`),
+			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":false,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`),
 			Pass:          false,
 			Outcome:       sql.NullString{String: "reject", Valid: true},
 			VerdictModel:  sql.NullString{String: "seed-model", Valid: true},
@@ -1373,7 +1373,7 @@ func TestApplyTagQuality_PartialSalvage(t *testing.T) {
 				Index:         i,
 				SubjectMatter: true,
 				Dimension:     true,
-				NotPerson:     true,
+				PersonClass:   types.PersonClassNotPerson,
 				Atomic:        true,
 				NotFormGenre:  true,
 			}
@@ -1461,7 +1461,7 @@ func TestApplyTagQuality_BatchesJudgeCalls(t *testing.T) {
 				Index:         i,
 				SubjectMatter: true,
 				Dimension:     true,
-				NotPerson:     true,
+				PersonClass:   types.PersonClassNotPerson,
 				Atomic:        true,
 				NotFormGenre:  true,
 			}
@@ -1492,6 +1492,86 @@ func TestApplyTagQuality_BatchesJudgeCalls(t *testing.T) {
 	adjAssertEqual(t, adj.qualityCall, 2, "the candidate list is split across bounded calls")
 	adjAssertEqual(t, len(decisions), n, "every candidate carries a decision")
 	adjAssertEqual(t, len(kept), n, "no candidate is dropped by the batching")
+}
+
+// TestApplyTagQuality_PersonGateway pins the person branch end to end through the gate: a documented
+// individual drops the tag with a person_facet rejection row, while a non-real class keeps it under a
+// person_review defer whose stored criteria re-derive to the same outcome.
+func TestApplyTagQuality_PersonGateway(t *testing.T) {
+	cases := []struct {
+		name        string
+		personClass string
+		wantKept    bool
+		wantOutcome string
+		wantReason  string
+	}{
+		{"a documented individual rejects", types.PersonClassRealIndividual, false, "reject", tags.ReasonPersonFacet},
+		{"a mythological class holds for review", types.PersonClassMythologicalOrLegendary, true, "defer", tags.ReasonPersonReview},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, q, adj := newTestAdjudicator(t)
+			a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+			setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+
+			adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+				results := make([]analyzer.TagQualityResult, len(candidates))
+				for i, c := range candidates {
+					results[i] = analyzer.TagQualityResult{
+						Index:         c.Index,
+						SubjectMatter: true,
+						Dimension:     true,
+						PersonClass:   tc.personClass,
+						Atomic:        true,
+						NotFormGenre:  true,
+					}
+				}
+				return results, nil
+			}
+			adj.partFn = partsDimensional
+			ctx := context.Background()
+			docID, _ := database.CreateTestDocument(t, q, "person-gateway-doc")
+
+			const name = "marie curie"
+			analysis := &tools.ContentAnalysisResult{
+				Tags:       []string{name},
+				TagDetails: []analyzer.TagDetail{{Term: name, Category: analyzer.TagCategoryTopic}},
+			}
+			kept, decisions, err := a.ApplyTagQuality(ctx, TagQualityInput{Analysis: analysis, DBNames: map[string]struct{}{}, ReducedText: "text", DocID: docID}, "")
+			if err != nil {
+				t.Fatalf("ApplyTagQuality() error = %v", err)
+			}
+
+			if tc.wantKept {
+				adjAssertEqual(t, len(kept), 1, "kept contains the deferred tag")
+				adjAssertEqual(t, kept[0], name, "kept tag name")
+				decision, ok := decisions[name]
+				if !ok {
+					t.Fatalf("decisions missing %q", name)
+				}
+				adjAssertEqual(t, decision.Outcome.String(), "defer", "decision outcome")
+				adjAssertEqual(t, decision.Reason, tc.wantReason, "decision reason")
+			} else {
+				adjAssertEqual(t, len(kept), 0, "a person_facet reject drops the tag")
+				if _, ok := decisions[name]; ok {
+					t.Errorf("a rejected tag carries no decision: %v", decisions[name])
+				}
+			}
+
+			rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+				PolicyVersion: analyzer.TagQualityVersion,
+				TagNames:      []string{name},
+			})
+			if err != nil {
+				t.Fatalf("read quality row: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("quality rows for %q = %d, want 1", name, len(rows))
+			}
+			adjAssertEqual(t, rows[0].Outcome.String, tc.wantOutcome, "quality outcome")
+			adjAssertEqual(t, rows[0].Pass, false, "quality pass")
+		})
+	}
 }
 
 func partsDimensional(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
@@ -2582,7 +2662,7 @@ func TestPlanIdentity_StoreLoserRegistersAsPairAlias(t *testing.T) {
 		return []analyzer.TagVerdictResult{{
 			Index:     0,
 			Verdict:   types.TagVerdicts.Same,
-			Direction: analyzer.TagDirectionQuery,
+			Direction: types.TagDirectionQuery,
 		}}, nil
 	}
 
@@ -2706,7 +2786,7 @@ func TestApplyTagQuality_ForceDefer(t *testing.T) {
 			results[i] = analyzer.TagQualityResult{
 				Index:         i,
 				SubjectMatter: true,
-				NotPerson:     true,
+				PersonClass:   types.PersonClassNotPerson,
 				Atomic:        true,
 				NotFormGenre:  true,
 			}
@@ -2758,8 +2838,8 @@ func TestApplyTagQuality_MissingPartsVerdictDefers(t *testing.T) {
 			results[i] = analyzer.TagQualityResult{
 				Index:         i,
 				SubjectMatter: true,
-				NotPerson:     false,
-				Atomic:        true,
+				PersonClass:   types.PersonClassNotPerson,
+				Atomic:        false,
 				NotFormGenre:  true,
 			}
 		}

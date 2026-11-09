@@ -476,7 +476,7 @@ func TestPromoteEligible_Acceptance(t *testing.T) {
 	ctx := context.Background()
 	e := NewEnricher(&config.Config{Enricher: config.EnricherConfig{TagReconcile: config.TagReconcileConfig{RecurrenceFloor: 10}}}, logger, client, curation.NewTag(client, logger, nil), &barMatcher{})
 
-	const deferCriteria = `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`
+	const deferCriteria = `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":false}`
 	seed := func(t *testing.T, name string, accepted bool) types.CreateResult[database.Tag] {
 		t.Helper()
 		id := database.MustCreateTag(t, client.Queries, name)

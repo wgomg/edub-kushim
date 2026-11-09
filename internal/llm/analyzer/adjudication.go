@@ -16,21 +16,12 @@ type TagPairEvidence struct {
 }
 
 // TagVerdictResult is the adjudicator's answer for one pair: the verdict
-// and, when it is same, the direction.
+// and, when it is same, the direction (types.TagDirection* values).
 type TagVerdictResult struct {
 	Index     int
 	Verdict   types.TagVerdict
 	Direction string
 }
-
-// The directions a same verdict can carry: which term's standard sense
-// is exactly the dimension; a tie leaves the choice to the deterministic
-// tie-break.
-const (
-	TagDirectionQuery  = "query"
-	TagDirectionTarget = "target"
-	TagDirectionTie    = "tie"
-)
 
 // AdjudicationSystemMessage is the system prompt of the pair
 // adjudication call.
@@ -96,7 +87,7 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 		results[idx].Verdict = v
 		present[idx] = true
 		switch p.Direction {
-		case TagDirectionQuery, TagDirectionTarget, TagDirectionTie:
+		case types.TagDirectionQuery, types.TagDirectionTarget, types.TagDirectionTie:
 			results[idx].Direction = p.Direction
 		}
 	}

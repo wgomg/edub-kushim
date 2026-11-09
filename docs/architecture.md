@@ -386,13 +386,18 @@ The enrichment pipeline:
    and stamped onto the row) plus the emission's deterministic
    signals (a detail annotated `other`, and a best store similarity below the
    internal `no_anchor_similarity` 0.60 cut). The rubric asks
-   `subject_matter`, `not_person`, `atomic` and
+   `subject_matter`, `person_class`, `atomic` and
    `not_form_genre`, and offers `defer` as an abstention, while a missing or
    abstained parts verdict defers rather than counting as a failing dimension; the decision
    defers on the judge's abstention, admits when nothing fails, defers on a lone failing
    signal or on a failure set of deterministic signals alone, and rejects when two or more
    signals fail with at least one judge-owned — subject matter and dimension both failing
-   rejects as `no_dimension` (definition §3.6's drop leg) — no single signal decides. Verdicts
+   rejects as `no_dimension` (definition §3.6's drop leg). The person class owns its own
+   disposition ahead of that ladder: a documented individual rejects as `person_facet`
+   independent of subject matter, while mythological, legendary, fictional and undecided
+   readings defer as `person_review`, so only a name classified as naming no person reaches
+   the corroborated rules — no single boolean signal decides, the classified person answer
+   being the one structured exception (definition §8 item 12). Verdicts
    are cached per `(tag_name, policy_version)` in `tag_quality_event` with the
    recorded outcome, so a re-emitted name resolves without a call; a rejected
    name drops the tag for that document only — its registration and pending

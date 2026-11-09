@@ -146,16 +146,16 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 }
 
 // ProvisionalFilter narrows the provisional queue by name prefix, rubric criterion state, verdict class
-// and review state; an empty field leaves that dimension unfiltered. The individual criterion fields
-// carry 'true', 'false' or 'absent', the Verdict carries 'none', 'admit', 'defer' or 'reject', and the
-// States field holds values from ProvisionalStateValues whose multiple entries combine as alternatives,
-// with the legacy Verdict dimension staying independent of States. OldestFirst reverses the default
-// newest-first page order.
+// and review state; an empty field leaves that dimension unfiltered. The boolean criterion fields carry
+// 'true', 'false' or 'absent', PersonClass carries one of the rubric's five class values or 'absent',
+// the Verdict carries 'none', 'admit', 'defer' or 'reject', and the States field holds the values from
+// ProvisionalStateValues list whose multiple entries combine as alternatives, with the legacy Verdict
+// dimension staying independent of States. OldestFirst reverses the default newest-first page order.
 type ProvisionalFilter struct {
 	NamePrefix    string
 	SubjectMatter string
 	Dimension     string
-	NotPerson     string
+	PersonClass   string
 	Atomic        string
 	NotFormGenre  string
 	Defer         string
@@ -212,7 +212,7 @@ func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, lim
 		NamePrefix:             filter.NamePrefix,
 		SubjectMatterState:     filter.SubjectMatter,
 		DimensionState:         filter.Dimension,
-		NotPersonState:         filter.NotPerson,
+		PersonClass:            filter.PersonClass,
 		AtomicState:            filter.Atomic,
 		NotFormGenreState:      filter.NotFormGenre,
 		DeferState:             filter.Defer,
@@ -243,7 +243,7 @@ func (s *Tag) CountProvisional(ctx context.Context, filter ProvisionalFilter, fa
 		NamePrefix:             filter.NamePrefix,
 		SubjectMatterState:     filter.SubjectMatter,
 		DimensionState:         filter.Dimension,
-		NotPersonState:         filter.NotPerson,
+		PersonClass:            filter.PersonClass,
 		AtomicState:            filter.Atomic,
 		NotFormGenreState:      filter.NotFormGenre,
 		DeferState:             filter.Defer,

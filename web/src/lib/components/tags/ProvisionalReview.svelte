@@ -497,24 +497,45 @@
 		provisional.reload();
 	}
 
+	const PERSON_CLASS_LABELS = {
+		not_person: 'not person',
+		real_individual: 'real individual',
+		mythological_or_legendary: 'myth/legend',
+		fictional: 'fictional',
+		uncertain: 'uncertain'
+	};
+
 	function criterionMark(value) {
 		if (value === true) return '✓';
 		if (value === false) return '✗';
 		return '—';
 	}
 
-	function criterionClass(value) {
+	function criterionDisplay(c, value) {
+		return c.key === 'person_class' ? (PERSON_CLASS_LABELS[value] ?? '—') : criterionMark(value);
+	}
+
+	function criterionPassed(c, value) {
+		return c.key === 'person_class' ? value === 'not_person' : value === true;
+	}
+
+	function criterionClass(c, value) {
+		if (c.key === 'person_class') {
+			if (value === 'not_person') return 'bg-emerald-600/20 text-emerald-500';
+			if (value === 'real_individual') return 'bg-clay-800 text-terracotta-500';
+			return 'bg-amber-600/20 text-amber-400';
+		}
 		if (value === true) return 'bg-emerald-600/20 text-emerald-500';
 		if (value === false) return 'bg-clay-800 text-terracotta-500';
 		return 'bg-clay-800 text-parchment-600';
 	}
 
 	function passingCount(tag) {
-		return rubricCriteria.filter((c) => tag.verdict.criteria?.[c.key] === true).length;
+		return rubricCriteria.filter((c) => criterionPassed(c, tag.verdict.criteria?.[c.key])).length;
 	}
 
 	function failingCriteria(tag) {
-		return rubricCriteria.filter((c) => tag.verdict.criteria?.[c.key] !== true);
+		return rubricCriteria.filter((c) => !criterionPassed(c, tag.verdict.criteria?.[c.key]));
 	}
 
 	function rubricSummary(tag) {
@@ -526,7 +547,7 @@
 
 	function rubricTitle(tag) {
 		const detail = rubricCriteria
-			.map((c) => `${c.label} ${criterionMark(tag.verdict.criteria?.[c.key])}`)
+			.map((c) => `${c.label} ${criterionDisplay(c, tag.verdict.criteria?.[c.key])}`)
 			.join(', ');
 		const defer = tag.verdict.criteria?.defer;
 		const deferDetail =
@@ -767,9 +788,9 @@
 					{#if tag.verdict?.criteria}
 						<div class="flex flex-wrap items-center gap-1.5" title={rubricTitle(tag)}>
 							{#each failingCriteria(tag) as c (c.key)}
-								<span class="{criteriaPill} {criterionClass(tag.verdict.criteria?.[c.key])}">
+								<span class="{criteriaPill} {criterionClass(c, tag.verdict.criteria?.[c.key])}">
 									{c.label}
-									{criterionMark(tag.verdict.criteria?.[c.key])}
+									{criterionDisplay(c, tag.verdict.criteria?.[c.key])}
 								</span>
 							{/each}
 							<span class={summaryPill}>{rubricSummary(tag)}</span>

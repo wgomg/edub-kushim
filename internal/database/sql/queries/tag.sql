@@ -239,8 +239,8 @@ FROM (
            OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
       AND (@dimension_state::text = ''
            OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
-      AND (@not_person_state::text = ''
-           OR coalesce(qe.criteria ->> 'not_person', 'absent') = @not_person_state::text)
+      AND (@person_class::text = ''
+           OR coalesce(qe.criteria ->> 'person_class', 'absent') = @person_class::text)
       AND (@atomic_state::text = ''
            OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
       AND (@not_form_genre_state::text = ''
@@ -432,8 +432,8 @@ FROM (
            OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
       AND (@dimension_state::text = ''
            OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
-      AND (@not_person_state::text = ''
-           OR coalesce(qe.criteria ->> 'not_person', 'absent') = @not_person_state::text)
+      AND (@person_class::text = ''
+           OR coalesce(qe.criteria ->> 'person_class', 'absent') = @person_class::text)
       AND (@atomic_state::text = ''
            OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
       AND (@not_form_genre_state::text = ''

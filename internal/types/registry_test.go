@@ -42,6 +42,25 @@ func TestValid(t *testing.T) {
 	}
 }
 
+func TestValidPersonClass(t *testing.T) {
+	cases := map[string]bool{
+		PersonClassNotPerson:               true,
+		PersonClassRealIndividual:          true,
+		PersonClassMythologicalOrLegendary: true,
+		PersonClassFictional:               true,
+		PersonClassUncertain:               true,
+		"":                                 false,
+		"person":                           false,
+		"real":                             false,
+		"REAL_INDIVIDUAL":                  false,
+	}
+	for class, want := range cases {
+		if got := ValidPersonClass(class); got != want {
+			t.Errorf("ValidPersonClass(%q) = %v, want %v", class, got, want)
+		}
+	}
+}
+
 func TestParseRoundTrip(t *testing.T) {
 	for _, st := range allTaskStatuses {
 		got, err := ParseTaskStatus(string(st))

@@ -65,10 +65,12 @@ vocabulary, and the sweeps keep working.
 Review exists because three different questions are judged automatically, and each can come out
 uncertain:
 
-- **Quality (admission) judge** — is this string a subject matter or a dimension, is it atomic, is it
-  not a person, not a publishing format? Its answers decide admit, defer or reject, and are shown as
-  the verdict badge and a rubric line under each queue entry — the failing checks plus a score, with
-  every criterion on hover.
+- **Quality (admission) judge** — is this string a subject matter or a dimension, is it atomic,
+  does it name a person, is it not a publishing format? Its answers decide admit, defer or reject,
+  and are shown as the verdict badge and a rubric line under each queue entry — the failing checks
+  plus a score, with every criterion on hover. A documented individual's name is rejected on the
+  person question alone; a mythological, legendary, fictional or unclear person reading is held
+  for review instead.
 - **Identity judge** — is this name the same concept as an existing value, just spelled or formed
   differently? Confirmed identities become aliases (see below); refused ones leave a **hold** for a
   person to resolve.
@@ -114,6 +116,8 @@ matching section of the guide.
 | `part_rejected` | every part of the decided split was rejected |
 | `judge_defer` | deferred by the current criteria |
 | `corroborated_failures` | rejected by the current criteria |
+| `person_facet` | the name belongs to a documented individual (the people facet) |
+| `person_review` | the person reading (mythological, legendary, fictional or unclear) was held for review |
 | `deterministic_only` | deferred on deterministic signals alone |
 | `single_signal` | deferred on a single failing signal |
 | `operator` | an editor demoted it from the Vocabulary tab |

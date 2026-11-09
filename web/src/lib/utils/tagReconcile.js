@@ -41,6 +41,8 @@ export const demotionReasonLabels = {
 	part_rejected: 'every part of it was rejected',
 	rejudged: 're-judged',
 	corroborated_failures: 'rejected by the current criteria',
+	person_facet: 'belongs to a documented individual',
+	person_review: 'held for review on the person question',
 	deterministic_only: 'deferred by the deterministic signals alone',
 	single_signal: 'deferred on a single signal',
 	judge_defer: 'deferred by the current criteria',

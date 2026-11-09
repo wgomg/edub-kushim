@@ -257,8 +257,10 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
    their latest rubric verdict, `pending_identity_total`, and `state_values` (the accepted
    review-state vocabulary). Filter it with:
 
-   - `criteria=key:state[,key:state…]` — keys `subject_matter`, `dimension`, `not_person`,
-     `atomic`, `not_form_genre`, `defer`; states `pass`, `fail`, `absent`. Pairs combine with
+   - `criteria=key:state[,key:state…]` — the boolean keys `subject_matter`, `dimension`,
+     `atomic`, `not_form_genre` and `defer` take `pass`, `fail` or `absent`; the
+     `person_class` key takes `not_person`, `real_individual`,
+     `mythological_or_legendary`, `fictional`, `uncertain` or `absent`. Pairs combine with
      AND. **Send one comma-separated value**: the server reads a single value per key and
      splits on commas, so repeated `criteria=` keys silently keep only the first. Unknown keys
      or states answer `400 Invalid criteria filter`.

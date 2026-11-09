@@ -18,5 +18,6 @@ protects against.
 | 0009 | [LLM catalogs: seed once, user edits authoritative](0009-llm-catalogs-seed-once-user-edits-authoritative.md) | accepted |
 | 0010 | [Document type: described candidates, head/tail refinement](0010-document-type-described-candidates-head-tail-refinement.md) | accepted |
 | 0011 | [Intake dedup by content hash](0011-intake-dedup-by-content-hash.md) | accepted |
+| 0012 | [Shared tag vocabulary lives in internal/types](0012-shared-tag-vocabulary-lives-in-types.md) | accepted |
 
 Living docs that depend on these decisions link here instead of restating them.

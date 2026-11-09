@@ -880,7 +880,7 @@ func TestSweepProvisionalTags_Acceptance(t *testing.T) {
 	t.Cleanup(func() { client.DB().Close() })
 	logger := testutil.NewTestLogger()
 
-	const deferCriteria = `{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":false}`
+	const deferCriteria = `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":false}`
 	seed := func(t *testing.T, name string, docs int, accepted bool) int64 {
 		t.Helper()
 		id := database.MustCreateTag(t, client.Queries, name)

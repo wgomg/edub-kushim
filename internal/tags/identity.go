@@ -13,8 +13,8 @@ import (
 	"github.com/blevesearch/snowballstem"
 	"github.com/blevesearch/snowballstem/english"
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // IdentityRuleSetVersion pins the birth-time identity rules and the judging body's criteria text; bump
@@ -1109,9 +1109,9 @@ func PreferCanonical(a, b string) string {
 // change to J4 is made once.
 func CanonicalLoser(direction, query, target string) (winner, loser string) {
 	switch direction {
-	case analyzer.TagDirectionTarget:
+	case types.TagDirectionTarget:
 		return target, query
-	case analyzer.TagDirectionQuery:
+	case types.TagDirectionQuery:
 		return query, target
 	}
 	if PreferCanonical(query, target) == query {

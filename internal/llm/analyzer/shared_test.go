@@ -845,7 +845,7 @@ func TestParseAdjudicationResponse(t *testing.T) {
 			content: `{"pairs":[{"verdict":"same","direction":"query"},{"verdict":"variant"}]}`,
 			n:       2,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: same, Direction: TagDirectionQuery},
+				{Index: 0, Verdict: same, Direction: types.TagDirectionQuery},
 				{Index: 1, Verdict: variant},
 			},
 		},
@@ -1598,19 +1598,19 @@ func TestBuildTagQualityPrompt(t *testing.T) {
 	if strings.Contains(prompt, "whitelisted") {
 		t.Error("prompt still carries a whitelist carve-out")
 	}
-	// Criterion 2 now asks the person question alone.
-	if !strings.Contains(prompt, "2. not_person: is the tag not a person?") {
-		t.Error("prompt missing the person-only criterion")
+	// Criterion 2 carries the five-class person question.
+	if !strings.Contains(prompt, "2. person_class: does the tag name a person") {
+		t.Error("prompt missing the person-class criterion")
 	}
-	// Must contain the four criteria, the abstention and the response format.
-	for _, kw := range []string{"subject_matter", "not_person", "atomic", "not_form_genre", "defer", "JSON"} {
+	// Must contain the criteria, the abstention and the response format.
+	for _, kw := range []string{"subject_matter", "person_class", "atomic", "not_form_genre", "defer", "JSON"} {
 		if !strings.Contains(prompt, kw) {
 			t.Errorf("prompt missing keyword %q", kw)
 		}
 	}
 	// The rubric must ask four numbered questions: the dimension question moved to the parts pass.
-	if !strings.Contains(prompt, "four yes/no questions") {
-		t.Error("prompt missing the four-question count")
+	if !strings.Contains(prompt, "answer the rubric against the definition above") {
+		t.Error("prompt missing the rubric framing")
 	}
 	if !strings.Contains(prompt, "4. not_form_genre") {
 		t.Error("prompt missing the fourth numbered question")
@@ -1656,7 +1656,7 @@ func TestBuildTagQualityPrompt_NarrowsTheDocumentToOneQuestion(t *testing.T) {
 		"Document for question 1:",
 		"1. subject_matter: is the tag a subject matter of the document",
 		"something this document is about",
-		"2. not_person: is the tag not a person?",
+		"2. person_class: does the tag name a person",
 		"3. atomic: is the tag one dimension rather than a pre-coordination",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -1733,8 +1733,8 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 	// Simulate a well-formed LLM response.
 	allTrue := `{"tags":[
-		{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false},
-		{"index":1,"subject_matter":false,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}
+		{"index":0,"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false},
+		{"index":1,"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}
 	]}`
 	results, err := ParseTagQualityResponse(allTrue, len(candidates))
 	if err != nil {
@@ -1743,7 +1743,7 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
-	if !results[0].SubjectMatter || !results[0].Dimension || !results[0].NotPerson || !results[0].Atomic || !results[0].NotFormGenre || results[0].Defer {
+	if !results[0].SubjectMatter || !results[0].Dimension || results[0].PersonClass != types.PersonClassNotPerson || !results[0].Atomic || !results[0].NotFormGenre || results[0].Defer {
 		t.Errorf("candidate 0 answers = %+v, want all criteria true and no defer", results[0])
 	}
 	if results[1].SubjectMatter || !results[1].Dimension {
@@ -1759,7 +1759,7 @@ func TestParseTagQualityResponse_RoundTrip(t *testing.T) {
 
 func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	// Only 1 of 2 candidates returned — must error.
-	partial := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}]}`
+	partial := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}]}`
 	results, err := ParseTagQualityResponse(partial, 2)
 	if err == nil {
 		t.Fatal("expected error for missing index, got nil")
@@ -1778,14 +1778,14 @@ func TestParseTagQualityResponse_MissingIndex(t *testing.T) {
 	if !results[0].SubjectMatter || !results[0].Dimension {
 		t.Errorf("index 0 answers = %+v, want them populated", results[0])
 	}
-	if results[1].SubjectMatter || results[1].Dimension || results[1].NotPerson || results[1].Atomic || results[1].NotFormGenre || results[1].Defer {
+	if results[1].SubjectMatter || results[1].Dimension || results[1].PersonClass != "" || results[1].Atomic || results[1].NotFormGenre || results[1].Defer {
 		t.Errorf("index 1 answers = %+v, want zero-valued (all false)", results[1])
 	}
 }
 
 func TestParseTagQualityResponse_IncompleteVerdict(t *testing.T) {
 	// One criterion omitted (nil) — must error.
-	incomplete := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true}]}`
+	incomplete := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"person_class":"not_person"}]}`
 	_, err := ParseTagQualityResponse(incomplete, 1)
 	if err == nil {
 		t.Fatal("expected error for incomplete verdict, got nil")
@@ -1793,7 +1793,7 @@ func TestParseTagQualityResponse_IncompleteVerdict(t *testing.T) {
 }
 
 func TestParseTagQualityResponse_DeferKey(t *testing.T) {
-	abstained := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":true}]}`
+	abstained := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":true}]}`
 	results, err := ParseTagQualityResponse(abstained, 1)
 	if err != nil {
 		t.Fatalf("parse abstained: %v", err)
@@ -1802,7 +1802,7 @@ func TestParseTagQualityResponse_DeferKey(t *testing.T) {
 		t.Error("defer=true must read as the judge's abstention")
 	}
 
-	omitted := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}]}`
+	omitted := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}]}`
 	results, err = ParseTagQualityResponse(omitted, 1)
 	if err != nil {
 		t.Fatalf("parse omitted defer: %v", err)
@@ -1819,11 +1819,36 @@ func TestParseTagQualityResponse_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestParseTagQualityResponse_PersonClassGate pins the v8 malformed-class contract: a person_class outside
+// the five rubric answers and the retired boolean not_person key both count as a missing verdict, so a
+// reply the parser cannot classify defers instead of ever reading as a confident rejection.
+func TestParseTagQualityResponse_PersonClassGate(t *testing.T) {
+	cases := map[string]string{
+		"out-of-vocabulary class": `{"tags":[{"subject_matter":true,"dimension":true,"person_class":"maybe","atomic":true,"not_form_genre":true,"defer":false}]}`,
+		"retired boolean key":     `{"tags":[{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}]}`,
+	}
+	for name, reply := range cases {
+		t.Run(name, func(t *testing.T) {
+			results, err := ParseTagQualityResponse(reply, 1)
+			incomplete, ok := errors.AsType[*IncompleteReplyError](err)
+			if !ok {
+				t.Fatalf("error = %v, want *IncompleteReplyError", err)
+			}
+			if len(incomplete.Missing) != 1 || incomplete.Missing[0] != 0 {
+				t.Errorf("Missing = %v, want [0]", incomplete.Missing)
+			}
+			if results[0].PersonClass != "" {
+				t.Errorf("PersonClass = %q, want empty: the parser never invents a class", results[0].PersonClass)
+			}
+		})
+	}
+}
+
 func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
 	bare := `[
-		{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true},
-		{"subject_matter":false,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true},
-		{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}
+		{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true},
+		{"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true},
+		{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}
 	]`
 	results, err := ParseTagQualityResponse(bare, 2)
 	if err != nil {
@@ -1838,7 +1863,7 @@ func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
 
 	// a bare array shorter than n must still fail rather than read as an
 	// all-false rejection
-	truncated := `[{"subject_matter":true,"dimension":true,"not_person":true,"atomic":true,"not_form_genre":true}]`
+	truncated := `[{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}]`
 	if _, err := ParseTagQualityResponse(truncated, 2); err == nil {
 		t.Fatal("expected incomplete-response error, got nil")
 	}
@@ -1849,7 +1874,7 @@ func TestParseTagQualityResponse_BareArrayPositional(t *testing.T) {
 // false for the gate to stamp from the parts verdict. Requiring the key would reject every v5 reply as
 // incomplete.
 func TestParseTagQualityResponse_DimensionOwnedByPartsPass(t *testing.T) {
-	v5 := `{"tags":[{"index":0,"subject_matter":true,"not_person":true,"atomic":true,"not_form_genre":true,"defer":false}]}`
+	v5 := `{"tags":[{"index":0,"subject_matter":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}]}`
 	results, err := ParseTagQualityResponse(v5, 1)
 	if err != nil {
 		t.Fatalf("parse a v5 reply without a dimension key: %v", err)
@@ -2210,17 +2235,17 @@ func TestParseAdjudicationResponse_Direction(t *testing.T) {
 		{
 			name:    "query direction",
 			content: `{"pairs":[{"index":0,"verdict":"same","direction":"query"}]}`,
-			want:    TagDirectionQuery,
+			want:    types.TagDirectionQuery,
 		},
 		{
 			name:    "target direction",
 			content: `{"pairs":[{"index":0,"verdict":"same","direction":"target"}]}`,
-			want:    TagDirectionTarget,
+			want:    types.TagDirectionTarget,
 		},
 		{
 			name:    "tie direction",
 			content: `{"pairs":[{"index":0,"verdict":"same","direction":"tie"}]}`,
-			want:    TagDirectionTie,
+			want:    types.TagDirectionTie,
 		},
 		{
 			name:    "unknown direction is dropped",

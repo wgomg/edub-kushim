@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
-	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 func TestHouseForm(t *testing.T) {
@@ -987,12 +987,12 @@ func TestCanonicalLoser(t *testing.T) {
 	}{
 		{
 			name:      "the judged direction names the target the winner",
-			direction: analyzer.TagDirectionTarget, a: "philosophy", b: "filosofia",
+			direction: types.TagDirectionTarget, a: "philosophy", b: "filosofia",
 			wantWinner: "filosofia", wantLoser: "philosophy",
 		},
 		{
 			name:      "the judged direction names the query the winner",
-			direction: analyzer.TagDirectionQuery, a: "philosophy", b: "filosofia",
+			direction: types.TagDirectionQuery, a: "philosophy", b: "filosofia",
 			wantWinner: "philosophy", wantLoser: "filosofia",
 		},
 		{

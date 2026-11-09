@@ -414,16 +414,16 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 
 // parseProvisionalFilter reads the name, criteria, verdict, review-state and sort query parameters into
 // the curation filter. The name is an ILIKE prefix, like the deleted-tag listing; the criteria entries
-// are `key:state` pairs carrying `pass`, `fail` or `absent`; the review-state entries are the values
-// from curation.ProvisionalStateValues, with duplicates dropped; and sort is `newest` (the default)
-// or `oldest`. Unknown keys, unknown criteria states, unknown verdict values, unknown review states
-// and unknown sort values are rejected instead of silently ignored.
+// are `key:state` pairs carrying `pass`, `fail` or `absent` for the boolean criteria, or a `person_class`
+// class value (or `absent`); the review-state entries are the values from curation.ProvisionalStateValues,
+// with duplicates dropped; and sort is `newest` (the default) or `oldest`. Unknown keys, unknown criteria
+// states, unknown verdict values, unknown review states and unknown sort values are rejected instead of
+// silently ignored.
 func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
 	filter := curation.ProvisionalFilter{NamePrefix: pb.Get("q", "")}
 	fields := map[string]*string{
 		"subject_matter": &filter.SubjectMatter,
 		"dimension":      &filter.Dimension,
-		"not_person":     &filter.NotPerson,
 		"atomic":         &filter.Atomic,
 		"not_form_genre": &filter.NotFormGenre,
 		"defer":          &filter.Defer,
@@ -432,9 +432,19 @@ func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
 
 	for _, entry := range pb.GetStrings("criteria") {
 		key, state, ok := strings.Cut(entry, ":")
+		if !ok {
+			return curation.ProvisionalFilter{}, errors.New("Invalid criteria filter")
+		}
+		if key == "person_class" {
+			if state != "absent" && !types.ValidPersonClass(state) {
+				return curation.ProvisionalFilter{}, errors.New("Invalid criteria filter")
+			}
+			filter.PersonClass = state
+			continue
+		}
 		dst, knownKey := fields[key]
 		sqlState, knownState := states[state]
-		if !ok || !knownKey || !knownState {
+		if !knownKey || !knownState {
 			return curation.ProvisionalFilter{}, errors.New("Invalid criteria filter")
 		}
 		*dst = sqlState
@@ -1235,12 +1245,12 @@ type DeletedTagListResponse struct {
 // TagQualityCriteriaView is the API view of the judge's rubric answers;
 // a nil answer had no signal in the stored payload.
 type TagQualityCriteriaView struct {
-	SubjectMatter *bool `json:"subject_matter"`
-	Dimension     *bool `json:"dimension"`
-	NotPerson     *bool `json:"not_person"`
-	Atomic        *bool `json:"atomic"`
-	NotFormGenre  *bool `json:"not_form_genre"`
-	Defer         *bool `json:"defer"`
+	SubjectMatter *bool   `json:"subject_matter"`
+	Dimension     *bool   `json:"dimension"`
+	PersonClass   *string `json:"person_class"`
+	Atomic        *bool   `json:"atomic"`
+	NotFormGenre  *bool   `json:"not_form_genre"`
+	Defer         *bool   `json:"defer"`
 }
 
 // TagQualityVerdictInfo is the latest recorded quality verdict for a

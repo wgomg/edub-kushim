@@ -859,7 +859,7 @@ func identityDirection(criteria []byte) string {
 		return ""
 	}
 	switch parsed.Direction {
-	case analyzer.TagDirectionQuery, analyzer.TagDirectionTarget, analyzer.TagDirectionTie:
+	case types.TagDirectionQuery, types.TagDirectionTarget, types.TagDirectionTie:
 		return parsed.Direction
 	}
 	return ""

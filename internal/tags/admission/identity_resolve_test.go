@@ -236,7 +236,7 @@ func TestResolvePending_SameIntentPair(t *testing.T) {
 			results[i] = analyzer.TagVerdictResult{
 				Index:     i,
 				Verdict:   types.TagVerdicts.Same,
-				Direction: analyzer.TagDirectionQuery,
+				Direction: types.TagDirectionQuery,
 			}
 		}
 		return results, nil

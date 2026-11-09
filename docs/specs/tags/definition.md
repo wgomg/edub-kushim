@@ -147,10 +147,12 @@ vocabulary must obey the same model. Three preconditions hold it up:
 A string is a tag in this system iff it satisfies all five:
 
 1. **Facet ownership.** It classifies subject matter — what the document is *about*. It
-   is not a person, not a form/genre (those have their own facets). Works are ordinary
-   subject candidates pending a future works facet, and places are ordinary subject
-   dimensions decided by dimensionality and recurrence rather than a validation
-   whitelist.
+   is not a person, not a form/genre (those have their own facets). The person exclusion is
+   enforced by classifying the name: a documented individual is not a tag, while a name
+   whose person-hood is mythological, legendary, fictional, or contested is undecidable on
+   its own and holds for review rather than deciding either way (§8 item 12). Works are
+   ordinary subject candidates pending a future works facet, and places are ordinary subject
+   dimensions decided by dimensionality and recurrence rather than a validation whitelist.
 2. **Dimensionality.** It is a value on a dimension of content-meaning: the kind of thing
    a searcher would use as a filter, alone or in combination, expecting other documents to
    share it. This is the "broad by design" property: a value too specific to recur is not
@@ -537,7 +539,9 @@ sharpens them:
 - **Filter over samples, never self-rewrite**: unchanged.
 - **Hard gates only where classification is unambiguous**: hard gates for facet ownership
   and canonicality; the gray band stays for the semantic judgments (relational compounds,
-  named units, near-faithful intersections) as evidence-and-curation territory.
+  named units, near-faithful intersections) as evidence-and-curation territory. The person
+  facet follows the same split: a confidently documented individual is a hard exclusion,
+  while mythological, legendary, fictional and contested readings stay gray-band.
 - **The long tail is partly legitimate**: a value below the recurrence floor is a pending
   candidate, not a reject.
 
@@ -620,6 +624,15 @@ The questions the definition leaves to policy, and their decided answers:
     names, alias targets, deferrals, admit-below-floor pending candidates and sub-floor
     demoted values never remove; promoted rows demote first (item 4); absence of evidence
     never acts.
+12. **Person facet — classified, not guessed.** The person question is answered as a
+    classification of the tag alone — store-global, like the other tag-intrinsic criteria:
+    `not_person`, `real_individual`, `mythological_or_legendary`, `fictional` or `uncertain`.
+    A documented individual is the one hard exclusion (the name belongs to the people
+    facet); mythological, legendary, fictional and uncertain readings defer to review. A
+    string that also names a place, organization, work, or concept — or whose person-hood is
+    contested — answers `uncertain` rather than guessing, so eponym names that are also
+    subjects (`washington`, `tesla`) defer instead of admitting; that recall cost is
+    accepted in exchange for never dropping a legitimate dimension as a person.
 
 ## 9. Operative statements
 

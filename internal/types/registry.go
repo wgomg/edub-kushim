@@ -1,9 +1,9 @@
 // Package types is the single Go declaration point for the task-system vocabulary: the batch origins
-// and statuses, the task types and statuses, the tag verdicts, and the closed set of resource locks
-// (LockMaintenance, LockStorage), all exposed as namespaced constant bags: types.Batch.Origin and the
-// types.Task.Type bag, with parse helpers for the wire form. The database's enum columns mirror these
-// values. It also holds the shared CRUD result envelope: CreateResult, UpdateResult, DeleteResult and
-// their status types.
+// and statuses, the task types and statuses, the tag verdicts and their directions, the tag quality
+// rubric's person classes, and the closed set of resource locks (LockMaintenance, LockStorage), all
+// exposed as namespaced constant bags: types.Batch.Origin and the types.Task.Type bag, with the parse
+// helpers for the wire form. The database's enum columns mirror these values. It also holds the shared
+// CRUD result envelope: CreateResult, UpdateResult, DeleteResult and their status types.
 package types
 
 import (
@@ -241,6 +241,38 @@ func (v TagVerdict) Valid() bool {
 
 // AllTagVerdicts returns every declared verdict, cloned.
 func AllTagVerdicts() []TagVerdict { return slices.Clone(allTagVerdicts) }
+
+// The directions that a same verdict can carry: which term's standard sense is exactly the dimension;
+// a tie leaves the choice to the deterministic tie-break. They ride TagVerdicts.Same and are shared by
+// the judge's wire shape and the identity rules that resolve a same-intent pair's canonical label.
+const (
+	TagDirectionQuery  = "query"
+	TagDirectionTarget = "target"
+	TagDirectionTie    = "tie"
+)
+
+// The person-class answers of the tag quality rubric: a tag naming no person continues to the admission
+// ladder, a documented individual rejects, and the mythological, legendary, fictional, and undecided
+// classes hold for review. The values are persisted in the quality criteria and change only with a bump
+// of the quality rubric's version.
+const (
+	PersonClassNotPerson               = "not_person"
+	PersonClassRealIndividual          = "real_individual"
+	PersonClassMythologicalOrLegendary = "mythological_or_legendary"
+	PersonClassFictional               = "fictional"
+	PersonClassUncertain               = "uncertain"
+)
+
+// ValidPersonClass reports whether class is one of the five rubric answers; any other value is not one
+// of the declared values.
+func ValidPersonClass(class string) bool {
+	switch class {
+	case PersonClassNotPerson, PersonClassRealIndividual, PersonClassMythologicalOrLegendary,
+		PersonClassFictional, PersonClassUncertain:
+		return true
+	}
+	return false
+}
 
 // ParseBatchStatus accepts one of the declared status values.
 func ParseBatchStatus(s string) (BatchStatus, error) {

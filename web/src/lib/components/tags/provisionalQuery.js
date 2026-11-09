@@ -2,13 +2,28 @@ import { parseView } from '#lib/list/listQuery.svelte.js';
 
 const PAGE_SIZE = 50;
 
+const BOOLEAN_STATES = [
+	{ value: 'pass', label: '✓', text: 'pass' },
+	{ value: 'fail', label: '✗', text: 'fail' },
+	{ value: 'absent', label: '—', text: 'absent' }
+];
+
+const PERSON_CLASS_STATES = [
+	{ value: 'not_person', label: 'not person', text: 'not_person' },
+	{ value: 'real_individual', label: 'real', text: 'real_individual' },
+	{ value: 'mythological_or_legendary', label: 'myth', text: 'mythological_or_legendary' },
+	{ value: 'fictional', label: 'fiction', text: 'fictional' },
+	{ value: 'uncertain', label: 'uncertain', text: 'uncertain' },
+	{ value: 'absent', label: '—', text: 'absent' }
+];
+
 export const criteria = [
-	{ key: 'subject_matter', label: 'subject matter' },
-	{ key: 'dimension', label: 'dimension' },
-	{ key: 'not_person', label: 'not person' },
-	{ key: 'atomic', label: 'atomic' },
-	{ key: 'not_form_genre', label: 'not publishing format' },
-	{ key: 'defer', label: 'defer' }
+	{ key: 'subject_matter', label: 'subject matter', states: BOOLEAN_STATES },
+	{ key: 'dimension', label: 'dimension', states: BOOLEAN_STATES },
+	{ key: 'person_class', label: 'person class', states: PERSON_CLASS_STATES },
+	{ key: 'atomic', label: 'atomic', states: BOOLEAN_STATES },
+	{ key: 'not_form_genre', label: 'not publishing format', states: BOOLEAN_STATES },
+	{ key: 'defer', label: 'defer', states: BOOLEAN_STATES }
 ];
 
 // review states the compact bar offers, grouped exactly as the menu renders them; the values mirror
@@ -38,7 +53,9 @@ const LEGACY_VERDICT_STATES = {
 	reject: ['rejected']
 };
 
-const CRITERION_STATES = new Set(['pass', 'fail', 'absent']);
+const CRITERION_STATES = new Map(
+	criteria.map((criterion) => [criterion.key, new Set(criterion.states.map((state) => state.value))])
+);
 
 const defaults = {
 	q: '',
@@ -74,7 +91,7 @@ export const provisionalQuery = {
 			if (separator < 0) continue;
 			const key = entry.slice(0, separator);
 			const state = entry.slice(separator + 1);
-			if (criteria.some((criterion) => criterion.key === key) && CRITERION_STATES.has(state)) {
+			if (CRITERION_STATES.get(key)?.has(state)) {
 				activeCriteria.push({ key, state });
 			}
 		}

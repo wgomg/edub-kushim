@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // TagQualityCandidate is one tag up for quality judging: its index, term,
@@ -14,14 +16,14 @@ type TagQualityCandidate struct {
 	Category string
 }
 
-// TagQualityResult is one candidate's rubric answers: the five criteria
-// plus the judge's abstention. The criteria are features, not a verdict —
-// the admission decision combines them.
+// TagQualityResult is one candidate's rubric answers: the boolean criteria, the person class value,
+// and the judge's abstention. The answers are features, not a verdict — the admission decision combines
+// them.
 type TagQualityResult struct {
 	Index         int
 	SubjectMatter bool
 	Dimension     bool
-	NotPerson     bool
+	PersonClass   string
 	Atomic        bool
 	NotFormGenre  bool
 	Defer         bool
@@ -31,12 +33,12 @@ type TagQualityResult struct {
 // verdict. Pointer fields distinguish an omitted key from an explicit
 // false; defer is optional, so an omitted defer reads as false.
 type TagQualityCriteria struct {
-	SubjectMatter *bool `json:"subject_matter"`
-	Dimension     *bool `json:"dimension"`
-	NotPerson     *bool `json:"not_person"`
-	Atomic        *bool `json:"atomic"`
-	NotFormGenre  *bool `json:"not_form_genre"`
-	Defer         *bool `json:"defer"`
+	SubjectMatter *bool   `json:"subject_matter"`
+	Dimension     *bool   `json:"dimension"`
+	PersonClass   *string `json:"person_class"`
+	Atomic        *bool   `json:"atomic"`
+	NotFormGenre  *bool   `json:"not_form_genre"`
+	Defer         *bool   `json:"defer"`
 }
 
 // Criteria returns the persisted wire shape of the answers.
@@ -44,19 +46,20 @@ func (r TagQualityResult) Criteria() TagQualityCriteria {
 	return TagQualityCriteria{
 		SubjectMatter: &r.SubjectMatter,
 		Dimension:     &r.Dimension,
-		NotPerson:     &r.NotPerson,
+		PersonClass:   &r.PersonClass,
 		Atomic:        &r.Atomic,
 		NotFormGenre:  &r.NotFormGenre,
 		Defer:         &r.Defer,
 	}
 }
 
-// Complete reports whether the four judge-owned criteria were specified. Dimension is optional here: it is
-// the parts pass's verdict the gate stamps onto the row, not a question the quality judge answers, so a
-// reply without it is still complete.
+// Complete reports whether the judge-owned criteria were specified, the person class included and carrying
+// one of the five rubric answers. Dimension is optional here: it is the parts pass's verdict the gate
+// stamps onto the row, not a question the quality judge answers, so a reply without it is still complete.
 func (c TagQualityCriteria) Complete() bool {
 	return c.SubjectMatter != nil &&
-		c.NotPerson != nil && c.Atomic != nil && c.NotFormGenre != nil
+		c.PersonClass != nil && types.ValidPersonClass(*c.PersonClass) &&
+		c.Atomic != nil && c.NotFormGenre != nil
 }
 
 // Result reads the persisted criteria back into rubric answers; the
@@ -71,7 +74,7 @@ func (c TagQualityCriteria) Result() (TagQualityResult, bool) {
 	return TagQualityResult{
 		SubjectMatter: *c.SubjectMatter,
 		Dimension:     c.Dimension != nil && *c.Dimension,
-		NotPerson:     *c.NotPerson,
+		PersonClass:   *c.PersonClass,
 		Atomic:        *c.Atomic,
 		NotFormGenre:  *c.NotFormGenre,
 		Defer:         c.Defer != nil && *c.Defer,
@@ -79,12 +82,16 @@ func (c TagQualityCriteria) Result() (TagQualityResult, bool) {
 }
 
 // String renders the answers for the audit log, treating an omitted
-// answer as false.
+// boolean as false and an omitted class as empty.
 func (c TagQualityCriteria) String() string {
-	return fmt.Sprintf("subject_matter=%t dimension=%t not_person=%t atomic=%t not_form_genre=%t defer=%t",
+	personClass := ""
+	if c.PersonClass != nil {
+		personClass = *c.PersonClass
+	}
+	return fmt.Sprintf("subject_matter=%t dimension=%t person_class=%s atomic=%t not_form_genre=%t defer=%t",
 		c.SubjectMatter != nil && *c.SubjectMatter,
 		c.Dimension != nil && *c.Dimension,
-		c.NotPerson != nil && *c.NotPerson,
+		personClass,
 		c.Atomic != nil && *c.Atomic,
 		c.NotFormGenre != nil && *c.NotFormGenre,
 		c.Defer != nil && *c.Defer)
@@ -101,8 +108,12 @@ func (c TagQualityCriteria) String() string {
 // works are ordinary candidates, and the criterion asks the person question alone under the wire key
 // `not_person`; the whitelisted-place hint retires with it. Cache lookup is version-filtered, so v5 verdicts
 // never apply and the stored v5 rows are superseded evidence. v7 embeds TagDefinition so the atomicity
-// question's "each work as tags on their own" resolves against the system's definition.
-const TagQualityVersion = "v7"
+// question's "each work as tags on their own" resolves against the system's definition. v8 replaces the
+// boolean person question with the five-class person_class answer: a documented individual rejects, the
+// non-real or undecided classes hold for review, and a tag naming no person continues to the admission
+// ladder; a reply without a valid class is incomplete and defers. Cache lookup is version-filtered, so v7
+// verdicts never apply and their stored rows are superseded evidence.
+const TagQualityVersion = "v8"
 
 // TagQualitySystemMessage is the system prompt of the quality judge.
 const TagQualitySystemMessage = "You are a tag-quality judge. Answer the rubric in the user message for each candidate tag."
@@ -115,13 +126,13 @@ const TagQualitySystemMessage = "You are a tag-quality judge. Answer the rubric 
 func BuildTagQualityPrompt(text string, candidates []TagQualityCandidate) string {
 	var sb strings.Builder
 	sb.WriteString(TagDefinition + "\n")
-	sb.WriteString("For each candidate tag below, answer four yes/no questions against the definition above. Question 1 asks whether the tag is a subject matter of the document; questions 2-4 ask about the tag on its own, and their answers do not depend on the document.\n")
+	sb.WriteString("For each candidate tag below, answer the rubric against the definition above. Question 1 asks whether the tag is a subject matter of the document; questions 2-4 ask about the tag on its own, and their answers do not depend on the document.\n")
 	sb.WriteString("1. subject_matter: is the tag a subject matter of the document — something this document is about? A specialized document's technical subject counts even when the word is rare or field-specific (a repair guide about spudgers is about spudgers); a generic theme word the text merely mentions or embodies is not (air, love, nature). The document's language is never a subject matter: a language name (spanish, english) is form, not aboutness.\n")
-	sb.WriteString("2. not_person: is the tag not a person? Individuals belong to the separate people field, so a person's name fails this criterion. Places, works, and genres are ordinary subject candidates and pass it.\n")
+	sb.WriteString("2. person_class: does the tag name a person, and if so which kind? Answer exactly one of five classes. not_person: the tag names no person — a place, work, organization, concept, or ordinary word. real_individual: a historically documented individual the string names unambiguously. mythological_or_legendary: a figure of myth, legend, or religious tradition — a deity or legendary figure whose person-hood rests on tradition, not historical record. fictional: a character invented by a work of fiction. uncertain: any other case, including a string that also names a place, organization, work, or concept (tesla, washington, darwin, jesus, buddha), a string naming several people, or a figure whose classification is contested. An individual belongs to the separate people field, so a person's name is never a subject tag.\n")
 	sb.WriteString("3. atomic: is the tag one dimension rather than a pre-coordination of dimensions that are each tags on their own? A lexical or named unit whose parts are not dimensions answers true.\n")
 	sb.WriteString("4. not_form_genre: is the tag not a publishing format? Publishing formats and containers (book, article, tutorial, manual, report, anthology, collected letters) describe what a document is as a publication, not what it is about — they fail this criterion. A genre or art form (poetry, drama, science fiction, horror, autobiography, memoir) is a subject-side content dimension, not a publishing format: it passes this criterion and is judged on the questions above.\n")
 	sb.WriteString("Also answer defer: set it true when you cannot decide whether the tag satisfies the definition. Uncertainty defers to review; it never forces a label.\n")
-	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"not_person\":true,\"atomic\":true,\"not_form_genre\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"tags\":[{\"index\":0,\"subject_matter\":true,\"person_class\":\"not_person\",\"atomic\":true,\"not_form_genre\":true,\"defer\":false},...]}, one entry per candidate, no explanations.\n\n")
 	sb.WriteString("Document for question 1:\n")
 	sb.WriteString(text)
 	sb.WriteString("\n\nCandidate tags:\n")
@@ -153,13 +164,12 @@ func (e *IncompleteReplyError) MissingSet() map[int]bool {
 	return missing
 }
 
-// ParseTagQualityResponse errors when any candidate lacks a fully
-// specified verdict: a zero-valued result must never be read as an
-// all-criteria-false rejection, or a truncated response would cache a
-// spurious permanent rejection. An omitted defer reads as false. A bare
-// top-level array is accepted as the envelope's value, and an entry
-// without an index is placed by its position in the array. A truncated
-// reply returns *IncompleteReplyError alongside the populated results.
+// ParseTagQualityResponse errors when any candidate lacks a fully specified verdict — a person_class
+// outside the five answers counting as missing, since a zero-valued result must never be read as an
+// all-criteria-false rejection, or a truncated response would cache a spurious permanent rejection.
+// An omitted defer reads as false. A bare top-level array is accepted as the envelope's value, and an
+// entry without an index is placed by its position in the array. A truncated reply returns the typed
+// *IncompleteReplyError alongside the populated results.
 func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
 	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "tags")
 	var parsed struct {
@@ -188,7 +198,7 @@ func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) 
 			Index:         idx,
 			SubjectMatter: *t.SubjectMatter,
 			Dimension:     t.Dimension != nil && *t.Dimension,
-			NotPerson:     *t.NotPerson,
+			PersonClass:   *t.PersonClass,
 			Atomic:        *t.Atomic,
 			NotFormGenre:  *t.NotFormGenre,
 			Defer:         t.Defer != nil && *t.Defer,

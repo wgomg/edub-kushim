@@ -1,6 +1,10 @@
 package tags
 
-import "time"
+import (
+	"time"
+
+	"github.com/wgomg/edub-kushim/internal/types"
+)
 
 // AdmissionOutcome is how the pinned rule set disposes of one candidate.
 // Reject drops it, defer sends it to review, and admit keeps it; defer and
@@ -30,14 +34,15 @@ func (o AdmissionOutcome) String() string {
 	}
 }
 
-// AdmissionFeatures is the evidence the admission decision reads for one candidate: the four judge answers
-// plus its abstention, the parts pass's stamped dimension verdict, and the deterministic signals the emission
-// context supplies. A feature the caller cannot establish stays false and never counts as failing —
-// absence of evidence is not evidence.
+// AdmissionFeatures is the evidence the admission decision reads for one candidate: the judge's rubric
+// answers plus its abstention, the parts pass's stamped dimension verdict, and the deterministic signals
+// the emission context supplies. A boolean feature the caller cannot establish stays false and never counts
+// as failing — absence of evidence is not evidence; an empty PersonClass instead defers to review, never
+// licensing a rejection.
 type AdmissionFeatures struct {
 	SubjectMatter bool
 	Dimension     bool
-	NotPerson     bool
+	PersonClass   string
 	Atomic        bool
 	NotFormGenre  bool
 	JudgeDefer    bool
@@ -46,12 +51,15 @@ type AdmissionFeatures struct {
 }
 
 // The reasons an admission decision carries into the logs: a judge abstention, a candidate judged neither
-// subject matter nor a dimension (the definition's drop leg, §3.6), two or more failing signals, a failure
-// set of deterministic signals alone, one lone failing signal in the gray band, no failing signal, or an
-// operator who waived a review deferral.
+// subject matter nor a dimension (the definition's drop leg, §3.6), a documented individual's name (the
+// people facet), a non-real or undecided person reading held for review, two or more failing signals, a
+// failure set of deterministic signals alone, one lone failing signal in the gray band, no failing signal,
+// or an operator who waived a review deferral.
 const (
 	ReasonJudgeDefer        = "judge_defer"
 	ReasonNoDimension       = "no_dimension"
+	ReasonPersonFacet       = "person_facet"
+	ReasonPersonReview      = "person_review"
 	ReasonCorroborated      = "corroborated_failures"
 	ReasonDeterministicOnly = "deterministic_only"
 	ReasonSingleSignal      = "single_signal"
@@ -77,21 +85,35 @@ type AdmissionDecision struct {
 }
 
 // DecideAdmission decides one candidate from its features: evidence, not verdicts — no single signal
-// decides. A judge abstention defers first. A candidate judged neither subject matter nor a dimension is
-// the definition's drop leg and rejects as no_dimension. Otherwise two or more failing signals reject
-// only when at least one is judge-owned (corroborated evidence); a failure set of deterministic signals
-// alone defers as deterministic_only; exactly one failing signal defers to review (the gray band refuses
-// single-signal drops); and none admits. The rule set is pinned and versioned — the quality version pins
-// the judge features behind it — and runs with zero labels.
+// decides, with the one class-structured exception the person gateway pins. A judge abstention defers
+// first, then a candidate judged neither subject matter nor a dimension is the definition's drop leg and
+// rejects as no_dimension. The person class decides next: a documented individual rejects as person_facet
+// independent of subject_matter (a biography is about its subject while the name belongs to the people
+// facet), while the mythological, legendary, fictional, undecided, and not-established classes defer as
+// person_review — only a tag naming no person reaches the corroborated ladder. There two or more failing
+// signals reject only when at least one is judge-owned (corroborated evidence); a failure set of the
+// deterministic signals alone defers as deterministic_only; exactly one failing signal defers to review
+// (the gray band refuses single-signal drops); and none admits. The rule set is pinned and versioned — the
+// quality version pins the judge features behind it — and runs with zero labels.
 func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 	if f.JudgeDefer {
 		return AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonJudgeDefer}
+	}
+	if !f.SubjectMatter && !f.Dimension {
+		return AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonNoDimension}
+	}
+	switch f.PersonClass {
+	case types.PersonClassRealIndividual:
+		return AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonPersonFacet}
+	case types.PersonClassNotPerson:
+		// the only class that continues to the corroborated ladder
+	default:
+		return AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonPersonReview}
 	}
 	judgeFailures := 0
 	for _, failed := range []bool{
 		!f.SubjectMatter,
 		!f.Dimension,
-		!f.NotPerson,
 		!f.Atomic,
 		!f.NotFormGenre,
 	} {
@@ -107,8 +129,6 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 	}
 	total := judgeFailures + detFailures
 	switch {
-	case !f.SubjectMatter && !f.Dimension:
-		return AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonNoDimension}
 	case total >= 2 && judgeFailures >= 1:
 		return AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonCorroborated}
 	case detFailures >= 2:
@@ -225,8 +245,12 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // promotion paths, the admission, demotion and retention rules unchanged. v11 releases the reconstructible
 // named-unit composition keep from the promotion hold: the compound is a final keep that promotes at the
 // recurrence floor and demotes on mass decay like any provisional candidate, the admission, demotion and
-// retention rules unchanged.
-const DecisionRuleSetVersion = "v11"
+// retention rules unchanged. v12 supersedes D53's facet-veto rejection for the person question: the
+// not_person boolean leaves the feature set for the five-class person_class answer, a documented individual
+// rejects as person_facet independent of subject_matter, the non-real and undecided classes (and an absent
+// class) defer as person_review before the corroborated ladder, and only a tag naming no person continues
+// to it — the demotion and retention rules unchanged.
+const DecisionRuleSetVersion = "v12"
 
 // DecidePromotion reports whether an admitted candidate at or above the configured floor promotes.
 func DecidePromotion(outcome AdmissionOutcome, liveMass int64, floor int64) bool {
