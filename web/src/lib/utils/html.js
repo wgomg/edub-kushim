@@ -1,13 +1,3 @@
-export function escapeHtml(str) {
-	if (str == null) return '';
-	return String(str)
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;');
-}
-
 export function formatSize(bytes) {
 	if (bytes == null) return '0 B';
 	const nf = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
@@ -28,7 +18,7 @@ export function documentsLabel(count) {
 }
 
 export function documentsForTagHref(name) {
-	return `/documents?q=${encodeURIComponent(`tag:"${name}"`)}`;
+	return `/documents?tag=${encodeURIComponent(name)}`;
 }
 
 export function formatDuration(ms) {
@@ -56,4 +46,22 @@ export function formatRelative(dateStr) {
 	const h = Math.floor(min / 60);
 	if (h < 24) return h + 'h';
 	return Math.floor(h / 24) + 'd';
+}
+
+const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+	dateStyle: 'medium',
+	timeStyle: 'short'
+});
+
+/** Formats an instant date-only; empty input renders as an em dash. */
+export function formatDate(value) {
+	if (!value) return '—';
+	return dateFormatter.format(new Date(value));
+}
+
+/** Formats an instant with its time, for records where the exact moment matters. */
+export function formatDateTime(value) {
+	if (!value) return '—';
+	return dateTimeFormatter.format(new Date(value));
 }

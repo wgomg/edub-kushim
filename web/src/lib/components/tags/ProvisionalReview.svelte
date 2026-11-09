@@ -1,9 +1,8 @@
 <script>
-	import { onDestroy, onMount } from 'svelte';
-	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { api, encodeCriteria } from '#lib/api.js';
+	import { api } from '#lib/api.js';
+	import { createListQuery, listWindow } from '#lib/list/listQuery.svelte.js';
 	import Icon from '#lib/components/Icon.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import SlideOver from '#lib/components/SlideOver.svelte';
@@ -14,49 +13,18 @@
 	import TagReviewHelp from '#lib/components/tags/TagReviewHelp.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
-	import { documentsForTagHref, documentsLabel, formatNumber } from '#lib/utils/html.js';
+	import {
+		documentsForTagHref,
+		documentsLabel,
+		formatDate,
+		formatDateTime,
+		formatNumber
+	} from '#lib/utils/html.js';
 	import { demotionLabel } from '#lib/utils/tagReconcile.js';
+	import { criteria, provisionalQuery, reviewStates } from './provisionalQuery.js';
 
-	const PAGE_SIZE = 50;
-
-	const criteria = [
-		{ key: 'subject_matter', label: 'subject matter' },
-		{ key: 'dimension', label: 'dimension' },
-		{ key: 'not_person', label: 'not person' },
-		{ key: 'atomic', label: 'atomic' },
-		{ key: 'not_form_genre', label: 'not publishing format' },
-		{ key: 'defer', label: 'defer' }
-	];
-
-	// review states the compact bar offers, grouped exactly as the menu renders them; the values mirror
-	// the server's canonical list
-	const reviewStates = [
-		{ value: 'no_verdict', label: 'no verdict', group: 'Verdict' },
-		{ value: 'admitted', label: 'awaiting promotion floor', group: 'Verdict' },
-		{ value: 'deferred', label: 'deferred to review', group: 'Verdict' },
-		{ value: 'rejected', label: 'judge rejected', group: 'Verdict' },
-		{ value: 'accepted', label: 'accepted deferral', group: 'Verdict' },
-		{ value: 'identity_pending', label: 'identity pending', group: 'Blocking' },
-		{ value: 'identity_hold', label: 'identity hold', group: 'Blocking' },
-		{ value: 'split_hold', label: 'split hold', group: 'Blocking' },
-		{ value: 'degraded', label: 'degraded composition', group: 'Blocking' },
-		{ value: 'demoted', label: 'demoted', group: 'Blocking' },
-		{ value: 'needs_decision', label: 'needs decision', group: 'Action' },
-		{ value: 'unblocked', label: 'awaiting floor, unblocked', group: 'Action' }
-	];
-
-	// older links carry the single verdict filter; map it onto the states the server newly exposes so
-	// they keep landing filtered; the old admit class folded accepted deferrals in, so it maps them to
-	// both admitted and accepted
-	const LEGACY_VERDICT_STATES = {
-		none: ['no_verdict'],
-		admit: ['admitted', 'accepted'],
-		defer: ['deferred'],
-		reject: ['rejected']
-	};
-
-	// defer records the judge's abstention, not a content criterion: the verdict badge already says
-	// when it fired, so the rubric counts only the five substantive checks
+	// defer records the judge's abstention, not a content criterion: the verdict badge already says when
+	// it fired, so the rubric counts only the five substantive checks
 	const rubricCriteria = criteria.filter((c) => c.key !== 'defer');
 
 	const cardClass =
@@ -112,21 +80,11 @@
 
 	let { onchanged = null } = $props();
 
-	let tags = $state([]);
-	let total = $state(0);
-	let loading = $state(true);
-	let error = $state('');
 	let acting = $state(null);
 	let identityActing = $state(false);
-	let offset = $state(0);
-	let pendingTotal = $state(0);
-	let filterStates = $state({});
-	let stateFilter = $state([]);
-	let stateValues = $state(null);
-	let facets = $state(null);
 	let facetsOpen = $state(false);
-	let query = $state('');
-	let loadSeq = 0;
+	let facets = $state(null);
+	let stateValues = $state(null);
 
 	let helpOpen = $state(false);
 	let helpSection = $state('overview');
@@ -139,7 +97,61 @@
 	let splitting = $state(null);
 	let splitParts = $state([]);
 	let folding = $state(null);
-	let provSort = $state('newest');
+
+	async function fetchProvisional({ limit, offset, query, signal }) {
+		const result = await api.tags.provisionalList(limit, offset, {
+			criteria: query.criteria,
+			states: query.states,
+			q: query.q,
+			sort: query.sort,
+			facets: facetsOpen,
+			signal
+		});
+		if (!result.ok) throw new Error('Failed to load new tags.');
+		return {
+			items: result.data?.results ?? [],
+			total: result.data?.total ?? 0,
+			pendingTotal: result.data?.pending_identity_total ?? 0,
+			stateValues: result.data?.state_values ?? null,
+			stateFacets: result.data?.state_facets ?? null
+		};
+	}
+
+	const provisional = createListQuery({
+		fetcher: fetchProvisional,
+		codec: provisionalQuery,
+		keyField: 'id'
+	});
+
+	const tags = $derived(provisional.rows);
+	const total = $derived(provisional.total ?? 0);
+	const loading = $derived(provisional.loading);
+	const error = $derived(provisional.error);
+	const pendingTotal = $derived(provisional.data?.pendingTotal ?? 0);
+	const query = $derived(provisional.query.q);
+	const filterStates = $derived(
+		Object.fromEntries(provisional.query.criteria.map((entry) => [entry.key, entry.state]))
+	);
+	const stateFilter = $derived(provisional.query.states);
+	const provSort = $derived(provisional.query.sort);
+	const pager = $derived(
+		listWindow({
+			page: provisional.query.page,
+			pageSize: provisional.query.pageSize,
+			rowCount: tags.length,
+			total
+		})
+	);
+
+	$effect(() => {
+		const values = provisional.data?.stateValues;
+		if (Array.isArray(values) && values.length > 0) stateValues = values;
+	});
+
+	$effect(() => {
+		const next = facetsOpen ? provisional.data?.stateFacets : null;
+		if (next != null) facets = next;
+	});
 
 	let hasFilters = $derived(
 		query !== '' || criteria.some((c) => filterStates[c.key]) || stateFilter.length > 0
@@ -151,128 +163,50 @@
 		stateValues ? reviewStates.filter((s) => stateValues.includes(s.value)) : reviewStates
 	);
 
-	onMount(() => {
-		const sp = page.url.searchParams;
-
-		query = sp.get('prov_q') ?? '';
-
-		const rawPage = sp.get('prov_page') ?? '';
-		if (/^\d+$/.test(rawPage)) offset = parseInt(rawPage, 10) * PAGE_SIZE;
-
-		if (sp.get('prov_sort') === 'oldest') provSort = 'oldest';
-
-		const rawCriteria = sp.get('prov_criteria') ?? '';
-		for (const entry of rawCriteria ? rawCriteria.split(',') : []) {
-			const [key, state] = entry.split(':');
-			if (criteria.some((c) => c.key === key) && ['', 'pass', 'fail', 'absent'].includes(state)) {
-				filterStates[key] = state;
-			}
-		}
-
-		const rawStates = sp.get('prov_state') ?? '';
-		for (const value of rawStates ? rawStates.split(',') : []) {
-			if (reviewStates.some((s) => s.value === value) && !stateFilter.includes(value)) {
-				stateFilter = [...stateFilter, value];
-			}
-		}
-		if (stateFilter.length === 0) {
-			const legacy = LEGACY_VERDICT_STATES[sp.get('prov_verdict') ?? ''] ?? [];
-			for (const value of legacy) {
-				if (reviewStates.some((s) => s.value === value) && !stateFilter.includes(value)) {
-					stateFilter = [...stateFilter, value];
-				}
-			}
-		}
-
-		load();
-	});
-
-	function activeCriteria() {
-		return criteria
-			.filter((c) => filterStates[c.key])
-			.map((c) => ({ key: c.key, state: filterStates[c.key] }));
+	function criteriaArray(states) {
+		return criteria.filter((c) => states[c.key]).map((c) => ({ key: c.key, state: states[c.key] }));
 	}
 
-	function syncUrl() {
-		// transient helper to sync the URL with local state; SvelteURLSearchParams is not imported in this file
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
-		const sp = new URLSearchParams(page.url.searchParams);
-		if (offset > 0) sp.set('prov_page', String(offset / PAGE_SIZE));
-		else sp.delete('prov_page');
+	// one load runs the list query, its count and the per-row identity lookups, so keystrokes wait for a
+	// pause instead of firing a full query set per character; the draft updates immediately so a
+	// criterion toggle or a clear always commits what the user currently sees
 
-		if (query) sp.set('prov_q', query);
-		else sp.delete('prov_q');
-
-		const active = encodeCriteria(activeCriteria());
-
-		if (active) sp.set('prov_criteria', active);
-		else sp.delete('prov_criteria');
-		if (stateFilter.length > 0) sp.set('prov_state', stateFilter.join(','));
-		else sp.delete('prov_state');
-		if (provSort === 'oldest') sp.set('prov_sort', 'oldest');
-		else sp.delete('prov_sort');
-		sp.delete('prov_verdict');
-
-		goto(resolve(`${page.url.pathname}?${sp.toString()}${page.url.hash}`), {
-			shallow: true,
-			replace: true
-		});
-	}
-
-	async function load(clamp = true, silent = false) {
-		const seq = ++loadSeq;
-		if (!silent) loading = true;
-		error = '';
-		const result = await api.tags.provisionalList(PAGE_SIZE, offset, {
-			criteria: activeCriteria(),
-			states: stateFilter,
-			q: query,
-			sort: provSort,
-			facets: facetsOpen
-		});
-		if (seq !== loadSeq) return;
-		if (!result.ok) {
-			if (silent) return;
-			tags = [];
-			total = 0;
-			pendingTotal = 0;
-			error = 'Failed to load new tags.';
-			loading = false;
+	// this list cannot use QueryDraft: the input lives inside ProvisionalFilters' `q` prop instead of a
+	// local input, so there is no focus signal here; a pending commit is tracked explicitly, and an
+	// external q write while it is pending cancels the commit and applies the URL
+	let draftQuery = $state(provisional.query.q);
+	let lastCommitted = provisional.query.q;
+	let scheduledQuery = null;
+	let queryTimer;
+	$effect(() => {
+		const committed = provisional.query.q;
+		if (committed === lastCommitted) return;
+		lastCommitted = committed;
+		if (committed === draftQuery) {
+			scheduledQuery = null;
 			return;
 		}
-		tags = result.data?.results ?? [];
-		total = result.data?.total ?? 0;
-		pendingTotal = result.data?.pending_identity_total ?? 0;
-		const values = result.data?.state_values;
-		if (Array.isArray(values) && values.length > 0) stateValues = values;
-		if (facetsOpen) facets = result.data?.state_facets ?? null;
-		// an emptied page and a deep-link offset the API clamped away both
-		// surface as offset >= total
-		if (clamp && offset > 0 && total <= offset) {
-			offset = Math.max(0, (Math.ceil(total / PAGE_SIZE) - 1) * PAGE_SIZE);
-			syncUrl();
-			return load(false);
-		}
-		loading = false;
-	}
-
-	function onFilterChange() {
-		offset = 0;
-		load();
-		syncUrl();
-	}
-
+		if (scheduledQuery != null && committed !== scheduledQuery) clearTimeout(queryTimer);
+		scheduledQuery = null;
+		draftQuery = committed;
+	});
 	function onQueryChange(value) {
-		query = value;
-		onQueryInput();
+		draftQuery = value;
+		scheduledQuery = value;
+		clearTimeout(queryTimer);
+		queryTimer = setTimeout(() => {
+			scheduledQuery = null;
+			provisional.update({ q: value });
+		}, 300);
 	}
+	onDestroy(() => clearTimeout(queryTimer));
 
-	// the menu shows what each state would add, so opening it asks the API for the facet counts while
-	// the request runs silently so the queue does not flash a loader; closing it stops carrying facets
-	// on later list, paging and keystroke requests
+	// the menu shows what each state would add, so opening it asks the API for the facet counts while the
+	// request runs silently so the queue does not flash a loader; closing it stops carrying facets on
+	// later list, paging and keystroke requests
 	function onFacetsRequested() {
 		facetsOpen = true;
-		load(true, true);
+		provisional.reload({ silent: true });
 	}
 
 	function onFacetsClosed() {
@@ -280,45 +214,33 @@
 	}
 
 	function applyFilters(next) {
-		query = next.q;
-		filterStates = { ...next.criteria };
-		stateFilter = [...next.states];
-		onFilterChange();
-	}
-
-	// one load runs the list query, its count and the per-row identity lookups, so keystrokes wait for a
-	// pause instead of firing a full query set per character
-	let queryTimer;
-	function onQueryInput() {
 		clearTimeout(queryTimer);
-		queryTimer = setTimeout(() => onFilterChange(), 300);
+		scheduledQuery = next.q;
+		draftQuery = next.q;
+		provisional.update({
+			q: next.q,
+			criteria: criteriaArray(next.criteria),
+			states: [...next.states]
+		});
 	}
-	onDestroy(() => clearTimeout(queryTimer));
 
 	function clearFilters() {
 		applyFilters({ q: '', criteria: {}, states: [] });
 	}
 
 	function prevPage() {
-		if (offset === 0) return;
-		offset = Math.max(0, offset - PAGE_SIZE);
-		load();
-		syncUrl();
+		if (provisional.query.page === 0) return;
+		provisional.update({ page: provisional.query.page - 1 });
 	}
 
 	function nextPage() {
-		if (offset + tags.length >= total) return;
-		offset += PAGE_SIZE;
-		load();
-		syncUrl();
+		if (!pager.hasMore) return;
+		provisional.update({ page: provisional.query.page + 1 });
 	}
 
 	function setSort(value) {
 		if (provSort === value) return;
-		provSort = value;
-		offset = 0;
-		load();
-		syncUrl();
+		provisional.update({ sort: value });
 	}
 
 	function openHelp(section) {
@@ -341,7 +263,7 @@
 		} else if (result.status !== 409) {
 			toastStore.error('Failed to approve tag');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	async function reject(tag) {
@@ -360,7 +282,7 @@
 		} else {
 			toastStore.error('Failed to reject tag');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	async function retire(tag) {
@@ -379,7 +301,7 @@
 		} else {
 			toastStore.error('Failed to retire tag');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	async function accept(tag) {
@@ -399,7 +321,7 @@
 		} else {
 			toastStore.error('Failed to accept the tag');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	async function foldInto(tag) {
@@ -421,7 +343,7 @@
 		} else {
 			toastStore.error('Failed to fold tag');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	async function makeCanonical(tag) {
@@ -443,7 +365,7 @@
 		} else {
 			toastStore.error('Failed to fold tag');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	async function keepSeparate(tag) {
@@ -464,7 +386,7 @@
 		} else {
 			toastStore.error('Failed to keep the values separate');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	async function keepWhole(tag) {
@@ -500,7 +422,7 @@
 		} else {
 			toastStore.error('Failed to apply the decision');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	function openSplit(tag) {
@@ -529,7 +451,7 @@
 			toastStore.success(`Renamed "${tag.name}"`);
 			renaming = null;
 			if (onchanged) onchanged();
-			await load();
+			provisional.reload();
 		} else if (result.status === 409) {
 			renameError = 'Tag already exists';
 		} else {
@@ -556,7 +478,7 @@
 		} else {
 			toastStore.error('Failed to queue the re-judge');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	function rejudgeMessage(scope) {
@@ -572,7 +494,7 @@
 		} else {
 			toastStore.error('Failed to queue identity adjudication');
 		}
-		await load();
+		provisional.reload();
 	}
 
 	function criterionMark(value) {
@@ -656,9 +578,7 @@
 	}
 
 	function verdictMeta(tag) {
-		return [tag.verdict.model, new Date(tag.verdict.verdict_at).toLocaleString()]
-			.filter(Boolean)
-			.join(' · ');
+		return [tag.verdict.model, formatDateTime(tag.verdict.verdict_at)].filter(Boolean).join(' · ');
 	}
 </script>
 
@@ -716,7 +636,7 @@
 </div>
 
 <ProvisionalFilters
-	q={query}
+	q={draftQuery}
 	{criteria}
 	criteriaStates={filterStates}
 	reviewStates={activeReviewStates}
@@ -788,7 +708,7 @@
 							{documentsLabel(tag.document_count)}
 						</a>
 						<span class="text-xs text-parchment-500">
-							· created {new Date(tag.created_at).toLocaleDateString()}
+							· created {formatDate(tag.created_at)}
 						</span>
 					</div>
 
@@ -876,7 +796,7 @@
 							disabled={acting === tag.id}
 							onclick={() => reject(tag)}
 						>
-							<Icon name="x" size={14} />
+							<Icon name="close" size={14} />
 							Reject
 						</button>
 					</div>
@@ -901,7 +821,7 @@
 							disabled={acting === tag.id}
 							onclick={() => (folding = tag)}
 						>
-							<Icon name="fold-into" size={13} />
+							<Icon name="fold" size={13} />
 							Fold into…
 						</button>
 						{#if tag.compound}
@@ -923,7 +843,7 @@
 							disabled={acting === tag.id}
 							onclick={() => openRename(tag)}
 						>
-							<Icon name="pencil" size={13} />
+							<Icon name="edit" size={13} />
 							Rename
 						</button>
 						<button
@@ -962,7 +882,7 @@
 								disabled={acting === tag.id}
 								onclick={() => foldInto(tag)}
 							>
-								<Icon name="fold-into" size={13} />
+								<Icon name="fold" size={13} />
 								Fold into “{tag.identity_hold}”
 							</button>
 							<button
@@ -1040,7 +960,7 @@
 								disabled={acting === tag.id}
 								onclick={() => rejudgeComposition(tag)}
 							>
-								<Icon name="rotate-cw" size={13} />
+								<Icon name="retry" size={13} />
 								Re-judge
 							</button>
 						{/if}
@@ -1052,13 +972,13 @@
 	{#if total > 0}
 		<div class="flex flex-wrap items-center justify-between gap-3 pt-1 text-sm">
 			<p class="text-parchment-500">
-				Showing {offset + 1}–{offset + tags.length} of {total}
+				Showing {pager.rangeStart}–{pager.rangeEnd} of {total}
 			</p>
 			<div class="flex items-center gap-3">
-				<button disabled={offset === 0} onclick={prevPage} class={pagerButton}>Prev</button>
-				<button disabled={offset + tags.length >= total} onclick={nextPage} class={pagerButton}>
-					Next
-				</button>
+				<button disabled={provisional.query.page === 0} onclick={prevPage} class={pagerButton}
+					>Prev</button
+				>
+				<button disabled={!pager.hasMore} onclick={nextPage} class={pagerButton}> Next </button>
 			</div>
 		</div>
 	{/if}
@@ -1129,7 +1049,7 @@
 	onClose={() => (folding = null)}
 	onfolded={() => {
 		if (onchanged) onchanged();
-		load();
+		provisional.reload();
 	}}
 />
 
@@ -1140,6 +1060,6 @@
 	onClose={() => (splitting = null)}
 	onsplit={() => {
 		if (onchanged) onchanged();
-		load();
+		provisional.reload();
 	}}
 />

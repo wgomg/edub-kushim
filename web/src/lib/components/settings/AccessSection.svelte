@@ -1,15 +1,17 @@
 <script>
 	import { api } from '#lib/api.js';
-	import DataTable from '#lib/components/DataTable.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+	import ListTable from '#lib/components/ListTable.svelte';
 	import Modal from '#lib/components/Modal.svelte';
-	import { EDIT_ICON, DELETE_ICON, actionButton } from '#lib/icons.js';
-	import { escapeHtml } from '#lib/utils/html.js';
+	import { createListQuery, toggleSortState } from '#lib/list/listQuery.svelte.js';
+	import { formatDate } from '#lib/utils/html.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
 	import Card from './Card.svelte';
 	import GroupHead from './GroupHead.svelte';
 	import Switch from './Switch.svelte';
+	import { usersQuery } from './usersQuery.js';
 
 	let { cfg, showHead = true } = $props();
 
@@ -20,50 +22,29 @@
 	let formRole = $state('viewer');
 	let userError = $state('');
 	let savingUser = $state(false);
-	let refreshKey = $state(0);
+
+	async function fetchUsers({ limit, offset, signal }) {
+		const data = await api.users.list(limit, offset, signal);
+		if (!data) throw new Error('Failed to load users');
+		return { items: data.users ?? [], total: data.total ?? null };
+	}
+
+	const users = createListQuery({
+		fetcher: fetchUsers,
+		codec: usersQuery,
+		sortKeys: ['username', 'role', 'created_at'],
+		keyField: 'id'
+	});
 
 	const userColumns = [
-		{
-			key: 'username',
-			label: 'Username',
-			sortable: true,
-			width: '100%'
-		},
-		{
-			key: 'role',
-			label: 'Role',
-			sortable: true,
-			cell: (_v, row) => {
-				const cls = authStore.roleBadgeClass(row.role);
-				return `<span class="inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}">${escapeHtml(row.role)}</span>`;
-			}
-		},
-		{
-			key: 'created_at',
-			label: 'Created At',
-			sortable: true,
-			cell: (_v, row) => {
-				if (!row.created_at) return '-';
-				const d = new Date(row.created_at);
-				return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-			}
-		},
-		{
-			key: 'actions',
-			label: 'Actions',
-			sortable: false,
-			cellClass: 'whitespace-nowrap',
-			cell: (_v, row) => {
-				const safeName = escapeHtml(row.username);
-				const safeRole = escapeHtml(row.role || 'viewer');
-				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-user': row.id, 'data-user-name': safeName, 'data-user-role': safeRole })}
-${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-user': row.id, 'data-user-name': safeName })}`;
-			}
-		}
+		{ key: 'username', label: 'Username', sortable: true, width: '100%' },
+		{ key: 'role', label: 'Role', sortable: true },
+		{ key: 'created_at', label: 'Created At', sortable: true },
+		{ key: 'actions', label: 'Actions', sortable: false, cellClass: 'whitespace-nowrap' }
 	];
 
-	async function fetchUsers({ limit, offset }) {
-		return await api.users.list(limit, offset);
+	function sortByColumn(key) {
+		users.update(toggleSortState(users.query, key));
 	}
 
 	function openNewUser() {
@@ -82,23 +63,6 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		formRole = userRole || 'viewer';
 		userError = '';
 		showUserModal = true;
-	}
-
-	function handleUserPageClick(e) {
-		const editBtn = e.target.closest('[data-edit-user]');
-		if (editBtn) {
-			const id = parseInt(editBtn.getAttribute('data-edit-user'));
-			const name = editBtn.getAttribute('data-user-name');
-			const role = editBtn.getAttribute('data-user-role') || 'viewer';
-			openEditUser(id, name, role);
-			return;
-		}
-		const deleteBtn = e.target.closest('[data-delete-user]');
-		if (deleteBtn) {
-			const id = parseInt(deleteBtn.getAttribute('data-delete-user'));
-			const name = deleteBtn.getAttribute('data-user-name');
-			handleDeleteUser(id, name);
-		}
 	}
 
 	async function saveUser() {
@@ -128,7 +92,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 
 		if (result.ok) {
 			showUserModal = false;
-			refreshKey++;
+			users.reload();
 		} else if (result.status === 409) {
 			userError = 'Username already exists';
 		} else {
@@ -144,7 +108,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		});
 		if (!ok) return;
 		await api.users.delete(userId);
-		refreshKey++;
+		users.reload();
 	}
 </script>
 
@@ -186,15 +150,54 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				</button>
 			{/snippet}
 
-			<DataTable
+			{#snippet cell(col, row)}
+				{#if col.key === 'role'}
+					<span
+						class="inline-block rounded-full px-2 py-0.5 text-xs font-medium {authStore.roleBadgeClass(
+							row.role
+						)}">{row.role}</span
+					>
+				{:else if col.key === 'created_at'}
+					{formatDate(row.created_at)}
+				{:else if col.key === 'actions'}
+					<div class="flex items-center">
+						<button
+							onclick={() => openEditUser(row.id, row.username, row.role || 'viewer')}
+							title="Edit"
+							aria-label="Edit"
+							class="rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							><Icon name="edit" /></button
+						>
+						<button
+							onclick={() => handleDeleteUser(row.id, row.username)}
+							title="Delete"
+							aria-label="Delete"
+							class="rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							><Icon name="delete" /></button
+						>
+					</div>
+				{:else}
+					{row[col.key] ?? ''}
+				{/if}
+			{/snippet}
+
+			<ListTable
 				columns={userColumns}
-				fetch={fetchUsers}
-				title=""
-				defaultPageSize={25}
+				{cell}
+				rows={users.rows}
+				total={users.total}
+				loading={users.loading}
+				error={users.error}
+				page={users.query.page}
+				pageSize={users.query.pageSize}
 				pageSizes={[10, 25, 50, 100]}
-				{refreshKey}
-				onActionClick={handleUserPageClick}
-				urlSync="users"
+				sortBy={users.query.sortBy}
+				sortOrder={users.query.sortOrder}
+				keyField="id"
+				title=""
+				onSort={sortByColumn}
+				onPage={(next) => users.update({ page: next })}
+				onPageSize={(size) => users.update({ pageSize: size })}
 			/>
 		</Card>
 	</div>

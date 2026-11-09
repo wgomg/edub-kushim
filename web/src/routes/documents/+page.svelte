@@ -1,23 +1,27 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
+	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { api } from '#lib/api.js';
-	import DataTable from '#lib/components/DataTable.svelte';
-	import DocumentGrid from '#lib/components/DocumentGrid.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+	import ListGrid from '#lib/components/ListGrid.svelte';
+	import ListTable from '#lib/components/ListTable.svelte';
 	import SearchBar from '#lib/components/SearchBar.svelte';
 	import FilterPanel from '#lib/components/FilterPanel.svelte';
-	import { filterStore } from '#lib/stores/filterStore.js';
-	import { setPersonTypes, serializeFilter } from '#lib/stores/searchFilter.js';
-	import { onDestroy, onMount } from 'svelte';
-	import { SvelteURLSearchParams } from 'svelte/reactivity';
-	import { escapeHtml, formatSize } from '#lib/utils/html.js';
-	import { DOWNLOAD_ICON } from '#lib/icons.js';
+	import { createListQuery, toggleSortState } from '#lib/list/listQuery.svelte.js';
+	import { formatDate, formatSize } from '#lib/utils/html.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
-
-	let selectedDocs = $state([]);
+	import {
+		documentsQuery,
+		normalizeSavedFilter,
+		PERSON_ANY_TYPE,
+		savedFilter,
+		searchRequestBody,
+		snippetSegments
+	} from './query.js';
 
 	let batchTagMode = $state('add');
 	let batchTagIds = $state([]);
@@ -34,7 +38,240 @@
 	let typePickerEl = $state(null);
 	let savedEl = $state(null);
 
-	const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+	let showFilters = $state(false);
+	let savedSearches = $state([]);
+	let showSaved = $state(false);
+	let saving = $state(false);
+	let showNameInput = $state(false);
+	let saveName = $state('');
+
+	let personTypes = $state([]);
+	let failedThumbs = new SvelteSet();
+
+	let viewMode = $state(
+		typeof localStorage !== 'undefined' && localStorage.getItem('edub:documents:view') === 'grid'
+			? 'grid'
+			: 'table'
+	);
+
+	async function fetchDocuments({ limit, offset, sortBy, sortOrder, query, signal }) {
+		const data = await api.documents.searchStructured(
+			{
+				...searchRequestBody(query),
+				sort_by: sortBy,
+				sort_order: sortOrder,
+				limit,
+				offset
+			},
+			signal
+		);
+		if (!data) throw new Error('Failed to load documents');
+		return { items: data.results ?? [], total: data.total ?? null };
+	}
+
+	const documents = createListQuery({
+		fetcher: fetchDocuments,
+		codec: documentsQuery,
+		sortKeys: ['title', 'page_count', 'file_size', 'created_at'],
+		keyField: 'id'
+	});
+
+	const selectedDocs = $derived(documents.selectedRows);
+
+	$effect(() => {
+		if (typeof localStorage !== 'undefined') {
+			localStorage.setItem('edub:documents:view', viewMode);
+		}
+	});
+
+	const columns = $derived.by(() => {
+		const cols = [{ key: 'title', label: 'Title', sortable: true }];
+
+		if (documents.query.q) {
+			cols.push({ key: 'snippet', label: 'Snippet', sortable: false, width: '40%' });
+		}
+
+		cols.push(
+			{ key: 'tags', label: 'Tags', sortable: false, minWidth: '200px' },
+			{ key: 'people', label: 'People', sortable: false, minWidth: '250px' },
+			{
+				key: 'page_count',
+				label: 'Pages',
+				sortable: true,
+				cellClass: 'tabular-nums',
+				minWidth: '70px'
+			},
+			{ key: 'file_size', label: 'Size', sortable: true, minWidth: '100px' },
+			{ key: 'created_at', label: 'Created', sortable: true, minWidth: '150px' },
+			{ key: '_actions', label: '', sortable: false, width: '50px' }
+		);
+
+		return cols;
+	});
+
+	const sortOptions = [
+		{ value: 'created_at', label: 'Created' },
+		{ value: 'title', label: 'Title' },
+		{ value: 'file_size', label: 'Size' },
+		{ value: 'page_count', label: 'Pages' }
+	];
+
+	function handleSearch(partial) {
+		documents.update(partial);
+	}
+
+	function sortByColumn(key) {
+		documents.update(toggleSortState(documents.query, key));
+	}
+
+	function toggleSortOrder() {
+		documents.update(toggleSortState(documents.query, documents.query.sortBy));
+	}
+
+	function view(row) {
+		goto(resolve(`documents/${row.id}`));
+	}
+
+	function personGroups(people) {
+		const grouped = {};
+		for (const person of people ?? []) {
+			const type = person.person_type_name || 'Unknown';
+			if (!grouped[type]) grouped[type] = [];
+			grouped[type].push(person.name);
+		}
+		return Object.entries(grouped).map(([type, names]) => ({
+			type,
+			shown: names.slice(0, 3),
+			extra: Math.max(0, names.length - 3)
+		}));
+	}
+
+	function typeLabel(mimeType) {
+		if (!mimeType) return 'FILE';
+		if (mimeType === 'application/pdf') return 'PDF';
+		if (mimeType.startsWith('image/')) return 'IMAGE';
+		if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+			return 'DOCX';
+		if (mimeType === 'application/vnd.oasis.opendocument.text') return 'ODT';
+		return 'FILE';
+	}
+
+	function openDocument(event, row) {
+		// let modifier clicks fall through to the href (new tab / middle-click)
+		if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+			return;
+		event.preventDefault();
+		view(row);
+	}
+
+	async function refreshSavedSearches() {
+		savedSearches = await api.savedSearches.list();
+	}
+
+	function openSaveInput() {
+		saveName = '';
+		showNameInput = true;
+		showSaved = false;
+	}
+
+	async function submitSave() {
+		const name = saveName.trim();
+		if (!name) return;
+		saving = true;
+		showNameInput = false;
+		await api.savedSearches.create(name, savedFilter(documents.query));
+		saving = false;
+		await refreshSavedSearches();
+	}
+
+	function handleLoad(saved) {
+		documents.update(normalizeSavedFilter(saved.filter));
+		showSaved = false;
+	}
+
+	async function handleDelete(id) {
+		const ok = await confirmStore.confirm({
+			title: 'Delete saved search',
+			message: 'Delete this saved search?',
+			danger: true
+		});
+		if (!ok) return;
+		await api.savedSearches.delete(id);
+		await refreshSavedSearches();
+	}
+
+	async function handleBatchDelete() {
+		const ok = await confirmStore.confirm({
+			title: 'Delete documents',
+			message: `Delete ${selectedDocs.length} document(s)? This action cannot be undone.`,
+			danger: true
+		});
+		if (!ok) return;
+		const res = await api.documents.batchDelete(selectedDocs.map((row) => row.id));
+		if (!res.ok) {
+			toastStore.error(res.data?.error || 'Batch delete failed');
+			return;
+		}
+		if (res.data?.failed?.length > 0) {
+			toastStore.warning(
+				`Deleted ${res.data.deleted} of ${selectedDocs.length} documents. ${res.data.failed.length} failed.`
+			);
+		}
+		documents.reload();
+	}
+
+	function onTagSearchInput(event) {
+		tagSearchQuery = event.target.value;
+		clearTimeout(tagSearchTimer);
+		tagSearchTimer = setTimeout(async () => {
+			try {
+				tagOptions = await api.autocomplete.tags(tagSearchQuery, 20);
+			} catch {
+				tagOptions = [];
+			}
+		}, 200);
+	}
+
+	async function handleBatchAssign() {
+		if (batchTagIds.length === 0) return;
+		const res = await api.documents.batchAssignTags(
+			selectedDocs.map((row) => row.id),
+			batchTagIds,
+			batchTagMode
+		);
+		if (!res.ok) {
+			toastStore.error(res.data?.error || 'Batch tag assignment failed');
+			return;
+		}
+		if (res.data?.failed?.length > 0) {
+			toastStore.warning(
+				`Tagged ${res.data.assigned} of ${selectedDocs.length} documents. ${res.data.failed.length} failed.`
+			);
+		}
+		batchTagIds = [];
+		showTagPicker = false;
+		documents.reload();
+	}
+
+	async function handleBatchSetType() {
+		if (!batchDocTypeId) return;
+		const res = await api.documents.batchSetDocumentType(
+			selectedDocs.map((row) => row.id),
+			batchDocTypeId
+		);
+		if (!res.ok) {
+			toastStore.error(res.data?.error || 'Batch type assignment failed');
+			return;
+		}
+		if (res.data?.failed?.length > 0) {
+			toastStore.warning(
+				`Set type on ${res.data.updated} of ${selectedDocs.length} documents. ${res.data.failed.length} failed.`
+			);
+		}
+		batchDocTypeId = null;
+		showTypePicker = false;
+		documents.reload();
+	}
 
 	$effect(() => {
 		if (!showTagPicker && !showTypePicker && !showSaved) return;
@@ -58,328 +295,10 @@
 		};
 	});
 
-	let columns = $derived.by(() => {
-		const cols = [
-			{
-				key: 'title',
-				label: 'Title',
-				sortable: true,
-				cell: (v, row) =>
-					`<a href="/documents/${row.id}" class="underline decoration-parchment-500/30 underline-offset-2 hover:text-gold-500">${escapeHtml(v)}</a>`
-			}
-		];
-
-		if (filter.query) {
-			cols.push({
-				key: 'snippet',
-				label: 'Snippet',
-				sortable: false,
-				cell: (v) =>
-					v
-						? `<span class="text-parchment-300 text-xs leading-relaxed [&>b]:text-gold-500 [&>b]:font-semibold">${v}</span>`
-						: '<span class="text-parchment-500 italic">—</span>',
-				width: '40%'
-			});
-		}
-
-		cols.push(
-			{
-				key: 'tags',
-				label: 'Tags',
-				sortable: false,
-				cell: (v) => {
-					if (!v || v.length === 0) return '<span class="text-parchment-500 italic">—</span>';
-					const shown = v.slice(0, 3);
-					const pills = shown
-						.map(
-							(t) =>
-								`<span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300">${escapeHtml(t.name)}</span>`
-						)
-						.join(' ');
-					const extra = v.length - shown.length;
-					return extra > 0
-						? `${pills} <span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-400">(+${extra})</span>`
-						: pills;
-				},
-				minWidth: '200px'
-			},
-			{
-				key: 'people',
-				label: 'People',
-				sortable: false,
-				cell: (v) => {
-					if (!v || v.length === 0) return '<span class="text-parchment-500 italic">—</span>';
-					const grouped = {};
-					for (const p of v) {
-						const type = p.person_type_name || 'Unknown';
-						if (!grouped[type]) grouped[type] = [];
-						grouped[type].push(escapeHtml(p.name));
-					}
-					return Object.entries(grouped)
-						.map(([type, names]) => {
-							const shown = names.slice(0, 3);
-							const extra = names.length - shown.length;
-							const badge =
-								extra > 0 ? ` <span class="text-parchment-400 text-xs">(+${extra})</span>` : '';
-							return `<span class="text-parchment-400 text-xs">${escapeHtml(type)}:</span> <span class="text-parchment-200">${shown.join(', ')}</span>${badge}`;
-						})
-						.join('<br>');
-				},
-				minWidth: '250px'
-			},
-			{
-				key: 'page_count',
-				label: 'Pages',
-				sortable: true,
-				cell: (v) =>
-					v != null && v > 0 ? String(v) : '<span class="text-parchment-500 italic">—</span>',
-				cellClass: 'tabular-nums',
-				minWidth: '70px'
-			},
-			{
-				key: 'file_size',
-				label: 'Size',
-				sortable: true,
-				cell: (v) => formatSize(v),
-				minWidth: '100px'
-			},
-			{
-				key: 'created_at',
-				label: 'Created',
-				sortable: true,
-				cell: (v) => dateFormatter.format(new Date(v)),
-				minWidth: '150px'
-			},
-			{
-				key: '_actions',
-				label: '',
-				sortable: false,
-				width: '50px',
-				cell: (_, row) =>
-					`<a href="/api/v1/documents/${row.id}/file?download=true" class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 hover:text-gold-500 hover:bg-clay-800 transition-colors" title="Download PDF" aria-label="Download PDF">${DOWNLOAD_ICON}</a>`
-			}
-		);
-
-		return cols;
-	});
-
-	let filter = $state({
-		query: '',
-		tags: [],
-		people: [],
-		documentType: '',
-		language: '',
-		dateCreated: { from: null, to: null },
-		dateModified: { from: null, to: null },
-		fileSize: { min: null, max: null },
-		missingLanguage: false,
-		missingType: false,
-		untagged: false
-	});
-	let showFilters = $state(false);
-	let refreshKey = $state(0);
-	let savedSearches = $state([]);
-	let showSaved = $state(false);
-	let saving = $state(false);
-	let showNameInput = $state(false);
-	let saveName = $state('');
-
-	let viewMode = $state(
-		typeof localStorage !== 'undefined' && localStorage.getItem('edub:documents:view') === 'grid'
-			? 'grid'
-			: 'table'
-	);
-
-	$effect(() => {
-		if (typeof localStorage !== 'undefined') {
-			localStorage.setItem('edub:documents:view', viewMode);
-		}
-	});
-
-	const initialQ = page.url.searchParams.get('q');
-	if (initialQ) {
-		filterStore.fromQueryString(initialQ);
-	}
-
-	let subscribed = false;
-	// the subscription must die with the page: a leaked one serializes this page's filter into whatever
-	// URL is current when another screen sets the store, which polluted the history entry of the tags and
-	// people screens, refilling their search boxes on back navigation
-	const unsubscribeFilter = filterStore.subscribe((f) => {
-		filter = {
-			query: f.query,
-			tags: f.tags,
-			people: f.people,
-			documentType: f.documentType,
-			language: f.language,
-			dateCreated: f.dateCreated,
-			dateModified: f.dateModified,
-			fileSize: f.fileSize,
-			missingLanguage: f.missingLanguage,
-			missingType: f.missingType,
-			untagged: f.untagged
-		};
-		if (subscribed) {
-			refreshKey++;
-			const q = serializeFilter(f);
-			const sp = new SvelteURLSearchParams(page.url.searchParams);
-
-			if (q) sp.set('q', q);
-			else sp.delete('q');
-
-			goto(resolve(`${page.url.pathname}?${sp.toString()}`), { shallow: true, replace: true });
-		}
-		subscribed = true;
-	});
-	onDestroy(unsubscribeFilter);
-
-	function handleSearch(partial) {
-		filterStore.setPartial(partial);
-	}
-
-	function buildFilterBody() {
-		const body = {
-			query: filter.query,
-			tags: filter.tags,
-			people: filter.people,
-			document_type: filter.documentType || '',
-			language: filter.language || '',
-			missing_language: filter.missingLanguage || false,
-			missing_type: filter.missingType || false,
-			untagged: filter.untagged || false
-		};
-		const dc = filter.dateCreated;
-		if (dc.from || dc.to) {
-			body.date_created = { from: dc.from || null, to: dc.to || null };
-		}
-		const dm = filter.dateModified;
-		if (dm.from || dm.to) {
-			body.date_modified = { from: dm.from || null, to: dm.to || null };
-		}
-		const fs = filter.fileSize;
-		if (fs.min != null || fs.max != null) {
-			body.file_size = { min: fs.min, max: fs.max };
-		}
-		return body;
-	}
-
-	async function refreshSavedSearches() {
-		savedSearches = await api.savedSearches.list();
-	}
-
-	function openSaveInput() {
-		saveName = '';
-		showNameInput = true;
-		showSaved = false;
-	}
-
-	async function submitSave() {
-		const name = saveName.trim();
-		if (!name) return;
-		saving = true;
-		showNameInput = false;
-		await api.savedSearches.create(name, buildFilterBody());
-		saving = false;
-		await refreshSavedSearches();
-	}
-
-	function handleLoad(s) {
-		const filterData = JSON.parse(s.filter_json);
-		filterStore.setPartial(filterData);
-		showSaved = false;
-	}
-
-	async function handleDelete(id) {
-		const ok = await confirmStore.confirm({
-			title: 'Delete saved search',
-			message: 'Delete this saved search?',
-			danger: true
-		});
-		if (!ok) return;
-		await api.savedSearches.delete(id);
-		await refreshSavedSearches();
-	}
-
-	async function handleBatchDelete() {
-		const ok = await confirmStore.confirm({
-			title: 'Delete documents',
-			message: `Delete ${selectedDocs.length} document(s)? This action cannot be undone.`,
-			danger: true
-		});
-		if (!ok) return;
-		const res = await api.documents.batchDelete(selectedDocs.map((r) => r.id));
-		if (!res.ok) {
-			toastStore.error(res.data?.error || 'Batch delete failed');
-			return;
-		}
-		if (res.data?.failed?.length > 0) {
-			const failed = res.data.failed;
-			toastStore.warning(
-				`Deleted ${res.data.deleted} of ${selectedDocs.length} documents. ${failed.length} failed.`
-			);
-		}
-		refreshKey++;
-	}
-
-	function onTagSearchInput(e) {
-		tagSearchQuery = e.target.value;
-		clearTimeout(tagSearchTimer);
-		tagSearchTimer = setTimeout(async () => {
-			try {
-				tagOptions = await api.autocomplete.tags(tagSearchQuery, 20);
-			} catch {
-				tagOptions = [];
-			}
-		}, 200);
-	}
-
-	async function handleBatchAssign() {
-		if (batchTagIds.length === 0) return;
-		const res = await api.documents.batchAssignTags(
-			selectedDocs.map((r) => r.id),
-			batchTagIds,
-			batchTagMode
-		);
-		if (!res.ok) {
-			toastStore.error(res.data?.error || 'Batch tag assignment failed');
-			return;
-		}
-		if (res.data?.failed?.length > 0) {
-			const failed = res.data.failed;
-			toastStore.warning(
-				`Tagged ${res.data.assigned} of ${selectedDocs.length} documents. ${failed.length} failed.`
-			);
-		}
-		batchTagIds = [];
-		showTagPicker = false;
-		refreshKey++;
-	}
-
-	async function handleBatchSetType() {
-		if (!batchDocTypeId) return;
-		const res = await api.documents.batchSetDocumentType(
-			selectedDocs.map((r) => r.id),
-			batchDocTypeId
-		);
-		if (!res.ok) {
-			toastStore.error(res.data?.error || 'Batch type assignment failed');
-			return;
-		}
-		if (res.data?.failed?.length > 0) {
-			const failed = res.data.failed;
-			toastStore.warning(
-				`Set type on ${res.data.updated} of ${selectedDocs.length} documents. ${failed.length} failed.`
-			);
-		}
-		batchDocTypeId = null;
-		showTypePicker = false;
-		refreshKey++;
-	}
-
 	onMount(() => {
 		api.autocomplete
 			.peopleTypes()
-			.then(setPersonTypes)
+			.then((types) => (personTypes = types.map((type) => type.name)))
 			.catch(() => {});
 		api.autocomplete
 			.documentTypes()
@@ -387,28 +306,141 @@
 			.catch(() => toastStore.error('Failed to load document types'));
 		refreshSavedSearches();
 	});
-
-	function fetch({ sortBy, sortOrder, limit, offset }) {
-		const body = {
-			...buildFilterBody(),
-			sort_by: sortBy,
-			sort_order: sortOrder,
-			limit,
-			offset
-		};
-		return api.documents.searchStructured(body);
-	}
-
-	function view(row) {
-		goto(resolve(`documents/${row.id}`));
-	}
 </script>
+
+{#snippet cell(col, row)}
+	{#if col.key === 'title'}
+		<a
+			href={resolve(`documents/${row.id}`)}
+			class="underline decoration-parchment-500/30 underline-offset-2 hover:text-gold-500"
+			>{row.title}</a
+		>
+	{:else if col.key === 'snippet'}
+		{#if row.snippet}
+			<span class="text-xs leading-relaxed text-parchment-300">
+				{#each snippetSegments(row.snippet) as segment, index (index)}
+					{#if segment.bold}<b class="font-semibold text-gold-500">{segment.text}</b
+						>{:else}{segment.text}{/if}
+				{/each}
+			</span>
+		{:else}
+			<span class="text-parchment-500 italic">—</span>
+		{/if}
+	{:else if col.key === 'tags'}
+		{#if row.tags?.length > 0}
+			<div class="flex flex-wrap gap-1">
+				{#each row.tags.slice(0, 3) as tag (tag.id)}
+					<span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-300"
+						>{tag.name}</span
+					>
+				{/each}
+				{#if row.tags.length > 3}
+					<span class="inline-block rounded-full bg-clay-800 px-2 py-0.5 text-xs text-parchment-400"
+						>(+{row.tags.length - 3})</span
+					>
+				{/if}
+			</div>
+		{:else}
+			<span class="text-parchment-500 italic">—</span>
+		{/if}
+	{:else if col.key === 'people'}
+		{#if row.people?.length > 0}
+			{#each personGroups(row.people) as group (group.type)}
+				<div>
+					<span class="text-xs text-parchment-400">{group.type}:</span>
+					<span class="text-parchment-200">{group.shown.join(', ')}</span>
+					{#if group.extra > 0}
+						<span class="text-xs text-parchment-400">(+{group.extra})</span>
+					{/if}
+				</div>
+			{/each}
+		{:else}
+			<span class="text-parchment-500 italic">—</span>
+		{/if}
+	{:else if col.key === 'page_count'}
+		{#if row.page_count != null && row.page_count > 0}
+			{row.page_count}
+		{:else}
+			<span class="text-parchment-500 italic">—</span>
+		{/if}
+	{:else if col.key === 'file_size'}
+		{formatSize(row.file_size)}
+	{:else if col.key === 'created_at'}
+		{formatDate(row.created_at)}
+	{:else if col.key === '_actions'}
+		<a
+			href={resolve(`/api/v1/documents/${row.id}/file?download=true`)}
+			class="inline-flex items-center justify-center rounded-md p-1.5 text-parchment-500 transition-colors hover:bg-clay-800 hover:text-gold-500"
+			title="Download PDF"
+			aria-label="Download PDF"><Icon name="download" /></a
+		>
+	{:else}
+		{row[col.key] ?? ''}
+	{/if}
+{/snippet}
+
+{#snippet card(row)}
+	<a
+		href={resolve(`documents/${row.id}`)}
+		class="flex flex-1 flex-col focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none focus-visible:ring-inset"
+		onclick={(event) => openDocument(event, row)}
+	>
+		<div class="relative aspect-3/4 w-full overflow-hidden bg-clay-950">
+			{#if row.has_thumbnail && !failedThumbs.has(row.id)}
+				<img
+					src={`/api/v1/documents/${row.id}/thumbnail`}
+					alt={row.title || 'Document thumbnail'}
+					loading="lazy"
+					width="400"
+					height="533"
+					onerror={() => failedThumbs.add(row.id)}
+					class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105 motion-reduce:transform-none motion-reduce:transition-none"
+				/>
+			{:else}
+				<div class="flex h-full w-full flex-col items-center justify-center gap-2">
+					{#if row.original_type === 'application/pdf'}
+						<Icon name="file-pdf" size={40} strokeWidth={1.5} class="text-terracotta-500" />
+					{:else if row.original_type?.startsWith('image/')}
+						<Icon name="file-image" size={40} strokeWidth={1.5} class="text-sage-500" />
+					{:else if row.original_type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || row.original_type === 'application/vnd.oasis.opendocument.text'}
+						<Icon name="file-text" size={40} strokeWidth={1.5} class="text-lapis-400" />
+					{:else}
+						<Icon name="file" size={40} strokeWidth={1.5} class="text-parchment-500" />
+					{/if}
+					<span
+						class="rounded-full bg-clay-800 px-2 py-0.5 text-[10px] font-medium tracking-wide text-parchment-400"
+					>
+						{typeLabel(row.original_type)}
+					</span>
+				</div>
+			{/if}
+		</div>
+		<div class="flex flex-1 flex-col gap-1.5 p-3">
+			<h3 class="line-clamp-2 text-sm leading-snug font-medium wrap-break-word text-parchment-200">
+				{row.title || 'Untitled'}
+			</h3>
+			{#if row.tags?.length > 0}
+				<div class="flex flex-wrap gap-1">
+					{#each row.tags.slice(0, 3) as tag (tag.id)}
+						<span class="rounded-full bg-clay-800 px-2 py-0.5 text-[11px] text-parchment-300"
+							>{tag.name}</span
+						>
+					{/each}
+				</div>
+			{/if}
+			<div class="mt-auto flex items-center justify-between text-[11px] text-parchment-500">
+				<span>{formatDate(row.created_at)}</span>
+				<span>{formatSize(row.file_size)}</span>
+			</div>
+		</div>
+	</a>
+{/snippet}
 
 <div class="flex flex-col gap-4">
 	<div class="flex items-center gap-3">
 		{#if selectedDocs.length > 0}
 			<button
-				onclick={() => api.documents.downloadBatch(selectedDocs.map((r) => r.id))}
+				onclick={() => api.documents.downloadBatch(selectedDocs.map((row) => row.id))}
 				class="shrink-0 rounded-lg bg-gold-600 px-3 py-2 text-sm font-medium text-clay-950 hover:bg-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			>
 				Download selected ({selectedDocs.length})
@@ -541,8 +573,8 @@
 									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 								>
 									<option value={null} disabled>Choose type…</option>
-									{#each documentTypeOptions as t (t.id)}
-										<option value={t.id}>{t.name}</option>
+									{#each documentTypeOptions as type (type.id)}
+										<option value={type.id}>{type.name}</option>
 									{/each}
 								</select>
 								<button
@@ -560,14 +592,16 @@
 		{/if}
 		<div class="relative min-w-0 flex-1">
 			<SearchBar
-				query={filter.query}
-				tags={filter.tags}
-				people={filter.people}
-				documentType={filter.documentType}
-				language={filter.language}
-				dateCreated={filter.dateCreated}
-				dateModified={filter.dateModified}
-				fileSize={filter.fileSize}
+				q={documents.query.q}
+				tags={documents.query.tags}
+				people={documents.query.people}
+				documentType={documents.query.documentType}
+				language={documents.query.language}
+				dateCreated={documents.query.dateCreated}
+				dateModified={documents.query.dateModified}
+				fileSize={documents.query.fileSize}
+				{personTypes}
+				personAnyType={PERSON_ANY_TYPE}
 				onSearch={handleSearch}
 			/>
 		</div>
@@ -627,17 +661,17 @@
 						{#if savedSearches.length === 0}
 							<p class="px-2 py-3 text-center text-xs text-parchment-500">No saved searches</p>
 						{:else}
-							{#each savedSearches as s (s.id)}
+							{#each savedSearches as search (search.id)}
 								<div class="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-clay-800">
 									<button
-										onclick={() => handleLoad(s)}
+										onclick={() => handleLoad(search)}
 										class="min-w-0 flex-1 truncate text-left text-sm text-parchment-200"
 									>
-										{s.name}
+										{search.name}
 									</button>
 									{#if !authStore.authEnabled() || authStore.isEditor()}
 										<button
-											onclick={() => handleDelete(s.id)}
+											onclick={() => handleDelete(search.id)}
 											class="shrink-0 rounded p-0.5 text-parchment-500 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 hover:text-red-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 											title="Delete"
 											aria-label="Delete saved search">×</button
@@ -698,33 +732,53 @@
 	{/if}
 
 	{#if showFilters}
-		<FilterPanel />
+		<FilterPanel filters={documents.query} {personTypes} onChange={handleSearch} />
 	{/if}
 
 	{#if viewMode === 'grid'}
-		<DocumentGrid
-			{fetch}
-			onRowClick={view}
+		<ListGrid
+			rows={documents.rows}
+			total={documents.total}
+			loading={documents.loading}
+			error={documents.error}
+			page={documents.query.page}
+			pageSize={documents.query.pageSize}
+			pageSizes={[10, 25, 50, 100]}
+			sortBy={documents.query.sortBy}
+			sortOrder={documents.query.sortOrder}
+			{sortOptions}
+			keyField="id"
 			title="Documents"
-			{refreshKey}
-			selectable={true}
-			onselectionchange={(rows) => (selectedDocs = rows)}
-			defaultSortBy="created_at"
-			defaultSortOrder="desc"
-			urlSync="dt"
+			selectedKeys={documents.selectedKeys}
+			onSort={sortByColumn}
+			onToggleOrder={toggleSortOrder}
+			onPage={(next) => documents.update({ page: next })}
+			onPageSize={(size) => documents.update({ pageSize: size })}
+			onToggleRow={documents.toggle}
+			{card}
 		/>
 	{:else}
-		<DataTable
+		<ListTable
 			{columns}
-			{fetch}
-			onRowClick={view}
+			{cell}
+			rows={documents.rows}
+			total={documents.total}
+			loading={documents.loading}
+			error={documents.error}
+			page={documents.query.page}
+			pageSize={documents.query.pageSize}
+			pageSizes={[10, 25, 50, 100]}
+			sortBy={documents.query.sortBy}
+			sortOrder={documents.query.sortOrder}
+			keyField="id"
 			title="Documents"
-			{refreshKey}
-			selectable={true}
-			onselectionchange={(rows) => (selectedDocs = rows)}
-			defaultSortBy="created_at"
-			defaultSortOrder="desc"
-			urlSync="dt"
+			selectedKeys={documents.selectedKeys}
+			onSort={sortByColumn}
+			onPage={(next) => documents.update({ page: next })}
+			onPageSize={(size) => documents.update({ pageSize: size })}
+			onRowClick={view}
+			onToggleRow={documents.toggle}
+			onToggleAll={documents.toggleAll}
 		/>
 	{/if}
 </div>

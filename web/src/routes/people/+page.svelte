@@ -1,19 +1,25 @@
 <script>
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { filterStore } from '#lib/stores/filterStore.js';
-	import { defaultFilter } from '#lib/stores/searchFilter.js';
 	import { onMount } from 'svelte';
 	import { api } from '#lib/api.js';
-	import { EDIT_ICON, DELETE_ICON, BTN_BASE, actionButton } from '#lib/icons.js';
-	import { escapeHtml } from '#lib/utils/html.js';
-	import DataTable from '#lib/components/DataTable.svelte';
+	import { BTN_BASE } from '#lib/icons.js';
+	import Icon from '#lib/components/Icon.svelte';
+	import ListTable from '#lib/components/ListTable.svelte';
+	import {
+		createListQuery,
+		effectiveUrl,
+		toggleSortState,
+		writeRouteParams
+	} from '#lib/list/listQuery.svelte.js';
+	import { QueryDraft } from '#lib/list/queryDraft.svelte.js';
 	import Modal from '#lib/components/Modal.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import { peopleQuery } from './query.js';
 
-	let activeTab = $state(new URL(window.location.href).searchParams.get('tab') || 'people');
+	let activeTab = $derived(effectiveUrl().searchParams.get('tab') || 'people');
 
 	let showPeopleModal = $state(false);
 	let editingPerson = $state(null);
@@ -28,10 +34,27 @@
 	let personTypeFormDescription = $state('');
 	let personTypeError = $state('');
 
-	let query = $state(new URL(window.location.href).searchParams.get('q') || '');
-	let refreshKey = $state(0);
 	let savingPerson = $state(false);
 	let savingPersonType = $state(false);
+
+	async function fetchPeople({ limit, offset, query, signal }) {
+		const data = await api.people.list(query.q, limit, offset, signal);
+		if (!data) throw new Error('Failed to load people');
+		return { items: data.results ?? [], total: data.total ?? null };
+	}
+
+	const people = createListQuery({
+		fetcher: fetchPeople,
+		codec: peopleQuery,
+		sortKeys: ['name', 'name_native', 'document_count'],
+		keyField: 'id'
+	});
+
+	const draft = new QueryDraft(people);
+
+	function sortByColumn(key) {
+		people.update(toggleSortState(people.query, key));
+	}
 
 	const columns = [
 		{ key: 'name', label: 'Name', sortable: true, width: '100%' },
@@ -40,35 +63,19 @@
 			key: 'document_count',
 			label: 'Documents',
 			sortable: true,
-			cell: (v) => String(v ?? 0),
 			width: '100px'
 		},
 		{
 			key: 'actions',
 			label: 'Actions',
 			sortable: false,
-			cellClass: 'whitespace-nowrap',
-			cell: (_v, row) => {
-				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
-				const safeName = escapeHtml(row.name);
-				const safeNative = escapeHtml(row.name_native || '');
-				return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-person': row.id, 'data-person-name': safeName, 'data-person-native': safeNative })}
-${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-person': row.id, 'data-person-name': safeName })}`;
-			}
+			cellClass: 'whitespace-nowrap'
 		}
 	];
 
 	function filterByPerson(row) {
-		filterStore.set({
-			...defaultFilter,
-			people: [{ name: row.name, type: 'author' }]
-		});
-
-		goto(resolve('documents'));
-	}
-
-	async function fetch({ limit, offset }) {
-		return await api.people.list(query, limit, offset);
+		const params = new URLSearchParams({ person: `author:${row.name}` });
+		goto(resolve(`documents?${params.toString()}`));
 	}
 
 	onMount(() => {
@@ -113,7 +120,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		savingPerson = false;
 		if (result.ok) {
 			showPeopleModal = false;
-			refreshKey++;
+			people.reload();
 		} else {
 			toastStore.error('Failed to save person');
 		}
@@ -127,25 +134,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 		});
 		if (!ok) return;
 		await api.people.delete(p.id);
-		refreshKey++;
-	}
-
-	function handlePageClick(e) {
-		const editBtn = e.target.closest('[data-edit-person]');
-		if (editBtn) {
-			const id = parseInt(editBtn.getAttribute('data-edit-person'));
-			const name = editBtn.getAttribute('data-person-name');
-			const nameNative = editBtn.getAttribute('data-person-native') || '';
-			openEditPerson({ id, name, name_native: nameNative });
-			return;
-		}
-		const deleteBtn = e.target.closest('[data-delete-person]');
-		if (deleteBtn) {
-			const id = parseInt(deleteBtn.getAttribute('data-delete-person'));
-			const name = deleteBtn.getAttribute('data-person-name');
-			handleDeletePerson({ id, name });
-			return;
-		}
+		people.reload();
 	}
 
 	function openNewPersonType() {
@@ -191,10 +180,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 	}
 
 	function switchTab(tab) {
-		activeTab = tab;
-		const url = new URL(window.location.href);
-		url.searchParams.set('tab', tab);
-		goto(resolve(url.pathname + url.search), { replaceState: true, reset: false });
+		writeRouteParams(['tab'], [['tab', tab]]);
 	}
 
 	async function handleDeletePersonType(pt) {
@@ -260,14 +246,10 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				<input
 					id="people-filter"
 					type="text"
-					bind:value={query}
-					oninput={() => {
-						refreshKey++;
-						const url = new URL(window.location.href);
-						if (query) url.searchParams.set('q', query);
-						else url.searchParams.delete('q');
-						goto(resolve(url.pathname + url.search), { replaceState: true, reset: false });
-					}}
+					bind:value={draft.value}
+					oninput={draft.markEdited}
+					onfocus={draft.focus}
+					onblur={draft.blur}
 					name="people-filter"
 					autocomplete="off"
 					placeholder="Filter people…"
@@ -275,16 +257,59 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 				/>
 			</div>
 
-			<DataTable
+			{#snippet cell(col, row)}
+				{#if col.key === 'document_count'}
+					{String(row.document_count ?? 0)}
+				{:else if col.key === 'actions'}
+					{#if !authStore.authEnabled() || authStore.isEditor()}
+						<div class="flex gap-1">
+							<button
+								onclick={(e) => {
+									e.stopPropagation();
+									openEditPerson(row);
+								}}
+								title="Edit"
+								aria-label="Edit person"
+								class="{BTN_BASE} text-parchment-400 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								<Icon name="edit" />
+							</button>
+							<button
+								onclick={(e) => {
+									e.stopPropagation();
+									handleDeletePerson(row);
+								}}
+								title="Delete"
+								aria-label="Delete person"
+								class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+							>
+								<Icon name="delete" />
+							</button>
+						</div>
+					{/if}
+				{:else}
+					{row[col.key] ?? ''}
+				{/if}
+			{/snippet}
+
+			<ListTable
 				{columns}
-				{fetch}
-				title=""
-				defaultPageSize={50}
+				{cell}
+				rows={people.rows}
+				total={people.total}
+				loading={people.loading}
+				error={people.error}
+				page={people.query.page}
+				pageSize={people.query.pageSize}
 				pageSizes={[10, 25, 50, 100]}
-				{refreshKey}
+				sortBy={people.query.sortBy}
+				sortOrder={people.query.sortOrder}
+				keyField="id"
+				title=""
+				onSort={sortByColumn}
+				onPage={(next) => people.update({ page: next })}
+				onPageSize={(size) => people.update({ pageSize: size })}
 				onRowClick={filterByPerson}
-				onActionClick={handlePageClick}
-				urlSync="people"
 			/>
 		</div>
 
@@ -398,9 +423,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 													aria-label="Edit person type"
 													class="{BTN_BASE} text-parchment-400 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 												>
-													<!-- icons are static trusted markup -->
-													<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-													{@html EDIT_ICON}
+													<Icon name="edit" />
 												</button>
 												<button
 													onclick={(e) => {
@@ -411,9 +434,7 @@ ${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-
 													aria-label="Delete person type"
 													class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 												>
-													<!-- icons are static trusted markup -->
-													<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-													{@html DELETE_ICON}
+													<Icon name="delete" />
 												</button>
 											</div>
 										{/if}

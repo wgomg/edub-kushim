@@ -99,6 +99,7 @@ declare -A description=(
   ["web/src/lib/components"]="reusable Svelte components"
   ["web/src/lib/components/settings"]="settings-area section components"
   ["web/src/lib/components/tags"]="tag-review components"
+  ["web/src/lib/list"]="URL-backed list state, fetching and the shared route writer"
   ["web/src/lib/pdf"]="self-hosted pdf.js loader, worker wrapper, polyfills"
   ["web/src/lib/stores"]="runes-based state stores"
   ["web/src/lib/stubs"]="build stubs for optional modules"

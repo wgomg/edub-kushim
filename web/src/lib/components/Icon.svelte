@@ -1,5 +1,10 @@
 <script>
-	let { name, size = 16, class: klass = '' } = $props();
+	/**
+	 * Renders one of the app's static stroke icons by name. The SVG source lives here as markup so no
+	 * caller injects raw HTML; icons are decorative (`aria-hidden`) and inherit `currentColor` from
+	 * the parent. Callers that need a lighter stroke (document placeholders) pass `strokeWidth`.
+	 */
+	let { name, size = 16, strokeWidth = 2, class: klass = '' } = $props();
 </script>
 
 <svg
@@ -10,7 +15,7 @@
 	viewBox="0 0 24 24"
 	aria-hidden="true"
 	stroke="currentColor"
-	stroke-width="2"
+	stroke-width={strokeWidth}
 	fill="none"
 	stroke-linecap="round"
 	stroke-linejoin="round"
@@ -33,10 +38,10 @@
 		<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
 		<polyline points="7 10 12 15 17 10" />
 		<line x1="12" y1="15" x2="12" y2="3" />
-	{:else if name === 'rotate-cw'}
+	{:else if name === 'retry'}
 		<path d="M23 4v6h-6" />
 		<path d="M20.49 15a9 9 0 1 1 2.12-9.36L23 10" />
-	{:else if name === 'trash-2'}
+	{:else if name === 'delete'}
 		<polyline points="3 6 5 6 21 6" />
 		<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
 		<line x1="10" y1="11" x2="10" y2="17" />
@@ -58,15 +63,15 @@
 	{:else if name === 'circle-check'}
 		<circle cx="12" cy="12" r="10" />
 		<path d="m9 12 2 2 4-4" />
-	{:else if name === 'x'}
+	{:else if name === 'close'}
 		<path d="M18 6 6 18" />
 		<path d="m6 6 12 12" />
-	{:else if name === 'pencil'}
+	{:else if name === 'edit'}
 		<path
 			d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
 		/>
 		<path d="m15 5 4 4" />
-	{:else if name === 'fold-into'}
+	{:else if name === 'fold'}
 		<path d="M17 12H7" />
 		<path d="m11 18 6-6-6-6" />
 		<path d="M21 5v14" />
@@ -108,5 +113,40 @@
 		<circle cx="12" cy="12" r="10" />
 		<path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
 		<path d="M12 17h.01" />
+	{:else if name === 'restore'}
+		<path d="M3 7v6h6" />
+		<path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+	{:else if name === 'resume'}
+		<polygon points="5 3 19 12 5 21 5 3" />
+	{:else if name === 'promote'}
+		<path d="M12 19V5" />
+		<path d="m5 12 7-7 7 7" />
+	{:else if name === 'demote'}
+		<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+		<path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+		<path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+		<line x1="2" x2="22" y1="2" y2="22" />
+	{:else if name === 'file-pdf'}
+		<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+		<path d="M14 2v6h6" />
+		<path d="M9 15h6" />
+		<path d="M9 12h2" />
+		<path d="M9 18h4" />
+	{:else if name === 'file-image'}
+		<rect x="3" y="3" width="18" height="18" rx="2" />
+		<circle cx="9" cy="9" r="2" />
+		<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+	{:else if name === 'file-text'}
+		<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+		<path d="M14 2v6h6" />
+		<path d="M16 13H8" />
+		<path d="M16 17H8" />
+		<path d="M10 9H8" />
+	{:else if name === 'file'}
+		<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+		<path d="M14 2v6h6" />
+	{:else if name === 'spinner'}
+		<circle class="opacity-25" cx="12" cy="12" r="10" stroke-width="4" />
+		<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
 	{/if}
 </svg>

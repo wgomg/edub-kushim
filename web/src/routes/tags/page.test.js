@@ -15,6 +15,11 @@ const apiMocks = vi.hoisted(() => ({
 	revertSplitRule: vi.fn()
 }));
 
+import { page } from '$app/state';
+
+vi.mock('$app/state', () => ({
+	page: { url: new URL('http://localhost/tags') }
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/paths', () => ({ resolve: (p) => p }));
 
@@ -40,6 +45,8 @@ vi.mock('#lib/stores/toastStore.svelte.js', () => ({
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	page.url = new URL('http://localhost/tags');
+	delete page.shallow;
 	apiMocks.list.mockResolvedValue({
 		results: [
 			{
@@ -86,5 +93,13 @@ describe('tags page vocabulary split', () => {
 		await waitFor(() =>
 			expect(apiMocks.split).toHaveBeenCalledWith('sample compound', ['machinery'])
 		);
+	});
+});
+
+describe('tags page tabs', () => {
+	it('activates the tab from the shallow target, not the rendered url', async () => {
+		page.shallow = { url: new URL('http://localhost/tags#deleted') };
+		render(TagsPage);
+		expect(await screen.findByLabelText('Filter blocked names')).toBeTruthy();
 	});
 });

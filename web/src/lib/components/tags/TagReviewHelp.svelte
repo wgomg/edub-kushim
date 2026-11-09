@@ -86,7 +86,7 @@
 			text: 'Promotes the tag into the shared vocabulary. It overrides an undecided verdict or hold, but a decided drop (no_dimension, part_rejected) is re-applied by the next reconciliation run — retire those instead.'
 		},
 		{
-			icon: 'x',
+			icon: 'close',
 			name: 'Reject',
 			text: 'Deletes the tag and records its name in the blocklist, so enrichment never proposes it again. Restorable from the Deleted tab.'
 		},
@@ -101,17 +101,17 @@
 			text: 'Waives a review deferral: the tag is no longer deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it. Offered only when no identity or split hold still withholds the tag.'
 		},
 		{
-			icon: 'pencil',
+			icon: 'edit',
 			name: 'Rename',
 			text: 'Changes the tag name in place. The verdict and hold journals are keyed by name, so a renamed tag shows no verdict until it is judged again under the new name.'
 		},
 		{
-			icon: 'fold-into',
+			icon: 'fold',
 			name: 'Fold into the existing value',
 			text: 'Collapses this tag onto the value named by its identity hold. The documents move onto the kept value and this name becomes an alias of it, disappearing from the vocabulary.'
 		},
 		{
-			icon: 'fold-into',
+			icon: 'fold',
 			name: 'Fold into…',
 			text: 'Folds this tag into any other live tag you pick. Available on every entry in this queue and on every Vocabulary row; the documents move onto the kept value and this name becomes an alias of it. Seeded values cannot be folded away.'
 		},
@@ -146,7 +146,7 @@
 			text: 'Keeps the compound and attaches its parts to the same documents, so both the whole and its components are searchable. No documents are re-pointed.'
 		},
 		{
-			icon: 'rotate-cw',
+			icon: 'retry',
 			name: 'Re-judge',
 			text: 'Queues a fresh judgment by the configured judge. The queue refreshes when the background task finishes; the badge updates on the next load.'
 		},

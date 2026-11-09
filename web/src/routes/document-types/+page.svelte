@@ -2,12 +2,12 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { api } from '#lib/api.js';
-	import { EDIT_ICON, DELETE_ICON, BTN_BASE } from '#lib/icons.js';
+	import Icon from '#lib/components/Icon.svelte';
+	import { BTN_BASE } from '#lib/icons.js';
 	import Modal from '#lib/components/Modal.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
-	import { defaultFilter, serializeFilter } from '#lib/stores/searchFilter.js';
 
 	let documentTypes = $state([]);
 	let showModal = $state(false);
@@ -124,11 +124,8 @@
 							class="bg-clay-950 transition-colors hover:bg-clay-900 motion-reduce:transition-none"
 						>
 							<td class="px-4 py-3 text-parchment-200">
-								<!-- keep serializeFilter + encodeURIComponent as-is: the q round-trip depends on quoted multi-word type names surviving the URL unmodified -->
 								<a
-									href={resolve(
-										`documents?q=${encodeURIComponent(serializeFilter({ ...defaultFilter, documentType: dt.name }))}`
-									)}
+									href={resolve(`documents?type=${encodeURIComponent(dt.name)}`)}
 									class="block focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 									>{dt.name}</a
 								>
@@ -144,9 +141,7 @@
 											aria-label={`Edit ${dt.name}`}
 											class="{BTN_BASE} text-parchment-400 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 										>
-											<!-- icons are static trusted markup -->
-											<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-											{@html EDIT_ICON}
+											<Icon name="edit" />
 										</button>
 										<button
 											onclick={() => handleDelete(dt)}
@@ -154,9 +149,7 @@
 											aria-label={`Delete ${dt.name}`}
 											class="{BTN_BASE} text-parchment-400 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 										>
-											<!-- icons are static trusted markup -->
-											<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-											{@html DELETE_ICON}
+											<Icon name="delete" />
 										</button>
 									</div>
 								{/if}

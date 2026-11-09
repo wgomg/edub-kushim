@@ -1,6 +1,6 @@
 <script>
 	import { resolve } from '$app/paths';
-	import { defaultFilter, serializeFilter } from '#lib/stores/searchFilter.js';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { formatNumber } from '#lib/utils/html.js';
 
 	let { analytics = null } = $props();
@@ -28,8 +28,14 @@
 	}
 
 	function filterUrl(partial) {
-		const q = serializeFilter({ ...defaultFilter, ...partial });
-		return `/documents?q=${encodeURIComponent(q)}`;
+		const params = new SvelteURLSearchParams();
+		if (partial.missingLanguage) params.append('missing', 'lang');
+		if (partial.missingType) params.append('missing', 'type');
+		if (partial.untagged) params.append('missing', 'tags');
+		if (partial.language) params.set('lang', partial.language);
+		if (partial.documentType) params.set('type', partial.documentType);
+		for (const tag of partial.tags ?? []) params.append('tag', tag);
+		return `/documents?${params.toString()}`;
 	}
 </script>
 

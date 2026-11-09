@@ -95,6 +95,7 @@ edub-kushim/
 │   │   │   ├── components  # reusable Svelte components
 │   │   │   │   ├── settings  # settings-area section components
 │   │   │   │   └── tags  # tag-review components
+│   │   │   ├── list  # URL-backed list state, fetching and the shared route writer
 │   │   │   ├── pdf  # self-hosted pdf.js loader, worker wrapper, polyfills
 │   │   │   ├── stores  # runes-based state stores
 │   │   │   ├── stubs  # build stubs for optional modules

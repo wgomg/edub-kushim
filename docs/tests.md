@@ -346,17 +346,28 @@ Both targets source nvm first, so they run under the `.nvmrc` Node version.
 (`test.projects`, both `extends: true` so they inherit the `sveltekit()` plugin —
 which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
 
-- `unit` (node env) — pure logic and runes stores: `searchFilter.js` (tokenizer,
-  query-string parser, size/date parsing, serialize round-trip), `utils/html.js`
-  (escaping, size/duration/relative formatting), `utils/termLookup.js` (definition
+- `unit` (node env) — pure logic and runes stores: `lib/list/listQuery.js` (sort toggle,
+  paging window, URL view parsing/serialization, `effectiveUrl` selection and the single URL
+  writer), `utils/html.js` (size/duration/date/relative formatting),
+  `utils/searchSyntax.js` (size/date filter syntax), `utils/termLookup.js` (definition
   lookup: three-source normalization, a miss falling back to search suggestions, the
   disambiguation flag, memoization and failure eviction, `forgetTerm` refetch),
-  `filterStore.js`, `toastStore.svelte.js`, `confirmStore.svelte.js`.
+  `utils/tagReconcile.js`, `toastStore.svelte.js`, `confirmStore.svelte.js`,
+  `settingsStore.svelte.js`.
 - `components` (jsdom + `svelteTesting()` from `@testing-library/svelte/vite` for
   auto-cleanup) — `authStore.svelte.js` and `api.js` (both touch `localStorage` at import
-  time, so they need the DOM), plus the component tests: `DataTable.svelte` (rows,
-  sort refetch, empty/error states, `onTotal` reporting), `FilterPanel.svelte` (filter-store wiring,
-  tag autocomplete, failure toast), `UploadModal.svelte` (upload success/error paths),
+  time, so they need the DOM), plus the component tests: `ListTable.svelte` (default cells,
+  sort/paging events, pager end states, loading/empty, selection), `Icon.svelte` (every
+  icon name used across the app renders markup), `SearchBar.svelte` (free text commits under
+  `q`, facet prefix submission, backspace chip removal), `FilterPanel.svelte` (controlled
+  filter patches, tag autocomplete, failure toast), `UploadModal.svelte` (upload
+  success/error paths), `tags/DeletedTags.svelte` (memory-mode list: debounce commit, blur
+  commit, unmount cancel, dropped pending write, stale-response ordering),
+  `tags/provisionalQuery.js` (legacy verdict mapping, invalid-filter fallback),
+  `routes/documents/query.test.js` (facet parsing, person round-trip, legacy `q` reader,
+  request body, saved-search normalization, snippet segments), `routes/listCodecs.test.js`
+  (round-trip and lenient defaults for the people/tags/tasks/batches/trash/users codecs),
+  `routes/tasks/TasksTable.test.js` (endpoint `tasks` extraction and failure state),
   `tags/ProvisionalReview.svelte` (verdict labels: recorded outcome preferred, legacy rubric
   fallback, unjudged names, the collapsed rubric — failing criteria plus the score — the
   identity-hold, split-hold and degraded-reason pills, and the entry's actions: both hold fold

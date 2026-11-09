@@ -8,7 +8,9 @@ vi.mock('$app/state', () => ({
 	page: { url: { searchParams: new URLSearchParams(), pathname: '/tags', hash: '' } }
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$app/paths', () => ({ resolve: (p) => p }));
+vi.mock('$app/paths', () => ({
+	resolve: (path) => (String(path).startsWith('/') ? path : `/${path}`)
+}));
 vi.mock('#lib/api.js', () => ({
 	api: {
 		tags: {

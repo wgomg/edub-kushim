@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
-import { get } from 'svelte/store';
 import FilterPanel from './FilterPanel.svelte';
-import { filterStore } from '#lib/stores/filterStore.js';
 import { toastStore } from '#lib/stores/toastStore.svelte.js';
 
 const apiMocks = vi.hoisted(() => ({
@@ -23,9 +21,24 @@ vi.mock('#lib/api.js', () => ({
 	}
 }));
 
+function baseFilters(overrides = {}) {
+	return {
+		tags: [],
+		people: [],
+		documentType: '',
+		language: '',
+		dateCreated: { from: null, to: null },
+		dateModified: { from: null, to: null },
+		fileSize: { min: null, max: null },
+		missingLanguage: false,
+		missingType: false,
+		untagged: false,
+		...overrides
+	};
+}
+
 describe('FilterPanel', () => {
 	beforeEach(() => {
-		filterStore.reset();
 		for (const t of toastStore.toasts) toastStore.dismiss(t.id);
 		apiMocks.documentTypes.mockReset().mockResolvedValue([
 			{ id: 1, name: 'Invoice' },
@@ -36,16 +49,18 @@ describe('FilterPanel', () => {
 		apiMocks.filterLanguages.mockReset().mockResolvedValue(['eng', 'spa']);
 	});
 
-	it('emits the selected document type to the filter store', async () => {
-		render(FilterPanel);
+	it('emits the selected document type', async () => {
+		const onChange = vi.fn();
+		render(FilterPanel, { filters: baseFilters(), onChange });
 		const select = await screen.findByLabelText('Document Type');
 		fireEvent.change(select, { target: { value: 'Invoice' } });
-		await waitFor(() => expect(get(filterStore).documentType).toBe('Invoice'));
+		await waitFor(() => expect(onChange).toHaveBeenCalledWith({ documentType: 'Invoice' }));
 	});
 
 	it('adds a tag from the autocomplete suggestions on Enter', async () => {
 		apiMocks.tags.mockResolvedValue([{ name: 'invoice' }, { name: 'invoices' }]);
-		render(FilterPanel);
+		const onChange = vi.fn();
+		render(FilterPanel, { filters: baseFilters(), onChange });
 
 		const input = screen.getByLabelText('Tags');
 		fireEvent.input(input, { target: { value: 'inv' } });
@@ -53,12 +68,13 @@ describe('FilterPanel', () => {
 		expect(option).toBeTruthy();
 
 		fireEvent.keyDown(input, { key: 'Enter' });
-		await waitFor(() => expect(get(filterStore).tags).toEqual(['invoice']));
+		await waitFor(() => expect(onChange).toHaveBeenCalledWith({ tags: ['invoice'] }));
 	});
 
 	it('shows the matched alias hint and selects the canonical tag', async () => {
 		apiMocks.tags.mockResolvedValue([{ name: 'netherlands', matched_alias: 'holland' }]);
-		render(FilterPanel);
+		const onChange = vi.fn();
+		render(FilterPanel, { filters: baseFilters(), onChange });
 
 		const input = screen.getByLabelText('Tags');
 		fireEvent.input(input, { target: { value: 'holl' } });
@@ -67,12 +83,12 @@ describe('FilterPanel', () => {
 		expect(option.textContent).toContain('alias: holland');
 
 		fireEvent.keyDown(input, { key: 'Enter' });
-		await waitFor(() => expect(get(filterStore).tags).toEqual(['netherlands']));
+		await waitFor(() => expect(onChange).toHaveBeenCalledWith({ tags: ['netherlands'] }));
 	});
 
 	it('shows a toast when tag autocomplete fails', async () => {
 		apiMocks.tags.mockRejectedValue(new Error('nope'));
-		render(FilterPanel);
+		render(FilterPanel, { filters: baseFilters(), onChange: vi.fn() });
 
 		const input = screen.getByLabelText('Tags');
 		fireEvent.input(input, { target: { value: 'inv' } });

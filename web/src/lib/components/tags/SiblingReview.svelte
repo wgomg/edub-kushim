@@ -1,56 +1,51 @@
 <script>
 	import { api } from '#lib/api.js';
-	import DataTable from '#lib/components/DataTable.svelte';
-	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
+	import ListTable from '#lib/components/ListTable.svelte';
+	import { createListQuery } from '#lib/list/listQuery.svelte.js';
+	import { formatNumber } from '#lib/utils/html.js';
 
-	let refreshKey = $state(0);
-	let readingsTotal = $state(null);
-	let snapshot = $state(null);
-
-	const columns = [
-		{
-			key: 'a',
-			label: 'Tag pair',
-			sortable: false,
-			cell: (_v, row) =>
-				`${escapeHtml(row.a)} <span class="ui-symbol">⊇</span> ${escapeHtml(row.b)}`
-		},
-		{
-			key: 'containment',
-			label: 'Overlap',
-			sortable: false,
-			width: '130px',
-			cell: (_v, row) => `${Math.round((row.containment ?? 0) * 100)}%`
-		},
-		{
-			key: 'mass_a',
-			label: 'Documents',
-			sortable: false,
-			width: '130px',
-			cell: (_v, row) => `${formatNumber(row.mass_a)} · ${formatNumber(row.mass_b)}`
-		},
-		{
-			key: 'gray',
-			label: 'Status',
-			sortable: false,
-			width: '130px',
-			cell: (_v, row) => (row.gray ? 'Needs review' : 'For reference')
-		}
-	];
-
-	async function fetchSiblings({ limit, offset }) {
-		const data = await api.tags.siblings(limit, offset);
-		snapshot = data;
+	async function fetchSiblings({ limit, offset, signal }) {
+		const data = await api.tags.siblings(limit, offset, signal);
+		if (!data) throw new Error('Failed to load overlap readings');
 		return {
-			results: (data.results ?? []).map((row) => ({ ...row, id: `${row.a} ⊇ ${row.b}` })),
-			total: data.total ?? 0
+			items: (data.results ?? []).map((row) => ({ ...row, id: `${row.a} ⊇ ${row.b}` })),
+			total: data.total ?? null,
+			absent: data.absent ?? false
 		};
 	}
+
+	const siblings = createListQuery({
+		fetcher: fetchSiblings,
+		defaults: { page: 0, pageSize: 25, sortBy: '', sortOrder: 'desc' },
+		keyField: 'id'
+	});
+
+	const columns = [
+		{ key: 'a', label: 'Tag pair', sortable: false },
+		{ key: 'containment', label: 'Overlap', sortable: false, width: '130px' },
+		{ key: 'mass_a', label: 'Documents', sortable: false, width: '130px' },
+		{ key: 'gray', label: 'Status', sortable: false, width: '130px' }
+	];
 </script>
+
+{#snippet cell(col, row)}
+	{#if col.key === 'a'}
+		{row.a} <span class="ui-symbol">⊇</span>
+		{row.b}
+	{:else if col.key === 'containment'}
+		{Math.round((row.containment ?? 0) * 100)}%
+	{:else if col.key === 'mass_a'}
+		{formatNumber(row.mass_a)} · {formatNumber(row.mass_b)}
+	{:else if col.key === 'gray'}
+		{row.gray ? 'Needs review' : 'For reference'}
+	{:else}
+		{row[col.key] ?? ''}
+	{/if}
+{/snippet}
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<span class="ms-auto text-[0.8125rem] text-parchment-500 tabular-nums">
-		<b class="font-semibold text-parchment-300">{formatNumber(readingsTotal ?? 0)}</b> overlapping pairs
+		<b class="font-semibold text-parchment-300">{formatNumber(siblings.total ?? 0)}</b> overlapping pairs
 	</span>
 </div>
 
@@ -60,17 +55,23 @@
 	own. This list is for review — the pairs marked “Needs review” are the ones worth a closer look.
 </p>
 
-{#if snapshot?.absent}
+{#if siblings.data?.absent}
 	<p class="text-[0.8125rem] text-parchment-500">
 		No measurement run yet. Run the tag measurement sweep to check for overlapping tags.
 	</p>
 {:else}
-	<DataTable
+	<ListTable
 		{columns}
-		fetch={fetchSiblings}
-		defaultPageSize={25}
+		{cell}
+		rows={siblings.rows}
+		total={siblings.total}
+		loading={siblings.loading}
+		error={siblings.error}
+		page={siblings.page}
+		pageSize={siblings.pageSize}
 		pageSizes={[25, 50, 100]}
-		{refreshKey}
-		onTotal={(t) => (readingsTotal = t)}
+		keyField="id"
+		onPage={(next) => siblings.update({ page: next })}
+		onPageSize={(size) => siblings.update({ pageSize: size })}
 	/>
 {/if}

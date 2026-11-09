@@ -5,31 +5,15 @@ vi.mock('$app/paths', () => ({
 }));
 
 import {
-	escapeHtml,
 	formatSize,
 	formatDuration,
+	formatDate,
+	formatDateTime,
 	formatRelative,
 	formatNumber,
 	documentsLabel,
 	documentsForTagHref
 } from './html.js';
-
-describe('escapeHtml', () => {
-	it('escapes all five entities', () => {
-		expect(escapeHtml(`<a href="x">Tom & Jerry's</a>`)).toBe(
-			'&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;'
-		);
-	});
-
-	it('returns an empty string for null and undefined', () => {
-		expect(escapeHtml(null)).toBe('');
-		expect(escapeHtml(undefined)).toBe('');
-	});
-
-	it('coerces non-strings', () => {
-		expect(escapeHtml(42)).toBe('42');
-	});
-});
 
 describe('formatSize', () => {
 	const nf = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
@@ -79,12 +63,12 @@ describe('formatDuration', () => {
 describe('documentsForTagHref', () => {
 	it('produces a URL-encoded documents filter link for a tag name', () => {
 		expect(documentsForTagHref('software development')).toBe(
-			'/documents?q=' + encodeURIComponent('tag:"software development"')
+			'/documents?tag=software%20development'
 		);
 	});
 
 	it('encodes special characters in tag names', () => {
-		expect(documentsForTagHref('C++')).toBe('/documents?q=' + encodeURIComponent('tag:"C++"'));
+		expect(documentsForTagHref('C++')).toBe('/documents?tag=C%2B%2B');
 	});
 });
 
@@ -108,5 +92,35 @@ describe('formatRelative', () => {
 		expect(formatRelative('')).toBe('—');
 		expect(formatRelative('not-a-date')).toBe('—');
 		expect(formatRelative('2026-01-02T00:00:00Z')).toBe('—');
+	});
+});
+
+describe('formatDate', () => {
+	it('renders an em dash for missing input', () => {
+		expect(formatDate('')).toBe('—');
+		expect(formatDate(null)).toBe('—');
+	});
+
+	it('formats an instant as a date', () => {
+		const instant = '2024-05-06T10:30:00Z';
+		const expected = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
+			new Date(instant)
+		);
+		expect(formatDate(instant)).toBe(expected);
+	});
+});
+
+describe('formatDateTime', () => {
+	it('renders an em dash for missing input', () => {
+		expect(formatDateTime(undefined)).toBe('—');
+	});
+
+	it('formats an instant as a date with time', () => {
+		const instant = '2024-05-06T10:30:00Z';
+		const expected = new Intl.DateTimeFormat(undefined, {
+			dateStyle: 'medium',
+			timeStyle: 'short'
+		}).format(new Date(instant));
+		expect(formatDateTime(instant)).toBe(expected);
 	});
 });

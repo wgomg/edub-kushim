@@ -1,43 +1,32 @@
 <script>
 	import { api } from '#lib/api.js';
-	import { filterStore } from '#lib/stores/filterStore.js';
-	import { getPersonTypes, formatSize } from '#lib/stores/searchFilter.js';
+	import { formatSize } from '#lib/utils/html.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+
+	/**
+	 * Controlled filter panel: the filter values come in as a prop and every change leaves through
+	 * `onChange` as a partial filter patch.
+	 */
+	let {
+		filters = {
+			tags: [],
+			people: [],
+			documentType: '',
+			language: '',
+			dateCreated: { from: null, to: null },
+			dateModified: { from: null, to: null },
+			fileSize: { min: null, max: null },
+			missingLanguage: false,
+			missingType: false,
+			untagged: false
+		},
+		personTypes = [],
+		onChange = () => {}
+	} = $props();
 
 	let languages = $state([]);
 
-	let f = $state({
-		tags: [],
-		people: [],
-		documentType: '',
-		language: '',
-		dateCreated: { from: null, to: null },
-		dateModified: { from: null, to: null },
-		fileSize: { min: null, max: null }
-	});
-
-	let missingLanguage = $state(false);
-	let missingType = $state(false);
-	let untagged = $state(false);
-
-	filterStore.subscribe((s) => {
-		f = {
-			tags: s.tags,
-			people: s.people,
-			documentType: s.documentType,
-			language: s.language,
-			dateCreated: s.dateCreated,
-			dateModified: s.dateModified,
-			fileSize: s.fileSize
-		};
-		missingLanguage = s.missingLanguage;
-		missingType = s.missingType;
-		untagged = s.untagged;
-	});
-
-	function emit(partial) {
-		filterStore.setPartial(partial);
-	}
+	const f = $derived(filters);
 
 	let tagInput = $state('');
 	let tagSuggestions = $state([]);
@@ -51,6 +40,10 @@
 	let documentTypes = $state([]);
 	let fileMinRaw = $state('');
 	let fileMaxRaw = $state('');
+
+	function emit(partial) {
+		onChange(partial);
+	}
 
 	$effect(() => {
 		api.autocomplete
@@ -307,7 +300,7 @@
 					class="w-1/2 rounded-md border border-clay-700 bg-clay-950 px-2 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 				>
 					<option value="">Type…</option>
-					{#each [...getPersonTypes()] as pt (pt)}
+					{#each personTypes as pt (pt)}
 						<option value={pt}>{pt}</option>
 					{/each}
 				</select>
@@ -384,7 +377,7 @@
 			<select
 				id="fp-doctype"
 				name="fp-doctype"
-				bind:value={f.documentType}
+				value={f.documentType}
 				onchange={(e) => emit({ documentType: e.target.value })}
 				class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 			>
@@ -402,7 +395,7 @@
 			<select
 				id="fp-lang"
 				name="fp-lang"
-				bind:value={f.language}
+				value={f.language}
 				onchange={(e) => emit({ language: e.target.value })}
 				class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
 			>
@@ -523,8 +516,8 @@
 			<input
 				type="checkbox"
 				class="accent-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-				checked={missingLanguage}
-				onchange={() => emit({ missingLanguage: !missingLanguage })}
+				checked={filters.missingLanguage}
+				onchange={() => emit({ missingLanguage: !filters.missingLanguage })}
 			/>
 			Missing Language
 		</label>
@@ -534,8 +527,8 @@
 			<input
 				type="checkbox"
 				class="accent-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-				checked={missingType}
-				onchange={() => emit({ missingType: !missingType })}
+				checked={filters.missingType}
+				onchange={() => emit({ missingType: !filters.missingType })}
 			/>
 			Missing Type
 		</label>
@@ -545,8 +538,8 @@
 			<input
 				type="checkbox"
 				class="accent-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-				checked={untagged}
-				onchange={() => emit({ untagged: !untagged })}
+				checked={filters.untagged}
+				onchange={() => emit({ untagged: !filters.untagged })}
 			/>
 			Untagged
 		</label>

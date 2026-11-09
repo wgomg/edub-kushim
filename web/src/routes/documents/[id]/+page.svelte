@@ -318,7 +318,7 @@
 								title="Re-enrich"
 								class="rounded-md p-1.5 text-parchment-300 hover:bg-clay-800 hover:text-parchment-100 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
 							>
-								<Icon name="rotate-cw" />
+								<Icon name="retry" />
 							</button>
 							<button
 								type="button"
@@ -328,7 +328,7 @@
 								title="Delete document"
 								class="rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-terracotta-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40"
 							>
-								<Icon name="trash-2" />
+								<Icon name="delete" />
 							</button>
 						{/if}
 						<span class="mx-1 h-5 w-px bg-clay-700" aria-hidden="true"></span>

@@ -30,13 +30,13 @@ trust the code, not the doc.
 4. [Svelte 5 reactivity: codebase patterns](#4-svelte-5-reactivity-codebase-patterns)
 5. [Components: conventions](#5-components-conventions)
 6. [Template syntax: conventions](#6-template-syntax-conventions)
-7. [Stores: three styles](#7-stores-three-styles)
+7. [State modules: three styles](#7-state-modules-three-styles)
 8. [The API layer](#8-the-api-layer)
 9. [Data fetching in pages](#9-data-fetching-in-pages)
-10. [URL state sync](#10-url-state-sync)
+10. [URL state and the shallow-URL contract](#10-url-state-and-the-shallow-url-contract)
 11. [Forms](#11-forms)
 12. [Auth and role gating](#12-auth-and-role-gating)
-13. [The DataTable pattern and HTML-string cells](#13-the-datatable-pattern-and-html-string-cells)
+13. [The list pattern: URL controller and presentational views](#13-the-list-pattern-url-controller-and-presentational-views)
 14. [The design system: Tailwind v4](#14-the-design-system-tailwind-v4)
 15. [Build and tooling](#15-build-and-tooling)
 16. [The setup wizard](#16-the-setup-wizard)
@@ -63,13 +63,13 @@ web/                        the main SPA (admin + document management UI)
       profile/ settings/
     lib/
       api.js                the whole API client (fetch wrappers)
-      icons.js              SVG-string icons + actionButton() builder
+      icons.js              shared button classes (BTN_BASE)
       tools.js              install hints for missing system tools
-      components/           DataTable, Modal, Toast, ConfirmDialog, SearchBar,
-                            FilterPanel, UploadModal, dashboard panels
-      stores/               authStore.svelte.js, filterStore.js, searchFilter.js,
-                            confirmStore.svelte.js, toastStore.svelte.js,
-                            settingsStore.svelte.js
+      list/                 list controller + URL writer + debounced filter draft
+      components/           ListTable, ListGrid, Icon, Modal, Toast, ConfirmDialog,
+                            SearchBar, FilterPanel, UploadModal, dashboard panels
+      stores/               authStore.svelte.js, confirmStore.svelte.js,
+                            toastStore.svelte.js, settingsStore.svelte.js
       stubs/empty.mjs       Vite alias target (neutralizes Node builtins)
   vite.config.js            sveltekit() plugin options: adapter-static +
                             fallback (SPA mode), appDir, runes; plus the
@@ -116,23 +116,25 @@ The stances that shape every page:
    `+page.js` load functions anywhere — pages fetch their own data in
    `onMount` (§9).
 3. **It's plain JavaScript, not TypeScript.** `.js`/`.svelte` files, JSDoc for
-   the few public contracts (e.g. `DataTable.svelte:7-18`). Readability comes
+   the few public contracts (e.g. `ListTable.svelte:5-9`). Readability comes
    from discipline: one `$props()` destructure per component, small pure
    helpers in `lib/`.
-4. **Stores divide into two styles** (§7): module-level `$state` runes stores
-   (`.svelte.js` — `authStore.svelte.js`, `confirmStore.svelte.js`,
-   `toastStore.svelte.js`, `settingsStore.svelte.js`) and a classic Svelte 4
-   `writable()` store (`filterStore.js`); pure computation (the search-filter
-   schema, `searchFilter.js`) stays in a plain module.
+4. **State divides into three styles** (§7): module-level `$state` runes
+   stores (`authStore.svelte.js`, `confirmStore.svelte.js`,
+   `toastStore.svelte.js`, `settingsStore.svelte.js`); route-scoped state
+   modules with effects (`lib/list/listQuery.svelte.js`,
+   `lib/list/queryDraft.svelte.js`); and pure modules for parsing and
+   formatting (route codecs in `routes/*/query.js`, `utils/searchSyntax.js`).
 5. **All styling is Tailwind v4, CSS-first.** There is no `tailwind.config.js`;
    the palette is declared with `@theme` in CSS (§14). No scoped `<style>`
    blocks, no transitions — motion is Tailwind classes.
 6. **The API layer centralizes everything** (`lib/api.js`): auth headers,
    JSON parsing, 401 handling, and the codebase-wide convention that a failed
    request yields `null` (§8).
-7. **State that must survive reloads lives in the URL.** Search filters,
-   tabs, pagination, the wizard step — all mirrored into the query string with
-   `replaceState`-style updates (§10).
+7. **List state that must survive reloads lives in the URL.** Route codecs
+   parse it, one controller per list derives from it, and a single writer
+   updates it (§10, §13). A shallow `goto` moves the address bar without
+   changing `page.url`, so reads and writes go through `effectiveUrl()`.
 
 ---
 
@@ -155,9 +157,10 @@ let { params } = $props();
   leading slash (only route ids start with `/`).
 - **Cross-directory internal imports use `#lib/...`**, resolved by the
   `imports` map in `package.json` (e.g. `import { api } from '#lib/api.js'`).
-- `$app/navigation` (`goto` for navigation, `replaceState`/`pushState` for
-  shallow history writes) handles client-side navigation; `page` is a reactive
-  object from `$app/state` (`page.url`) — see §10.
+- `$app/navigation` (`goto` for navigation, and for shallow history writes
+  with `{ shallow: true, replace: true }`) handles client-side navigation;
+  `page` is a reactive object from `$app/state` (`page.url`) — see §10 for
+  what a shallow write does and does not update.
 - Per-page head additions use `<svelte:head>` (`+layout.svelte:66` sets the
   favicon).
 
@@ -176,17 +179,11 @@ initial value is `undefined` (`+page.svelte:12`).
 $state(null)` (`UploadModal.svelte:14`), `let scrollContainer = $state(null)`
 (`logs/+page.svelte:22`).
 
-**Sets are state, but rebuilt, not mutated** (`DataTable.svelte:55`,
-`logs/+page.svelte:23`):
-
-```js
-const next = new Set(selectedKeys);   // copy
-if (next.has(key)) next.delete(key);  // mutate the copy
-else next.add(key);
-selectedKeys = next;                  // reassign
-```
-
-(Mutating a `Set` in place isn't tracked; assigning a new one is.)
+**Sets that must be reactive use `SvelteSet`** (`listQuery.svelte.js:154` for
+selection, `PdfViewer.svelte:32` for render zones, `logs/+page.svelte` for
+expanded lines): mutate them in place — the class tracks membership. A plain
+`Set`/`Map` is not tracked, so either keep it out of reactive state or rebuild
+and reassign it.
 
 **Whole objects in one `$state`** are deeply reactive — the object is proxied
 recursively, so `f.tags.push(t)` *does* trigger updates. `toastStore` exploits
@@ -215,27 +212,33 @@ $effect(() => {
 });
 ```
 
-**`untrack`** breaks the dependency graph so a write inside the effect doesn't
-retrigger it. DataTable reacts to `refreshKey` changes but must not re-run
-because `load()` writes state (`DataTable.svelte:110-118`):
+**`untrack`** breaks the dependency graph so the work an effect starts does not
+re-subscribe it to the state that work writes. The list controller keys its
+fetch effect on the serialized query plus a `reload()` generation counter and
+runs the fetch untracked (`listQuery.svelte.js:249-261`):
 
 ```js
 $effect(() => {
-	if (refreshKey) {
-		untrack(() => {
-			pageIndex = 0;
-			load();
-			syncUrl();
-		});
-	}
+	const state = current;
+	const generationValue = generation;
+	const key = JSON.stringify(state);
+	if (key === lastKey && generationValue === lastGeneration) return;
+	lastKey = key;
+	lastGeneration = generationValue;
+	untrack(() => run(state, silent));
 });
 ```
 
-**One-time init** is a guard flag (`if (!initialized) { initialized = true;
-... }`, `DataTable.svelte:68-90`) rather than `$effect.pre`.
+Because the effect's only dependencies are the derived query and the counter,
+loading/data writes cannot retrigger it; `reload()` bumps the counter for
+mutations that do not change the query. There is no `onMount` fetch and no
+initialization flag — the effect's first run is the first load.
 
-Not used anywhere here: `$state.raw`, `$inspect`, `$host`, `$effect.pre`,
-named `{@snippet}` declarations.
+**Named snippets are the cell mechanism**: `ListTable` and `ListGrid` callers
+declare `{#snippet cell(col, row)}` / `{#snippet card(row)}` and pass them as
+props (§13), rendered with `{@render cell(col, row)}`.
+
+Not used anywhere here: `$inspect`, `$host`, `$effect.pre`, `$bindable`.
 
 ---
 
@@ -261,9 +264,9 @@ is the reference:
 Conventions to keep:
 
 - **Props**: one `$props()` destructure at the top, with defaults for optional
-  props (`SearchBar.svelte:11-20`, `DataTable.svelte:37-53`). The component is
-  *controlled*: the parent decides visibility and closing. No `bind:this`, no
-  imperative API.
+  props (`SearchBar.svelte:11-24`, `ListTable.svelte:10-31`). The component is
+  *controlled*: the parent decides visibility, closing and data. No `bind:this`,
+  no imperative API.
 - **`children`** is a snippet rendered with `{@render children()}` — this
   replaces `<slot>`.
 - **Events are props**: `onclick={onClose}`, callbacks flow up (`onSearch`,
@@ -278,31 +281,31 @@ There are **no** class-style components, no `export let` props, no slots, no
 
 ## 6. Template syntax: conventions
 
-- **`{@html ...}`** — raw HTML insertion, used in exactly two places and both
-  are controlled: DataTable cell renderers (`DataTable.svelte:377-381`) and
-  static icon markup. The contract is documented at the call site — *callers
-  must `escapeHtml` user data first* (§13).
-- **`<svelte:window>`** — document-level event listener for delegated clicks
-  on `data-*` action buttons (`tasks/+page.svelte:330`).
-- **`bind:` inventory**: `bind:value` for inputs (≈45 sites; works deep into
-  `$state` objects: `bind:value={cfg.server.host}`, `IntakeSection.svelte:35`,
-  and inside `{#each}` loops), `bind:checked` for checkboxes
+- **Cells are snippets, not strings.** `ListTable`/`ListGrid` take a
+  `cell(col, row)` / `card(row)` snippet and render it with `{@render ...}`;
+  there is **no `{@html}` anywhere** in the app (§13).
+- **`<svelte:window>`** — document-level event listener used by pages that
+  delegate row actions (`tasks/+page.svelte:330`).
+- **`bind:` inventory**: `bind:value` for inputs, including the list filter
+  inputs bound to a `QueryDraft` (`people/+page.svelte`, `tags/+page.svelte`,
+  `tags/DeletedTags.svelte`), `bind:checked` for checkboxes
   (`Switch.svelte:18`), `bind:this` for element refs stored in
   `$state` (§4).
-- **Uncontrolled inputs with `oninput`** when the value must pass through a
-  function: `oninput={onTagInput}` (`FilterPanel.svelte:240`). A deliberate
-  hybrid in FilterPanel: `bind:value={f.documentType}` for display plus
-  `onchange` to push to the store (`FilterPanel.svelte:373`).
+- **Controlled filter inputs**: `SearchBar` and `FilterPanel` receive filter
+  values as props and emit partial patches through `onSearch`/`onChange`
+  (`SearchBar.svelte`, `FilterPanel.svelte`). Text drafts live in
+  `QueryDraft`, not in the route.
 - **No `class:` directive** — classes are computed inline with ternaries
   (`documents/+page.svelte:264`) or a variant map (`Toast.svelte:18-21`:
   `{variantClasses[toast.variant] || variantClasses.info}`).
 
 ---
 
-## 7. Stores: three styles
+## 7. State modules: three styles
 
-State shared across components lives in `src/lib/stores/`, and all three
-approaches coexist. Which one to use is a judgment call — read the tradeoffs.
+State is modelled at three scopes: shared runes stores in `src/lib/stores/`,
+route codecs as pure modules, and route-scoped state modules that combine
+`$state` with effects. Which one to use is a judgment call — read the tradeoffs.
 
 ### Runes stores: token/state pairs in `.svelte.js` modules
 
@@ -328,65 +331,39 @@ reactive — templates re-render when it lands). `_token` and `_user` stay plain
 variables on purpose: login/logout persist through `localStorage` and the
 navigation change re-renders the page.
 
-### Plain module: `searchFilter.js` (pure logic)
+### Plain module: route codecs
 
-The config-module idea survives where there is no state to make reactive: the
-search-filter schema is pure computation — a frozen default, serializers and
-parsers (`searchFilter.js:11`, the `Object.freeze({ ... })` schema stores copy
-but never mutate).
+Each list route owns a `query.js` codec (`routes/documents`, `routes/people`,
+`routes/tags`, `routes/tasks`, `routes/trash`; `settings/usersQuery.js` and
+`tags/provisionalQuery.js` follow the same shape). A codec is pure: `keys` (the
+URL parameters it owns), `defaults`, `parse(searchParams)` and
+`serialize(state)`. Parsing never throws — an invalid or missing value falls
+back to its default, so a hand-edited link cannot produce a bad page or page
+size. The documents codec additionally builds the search request body,
+normalizes saved-search payloads and reads the legacy `q` DSL.
 
-### Classic writable store: `filterStore.js`
+### Route-scoped state module: `createListQuery`
 
-Svelte 4-style `writable()` with a thin wrapper API
-(`filterStore.js:4-23`):
+`lib/list/listQuery.svelte.js` exports `createListQuery({ fetcher, codec?, ... })`.
+With a codec the query is derived from `effectiveUrl().searchParams`; without
+one (memory mode) the same shape lives in component state. The controller owns:
 
-```js
-function createFilterStore() {
-	const store = writable({ ...defaultFilter });
+- the fetch lifecycle: a request token plus `AbortController`, so an older
+  response can never overwrite a newer one;
+- the fetcher contract `{ limit, offset, sortBy, sortOrder, query, signal }` →
+  `{ items, total, ...extras }`, with `total: null` meaning "no count available";
+- page reset on filter changes (not on page moves), last-page clamping, and
+  `reload({ silent })` for background refreshes such as facet counts;
+- selection (`selectedKeys`/`selectedRows`) keyed by `keyField`;
+- URL writes, only through `writeRouteParams` (§10).
 
-	return {
-		subscribe: store.subscribe,
-		set: store.set,
-		update: store.update,
-		setPartial(partial) {
-			store.update((f) => ({ ...f, ...partial }));
-		},
-		reset() {
-			store.set({ ...defaultFilter });
-		}
-	};
-}
+### Route-scoped input module: `QueryDraft`
 
-export const filterStore = createFilterStore();
-export const queryString = derived(filterStore, ($f) => serializeFilter($f));
-```
-
-Components subscribe imperatively and copy values into local `$state`
-(`documents/+page.svelte:141-167`), with a guard so the store's immediate
-initial emission doesn't touch the URL:
-
-```js
-let subscribed = false;
-filterStore.subscribe((f) => {
-	filter = { query: f.query, /* ... */ };
-	if (subscribed) {
-		refreshKey++;
-		// ... write ?q= into the URL via a shallow goto
-	}
-	subscribed = true;
-});
-```
-
-The URL filter is applied *before* subscribing: `fromQueryString(q)` runs in
-the script body (`documents/+page.svelte:136-139`), not in `onMount`. Child
-`onMount`s fire before the parent's, so applying it in `onMount` let
-`DataTable` start its first load with the stale store from the previous
-visit, then trigger a second load after the URL was parsed (two racing
-`POST /api/v1/documents/search` requests). In the script body the store is
-correct before any child instantiates.
-
-The frozen `defaultFilter` schema lives in `lib/stores/searchFilter.js:11`
-(`Object.freeze({ ... })` — stores copy it, never mutate it).
+`lib/list/queryDraft.svelte.js` owns the debounced free-text input bound to a
+list's `q` (`new QueryDraft(list)`; the input binds `draft.value` and calls
+`draft.markEdited`). User edits commit after 250 ms, blur commits a pending edit
+immediately, and the timer is cancelled on destroy so a pending edit cannot
+write into another route's URL.
 
 ### Runes stores in practice: `confirmStore.svelte.js`, `toastStore.svelte.js`, `settingsStore.svelte.js`
 
@@ -449,9 +426,9 @@ if (!ok) return;
 And toasts are one-liners: `toastStore.success('Document restored')`
 (`trash/+page.svelte:90`).
 
-The **rule of thumb**: runes stores for new cross-component state — including
-the token store `api.js` reads; `filterStore`-style writable stores remain
-where they already work; plain modules for pure computation.
+The **rule of thumb**: shared cross-component state goes in a runes store;
+per-route state stays in the route's codec and controller; pure computation
+stays in plain modules.
 
 ---
 
@@ -565,22 +542,27 @@ async function fetchLogs() {
 
 with `onDestroy(() => { if (controller) controller.abort(); })` (`:167-170`).
 
-### 3. The DataTable owns its fetching
+### 3. The list controller owns its fetching
 
-List pages hand DataTable a `fetch({ sortBy, sortOrder, limit, offset })`
-callback; the table calls it and manages paging/sort internally
-(`documents/+page.svelte:290-297`):
+List pages create one controller per list:
+`createListQuery({ fetcher, codec, ... })`. The route supplies the fetcher and
+the codec; the controller calls the fetcher with
+`{ limit, offset, sortBy, sortOrder, query, signal }` and consumes
+`{ items, total, ...extras }` (`documents/+page.svelte`, `routes/documents/query.js`):
 
 ```js
-function fetch({ sortBy, sortOrder, limit, offset }) {
-	const body = { ...buildFilterBody(), sort_by: sortBy, sort_order: sortOrder, limit, offset };
-	return api.documents.searchStructured(body);
+async function fetchDocuments({ limit, offset, sortBy, sortOrder, query, signal }) {
+	const body = { ...searchRequestBody(query), sort_by: sortBy, sort_order: sortOrder, limit, offset };
+	const data = await api.documents.searchStructured(body, signal);
+	if (!data) throw new Error('Failed to load documents');
+	return { items: data.results ?? [], total: data.total ?? null };
 }
 ```
 
-Pages trigger reloads by bumping a `refreshKey` prop (a number);
-DataTable watches it in an `untrack`ed effect (§4). Detail pages re-fetch after
-mutations (`refreshDoc()`, `documents/[id]/+page.svelte:80-84`).
+Mutations that change data without changing the query call `list.reload()`;
+background refreshes call `list.reload({ silent: true })`. Detail pages keep
+their own re-fetch after mutations (`refreshDoc()`,
+`documents/[id]/+page.svelte:80-84`).
 
 ### Loading / error / empty states
 
@@ -590,66 +572,66 @@ The canonical three-state chain (`logs/+page.svelte:218-237`) gates on
 
 ---
 
-## 10. URL state sync
+## 10. URL state and the shallow-URL contract
 
-State that should survive reload/share/back-button lives in the query string.
-Three writing styles exist; all read via `page.url.searchParams` (`$app/state`).
+List state that should survive reload/share/back-button lives in the query
+string, and the URL is its source of truth. Two rules cover all of it: reads go
+through `effectiveUrl()`, writes through one route-level writer.
 
-### 1. `$effect` writing back with `goto(..., { replaceState: true })` — logs page
+### 1. Reading: `effectiveUrl()`, not `page.url`
 
-Read once at init, then mirror state into the URL whenever it changes
-(`logs/+page.svelte:28-53`):
+A shallow navigation (`goto(url, { shallow: true, replace: true })`) moves the
+address bar but **does not update `page.url`**: per SvelteKit's shallow-routing
+contract, `page.url` keeps describing the page that is actually rendered while
+`page.shallow.url` describes the target. Reading `page.url` after a shallow
+write therefore reads stale parameters. Everything that derives list or tab
+state calls `effectiveUrl()` (`lib/list/listQuery.svelte.js`):
 
 ```js
-function syncFromURL() {
-	const params = page.url.searchParams;
-	const tab = params.get('tab');
-	if (tab && tabs.some((t) => t.id === tab)) activeTab = tab;
-	// ... same for lines ...
+export function effectiveUrl() {
+	return page.shallow?.url ?? page.url;
 }
-syncFromURL();
-
-$effect(() => {
-	const search = page.url.search;
-	const params = new URLSearchParams(search);
-	params.set('tab', activeTab);
-	params.set('lines', String(lines));
-	const qs = params.toString();
-	const current = page.url.search;
-	if ('?' + qs !== current && current !== qs) {
-		goto(resolve(`logs?${qs}`), { replaceState: true, reset: false });
-	}
-});
 ```
 
-`replaceState: true` keeps it out of history; `reset: false` keeps the current
-scroll position and focus instead of jumping to the top; the equality check
-avoids infinite ping-pong.
+A full navigation clears `page.shallow`, so the accessor falls back to
+`page.url` automatically. Tab state uses it too (`people/+page.svelte`,
+`tags/+page.svelte`, `tasks/+page.svelte`).
 
-### 2. Shallow `goto(..., { shallow: true, replace: true })` — documents page
+### 2. Writing: one shared writer
 
-The filter store subscription writes `?q=` with the serialized filter
-(`documents/+page.svelte:205-227`; `goto(resolve(\`${page.url.pathname}?${sp}\`),
-{ shallow: true, replace: true })` — see §7 for the full pattern). The `?q=`
-value is a mini-language (`tag:"x"`,
-`type:"scientific paper"`, `created:from..to`, `missing:lang`, `size:>10mb`)
-parsed/serialized by the pure functions in `lib/stores/searchFilter.js` —
-`parseQueryString` / `serializeFilter` — so the URL is the source of truth
-for the filter. `serializeFilter` always wraps field values in double quotes
-(the tokenizer strips them); unconditional quoting keeps multi-word tags,
-types, languages, and person names intact through the URL round-trip.
+`writeRouteParams(keys, entries)` in `lib/list/listQuery.svelte.js` is the only
+code allowed to write list parameters:
 
-### 3. Plain `history.replaceState` — legacy settings redirect, wizard step
+```js
+const current = effectiveUrl();
+const next = new SvelteURLSearchParams(current.searchParams);
+for (const key of keys) next.delete(key);
+for (const [key, value] of entries) if (value !== '' && value != null) next.append(key, value);
+if (next.toString() === current.searchParams.toString()) return;
+goto(resolve(`${current.pathname}?${next}${current.hash}`), { shallow: true, replace: true });
+```
 
-When no SvelteKit navigation is needed, `switchTab` writes the param directly
+It owns exactly the keys in its route's codec, preserves foreign parameters and
+the hash, and skips navigation when nothing changed. `replace: true` keeps
+filter changes out of history. The `logs` page adopts the same writer for its
+`tab`/`lines` parameters.
+
+### 3. Naming: the route codec decides
+
+Each route's codec lists the parameters it owns and the view suffix it uses.
+Generic view state follows `<prefix>_page`, `<prefix>_size`, `<prefix>_sort`,
+`<prefix>_order` through `parseView`/`serializeView`; views default to
+[10, 25, 50, 100] (`DEFAULT_PAGE_SIZES`). Free text is `q`; every facet has its
+own key (`tag`, `person`, `type`, `lang`, `created_from`, …), and default
+values are omitted from the URL.
+
+### 4. Non-list pages
+
+The wizard writes its step with plain `history.replaceState`
 (`web-wizard/+page.svelte:30-34`); the settings area redirects the legacy
-`?tab=Users` parameter to `/settings/access` with `goto`
-(`settings/+layout.svelte`), and the Models page syncs its selected provider
-to the `?provider=` parameter with a shallow replacing `goto` that forwards
-`page.state` (`settings/ModelsSection.svelte`).
-
-DataTable's own `urlSync="dt"` prop persists `<prefix>_size/_page/_sort/_order`
-params itself (`DataTable.svelte:94`).
+`?tab=Users` parameter with `goto` (`settings/+layout.svelte`), and the Models
+page syncs its provider to `?provider=` with a shallow `goto`
+(`settings/ModelsSection.svelte`).
 
 ---
 
@@ -755,65 +737,66 @@ The dual condition "auth off OR editor+" is the standard idiom
 {/if}
 ```
 
-Inside DataTable cell builders, actions return `''` for viewers
-(`tasks/+page.svelte:139,237`): `if (authStore.authEnabled() && !authStore.isEditor()) return '';`.
+Inside list cell snippets, actions render only for editors
+(`{#if !authStore.authEnabled() || authStore.isEditor()}` in
+`tasks/TasksTable.svelte`, `tags/+page.svelte`).
 The sidebar hides nav links per role (`+layout.svelte:71-74,103-112`), and the
 profile page guards itself in `onMount` (`profile/+page.svelte:20-26`).
 
 ---
 
-## 13. The DataTable pattern and HTML-string cells
+## 13. The list pattern: URL controller and presentational views
 
-`DataTable.svelte` (444 lines) is the workhorse list component: server-side
-paging/sort, spinner loading rows, `refreshKey` reloads, row selection via a
-rebuilt `Set`, keyboard accessibility, URL sync. It takes 15 props, all with
-defaults (`DataTable.svelte:37-53`).
+Every list — documents (table and grid), tags, people, tasks, batches, trash,
+users and the tag-review panels — is built from the same four pieces:
 
-**The unusual part: columns are functions returning HTML strings**, inserted
-raw with `{@html ...}` (`DataTable.svelte:377-381`):
+- a **route codec** for the URL slice (§7, §10);
+- a **controller** from `createListQuery` (§7) for fetching and interaction state;
+- a **presentational view**: `ListTable.svelte` or `ListGrid.svelte`;
+- **snippets** for cells and cards, defined in the route.
 
-```js
-{@html col.cell(row[col.key], row)}
+### Presentational views
+
+`ListTable` takes rows, view state and events (`ListTable.svelte:5-9`):
+`rows`, `total`, `loading`, `error`, `page`, `pageSize`, `pageSizes`, `sortBy`,
+`sortOrder`, `keyField`, `title`, `selectedKeys`, and `onSort`/`onPage`/
+`onPageSize`/`onRowClick`/`onToggleRow`/`onToggleAll`. `ListGrid` takes the same
+data with a `card(row)` snippet and sort options instead. Neither fetches, reads
+the URL, nor knows about a reload; both share the paging window from
+`listWindow()`.
+
+Cells are snippets rendered by the view; there is **no HTML-string cell API and
+no `{@html}` anywhere**. A route declares one snippet and passes it down
+(`documents/+page.svelte`):
+
+```svelte
+{#snippet cell(col, row)}
+	{#if col.key === 'title'}
+		<a href={resolve(`documents/${row.id}`)}>{row.title}</a>
+	{:else if col.key === 'tags'}
+		…
+	{/if}
+{/snippet}
+
+<ListTable {columns} {cell} rows={documents.rows} … />
 ```
 
-The contract is documented at the call site: *callers build cells with
-`escapeHtml`; raw insertion is required*. The documents page defines columns
-in a `$derived.by` block, e.g. (`documents/+page.svelte:43-52`):
+### The route's responsibilities
 
-```js
-{
-	key: 'title',
-	label: 'Title',
-	sortable: true,
-	cell: (title, row) =>
-		`<a href="${resolve(`/documents/${row.id}`)}" class="...">${escapeHtml(title || '')}</a>`
-}
-```
+A route keeps what is domain-specific: column definitions, cell snippets, the
+fetcher, filter UI, saved searches, batch actions, cross-route links and error
+messaging. Mutations call `list.reload()`; view events call
+`list.update(...)` and `list.toggle(row)`.
 
-The pair that makes this safe: `escapeHtml` from `lib/utils/html.js` for
-**user data**, and `actionButton()` from `lib/icons.js` for **static icons**.
+### Icons
 
-### `icons.js` — SVG strings + a button builder
-
-Icons are plain SVG markup strings (16×16, `stroke="currentColor"` so CSS
-`text-*` colors them), not components (`icons.js:1-21`). `actionButton()`
-(`icons.js:24-40`) builds a `<button>` string with `data-*` attributes:
-
-```js
-return `<button ${attrs} class="${cls}" title="${tooltip}" aria-label="${tooltip}">${svg}</button>`;
-```
-
-Cells concatenate them (values pre-escaped by callers — noted in the JSDoc
-contract at `icons.js:29`):
-
-```js
-return `${actionButton(EDIT_ICON, 'Edit', 'text-parchment-400 hover:text-gold-500', { 'data-edit-tag': row.id })}
-${actionButton(DELETE_ICON, 'Delete', 'text-parchment-400 hover:text-terracotta-500', { 'data-delete-tag': row.id })}`;
-```
-
-(`tags/+page.svelte:73-80`). Clicks are **delegated**: DataTable's
-`onActionClick` handler, or a `<svelte:window onclick>` on the tasks page
-(`tasks/+page.svelte:330`), dispatch on `e.target.closest('[data-...]')`.
+`Icon.svelte` is the single icon catalogue: name → SVG markup, 16 px by default,
+`stroke="currentColor"` so `text-*` classes colour it; `strokeWidth` exists for
+the larger document placeholders. Names describe the action (`edit`, `delete`,
+`close`, `retry`, `fold`, `restore`, `resume`, …) or, for positional drawings,
+the shape (`chevron-left`, `panel-right-open`). `Icon.test.js` renders every name
+used anywhere in `src/`, so a missing name fails the suite instead of rendering a
+blank SVG.
 
 ---
 
@@ -983,7 +966,7 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 | Endpoints | `/wizard/config`, `/wizard/config/status`, `/wizard/admin-user` | `/api/v1/...`, `/health`, `/wizard/bootstrap` |
 | State | one page's `$state` | stores + components |
 | Dialogs | `window.confirm` | `confirmStore` + `ConfirmDialog` |
-| URL writes | `history.replaceState` directly | `goto`/`replaceState` from `$app/navigation` |
+| URL writes | `history.replaceState` directly | `goto(url, { shallow: true, replace: true })` through `writeRouteParams` |
 
 ---
 
@@ -992,16 +975,17 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 | I want to see... | Go to |
 |---|---|
 | Svelte 5 runes (`$state`, `$derived`, `$effect`) | any page; `web/src/routes/logs/+page.svelte`, `web/src/routes/+page.svelte` |
-| `$props()` with defaults | `web/src/lib/components/DataTable.svelte:37`, `SearchBar.svelte:11` |
+| `$props()` with defaults | `web/src/lib/components/ListTable.svelte:10`, `SearchBar.svelte:11` |
 | `children` snippet + `{@render children()}` | `web/src/lib/components/Modal.svelte`, `+layout.svelte:199` |
 | Runes store (module `$state`) | `web/src/lib/stores/confirmStore.svelte.js`, `toastStore.svelte.js`, `authStore.svelte.js`, `settingsStore.svelte.js` |
-| Classic writable store | `web/src/lib/stores/filterStore.js` |
-| Plain module (pure logic) | `web/src/lib/stores/searchFilter.js` |
+| List controller + single URL writer | `web/src/lib/list/listQuery.svelte.js` |
+| Debounced list filter input | `web/src/lib/list/queryDraft.svelte.js` |
+| Route codec (pure parse/serialize) | `web/src/routes/documents/query.js`, `web/src/routes/people/query.js` |
 | Fetch wrappers / 401 handling | `web/src/lib/api.js:7-60` |
-| URL ⇄ state sync | `web/src/routes/logs/+page.svelte:28-53`, `documents/+page.svelte:136-162` |
+| URL ⇄ state sync (lists) | `web/src/lib/list/listQuery.svelte.js`; `web/src/routes/logs/+page.svelte` |
 | AbortController pattern | `web/src/routes/logs/+page.svelte:55-71` |
-| DataTable columns + `{@html}` cells | `web/src/routes/documents/+page.svelte:24-113`, `DataTable.svelte:381` |
-| SVG icons + `actionButton` | `web/src/lib/icons.js` |
+| List views + snippet cells | `web/src/lib/components/ListTable.svelte`, `web/src/routes/documents/+page.svelte` |
+| Icon catalogue | `web/src/lib/components/Icon.svelte` |
 | Design tokens (`@theme`) | `web/src/routes/layout.css`, `web-wizard/src/app.css` |
 | Auth/role gates | `web/src/routes/+layout.svelte:31-40`, `trash/+page.svelte:203` |
 | Modal + confirm dialog | `web/src/lib/components/Modal.svelte`, `ConfirmDialog.svelte` |
@@ -1027,11 +1011,11 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
   listeners.
 - **Null-coalesce API results** (`data ?? []`) — `request()` returns `null` on
   any failure.
-- **Escape user data in `{@html}` cells** with `escapeHtml` from
-  `#lib/utils/html.js`; icons are safe, data is not.
-- **Keep URL-visible state in the query string** via replacing history writes
-  (a shallow `goto` with `replace: true`, or `goto` with `replaceState: true`
-  in an `$effect`), and read it with `page.url.searchParams`.
+- **Render cells as snippets** (`{#snippet cell(col, row)}` + `{@render}`); never
+  build markup in strings.
+- **Keep URL-visible list state in the query string**: read it from
+  `effectiveUrl()` (not `page.url` after a shallow write) and write it only
+  through `writeRouteParams`.
 - **`gofmt`-equivalent: `npm run format`** (Prettier sorts Tailwind classes
   too) and `npm run lint`.
 - **`nvm use` before any npm command** — `.nvmrc` pins the Node version, and
@@ -1040,26 +1024,25 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 
 ### Gotchas that bit people before
 
-- **Mutating a `$state` Set/Map in place is invisible to Svelte.** Rebuild and
-  reassign (`selectedKeys = new Set(...)`) — the code comments say exactly this
-  (`DataTable.svelte:156-164`, `logs/+page.svelte:127-130`).
-- **`$derived` variables must not be assigned.** If you need to write, use
-  `$state` (and `$derived.by` for multi-statement reads).
-- **`$effect` runs when *any* read dependency changes**, including writes it
-  itself triggers — wrap state writes in `untrack` when reacting to a
-  "command" prop like `refreshKey`.
+- **A plain `Set`/`Map` is not reactive.** Use `SvelteSet` for reactive
+  membership (`listQuery` selection, `PdfViewer` render zones, expanded log
+  lines) and mutate it in place.
+- **`$derived` variables must not be assigned** unless declared writable;
+  compute from state, write with `update()` on the owning module.
+- **A shallow `goto` moves the address bar but not `page.url`.** Derive list
+  and tab state from `effectiveUrl()` (`page.shallow?.url ?? page.url`), or the
+  UI will not react until a reload.
 - **`onMount` is one-shot; `$effect` is not.** For intervals that toggle, put
   the lifecycle in the effect, not in `onMount`.
-- **Stores fire subscribers immediately.** Guard the first emission when the
-  callback has side effects (the `subscribed` flag in
-  `documents/+page.svelte:136-162`).
+- **A debounced input must own its timer.** Commit on the pause or on blur and
+  cancel on destroy (`QueryDraft`); a stray timer can otherwise write into
+  another route's URL.
 - **`request()` swallows errors.** Check `data === null` before reading
   fields; use `requestRaw()` when you need the status.
 - **401 during any request redirects to `/login`.** That is by design
   (`handleUnauthorized`); don't wrap your own redirects around it.
-- **`{@html}` skips all escaping.** Only static markup or
-  `escapeHtml`-processed strings go in there (see the comments at
-  `DataTable.svelte:378-381` and `icons.js:29`).
+- **There is no `{@html}` in the app.** Icons are Svelte markup in
+  `Icon.svelte`; cells are snippets.
 - **SPA mode: no load functions, no SSR.** `window`/`localStorage` are safe to
   touch at module or component init — but don't rely on anything server-side.
 - **The dev proxy only forwards `/api`, `/health`, `/wizard`.** New backend
@@ -1069,4 +1052,4 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
 
 ---
 
-*Last verified against the tree: 2026-09-16. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-11-09. If code and doc disagree, code wins.*

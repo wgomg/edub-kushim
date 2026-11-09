@@ -5,64 +5,34 @@
 -->
 <script>
 	import { api } from '#lib/api.js';
-	import DataTable from '#lib/components/DataTable.svelte';
-	import { RESTORE_ICON, actionButton } from '#lib/icons.js';
+	import Icon from '#lib/components/Icon.svelte';
+	import ListTable from '#lib/components/ListTable.svelte';
+	import { createListQuery } from '#lib/list/listQuery.svelte.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
-	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
+	import { formatDateTime, formatNumber } from '#lib/utils/html.js';
 
-	let { refreshKey = 0, onchanged = null } = $props();
+	let { onchanged = null } = $props();
 
-	let rulesTotal = $state(null);
+	async function fetchRules({ limit, offset, signal }) {
+		const data = await api.tags.splitRulesList({ limit, offset, signal });
+		if (!data) throw new Error('Failed to load split rules');
+		return { items: data.results ?? [], total: data.total ?? null };
+	}
+
+	const rules = createListQuery({
+		fetcher: fetchRules,
+		defaults: { page: 0, pageSize: 10, sortBy: '', sortOrder: 'desc' },
+		keyField: 'candidate'
+	});
 
 	const columns = [
-		{
-			key: 'candidate',
-			label: 'Name',
-			sortable: false,
-			width: '100%'
-		},
-		{
-			key: 'parts',
-			label: 'Applied components',
-			sortable: false,
-			width: '220px',
-			cell: (v) => (v ?? []).join(', ')
-		},
-		{
-			key: 'created_at',
-			label: 'Recorded',
-			sortable: false,
-			width: '180px',
-			cell: (v) => (v ? new Date(v).toLocaleString() : '')
-		},
-		{
-			key: 'actions',
-			label: 'Actions',
-			sortable: false,
-			cellClass: 'whitespace-nowrap',
-			cell: (_v, row) => {
-				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
-				return actionButton(
-					RESTORE_ICON,
-					'Revert split',
-					'text-parchment-400 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none',
-					{ 'data-revert-split-rule': escapeHtml(row.candidate) }
-				);
-			}
-		}
+		{ key: 'candidate', label: 'Name', sortable: false, width: '100%' },
+		{ key: 'parts', label: 'Applied components', sortable: false, width: '220px' },
+		{ key: 'created_at', label: 'Recorded', sortable: false, width: '180px' },
+		{ key: 'actions', label: 'Actions', sortable: false, cellClass: 'whitespace-nowrap' }
 	];
-
-	async function fetchRules({ limit, offset }) {
-		return await api.tags.splitRulesList({ limit, offset });
-	}
-
-	function handleActionClick(e) {
-		const revertBtn = e.target.closest('[data-revert-split-rule]');
-		if (!revertBtn) return;
-		revert(revertBtn.getAttribute('data-revert-split-rule'));
-	}
 
 	async function revert(candidate) {
 		const ok = await confirmStore.confirm({
@@ -73,6 +43,7 @@
 		const result = await api.tags.revertSplitRule(candidate);
 		if (result.ok) {
 			toastStore.success(`Reverted split "${candidate}"`);
+			rules.reload();
 			if (onchanged) onchanged();
 		} else if (result.status === 404) {
 			toastStore.error('This split rule no longer exists');
@@ -82,9 +53,30 @@
 	}
 </script>
 
+{#snippet cell(col, row)}
+	{#if col.key === 'parts'}
+		{(row.parts ?? []).join(', ')}
+	{:else if col.key === 'created_at'}
+		{formatDateTime(row.created_at)}
+	{:else if col.key === 'actions'}
+		{#if !authStore.authEnabled() || authStore.isEditor()}
+			<button
+				onclick={() => revert(row.candidate)}
+				title="Revert split"
+				aria-label="Revert split"
+				class="rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+			>
+				<Icon name="restore" />
+			</button>
+		{/if}
+	{:else}
+		{row[col.key] ?? ''}
+	{/if}
+{/snippet}
+
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<span class="ms-auto text-[0.8125rem] text-parchment-500 tabular-nums">
-		<b class="font-semibold text-parchment-300">{formatNumber(rulesTotal ?? 0)}</b> split rules
+		<b class="font-semibold text-parchment-300">{formatNumber(rules.total ?? 0)}</b> split rules
 	</span>
 </div>
 
@@ -94,13 +86,17 @@
 	untouched.
 </p>
 
-<DataTable
+<ListTable
 	{columns}
-	fetch={fetchRules}
-	keyField="candidate"
-	defaultPageSize={10}
+	{cell}
+	rows={rules.rows}
+	total={rules.total}
+	loading={rules.loading}
+	error={rules.error}
+	page={rules.page}
+	pageSize={rules.pageSize}
 	pageSizes={[10, 25, 50]}
-	{refreshKey}
-	onActionClick={handleActionClick}
-	onTotal={(t) => (rulesTotal = t)}
+	keyField="candidate"
+	onPage={(next) => rules.update({ page: next })}
+	onPageSize={(size) => rules.update({ pageSize: size })}
 />

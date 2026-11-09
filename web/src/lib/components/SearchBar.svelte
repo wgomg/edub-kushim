@@ -1,16 +1,16 @@
 <script>
 	import { api } from '#lib/api.js';
+	import { formatSize } from '#lib/utils/html.js';
+	import { parseDateRange, parseSize } from '#lib/utils/searchSyntax.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
-	import {
-		getPersonTypes,
-		PERSON_ANY_TYPE,
-		formatSize,
-		parseDateRange,
-		parseSize
-	} from '#lib/stores/searchFilter.js';
 
+	/**
+	 * Controlled search bar: the filter values come in as props — `q` is the free-text filter — and
+	 * every change leaves through `onSearch` as a partial filter patch. It owns only the text draft
+	 * and the suggestion popup.
+	 */
 	let {
-		query = '',
+		q = '',
 		tags = [],
 		people = [],
 		documentType = '',
@@ -18,6 +18,8 @@
 		dateCreated = { from: null, to: null },
 		dateModified = { from: null, to: null },
 		fileSize = { min: null, max: null },
+		personTypes = [],
+		personAnyType = 'person',
 		onSearch = () => {}
 	} = $props();
 
@@ -30,7 +32,7 @@
 
 	function emit(partial) {
 		onSearch({
-			query,
+			q,
 			tags,
 			people,
 			documentType,
@@ -54,7 +56,7 @@
 	}
 
 	function isPersonField(field) {
-		return getPersonTypes().has(field);
+		return personTypes.includes(field);
 	}
 
 	async function fetchSuggestions(prefix, field) {
@@ -75,12 +77,12 @@
 				.map((dt) => ({ label: dt.name, value: dt.name, type: 'documentType' }));
 		}
 
-		if (field === PERSON_ANY_TYPE) {
+		if (field === personAnyType) {
 			const data = await api.autocomplete.people(prefix, 10);
 			return data.map((p) => ({
 				label: `person: ${p.name}`,
 				value: p.name,
-				type: PERSON_ANY_TYPE
+				type: personAnyType
 			}));
 		}
 
@@ -112,7 +114,7 @@
 			results.push({
 				label: `person: ${p.name}`,
 				value: p.name,
-				type: PERSON_ANY_TYPE
+				type: personAnyType
 			});
 		for (const dt of typesData) {
 			if (dt.name.includes(prefix))
@@ -165,6 +167,12 @@
 		if (inputEl) inputEl.focus();
 	}
 
+	function emitFreeText() {
+		emit({ q: (q + ' ' + inputValue).trim() });
+	}
+
+	// an unrecognized field or an unparsable value is kept as free text; dropping it would clear the
+	// input without the user learning anything
 	function onSubmit() {
 		if (!inputValue.trim()) return;
 		const fp = getFieldPrefix(inputValue.trim());
@@ -178,9 +186,11 @@
 			} else if (fp.field === 'created') {
 				const dr = parseDateRange(fp.value);
 				if (dr) emit({ dateCreated: dr });
+				else emitFreeText();
 			} else if (fp.field === 'modified') {
 				const dr = parseDateRange(fp.value);
 				if (dr) emit({ dateModified: dr });
+				else emitFreeText();
 			} else if (fp.field === 'size') {
 				const sz = parseSize(fp.value);
 				if (sz) {
@@ -190,14 +200,18 @@
 					if (sz.op === '>') fs.max = null;
 					if (sz.op === '<') fs.min = null;
 					emit({ fileSize: fs });
+				} else {
+					emitFreeText();
 				}
-			} else if (fp.field === PERSON_ANY_TYPE) {
-				emit({ people: [...people, { name: fp.value, type: PERSON_ANY_TYPE }] });
+			} else if (fp.field === personAnyType) {
+				emit({ people: [...people, { name: fp.value, type: personAnyType }] });
 			} else if (isPersonField(fp.field)) {
 				emit({ people: [...people, { name: fp.value, type: fp.field }] });
+			} else {
+				emitFreeText();
 			}
 		} else {
-			emit({ query: (query + ' ' + inputValue).trim() });
+			emitFreeText();
 		}
 		inputValue = '';
 		showDropdown = false;
@@ -240,8 +254,8 @@
 				emit({ dateModified: { from: null, to: null } });
 			} else if (fileSize.min != null || fileSize.max != null) {
 				emit({ fileSize: { min: null, max: null } });
-			} else if (query) {
-				emit({ query: '' });
+			} else if (q) {
+				emit({ q: '' });
 			}
 		}
 	}
@@ -275,7 +289,7 @@
 	}
 
 	function clearQuery() {
-		emit({ query: '' });
+		emit({ q: '' });
 	}
 
 	function dateChipLabel(dr) {
@@ -393,11 +407,11 @@
 			</span>
 		{/if}
 
-		{#if query}
+		{#if q}
 			<span
 				class="inline-flex items-center gap-1 rounded-full bg-clay-700 px-2.5 py-0.5 text-xs text-parchment-200"
 			>
-				{query}
+				{q}
 				<button
 					onclick={clearQuery}
 					aria-label="Remove text filter"
@@ -437,7 +451,7 @@
 			!dateModified.to &&
 			fileSize.min == null &&
 			fileSize.max == null &&
-			!query
+			!q
 				? 'Search documents…'
 				: ''}
 			class="min-w-[120px] flex-1 border-0 bg-transparent p-0 text-parchment-200 placeholder-parchment-500 outline-none focus:ring-0"

@@ -7,6 +7,11 @@ const apiMocks = vi.hoisted(() => ({
 	trashList: vi.fn()
 }));
 
+vi.mock('$app/state', () => ({
+	page: { url: new URL('http://localhost/trash') }
+}));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('$app/paths', () => ({ resolve: (p) => p }));
 vi.mock('#lib/api.js', () => ({
 	api: {
 		trash: {

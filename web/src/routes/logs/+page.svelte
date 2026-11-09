@@ -1,8 +1,8 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
+	import { SvelteSet } from 'svelte/reactivity';
+	import { writeRouteParams } from '#lib/list/listQuery.svelte.js';
 	import { api } from '#lib/api.js';
 
 	const tabs = [
@@ -20,7 +20,7 @@
 	let error = $state('');
 	let atBottom = $state(true);
 	let scrollContainer = $state(null);
-	let expandedLines = $state(new Set());
+	const expandedLines = new SvelteSet();
 
 	let refreshInterval = null;
 	let controller = $state(null);
@@ -38,19 +38,15 @@
 
 	syncFromURL();
 
-	$effect(() => {
-		const search = page.url.search;
-		// transient helper to sync the URL with local state; SvelteURLSearchParams is not imported in this file
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
-		const params = new URLSearchParams(search);
-		params.set('tab', activeTab);
-		params.set('lines', String(lines));
-		const qs = params.toString();
-		const current = page.url.search;
-		if ('?' + qs !== current && current !== qs) {
-			goto(resolve(`logs?${qs}`), { replaceState: true, reset: false });
-		}
-	});
+	function syncUrl() {
+		writeRouteParams(
+			['tab', 'lines'],
+			[
+				['tab', activeTab],
+				['lines', String(lines)]
+			]
+		);
+	}
 
 	async function fetchLogs() {
 		if (controller) controller.abort();
@@ -73,8 +69,9 @@
 	function handleTabClick(tabId) {
 		if (tabId === activeTab) return;
 		activeTab = tabId;
-		expandedLines = new Set();
+		expandedLines.clear();
 		atBottom = true;
+		syncUrl();
 		fetchLogs();
 	}
 
@@ -82,6 +79,7 @@
 		const val = parseInt(e.target.value);
 		if (!isNaN(val)) {
 			lines = Math.max(100, Math.min(5000, val));
+			syncUrl();
 			fetchLogs();
 		}
 	}
@@ -124,12 +122,8 @@
 	});
 
 	function toggleExpand(idx) {
-		// set is rebuilt on change, not mutated in place
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
-		const next = new Set(expandedLines);
-		if (next.has(idx)) next.delete(idx);
-		else next.add(idx);
-		expandedLines = next;
+		if (expandedLines.has(idx)) expandedLines.delete(idx);
+		else expandedLines.add(idx);
 	}
 
 	function lineClass(level) {

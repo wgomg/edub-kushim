@@ -40,15 +40,24 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
 - **`src/lib/stores/settingsStore.svelte.js`** — settings state: loads and snapshots the admin
   config, exposes the flattened diff (token values redacted), stages catalog operations, and runs
   apply/discard including the deferred migration watch.
-- **`src/lib/stores/filterStore.js`**, **`src/lib/stores/searchFilter.js`** — shared document-filter
-  state and the `field:value` query parser/serializer used by the search bar and the URL.
+- **`src/lib/list/listQuery.svelte.js`** — the list-state module. `createListQuery` turns a
+  route codec into a list controller (fetching, request ordering, clamping, selection, paging
+  resets); `writeRouteParams` is the only writer of list search params. `effectiveUrl()` reads
+  `page.shallow?.url ?? page.url` because a shallow `goto` updates the address bar without
+  touching `page.url`. `queryDraft.svelte.js` holds the debounced free-text input used by the
+  list pages.
+- **`src/routes/*/query.js`**, **`src/lib/components/settings/usersQuery.js`**,
+  **`src/lib/components/tags/provisionalQuery.js`** — one codec per list slice: `parse`,
+  `serialize` and `defaults` for the route's URL parameters. The documents codec also builds
+  the search request body, normalizes saved-search payloads and reads the legacy `q` DSL.
 - **`src/lib/stores/confirmStore.svelte.js`**, **`src/lib/stores/toastStore.svelte.js`** —
   imperative promise-based confirm dialogs (one pending at a time) and the global toast stack.
-- **`src/lib/components/DataTable.svelte`** — reusable sortable/paginated table card with
-  `refreshKey`, `onRowClick`, total reporting and loading/empty states.
-- **`src/lib/components/SearchBar.svelte`**, **`src/lib/components/FilterPanel.svelte`** — rich
-  search input with chips, autocomplete and keyboard navigation; collapsible panel over every
-  filter field.
+- **`src/lib/components/ListTable.svelte`**, **`src/lib/components/ListGrid.svelte`** —
+  presentational list views: snippet cells, sort/paging events, selection and loading/empty
+  states. **`Icon.svelte`** renders the app's stroke-icon catalogue by name.
+- **`src/lib/components/SearchBar.svelte`**, **`src/lib/components/FilterPanel.svelte`** —
+  controlled search input with chips, autocomplete and keyboard navigation; collapsible panel
+  over every filter field. Both emit partial filter patches to their route.
 - **`src/lib/components/PdfViewer.svelte`**, **`src/lib/components/PdfPage.svelte`** — self-hosted
   pdf.js viewer: continuous scroll with lazy dual-IntersectionObserver rendering, zoom, page jump
   and find-in-PDF, on a per-page canvas plus selectable text layer.
@@ -71,10 +80,10 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
   `tagreconcile` task pages.
 - **`src/lib/pdf/`** — the pdf.js loader singleton, the worker wrapper with its polyfills, and the
   shared `Promise.withResolvers` shim.
-- **`src/lib/utils/`** — `html.js` (escaping, size/number/duration/relative formatting),
-  `statusChip.js` (status to chip classes), `tagReconcile.js` (report phrase maps and totals) and
-  `termLookup.js` (definition lookup across Wikipedia, Wiktionary and the Free Dictionary API with
-  its session cache).
+- **`src/lib/utils/`** — `html.js` (size/number/duration/date/relative formatting),
+  `searchSyntax.js` (size and date filter syntax), `statusChip.js` (status to chip classes),
+  `tagReconcile.js` (report phrase maps and totals) and `termLookup.js` (definition lookup
+  across Wikipedia, Wiktionary and the Free Dictionary API with its session cache).
 
 Tests live beside their sources as `*.test.js`; the web test tiers are documented in
 [tests.md](tests.md).

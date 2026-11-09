@@ -1,72 +1,42 @@
 <script>
+	import { resolve } from '$app/paths';
 	import { api } from '#lib/api.js';
-	import DataTable from '#lib/components/DataTable.svelte';
-	import { actionButton } from '#lib/icons.js';
+	import Icon from '#lib/components/Icon.svelte';
+	import ListTable from '#lib/components/ListTable.svelte';
+	import { createListQuery } from '#lib/list/listQuery.svelte.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
-	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
+	import { formatNumber } from '#lib/utils/html.js';
 
 	let { onchanged = null } = $props();
 
-	let refreshKey = $state(0);
-	let flagsTotal = $state(null);
 	let running = $state(false);
 
-	const CHECK_ICON =
-		'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M20 6 9 17l-5-5"/></svg>';
-	const DISMISS_ICON =
-		'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12"/></svg>';
-	const PLUS_ICON =
-		'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M12 5v14M5 12h14"/></svg>';
-
 	const confirmClass =
-		'text-parchment-400 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+		'rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
 	const dismissClass =
-		'text-parchment-400 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+		'rounded-md p-1.5 text-parchment-400 hover:bg-clay-800 hover:text-terracotta-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+
+	async function fetchFlags({ limit, offset, signal }) {
+		const data = await api.tags.auditFlags(limit, offset, signal);
+		if (!data) throw new Error('Failed to load coverage flags');
+		return { items: data.results ?? [], total: data.total ?? null };
+	}
+
+	const flags = createListQuery({
+		fetcher: fetchFlags,
+		defaults: { page: 0, pageSize: 25, sortBy: '', sortOrder: 'desc' },
+		keyField: 'id'
+	});
 
 	const columns = [
-		{
-			key: 'document_title',
-			label: 'Document',
-			sortable: false,
-			width: '45%',
-			cell: (v, row) =>
-				`<a href="/documents/${escapeHtml(row.document_uuid)}" class="underline decoration-parchment-500/30 underline-offset-2 hover:text-gold-500">${escapeHtml(v ?? '')}</a>`
-		},
+		{ key: 'document_title', label: 'Document', sortable: false, width: '45%' },
 		{ key: 'tag_name', label: 'Tag', sortable: false },
 		{ key: 'class', label: 'Class', sortable: false, width: '170px' },
 		{ key: 'source', label: 'Source', sortable: false, width: '110px' },
-		{
-			key: 'actions',
-			label: 'Actions',
-			sortable: false,
-			cellClass: 'whitespace-nowrap',
-			cell: (_v, row) => {
-				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
-				const attrs = { 'data-doc': row.document_id, 'data-tag': escapeHtml(row.tag_name) };
-				if (row.class === 'missing') {
-					return actionButton(PLUS_ICON, 'Create value', confirmClass, {
-						...attrs,
-						'data-audit-create': ''
-					});
-				}
-				const apply = actionButton(CHECK_ICON, 'Apply', confirmClass, {
-					...attrs,
-					'data-audit-apply': ''
-				});
-				const dismiss = actionButton(DISMISS_ICON, 'Dismiss', dismissClass, {
-					...attrs,
-					'data-audit-dismiss': ''
-				});
-				return apply + dismiss;
-			}
-		}
+		{ key: 'actions', label: 'Actions', sortable: false, cellClass: 'whitespace-nowrap' }
 	];
-
-	async function fetchFlags({ limit, offset }) {
-		return await api.tags.auditFlags(limit, offset);
-	}
 
 	async function runAudit() {
 		running = true;
@@ -74,7 +44,7 @@
 			const result = await api.tags.reevaluateAudit();
 			if (result.ok) {
 				toastStore.success('Coverage audit queued');
-				refreshKey++;
+				flags.reload();
 			} else {
 				toastStore.error('Failed to queue the coverage audit');
 			}
@@ -83,22 +53,11 @@
 		}
 	}
 
-	function handleActionClick(e) {
-		const btn = e.target.closest('[data-audit-apply], [data-audit-dismiss], [data-audit-create]');
-		if (!btn) return;
-		const doc = Number(btn.getAttribute('data-doc'));
-		const tag = btn.getAttribute('data-tag');
-		if (!tag) return;
-		if (btn.hasAttribute('data-audit-apply')) apply(doc, tag);
-		else if (btn.hasAttribute('data-audit-dismiss')) dismiss(doc, tag);
-		else createValue(tag);
-	}
-
 	async function apply(documentID, tagName) {
 		const result = await api.tags.applyAuditFlag({ document_id: documentID, tag_name: tagName });
 		if (result.ok) {
 			toastStore.success(`Applied "${tagName}"`);
-			refreshKey++;
+			flags.reload();
 			if (onchanged) onchanged();
 		} else {
 			toastStore.error('Failed to apply the coverage flag');
@@ -114,7 +73,7 @@
 		const result = await api.tags.dismissAuditFlag({ document_id: documentID, tag_name: tagName });
 		if (result.ok) {
 			toastStore.success(`Dismissed "${tagName}"`);
-			refreshKey++;
+			flags.reload();
 			if (onchanged) onchanged();
 		} else {
 			toastStore.error('Failed to dismiss the coverage flag');
@@ -125,12 +84,56 @@
 		const result = await api.tags.createAuditValue({ tag_name: tagName });
 		if (result.ok) {
 			toastStore.success(`Registered "${tagName}" provisionally`);
-			refreshKey++;
+			flags.reload();
 		} else {
 			toastStore.error('Failed to create the value');
 		}
 	}
 </script>
+
+{#snippet cell(col, row)}
+	{#if col.key === 'document_title'}
+		<a
+			href={resolve(`documents/${row.document_uuid}`)}
+			class="underline decoration-parchment-500/30 underline-offset-2 hover:text-gold-500"
+			>{row.document_title ?? ''}</a
+		>
+	{:else if col.key === 'actions'}
+		{#if !authStore.authEnabled() || authStore.isEditor()}
+			<div class="flex gap-1">
+				{#if row.class === 'missing'}
+					<button
+						onclick={() => createValue(row.tag_name)}
+						title="Create value"
+						aria-label="Create value"
+						class={confirmClass}
+					>
+						<Icon name="plus" />
+					</button>
+				{:else}
+					<button
+						onclick={() => apply(row.document_id, row.tag_name)}
+						title="Apply"
+						aria-label="Apply"
+						class={confirmClass}
+					>
+						<Icon name="check" />
+					</button>
+					<button
+						onclick={() => dismiss(row.document_id, row.tag_name)}
+						title="Dismiss"
+						aria-label="Dismiss"
+						class={dismissClass}
+					>
+						<Icon name="close" />
+					</button>
+				{/if}
+			</div>
+		{/if}
+	{:else}
+		{row[col.key] ?? ''}
+	{/if}
+{/snippet}
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<button
@@ -142,7 +145,7 @@
 		{running ? 'Queueing…' : 'Run coverage audit'}
 	</button>
 	<span class="ms-auto text-[0.8125rem] text-parchment-500 tabular-nums">
-		<b class="font-semibold text-parchment-300">{formatNumber(flagsTotal ?? 0)}</b> open flags
+		<b class="font-semibold text-parchment-300">{formatNumber(flags.total ?? 0)}</b> open flags
 	</span>
 </div>
 
@@ -171,13 +174,17 @@
 	</div>
 </dl>
 
-<DataTable
+<ListTable
 	{columns}
-	fetch={fetchFlags}
-	keyField="id"
-	defaultPageSize={25}
+	{cell}
+	rows={flags.rows}
+	total={flags.total}
+	loading={flags.loading}
+	error={flags.error}
+	page={flags.page}
+	pageSize={flags.pageSize}
 	pageSizes={[25, 50, 100]}
-	{refreshKey}
-	onActionClick={handleActionClick}
-	onTotal={(t) => (flagsTotal = t)}
+	keyField="id"
+	onPage={(next) => flags.update({ page: next })}
+	onPageSize={(size) => flags.update({ pageSize: size })}
 />

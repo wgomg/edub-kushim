@@ -35,6 +35,7 @@ async function request(path, opts = {}) {
 		if (res.status === 204 || res.headers.get('content-length') === '0') return null;
 		return await res.json();
 	} catch (err) {
+		if (err?.name === 'AbortError') throw err;
 		console.error(`API ${path}:`, err);
 		return null;
 	}
@@ -55,6 +56,7 @@ async function requestRaw(path, opts = {}) {
 		}
 		return { ok: res.ok, status: res.status, data };
 	} catch (err) {
+		if (err?.name === 'AbortError') throw err;
 		console.error(`API ${path}:`, err);
 		return { ok: false, status: 0, data: null };
 	}
@@ -123,11 +125,12 @@ export const api = {
 				`/api/v1/documents/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`
 			).then((data) => data ?? []),
 
-		searchStructured: (body) =>
+		searchStructured: (body, signal) =>
 			request('/api/v1/documents/search', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body)
+				body: JSON.stringify(body),
+				signal
 			}).then((data) => data ?? { results: [], total: 0 }),
 
 		update: (id, body) =>
@@ -211,26 +214,28 @@ export const api = {
 	},
 
 	tasks: {
-		list: (batch, status, limit = 20, offset = 0) => {
+		list: (batch, status, limit = 20, offset = 0, signal) => {
 			const params = new URLSearchParams();
 			if (batch) params.set('batch', batch);
 			if (status) params.set('status', status);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
 			const qs = params.toString();
-			return request(`/api/v1/tasks${qs ? '?' + qs : ''}`).then((data) => data ?? []);
+			return request(`/api/v1/tasks${qs ? '?' + qs : ''}`, { signal }).then((data) => data ?? []);
 		},
 
 		get: (taskId) => request(`/api/v1/tasks/${taskId}`)
 	},
 
 	batches: {
-		list: (taskStatus = '', limit = 20, offset = 0) => {
+		list: (taskStatus = '', limit = 20, offset = 0, signal) => {
 			const params = new URLSearchParams();
 			if (taskStatus) params.set('task_status', taskStatus);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
-			return request(`/api/v1/batches?${params.toString()}`).then((data) => data?.batches ?? []);
+			return request(`/api/v1/batches?${params.toString()}`, { signal }).then(
+				(data) => data?.batches ?? []
+			);
 		},
 
 		get: (batchId) => request(`/api/v1/batches/${batchId}`),
@@ -254,12 +259,12 @@ export const api = {
 	},
 
 	tags: {
-		list: (q, limit = 50, offset = 0) => {
+		list: (q, limit = 50, offset = 0, signal) => {
 			const params = new URLSearchParams();
 			if (q) params.set('q', q);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
-			return request(`/api/v1/tags?${params.toString()}`).then(
+			return request(`/api/v1/tags?${params.toString()}`, { signal }).then(
 				(data) => data ?? { results: [], total: 0 }
 			);
 		},
@@ -280,20 +285,20 @@ export const api = {
 			requestRaw(`/api/v1/tags/aliases/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 		promoteAlias: (name) =>
 			requestRaw(`/api/v1/tags/aliases/${encodeURIComponent(name)}/promote`, { method: 'POST' }),
-		deletedList: ({ q = '', limit = 50, offset = 0 } = {}) => {
+		deletedList: ({ q = '', limit = 50, offset = 0, signal } = {}) => {
 			const params = new URLSearchParams();
 			if (q) params.set('q', q);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
-			return request(`/api/v1/tags/deleted?${params.toString()}`).then(
+			return request(`/api/v1/tags/deleted?${params.toString()}`, { signal }).then(
 				(data) => data ?? { results: [], total: 0 }
 			);
 		},
 		restoreDeleted: (name) =>
 			requestRaw(`/api/v1/tags/deleted/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-		splitRulesList: ({ limit = 50, offset = 0 } = {}) => {
+		splitRulesList: ({ limit = 50, offset = 0, signal } = {}) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-			return request(`/api/v1/tags/split-rules?${params.toString()}`).then(
+			return request(`/api/v1/tags/split-rules?${params.toString()}`, { signal }).then(
 				(data) => data ?? { results: [], total: 0 }
 			);
 		},
@@ -303,7 +308,7 @@ export const api = {
 		provisionalList: (
 			limit = 50,
 			offset = 0,
-			{ criteria = [], states = [], q = '', sort = 'newest', facets = false } = {}
+			{ criteria = [], states = [], q = '', sort = 'newest', facets = false, signal } = {}
 		) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
 			if (q) params.set('q', q);
@@ -311,7 +316,7 @@ export const api = {
 			if (states.length) params.set('state', states.join(','));
 			if (sort === 'oldest') params.set('sort', 'oldest');
 			if (facets) params.set('facets', 'true');
-			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`);
+			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`, { signal });
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
 		demote: (id) => requestRaw(`/api/v1/tags/${id}/demote`, { method: 'POST' }),
@@ -344,9 +349,9 @@ export const api = {
 			}),
 		reevaluateIdentity: () => requestRaw('/api/v1/tags/identity/reevaluate', { method: 'POST' }),
 		reevaluateAudit: () => requestRaw('/api/v1/tags/audit/reevaluate', { method: 'POST' }),
-		auditFlags: (limit = 50, offset = 0) => {
+		auditFlags: (limit = 50, offset = 0, signal) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-			return request(`/api/v1/tags/audit/flags?${params.toString()}`).then(
+			return request(`/api/v1/tags/audit/flags?${params.toString()}`, { signal }).then(
 				(data) => data ?? { results: [], total: 0 }
 			);
 		},
@@ -368,21 +373,21 @@ export const api = {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)
 			}),
-		siblings: (limit = 50, offset = 0) => {
+		siblings: (limit = 50, offset = 0, signal) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-			return request(`/api/v1/tags/siblings?${params.toString()}`).then(
+			return request(`/api/v1/tags/siblings?${params.toString()}`, { signal }).then(
 				(data) => data ?? { results: [], total: 0 }
 			);
 		}
 	},
 
 	people: {
-		list: (q, limit = 50, offset = 0) => {
+		list: (q, limit = 50, offset = 0, signal) => {
 			const params = new URLSearchParams();
 			if (q) params.set('q', q);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
-			return request(`/api/v1/people?${params.toString()}`);
+			return request(`/api/v1/people?${params.toString()}`, { signal });
 		},
 		create: (body) =>
 			requestRaw('/api/v1/people', {
@@ -446,8 +451,8 @@ export const api = {
 	},
 
 	users: {
-		list: (limit = 50, offset = 0) =>
-			request(`/api/v1/users?limit=${limit}&offset=${offset}`).then(
+		list: (limit = 50, offset = 0, signal) =>
+			request(`/api/v1/users?limit=${limit}&offset=${offset}`, { signal }).then(
 				(data) => data ?? { users: [], total: 0 }
 			),
 		get: (id) => request(`/api/v1/users/${id}`),
@@ -590,8 +595,8 @@ export const api = {
 	},
 
 	trash: {
-		list: (limit = 50, offset = 0) =>
-			request(`/api/v1/trash?limit=${limit}&offset=${offset}`).then((data) => ({
+		list: (limit = 50, offset = 0, signal) =>
+			request(`/api/v1/trash?limit=${limit}&offset=${offset}`, { signal }).then((data) => ({
 				results: data?.documents ?? [],
 				total: data?.total ?? 0
 			})),

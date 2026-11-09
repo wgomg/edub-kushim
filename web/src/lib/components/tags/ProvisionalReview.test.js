@@ -38,10 +38,45 @@ const {
 	forgetTerm: vi.fn()
 }));
 
-vi.mock('$app/state', () => ({
-	page: { url: { searchParams: new URLSearchParams(), pathname: '/tags', hash: '' } }
+const pageMock = vi.hoisted(() => {
+	const state = { sp: null, hash: '' };
+	state.url = {
+		get searchParams() {
+			return state.sp;
+		},
+		set searchParams(next) {
+			for (const key of [...state.sp.keys()]) state.sp.delete(key);
+			for (const [key, value] of next) state.sp.append(key, value);
+		},
+		get search() {
+			const value = state.sp ? state.sp.toString() : '';
+			return value ? `?${value}` : '';
+		},
+		pathname: '/tags',
+		get hash() {
+			return state.hash;
+		},
+		set hash(value) {
+			state.hash = value;
+		}
+	};
+	return state;
+});
+
+vi.mock('$app/state', async () => {
+	const { SvelteURLSearchParams } = await import('svelte/reactivity');
+	pageMock.sp = new SvelteURLSearchParams();
+	return { page: { url: pageMock.url } };
+});
+vi.mock('$app/navigation', () => ({
+	goto: vi.fn((target) => {
+		const url = new URL(String(target), 'http://localhost');
+		const sp = pageMock.sp;
+		for (const key of [...sp.keys()]) sp.delete(key);
+		for (const [key, value] of url.searchParams) sp.append(key, value);
+		pageMock.hash = url.hash;
+	})
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/paths', () => ({ resolve: (p) => p }));
 vi.mock('#lib/api.js', async (importOriginal) => {
 	const actual = await importOriginal();
@@ -234,13 +269,17 @@ describe('ProvisionalReview filters and paging', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'atomic: fail' }));
 
 		await waitFor(() =>
-			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
-				criteria: [{ key: 'atomic', state: 'fail' }],
-				states: [],
-				q: '',
-				sort: 'newest',
-				facets: false
-			})
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({
+					criteria: [{ key: 'atomic', state: 'fail' }],
+					states: [],
+					q: '',
+					sort: 'newest',
+					facets: false
+				})
+			)
 		);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_criteria=atomic%3Afail#provisional', {
 			shallow: true,
@@ -258,13 +297,17 @@ describe('ProvisionalReview filters and paging', () => {
 		await fireEvent.click(screen.getByRole('checkbox', { name: /no verdict/ }));
 
 		await waitFor(() =>
-			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
-				criteria: [],
-				states: ['no_verdict'],
-				q: '',
-				sort: 'newest',
-				facets: true
-			})
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({
+					criteria: [],
+					states: ['no_verdict'],
+					q: '',
+					sort: 'newest',
+					facets: true
+				})
+			)
 		);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_state=no_verdict', {
 			shallow: true,
@@ -287,13 +330,17 @@ describe('ProvisionalReview filters and paging', () => {
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Review state' }));
 		await waitFor(() =>
-			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
-				criteria: [],
-				states: [],
-				q: '',
-				sort: 'newest',
-				facets: true
-			})
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({
+					criteria: [],
+					states: [],
+					q: '',
+					sort: 'newest',
+					facets: true
+				})
+			)
 		);
 		await waitFor(() => {
 			const box = screen.getByRole('checkbox', { name: /identity hold/ });
@@ -304,13 +351,17 @@ describe('ProvisionalReview filters and paging', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Rubric' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'atomic: fail' }));
 		await waitFor(() =>
-			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
-				criteria: [{ key: 'atomic', state: 'fail' }],
-				states: [],
-				q: '',
-				sort: 'newest',
-				facets: false
-			})
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({
+					criteria: [{ key: 'atomic', state: 'fail' }],
+					states: [],
+					q: '',
+					sort: 'newest',
+					facets: false
+				})
+			)
 		);
 	});
 
@@ -323,13 +374,17 @@ describe('ProvisionalReview filters and paging', () => {
 		render(ProvisionalReview);
 
 		await waitFor(() =>
-			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
-				criteria: [],
-				states: ['admitted', 'accepted'],
-				q: '',
-				sort: 'newest',
-				facets: false
-			})
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({
+					criteria: [],
+					states: ['admitted', 'accepted'],
+					q: '',
+					sort: 'newest',
+					facets: false
+				})
+			)
 		);
 		expect(
 			await screen.findByRole('button', { name: 'Remove awaiting promotion floor filter' })
@@ -363,13 +418,17 @@ describe('ProvisionalReview filters and paging', () => {
 		});
 
 		await waitFor(() =>
-			expect(provisionalList).toHaveBeenLastCalledWith(50, 0, {
-				criteria: [],
-				states: [],
-				q: 'politic',
-				sort: 'newest',
-				facets: false
-			})
+			expect(provisionalList).toHaveBeenLastCalledWith(
+				50,
+				0,
+				expect.objectContaining({
+					criteria: [],
+					states: [],
+					q: 'politic',
+					sort: 'newest',
+					facets: false
+				})
+			)
 		);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_q=politic', {
 			shallow: true,
@@ -385,13 +444,17 @@ describe('ProvisionalReview filters and paging', () => {
 		render(ProvisionalReview);
 		await screen.findByText('sample tag');
 
-		expect(provisionalList).toHaveBeenLastCalledWith(50, 100, {
-			criteria: [{ key: 'atomic', state: 'fail' }],
-			states: ['no_verdict'],
-			q: '',
-			sort: 'newest',
-			facets: false
-		});
+		expect(provisionalList).toHaveBeenLastCalledWith(
+			50,
+			100,
+			expect.objectContaining({
+				criteria: [{ key: 'atomic', state: 'fail' }],
+				states: ['no_verdict'],
+				q: '',
+				sort: 'newest',
+				facets: false
+			})
+		);
 		await waitFor(() => {
 			expect(screen.getByRole('button', { name: 'Remove atomic filter' })).toBeTruthy();
 			expect(screen.getByRole('button', { name: 'Remove no verdict filter' })).toBeTruthy();
@@ -423,13 +486,17 @@ describe('ProvisionalReview filters and paging', () => {
 
 		await fireEvent.click(next);
 		await screen.findByText('second page tag');
-		expect(provisionalList).toHaveBeenLastCalledWith(50, 50, {
-			criteria: [],
-			states: [],
-			q: '',
-			sort: 'newest',
-			facets: false
-		});
+		expect(provisionalList).toHaveBeenLastCalledWith(
+			50,
+			50,
+			expect.objectContaining({
+				criteria: [],
+				states: [],
+				q: '',
+				sort: 'newest',
+				facets: false
+			})
+		);
 		expect(screen.getByRole('button', { name: 'Prev' }).disabled).toBe(false);
 		expect(goto).toHaveBeenLastCalledWith('/tags?prov_page=1', { shallow: true, replace: true });
 	});

@@ -2,9 +2,8 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { filterStore } from '#lib/stores/filterStore.js';
-	import { defaultFilter } from '#lib/stores/searchFilter.js';
-	import DataTable from '#lib/components/DataTable.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+	import ListTable from '#lib/components/ListTable.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import TagReconcileStrip from '#lib/components/tags/TagReconcileStrip.svelte';
 	import FoldTagModal from '#lib/components/tags/FoldTagModal.svelte';
@@ -14,26 +13,19 @@
 	import SiblingReview from '#lib/components/tags/SiblingReview.svelte';
 	import DeletedTags from '#lib/components/tags/DeletedTags.svelte';
 	import SplitRules from '#lib/components/tags/SplitRules.svelte';
-	import {
-		EDIT_ICON,
-		DELETE_ICON,
-		DEMOTE_ICON,
-		FOLD_ICON,
-		SPLIT_ICON,
-		PROMOTE_ICON,
-		CANCEL_ICON,
-		actionButton
-	} from '#lib/icons.js';
-	import { escapeHtml, formatNumber } from '#lib/utils/html.js';
+	import { createListQuery, effectiveUrl, toggleSortState } from '#lib/list/listQuery.svelte.js';
+	import { QueryDraft } from '#lib/list/queryDraft.svelte.js';
+	import { formatDate, formatNumber } from '#lib/utils/html.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import { api } from '#lib/api.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
+	import { tagsQuery } from './query.js';
 
 	const TABS = ['vocabulary', 'provisional', 'coverage', 'siblings', 'deleted', 'split-rules'];
 
-	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip
-	// stick flush under the topbar instead of leaving a 24px band over the panel
+	// main's p-6 is the sticky view rectangle's origin, so -top-6 lets the strip stick flush under the
+	// topbar instead of leaving a 24px band over the panel
 	const tabStrip =
 		'sticky -top-6 z-20 mb-6 flex items-end gap-1 overflow-x-auto overflow-y-hidden border-b border-clay-800 bg-clay-950 pt-1';
 
@@ -48,99 +40,42 @@
 	let editingTag = $state(null);
 	let formName = $state('');
 	let error = $state('');
-	let query = $state(new URL(window.location.href).searchParams.get('q') || '');
-	let refreshKey = $state(0);
-	let deletedRefreshKey = $state(0);
-	let splitRulesRefreshKey = $state(0);
 	let savingTag = $state(false);
 	let folding = $state(null);
 	let splitting = $state(null);
-	let activeTab = $state('vocabulary');
-	let vocabularyTotal = $state(null);
 	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0, splitRules: 0 });
 
-	const compactButton =
-		'rounded p-0.5 text-parchment-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+	let activeTab = $derived(
+		TABS.includes(effectiveUrl().hash.slice(1)) ? effectiveUrl().hash.slice(1) : 'vocabulary'
+	);
 
-	function aliasChip(alias, tagName) {
-		const safeAlias = escapeHtml(alias.name);
-		const actions = canModerate()
-			? `<button data-alias-promote="${safeAlias}" data-tag-name="${escapeHtml(tagName)}" title="Promote alias &quot;${safeAlias}&quot; to a tag" aria-label="Promote alias ${safeAlias} to a tag" class="${compactButton} hover:text-gold-500">${PROMOTE_ICON}</button>${
-					alias.seeded
-						? ''
-						: `<button data-alias-remove="${safeAlias}" data-tag-name="${escapeHtml(tagName)}" title="Remove alias &quot;${safeAlias}&quot;" aria-label="Remove alias ${safeAlias}" class="${compactButton} hover:text-terracotta-500">${CANCEL_ICON}</button>`
-				}`
-			: '';
-		const note = alias.seeded ? ' title="seeded alias; the startup seeder restores it"' : '';
-		return `<span class="inline-flex items-center gap-0.5 rounded-full border border-clay-700 bg-clay-900 py-0.5 ps-2 pe-1 text-[0.6875rem] text-parchment-400"${note}>${safeAlias}${actions}</span>`;
+	const compactButton =
+		'rounded p-0.5 text-parchment-500 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
+
+	async function fetchVocabulary({ limit, offset, query, signal }) {
+		const data = await api.tags.list(query.q, limit, offset, signal);
+		if (!data) throw new Error('Failed to load tags');
+		return { items: data.results ?? [], total: data.total ?? null };
+	}
+
+	const vocabulary = createListQuery({
+		fetcher: fetchVocabulary,
+		codec: tagsQuery,
+		sortKeys: ['name', 'document_count'],
+		keyField: 'id'
+	});
+
+	const draft = new QueryDraft(vocabulary);
+
+	function sortByColumn(key) {
+		vocabulary.update(toggleSortState(vocabulary.query, key));
 	}
 
 	const columns = [
-		{
-			key: 'name',
-			label: 'Name',
-			sortable: true,
-			width: '100%',
-			cell: (_v, row) => {
-				const name = escapeHtml(row.name);
-				const aliases = row.aliases ?? [];
-				if (aliases.length === 0) return name;
-				const chips = aliases.map((alias) => aliasChip(alias, row.name)).join('');
-				return `<div><span>${name}</span><div class="mt-1 flex flex-wrap items-center gap-1">${chips}</div></div>`;
-			}
-		},
-		{
-			key: 'document_count',
-			label: 'Documents',
-			sortable: true,
-			cell: (v) => String(v ?? 0),
-			width: '100px'
-		},
-		{
-			key: 'created_at',
-			label: 'Created',
-			sortable: false,
-			width: '150px',
-			cell: (v) => (v ? new Date(v).toLocaleDateString() : '')
-		},
-		{
-			key: 'actions',
-			label: 'Actions',
-			sortable: false,
-			cellClass: 'whitespace-nowrap',
-			cell: (_v, row) => {
-				if (!authStore.authEnabled() || !authStore.isEditor()) return '';
-				const safeName = escapeHtml(row.name);
-				const actionable =
-					'text-parchment-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
-				const demote =
-					row.promoted && !row.seeded
-						? `${actionButton(DEMOTE_ICON, 'Demote', `${actionable} hover:text-amber-400`, { 'data-demote-tag': row.id, 'data-tag-name': safeName })}\n`
-						: '';
-				const fold = !row.seeded
-					? actionButton(FOLD_ICON, 'Fold into another tag', `${actionable} hover:text-gold-500`, {
-							'data-fold-tag': row.id,
-							'data-tag-name': safeName,
-							'data-tag-documents': String(row.document_count ?? 0)
-						})
-					: '';
-				const split =
-					row.compound && !row.seeded
-						? actionButton(
-								SPLIT_ICON,
-								'Split into components',
-								`${actionable} hover:text-gold-500`,
-								{
-									'data-split-tag': row.id,
-									'data-tag-name': safeName,
-									'data-tag-documents': String(row.document_count ?? 0)
-								}
-							)
-						: '';
-				return `${actionButton(EDIT_ICON, 'Edit', `${actionable} hover:text-gold-500`, { 'data-edit-tag': row.id, 'data-tag-name': safeName })}
-${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hover:text-terracotta-500`, { 'data-delete-tag': row.id, 'data-tag-name': safeName })}`;
-			}
-		}
+		{ key: 'name', label: 'Name', sortable: true, width: '100%' },
+		{ key: 'document_count', label: 'Documents', sortable: true, width: '100px' },
+		{ key: 'created_at', label: 'Created', sortable: false, width: '150px' },
+		{ key: 'actions', label: 'Actions', sortable: false, cellClass: 'whitespace-nowrap' }
 	];
 
 	function canModerate() {
@@ -152,9 +87,11 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 	}
 
 	function selectTab(tab) {
-		activeTab = tab;
-		const url = new URL(window.location.href);
-		goto(resolve(`${url.pathname}${url.search}#${tab}`), { shallow: true, replace: true });
+		const url = effectiveUrl();
+		goto(resolve(`${url.pathname}${url.search}#${tab}`), {
+			shallow: true,
+			replace: true
+		});
 	}
 
 	async function refreshCounts() {
@@ -181,19 +118,13 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 	}
 
 	function onReviewChanged() {
-		refreshKey++;
-		deletedRefreshKey++;
-		splitRulesRefreshKey++;
+		vocabulary.reload();
 		refreshCounts();
 	}
 
 	function filterByTag(row) {
-		filterStore.set({ ...defaultFilter, tags: [row.name] });
-		goto(resolve('documents'));
-	}
-
-	async function fetchVocabulary({ limit, offset }) {
-		return await api.tags.list(query, limit, offset);
+		const params = new URLSearchParams({ tag: row.name });
+		goto(resolve(`documents?${params.toString()}`));
 	}
 
 	function openNew() {
@@ -227,7 +158,7 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 		savingTag = false;
 		if (result.ok) {
 			showModal = false;
-			refreshKey++;
+			vocabulary.reload();
 		} else if (result.status === 409) {
 			error = 'Tag already exists';
 		} else {
@@ -243,8 +174,7 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 		});
 		if (!ok) return;
 		await api.tags.delete(tagId);
-		refreshKey++;
-		deletedRefreshKey++;
+		vocabulary.reload();
 		refreshCounts();
 	}
 
@@ -275,7 +205,7 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 		const result = await api.tags.removeAlias(aliasName);
 		if (result.ok) {
 			toastStore.success(`Removed alias "${aliasName}"`);
-			refreshKey++;
+			vocabulary.reload();
 		} else if (result.status === 409) {
 			toastStore.error(result.data?.error ?? 'Alias cannot be removed');
 		} else {
@@ -300,63 +230,7 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 		}
 	}
 
-	function handlePageClick(e) {
-		const aliasPromoteBtn = e.target.closest('[data-alias-promote]');
-		if (aliasPromoteBtn) {
-			handlePromoteAlias(
-				aliasPromoteBtn.getAttribute('data-alias-promote'),
-				aliasPromoteBtn.getAttribute('data-tag-name')
-			);
-			return;
-		}
-		const aliasRemoveBtn = e.target.closest('[data-alias-remove]');
-		if (aliasRemoveBtn) {
-			handleRemoveAlias(
-				aliasRemoveBtn.getAttribute('data-alias-remove'),
-				aliasRemoveBtn.getAttribute('data-tag-name')
-			);
-			return;
-		}
-		const editBtn = e.target.closest('[data-edit-tag]');
-		if (editBtn) {
-			const id = parseInt(editBtn.getAttribute('data-edit-tag'));
-			const name = editBtn.getAttribute('data-tag-name');
-			openEdit(id, name);
-			return;
-		}
-		const foldBtn = e.target.closest('[data-fold-tag]');
-		if (foldBtn) {
-			const name = foldBtn.getAttribute('data-tag-name');
-			const documents = parseInt(foldBtn.getAttribute('data-tag-documents') ?? '0');
-			folding = { name, document_count: documents };
-			return;
-		}
-		const splitBtn = e.target.closest('[data-split-tag]');
-		if (splitBtn) {
-			const name = splitBtn.getAttribute('data-tag-name');
-			const documents = parseInt(splitBtn.getAttribute('data-tag-documents') ?? '0');
-			splitting = { name, document_count: documents };
-			return;
-		}
-		const demoteBtn = e.target.closest('[data-demote-tag]');
-		if (demoteBtn) {
-			const id = parseInt(demoteBtn.getAttribute('data-demote-tag'));
-			const name = demoteBtn.getAttribute('data-tag-name');
-			handleDemote(id, name);
-			return;
-		}
-		const deleteBtn = e.target.closest('[data-delete-tag]');
-		if (deleteBtn) {
-			const id = parseInt(deleteBtn.getAttribute('data-delete-tag'));
-			const name = deleteBtn.getAttribute('data-tag-name');
-			handleDelete(id, name);
-			return;
-		}
-	}
-
 	onMount(() => {
-		const hash = window.location.hash.slice(1);
-		if (TABS.includes(hash)) activeTab = hash;
 		if (canModerate()) {
 			refreshCounts();
 			refreshSiblingCount();
@@ -461,44 +335,130 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 
 {#if activeTab === 'vocabulary'}
 	<div id="panel-vocabulary" role="tabpanel" aria-labelledby="tab-vocabulary">
+		{#snippet cell(col, row)}
+			{#if col.key === 'name'}
+				<div>
+					<span>{row.name}</span>
+					{#if row.aliases?.length > 0}
+						<div class="mt-1 flex flex-wrap items-center gap-1">
+							{#each row.aliases as alias (alias.name)}
+								<span
+									class="inline-flex items-center gap-0.5 rounded-full border border-clay-700 bg-clay-900 py-0.5 ps-2 pe-1 text-[0.6875rem] text-parchment-400"
+									title={alias.seeded ? 'seeded alias; the startup seeder restores it' : undefined}
+								>
+									{alias.name}
+									{#if canModerate()}
+										<button
+											onclick={() => handlePromoteAlias(alias.name, row.name)}
+											title="Promote alias {alias.name} to a tag"
+											aria-label="Promote alias {alias.name} to a tag"
+											class="{compactButton} hover:text-gold-500"><Icon name="promote" /></button
+										>
+										{#if !alias.seeded}
+											<button
+												onclick={() => handleRemoveAlias(alias.name, row.name)}
+												title="Remove alias {alias.name}"
+												aria-label="Remove alias {alias.name}"
+												class="{compactButton} hover:text-terracotta-500"
+												><Icon name="close" /></button
+											>
+										{/if}
+									{/if}
+								</span>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{:else if col.key === 'document_count'}
+				{String(row.document_count ?? 0)}
+			{:else if col.key === 'created_at'}
+				{formatDate(row.created_at)}
+			{:else if col.key === 'actions'}
+				{#if canModerate()}
+					<div class="flex items-center">
+						{#if row.promoted && !row.seeded}
+							<button
+								onclick={() => handleDemote(row.id, row.name)}
+								title="Demote"
+								aria-label="Demote"
+								class="{compactButton} hover:text-amber-400"><Icon name="demote" /></button
+							>
+						{/if}
+						{#if !row.seeded}
+							<button
+								onclick={() =>
+									(folding = { name: row.name, document_count: row.document_count ?? 0 })}
+								title="Fold into another tag"
+								aria-label="Fold into another tag"
+								class="{compactButton} hover:text-gold-500"><Icon name="fold" /></button
+							>
+						{/if}
+						{#if row.compound && !row.seeded}
+							<button
+								onclick={() =>
+									(splitting = { name: row.name, document_count: row.document_count ?? 0 })}
+								title="Split into components"
+								aria-label="Split into components"
+								class="{compactButton} hover:text-gold-500"><Icon name="split" /></button
+							>
+						{/if}
+						<button
+							onclick={() => openEdit(row.id, row.name)}
+							title="Edit"
+							aria-label="Edit"
+							class="{compactButton} hover:text-gold-500"><Icon name="edit" /></button
+						>
+						<button
+							onclick={() => handleDelete(row.id, row.name)}
+							title="Delete"
+							aria-label="Delete"
+							class="{compactButton} hover:text-terracotta-500"><Icon name="delete" /></button
+						>
+					</div>
+				{/if}
+			{:else}
+				{row[col.key] ?? ''}
+			{/if}
+		{/snippet}
+
 		<div class="mb-4 flex flex-wrap items-center gap-3">
 			<label for="tag-filter" class="sr-only">Filter tags</label>
 			<input
 				id="tag-filter"
 				name="tag-filter"
 				type="text"
-				bind:value={query}
-				oninput={() => {
-					refreshKey++;
-					const url = new URL(window.location.href);
-					if (query) url.searchParams.set('q', query);
-					else url.searchParams.delete('q');
-					goto(resolve(`${url.pathname}${url.search}${url.hash}`), {
-						replaceState: true,
-						reset: false
-					});
-				}}
+				bind:value={draft.value}
+				oninput={draft.markEdited}
+				onfocus={draft.focus}
+				onblur={draft.blur}
 				autocomplete="off"
 				placeholder="Filter tags…"
 				class="w-full max-w-xs rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 			/>
-			{#if vocabularyTotal != null}
+			{#if vocabulary.total != null}
 				<span class="ms-auto text-[0.8125rem] text-parchment-500 tabular-nums">
-					<b class="font-semibold text-parchment-300">{formatNumber(vocabularyTotal)}</b> tags
+					<b class="font-semibold text-parchment-300">{formatNumber(vocabulary.total)}</b> tags
 				</span>
 			{/if}
 		</div>
 
-		<DataTable
+		<ListTable
 			{columns}
-			fetch={fetchVocabulary}
-			{refreshKey}
-			defaultSortBy="document_count"
-			defaultSortOrder="desc"
-			urlSync="tags"
+			{cell}
+			rows={vocabulary.rows}
+			total={vocabulary.total}
+			loading={vocabulary.loading}
+			error={vocabulary.error}
+			page={vocabulary.query.page}
+			pageSize={vocabulary.query.pageSize}
+			pageSizes={[10, 25, 50, 100]}
+			sortBy={vocabulary.query.sortBy}
+			sortOrder={vocabulary.query.sortOrder}
+			keyField="id"
+			onSort={sortByColumn}
+			onPage={(next) => vocabulary.update({ page: next })}
+			onPageSize={(size) => vocabulary.update({ pageSize: size })}
 			onRowClick={filterByTag}
-			onActionClick={handlePageClick}
-			onTotal={(t) => (vocabularyTotal = t)}
 		/>
 	</div>
 {:else if activeTab === 'provisional'}
@@ -507,11 +467,11 @@ ${demote}${fold}${split}${actionButton(DELETE_ICON, 'Delete', `${actionable} hov
 	</div>
 {:else if activeTab === 'deleted'}
 	<div id="panel-deleted" role="tabpanel" aria-labelledby="tab-deleted">
-		<DeletedTags refreshKey={deletedRefreshKey} onchanged={onReviewChanged} />
+		<DeletedTags onchanged={onReviewChanged} />
 	</div>
 {:else if activeTab === 'split-rules'}
 	<div id="panel-split-rules" role="tabpanel" aria-labelledby="tab-split-rules">
-		<SplitRules refreshKey={splitRulesRefreshKey} onchanged={onReviewChanged} />
+		<SplitRules onchanged={onReviewChanged} />
 	</div>
 {:else if activeTab === 'coverage'}
 	<div id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage">

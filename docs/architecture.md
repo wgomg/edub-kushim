@@ -709,27 +709,30 @@ Five API endpoints support progressive filtering in the UI via case-insensitive 
 
 ### Saved Searches
 
-Users persist search configurations via a simple CRUD API (`saved_search` table). The `filter_json` column stores the raw `Filter` struct as JSON. The frontend restores full filter state (SearchBar chips + FilterPanel) from a single click.
+Users persist search configurations via a simple CRUD API (`saved_search` table). The `filter_json` column stores the frontend query object as JSON. The frontend restores full filter state (SearchBar chips + FilterPanel) from a single click; legacy payloads in the previous snake_case shape are normalized on read.
 
 ### Frontend Search State
 
-Three layers manage search state on the client:
+List state lives in the URL and is owned by one controller per list:
 
-- **`searchFilter.js`** — Pure utility tokenizer. Parses `field:value` syntax (e.g. `tag:finance size:>1MB`), normalizes date ranges and file sizes, serializes filter state to query strings.
-- **`filterStore.js`** — Svelte writable store holding the current `Filter`. Exposes `setPartial()` for incremental updates, `reset()` for clearing. A derived `queryString` store syncs to URL search params.
-- **`SearchBar.svelte`** / **`FilterPanel.svelte`** — UI components consuming the store. The search bar shows active filters as color-coded chips with autocomplete on `:` keystrokes. The filter panel provides structured form controls per dimension.
+- **Route codecs** (`web/src/routes/*/query.js`, plus `settings/usersQuery.js` and `tags/provisionalQuery.js`) parse and serialize each route's URL slice into a flat query object. Parsing is lenient: an invalid or missing value falls back to its default instead of failing the page.
+- **`web/src/lib/list/listQuery.svelte.js`** provides `createListQuery`, which derives the query from the URL through the codec, fetches through a route-supplied fetcher, orders and cancels requests, clamps to the last page, and resets paging on filter changes. `writeRouteParams` is the only code that writes list parameters; it preserves foreign parameters and the hash. Because a shallow `goto` updates `page.shallow.url` but not `page.url`, reads and writes go through `effectiveUrl()`.
+- **`ListTable.svelte`** / **`ListGrid.svelte`** are presentational: rows and view state come in, sort/page/selection events go out. Cells are Svelte snippets, so no markup is injected as strings.
+- **`SearchBar.svelte`** / **`FilterPanel.svelte`** are controlled components: they receive the current filter values as props and emit partial patches. Free text lives in `q`; every other dimension has its own parameter (`tag`, `person`, `type`, `lang`, `created_from`, `modified_from`, `size_min`, `missing`, …).
 
-The `field:value` syntax in the search bar supports:
+The search bar still accepts `field:value` input syntax, which it converts into the corresponding chips and parameters:
 
-| Prefix     | Example                          | SQL effect                   |
-| ---------- | -------------------------------- | ---------------------------- |
-| `tag:`     | `tag:finance`                    | Tag subquery filter          |
-| `author:`  | `author:"Jane Smith"`            | People subquery, type=author |
-| `person:`  | `person:"Jane Smith"`            | People subquery, any type (reserved sentinel, skips `people_type`) |
-| `type:`    | `type:invoice`                   | Document type equality       |
-| `lang:`    | `lang:eng`                       | Language equality            |
-| `size:`    | `size:>1MB`                      | File size range              |
-| `created:` | `created:2024-01-01..2024-06-30` | Date range filter            |
+| Prefix     | Example                          |
+| ---------- | -------------------------------- |
+| `tag:`     | `tag:finance`                    |
+| `author:`  | `author:"Jane Smith"`            |
+| `person:`  | `person:"Jane Smith"`            |
+| `type:`    | `type:invoice`                   |
+| `lang:`    | `lang:eng`                       |
+| `size:`    | `size:>1MB`                      |
+| `created:` | `created:2024-01-01..2024-06-30` |
+
+URLs written before the per-facet schema carry that syntax in `q`; the documents codec reads it once and the next write emits the parameter form.
 
 ### Why Not a Dedicated Search Engine?
 
