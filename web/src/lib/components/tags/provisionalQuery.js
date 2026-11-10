@@ -54,7 +54,10 @@ const LEGACY_VERDICT_STATES = {
 };
 
 const CRITERION_STATES = new Map(
-	criteria.map((criterion) => [criterion.key, new Set(criterion.states.map((state) => state.value))])
+	criteria.map((criterion) => [
+		criterion.key,
+		new Set(criterion.states.map((state) => state.value))
+	])
 );
 
 const defaults = {
