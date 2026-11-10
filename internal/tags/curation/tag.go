@@ -11,7 +11,6 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/database"
@@ -92,22 +91,14 @@ func (s *Tag) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// CountByName counts the tags whose name or recorded alias starts with the prefix; LIKE wildcards in
-// the prefix are matched literally.
-func (s *Tag) CountByName(ctx context.Context, prefix string) (int64, error) {
-	count, err := s.client.Queries.CountTagsByName(ctx, likePrefixPattern(prefix))
+// CountByName counts the tags whose name or recorded alias contains the text; LIKE wildcards in the
+// text are matched literally.
+func (s *Tag) CountByName(ctx context.Context, text string) (int64, error) {
+	count, err := s.client.Queries.CountTagsByName(ctx, database.LikeContains(text))
 	if err != nil {
 		return 0, errs.FromDB(err, "count tags by name")
 	}
 	return count, nil
-}
-
-// likePrefixPattern builds the ILIKE prefix pattern for a tag-name search. LIKE treats '\', '%' and '_'
-// specially, so they are escaped to keep the search text literal; the listing's matching-alias hint
-// compares the same literal prefix.
-func likePrefixPattern(prefix string) string {
-	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
-	return escaped + "%"
 }
 
 // ListAll returns every tag, promoted and provisional.
@@ -131,11 +122,11 @@ func (s *Tag) ListWithDocumentCount(ctx context.Context, limit, offset int32) ([
 	return tags, nil
 }
 
-// SearchByNameWithDocumentCount pages the tags whose name or recorded alias starts with the prefix,
-// with their live document counts; LIKE wildcards in the prefix are matched literally.
-func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
+// SearchByNameWithDocumentCount pages the tags whose name or recorded alias contains the text, with
+// their live document counts; LIKE wildcards in the text are matched literally.
+func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, text string, limit, offset int32) ([]database.SearchTagsByNameWithDocumentCountRow, error) {
 	tags, err := s.client.Queries.SearchTagsByNameWithDocumentCount(ctx, database.SearchTagsByNameWithDocumentCountParams{
-		Name:   likePrefixPattern(prefix),
+		Name:   database.LikeContains(text),
 		Limit:  limit,
 		Offset: offset,
 	})
@@ -145,14 +136,14 @@ func (s *Tag) SearchByNameWithDocumentCount(ctx context.Context, prefix string, 
 	return tags, nil
 }
 
-// ProvisionalFilter narrows the provisional queue by name prefix, rubric criterion state, verdict class
-// and review state; an empty field leaves that dimension unfiltered. The boolean criterion fields carry
-// 'true', 'false' or 'absent', PersonClass carries one of the rubric's five class values or 'absent',
+// ProvisionalFilter narrows the provisional queue by name substring, rubric criterion state, verdict
+// class and review state; an empty field leaves that dimension unfiltered. The boolean criterion fields
+// carry 'true', 'false' or 'absent', PersonClass carries one of the rubric's five class values or 'absent',
 // the Verdict carries 'none', 'admit', 'defer' or 'reject', and the States field holds the values from
 // ProvisionalStateValues list whose multiple entries combine as alternatives, with the legacy Verdict
 // dimension staying independent of States. OldestFirst reverses the default newest-first page order.
 type ProvisionalFilter struct {
-	NamePrefix    string
+	NameContains  string
 	SubjectMatter string
 	Dimension     string
 	PersonClass   string
@@ -209,7 +200,7 @@ func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, lim
 		IdentityHoldKinds:      tags.IdentityHoldKinds(),
 		SplitCriteriaVersion:   analyzer.TagSplitVersion,
 		CompositionHoldReasons: tags.CompositionHoldReasons(),
-		NamePrefix:             filter.NamePrefix,
+		NamePattern:            nameFilterPattern(filter.NameContains),
 		SubjectMatterState:     filter.SubjectMatter,
 		DimensionState:         filter.Dimension,
 		PersonClass:            filter.PersonClass,
@@ -240,7 +231,7 @@ func (s *Tag) CountProvisional(ctx context.Context, filter ProvisionalFilter, fa
 		IdentityHoldKinds:      tags.IdentityHoldKinds(),
 		SplitCriteriaVersion:   analyzer.TagSplitVersion,
 		CompositionHoldReasons: tags.CompositionHoldReasons(),
-		NamePrefix:             filter.NamePrefix,
+		NamePattern:            nameFilterPattern(filter.NameContains),
 		SubjectMatterState:     filter.SubjectMatter,
 		DimensionState:         filter.Dimension,
 		PersonClass:            filter.PersonClass,
@@ -666,18 +657,28 @@ func (s *Tag) Demote(ctx context.Context, id int64, reason string) (database.Tag
 	return tag, types.DemoteDemoted, nil
 }
 
-// ListDeleted pages the deleted-tag blocklist by name prefix with its
-// total count.
-func (s *Tag) ListDeleted(ctx context.Context, prefix string, limit, offset int32) ([]database.DeletedTag, int64, error) {
+// nameFilterPattern builds the ILIKE pattern for a name-contains filter; empty text leaves the name
+// dimension unfiltered, which the queries' empty-pattern guard expects.
+func nameFilterPattern(text string) string {
+	if text == "" {
+		return ""
+	}
+	return database.LikeContains(text)
+}
+
+// ListDeleted pages the deleted-tag blocklist by name substring with its total count; LIKE wildcards
+// in the text are matched literally.
+func (s *Tag) ListDeleted(ctx context.Context, text string, limit, offset int32) ([]database.DeletedTag, int64, error) {
+	pattern := nameFilterPattern(text)
 	rows, err := s.client.Queries.ListDeletedTags(ctx, database.ListDeletedTagsParams{
-		NamePrefix: prefix,
-		PageLimit:  limit,
-		PageOffset: offset,
+		NamePattern: pattern,
+		PageLimit:   limit,
+		PageOffset:  offset,
 	})
 	if err != nil {
 		return nil, 0, errs.FromDB(err, "list deleted tags")
 	}
-	total, err := s.client.Queries.CountDeletedTags(ctx, prefix)
+	total, err := s.client.Queries.CountDeletedTags(ctx, pattern)
 	if err != nil {
 		return nil, 0, errs.FromDB(err, "count deleted tags")
 	}

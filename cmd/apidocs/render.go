@@ -110,7 +110,7 @@ func writeOverview(b *strings.Builder, doc *specDoc) {
 
 	b.WriteString("### Pagination\n\n")
 	b.WriteString("Listing endpoints take `limit` and `offset`; each endpoint's parameter table states its defaults.\n")
-	b.WriteString("The `q` parameter, where present, is a name-prefix search.\n\n")
+	b.WriteString("The `q` parameter, where present, matches anywhere in the name it filters.\n\n")
 }
 
 // writeEndpoints emits every operation, grouped by resource. Groups follow groupOrder; endpoints inside

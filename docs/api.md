@@ -48,7 +48,7 @@ conflict with the current state, `503` an unavailable dependency (the tag matche
 ### Pagination
 
 Listing endpoints take `limit` and `offset`; each endpoint's parameter table states its defaults.
-The `q` parameter, where present, is a name-prefix search.
+The `q` parameter, where present, matches anywhere in the name it filters.
 
 ## Endpoints
 
@@ -347,7 +347,7 @@ SupportedMimeTypes serves the formats the pipeline ingests.
 
 #### `GET /api/v1/tags`
 
-List serves the paged tag listing with a name-prefix search and document counts.
+List serves the paged tag listing with a name search and document counts.
 
 | Parameter | In | Type | Required | Default |
 |---|---|---|---|---|
@@ -3184,7 +3184,7 @@ TagReconcileReportResponse points at the task whose result holds the reconcile r
 
 ### TagResponse
 
-TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the operator-owned inventory the demote action must leave alone, while Compound marks the composition shape the split actions gate on. The vocabulary listing also fills Aliases and, when the listing is name-searched, the MatchedAlias that the search text prefix-matched; document surfaces leave both empty.
+TagResponse carries a tag on the vocabulary and document surfaces: the vocabulary listing fills both DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the operator-owned inventory the demote action must leave alone, while Compound marks the composition shape the split actions gate on. The vocabulary listing also fills Aliases and, when the listing is name-searched, the MatchedAlias that the search text matched anywhere in the name; document surfaces leave both empty.
 
 | Field | Type | Required |
 |---|---|---|

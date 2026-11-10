@@ -53,8 +53,7 @@ func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, audit *cur
 	return &TagHandler{tag: tag, identity: identity, audit: audit, rejudge: rejudge, logger: logger}
 }
 
-// List serves the paged tag listing with a name-prefix search and
-// document counts.
+// List serves the paged tag listing with a name search and document counts.
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := log.ReqIDFrom(ctx)
@@ -113,8 +112,8 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // attachAliases fills each listed tag with its recorded aliases and, when the listing is name-searched,
-// with the alias the query prefix-matched. The lookup runs only when the page has rows, so an empty
-// page costs no query.
+// with the alias the query matched anywhere in the name. The lookup runs only when the page has rows, so an
+// empty page costs no query.
 func (h *TagHandler) attachAliases(ctx context.Context, rows []TagResponse, query string) error {
 	if len(rows) == 0 {
 		return nil
@@ -129,11 +128,11 @@ func (h *TagHandler) attachAliases(ctx context.Context, rows []TagResponse, quer
 		return err
 	}
 
-	prefix := strings.ToLower(query)
+	needle := strings.ToLower(query)
 	for i := range rows {
 		for _, alias := range aliases[rows[i].ID] {
 			rows[i].Aliases = append(rows[i].Aliases, TagAliasResponse{Name: alias.AliasName, Seeded: alias.Seeded})
-			if rows[i].MatchedAlias == "" && prefix != "" && strings.HasPrefix(strings.ToLower(alias.AliasName), prefix) {
+			if rows[i].MatchedAlias == "" && needle != "" && strings.Contains(strings.ToLower(alias.AliasName), needle) {
 				rows[i].MatchedAlias = alias.AliasName
 			}
 		}
@@ -415,14 +414,14 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseProvisionalFilter reads the name, criteria, verdict, review-state and sort query parameters into
-// the curation filter. The name is an ILIKE prefix, like the deleted-tag listing; the criteria entries
-// are `key:state` pairs carrying `pass`, `fail` or `absent` for the boolean criteria, or a `person_class`
-// class value (or `absent`); the review-state entries are the values from curation.ProvisionalStateValues,
-// with duplicates dropped; and sort is `newest` (the default) or `oldest`. Unknown keys, unknown criteria
-// states, unknown verdict values, unknown review states and unknown sort values are rejected instead of
-// silently ignored.
+// the curation filter. The name matches anywhere in the tag name, like the deleted-tag listing; the
+// criteria entries are `key:state` pairs carrying `pass`, `fail` or `absent` for the boolean criteria, or
+// a `person_class` class value (or `absent`); the review-state entries are the values from the curation
+// package's ProvisionalStateValues, with duplicates dropped; and sort is `newest` (the default) or `oldest`.
+// Unknown keys, unknown criteria states, unknown verdict values, unknown review states and unknown sort
+// values are rejected instead of silently ignored.
 func parseProvisionalFilter(pb *ParamBag) (curation.ProvisionalFilter, error) {
-	filter := curation.ProvisionalFilter{NamePrefix: pb.Get("q", "")}
+	filter := curation.ProvisionalFilter{NameContains: pb.Get("q", "")}
 	fields := map[string]*string{
 		"subject_matter": &filter.SubjectMatter,
 		"dimension":      &filter.Dimension,

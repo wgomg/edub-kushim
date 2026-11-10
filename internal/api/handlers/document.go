@@ -1167,8 +1167,8 @@ type PersonListResponse struct {
 // DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
 // operator-owned inventory the demote action must leave alone, while Compound marks the composition
 // shape the split actions gate on. The vocabulary listing also fills Aliases and, when the listing is
-// name-searched, the MatchedAlias that the search text prefix-matched; document surfaces leave both
-// empty.
+// name-searched, the MatchedAlias that the search text matched anywhere in the name; document surfaces
+// leave both empty.
 type TagResponse struct {
 	ID            int64              `json:"id"`
 	Name          string             `json:"name"`

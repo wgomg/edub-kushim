@@ -75,9 +75,10 @@ func (s *People) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// CountByName counts the people whose names start with the prefix.
-func (s *People) CountByName(ctx context.Context, prefix string) (int64, error) {
-	count, err := s.queries.CountPeopleByName(ctx, prefix+"%")
+// CountByName counts the people whose names contain the text; LIKE wildcards in the text are matched
+// literally.
+func (s *People) CountByName(ctx context.Context, text string) (int64, error) {
+	count, err := s.queries.CountPeopleByName(ctx, database.LikeContains(text))
 	if err != nil {
 		return 0, errs.FromDB(err, "count people by name")
 	}
@@ -96,11 +97,11 @@ func (s *People) ListWithDocumentCount(ctx context.Context, limit, offset int32)
 	return people, nil
 }
 
-// SearchByNameWithDocumentCount pages the people whose names start with
-// the prefix, with document counts.
-func (s *People) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit, offset int32) ([]database.SearchPeopleByNameWithDocumentCountRow, error) {
+// SearchByNameWithDocumentCount pages the people whose names contain the text, with document counts;
+// LIKE wildcards in the text are matched literally.
+func (s *People) SearchByNameWithDocumentCount(ctx context.Context, text string, limit, offset int32) ([]database.SearchPeopleByNameWithDocumentCountRow, error) {
 	people, err := s.queries.SearchPeopleByNameWithDocumentCount(ctx, database.SearchPeopleByNameWithDocumentCountParams{
-		Name:   prefix + "%",
+		Name:   database.LikeContains(text),
 		Limit:  limit,
 		Offset: offset,
 	})

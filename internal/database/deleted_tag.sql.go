@@ -11,11 +11,11 @@ import (
 
 const countDeletedTags = `-- name: CountDeletedTags :one
 SELECT COUNT(*) FROM deleted_tag
-WHERE ($1::text = '' OR name ILIKE $1::text || '%')
+WHERE ($1::text = '' OR name ILIKE $1::text)
 `
 
-func (q *Queries) CountDeletedTags(ctx context.Context, namePrefix string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countDeletedTags, namePrefix)
+func (q *Queries) CountDeletedTags(ctx context.Context, namePattern string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countDeletedTags, namePattern)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -75,19 +75,19 @@ func (q *Queries) ListAllDeletedTags(ctx context.Context) ([]ListAllDeletedTagsR
 
 const listDeletedTags = `-- name: ListDeletedTags :many
 SELECT name, kind, deleted_at FROM deleted_tag
-WHERE ($1::text = '' OR name ILIKE $1::text || '%')
+WHERE ($1::text = '' OR name ILIKE $1::text)
 ORDER BY deleted_at DESC
 LIMIT $3 OFFSET $2
 `
 
 type ListDeletedTagsParams struct {
-	NamePrefix string
-	PageOffset int32
-	PageLimit  int32
+	NamePattern string
+	PageOffset  int32
+	PageLimit   int32
 }
 
 func (q *Queries) ListDeletedTags(ctx context.Context, arg ListDeletedTagsParams) ([]DeletedTag, error) {
-	rows, err := q.db.QueryContext(ctx, listDeletedTags, arg.NamePrefix, arg.PageOffset, arg.PageLimit)
+	rows, err := q.db.QueryContext(ctx, listDeletedTags, arg.NamePattern, arg.PageOffset, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}

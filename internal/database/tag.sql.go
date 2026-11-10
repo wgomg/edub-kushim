@@ -187,7 +187,7 @@ FROM (
     ) flag ON true
     WHERE t.promoted_at IS NULL
       AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-      AND ($9::text = '' OR t.name ILIKE $9::text || '%')
+      AND ($9::text = '' OR t.name ILIKE $9::text)
       AND ($10::text = ''
            OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $10::text)
       AND ($11::text = ''
@@ -212,7 +212,7 @@ type CountProvisionalTagsParams struct {
 	IdentityHoldKinds      []string
 	SplitCriteriaVersion   string
 	CompositionHoldReasons []string
-	NamePrefix             string
+	NamePattern            string
 	SubjectMatterState     string
 	DimensionState         string
 	PersonClass            string
@@ -251,7 +251,7 @@ func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisional
 		pq.Array(arg.IdentityHoldKinds),
 		arg.SplitCriteriaVersion,
 		pq.Array(arg.CompositionHoldReasons),
-		arg.NamePrefix,
+		arg.NamePattern,
 		arg.SubjectMatterState,
 		arg.DimensionState,
 		arg.PersonClass,
@@ -864,7 +864,7 @@ FROM (
     ) flag ON true
     WHERE t.promoted_at IS NULL
       AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-      AND ($7::text = '' OR t.name ILIKE $7::text || '%')
+      AND ($7::text = '' OR t.name ILIKE $7::text)
       AND ($8::text = ''
            OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $8::text)
       AND ($9::text = ''
@@ -925,7 +925,7 @@ type ListProvisionalTagsWithDocumentCountParams struct {
 	IdentityHoldKinds      []string
 	SplitCriteriaVersion   string
 	CompositionHoldReasons []string
-	NamePrefix             string
+	NamePattern            string
 	SubjectMatterState     string
 	DimensionState         string
 	PersonClass            string
@@ -960,7 +960,7 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 		pq.Array(arg.IdentityHoldKinds),
 		arg.SplitCriteriaVersion,
 		pq.Array(arg.CompositionHoldReasons),
-		arg.NamePrefix,
+		arg.NamePattern,
 		arg.SubjectMatterState,
 		arg.DimensionState,
 		arg.PersonClass,

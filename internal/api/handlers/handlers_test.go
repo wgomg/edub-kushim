@@ -591,6 +591,22 @@ func TestPeopleCrud(t *testing.T) {
 			t.Fatal("expected at least 1 result")
 		}
 	})
+
+	t.Run("search matches any part of the name", func(t *testing.T) {
+		ppl, err := env.peopleSvc.SearchByNameWithDocumentCount(ctx, "lice", 10, 0)
+		testutil.AssertNoError(t, err, "search mid-string")
+		if len(ppl) == 0 {
+			t.Fatal("expected at least 1 result for a mid-name needle")
+		}
+	})
+
+	t.Run("LIKE wildcards in the query are literal", func(t *testing.T) {
+		ppl, err := env.peopleSvc.SearchByNameWithDocumentCount(ctx, "%Wond", 10, 0)
+		testutil.AssertNoError(t, err, "search literal percent")
+		if len(ppl) != 0 {
+			t.Fatalf("expected 0 results, got %d: a literal %% must not act as a wildcard", len(ppl))
+		}
+	})
 }
 
 func TestPeopleTypeSeeded(t *testing.T) {
@@ -3167,14 +3183,20 @@ func TestListProvisionalFilters(t *testing.T) {
 		}
 	})
 
-	t.Run("q matches only the prefix, not a substring", func(t *testing.T) {
+	t.Run("q matches a substring, not only the prefix", func(t *testing.T) {
 		w := rec()
 		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?q=filter+f", nil))
 		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
 
 		var resp ProvisionalTagListResponse
 		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
-		testutil.AssertEqual(t, resp.Total, int64(0), "substring must not match")
+		testutil.AssertEqual(t, resp.Total, int64(1), "substring total")
+		if !contains(resp.Results, failID) {
+			t.Errorf("q=filter f must include tag %d", failID)
+		}
+		if contains(resp.Results, unjudgedID) {
+			t.Errorf("q=filter f must exclude tag %d", unjudgedID)
+		}
 	})
 
 	t.Run("unknown criteria key is rejected", func(t *testing.T) {
@@ -4637,7 +4659,7 @@ func TestListProvisionalCompositionAction(t *testing.T) {
 }
 
 // TestTagListAliases pins the alias surfacing on the listing: each row carries its recorded aliases
-// with the seeded flag, and a name search marks the alias whose prefix the query matched.
+// with the seeded flag, and a name search marks the alias whose text the query matched.
 func TestTagListAliases(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
@@ -4683,7 +4705,7 @@ func TestTagListAliases(t *testing.T) {
 		testutil.AssertEqual(t, row.MatchedAlias, "", "no search, no match")
 	})
 
-	t.Run("a name search marks the alias the query prefix-matched", func(t *testing.T) {
+	t.Run("a name search marks the alias the query matched", func(t *testing.T) {
 		row, ok := find(list("alias list lo"), "alias list canonical")
 		if !ok {
 			t.Fatal("canonical tag missing from the alias search")
@@ -4697,6 +4719,24 @@ func TestTagListAliases(t *testing.T) {
 			t.Fatal("canonical tag missing from the name search")
 		}
 		testutil.AssertEqual(t, row.MatchedAlias, "", "matched alias")
+	})
+
+	t.Run("a name search matches a substring of the name", func(t *testing.T) {
+		row, ok := find(list("list can"), "alias list canonical")
+		if !ok {
+			t.Fatal("canonical tag missing from the substring search")
+		}
+		testutil.AssertEqual(t, row.MatchedAlias, "", "a direct name match carries no alias hint")
+	})
+
+	t.Run("the alias hint matches text anywhere in the alias", func(t *testing.T) {
+		// "st los" starts neither the canonical name nor the alias head, so only a
+		// contains match can surface this row and the hint.
+		row, ok := find(list("st los"), "alias list canonical")
+		if !ok {
+			t.Fatal("canonical tag missing from the alias substring search")
+		}
+		testutil.AssertEqual(t, row.MatchedAlias, "alias list loser", "matched alias")
 	})
 }
 

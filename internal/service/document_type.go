@@ -63,11 +63,11 @@ func (s *DocumentType) ListWithDocumentCount(ctx context.Context, limit, offset 
 	return dts, nil
 }
 
-// SearchByNameWithDocumentCount returns the types whose names start with
-// the prefix, with document counts.
-func (s *DocumentType) SearchByNameWithDocumentCount(ctx context.Context, prefix string, limit int32) ([]database.SearchDocumentTypeByNameWithDocumentCountRow, error) {
+// SearchByNameWithDocumentCount returns the types whose names contain the text, with document counts;
+// LIKE wildcards in the text are matched literally.
+func (s *DocumentType) SearchByNameWithDocumentCount(ctx context.Context, text string, limit int32) ([]database.SearchDocumentTypeByNameWithDocumentCountRow, error) {
 	dts, err := s.queries.SearchDocumentTypeByNameWithDocumentCount(ctx, database.SearchDocumentTypeByNameWithDocumentCountParams{
-		Name:  prefix + "%",
+		Name:  database.LikeContains(text),
 		Limit: limit,
 	})
 	if err != nil {

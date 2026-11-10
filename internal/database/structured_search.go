@@ -70,7 +70,7 @@ func (b *queryBuilder) add(clause string, args ...any) {
 }
 
 // eqFold appends a case-insensitive equality clause for an exact-value filter: the value is compared
-// literally, so LIKE metacharacters in user input have no wildcard meaning; prefix searches keep ILIKE
+// literally, so LIKE metacharacters in user input have no wildcard meaning; name searches keep ILIKE
 func (b *queryBuilder) eqFold(col, val string) {
 	if val == "" {
 		return

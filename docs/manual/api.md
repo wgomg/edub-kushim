@@ -275,7 +275,7 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
    - `facets=true` — adds `state_facets`, a count per review state over the `q`/`criteria`
      result set. The counts ignore `state` (and `verdict`), so each entry answers what its
      value would add.
-   - `q=prefix` — case-insensitive prefix match on the tag name (absent or empty lists
+   - `q=text` — case-insensitive substring match anywhere in the tag name (absent or empty lists
      everything); combines with `criteria`, `state` and `verdict`.
 
 2. **Decide**: `POST /api/v1/tags/{id}/promote` → `204` (already promoted → `409`). Rejecting

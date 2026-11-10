@@ -2974,7 +2974,7 @@ paths:
                   $ref: '#/components/schemas/MimeInfo'
   /api/v1/tags:
     get:
-      summary: List serves the paged tag listing with a name-prefix search and document counts.
+      summary: List serves the paged tag listing with a name search and document counts.
       operationId: getApiV1Tags
       parameters:
         - name: q
@@ -7959,8 +7959,8 @@ components:
         DocumentCount — every assignment, trashed documents included — and Promoted, while Seeded marks the
         operator-owned inventory the demote action must leave alone, while Compound marks the composition
         shape the split actions gate on. The vocabulary listing also fills Aliases and, when the listing is
-        name-searched, the MatchedAlias that the search text prefix-matched; document surfaces leave both
-        empty.
+        name-searched, the MatchedAlias that the search text matched anywhere in the name; document surfaces
+        leave both empty.
       properties:
         aliases:
           type: array

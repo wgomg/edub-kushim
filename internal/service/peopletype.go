@@ -69,10 +69,11 @@ func (s *PeopleType) ListAll(ctx context.Context) ([]database.PeopleType, error)
 	return pts, nil
 }
 
-// Search returns the people types whose names start with the prefix.
-func (s *PeopleType) Search(ctx context.Context, prefix string, limit int32) ([]database.PeopleType, error) {
+// Search returns the people types whose names contain the text; LIKE wildcards in the text are matched
+// literally.
+func (s *PeopleType) Search(ctx context.Context, text string, limit int32) ([]database.PeopleType, error) {
 	pts, err := s.queries.SearchPeopleTypeByName(ctx, database.SearchPeopleTypeByNameParams{
-		Name:  prefix + "%",
+		Name:  database.LikeContains(text),
 		Limit: limit,
 	})
 	if err != nil {

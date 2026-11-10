@@ -135,6 +135,42 @@ func TestTag_RestoreDeleted_NotFound(t *testing.T) {
 	testutil.AssertError(t, err, "not found")
 }
 
+func TestTag_ListDeleted_NameFilter(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	const seeded = "list deleted needle"
+	testutil.AssertNoError(t, client.Queries.UpsertDeletedTag(ctx, database.UpsertDeletedTagParams{
+		Name: seeded,
+		Kind: DeletedTagKindBlocked,
+	}), "seed blocked tag")
+
+	t.Run("a mid-name needle matches the seeded row", func(t *testing.T) {
+		rows, total, err := svc.ListDeleted(ctx, "deleted needle", 10, 0)
+		testutil.AssertNoError(t, err, "search blocked names")
+		testutil.AssertEqual(t, total, int64(1), "filtered total")
+		testutil.AssertEqual(t, len(rows), 1, "filtered rows")
+		testutil.AssertEqual(t, rows[0].Name, seeded, "matched name")
+	})
+
+	t.Run("empty text keeps the listing unfiltered", func(t *testing.T) {
+		rows, total, err := svc.ListDeleted(ctx, "", 10, 0)
+		testutil.AssertNoError(t, err, "list blocked names")
+		if total < 1 {
+			t.Fatalf("total = %d, the unfiltered list must include the seeded row", total)
+		}
+		found := false
+		for _, row := range rows {
+			if row.Name == seeded {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the seeded row %q is missing from the unfiltered list", seeded)
+		}
+	})
+}
+
 func TestTag_Create_PromotesBirth(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()
@@ -564,7 +600,7 @@ func TestTag_CountProvisionalStateFacets(t *testing.T) {
 	seed("prov facets reject", `{"atomic":false}`, false, "reject")
 	seed("prov facets unjudged", "", false, "")
 
-	filter := ProvisionalFilter{NamePrefix: "prov facets "}
+	filter := ProvisionalFilter{NameContains: "prov facets "}
 
 	_, withoutFacets, err := svc.CountProvisional(ctx, filter, false)
 	testutil.AssertNoError(t, err, "count without facets")
@@ -612,8 +648,8 @@ func TestTag_CountProvisionalStateFacets(t *testing.T) {
 	// queries share the predicate text but are separate copies, so parity is the drift net.
 	for _, value := range ProvisionalStateValues() {
 		stateRows, err := svc.ListProvisional(ctx, ProvisionalFilter{
-			NamePrefix: filter.NamePrefix,
-			States:     []string{value},
+			NameContains: filter.NameContains,
+			States:       []string{value},
 		}, 500, 0)
 		testutil.AssertNoError(t, err, "list by state")
 		if int64(len(stateRows)) != facets[value] {
@@ -623,8 +659,8 @@ func TestTag_CountProvisionalStateFacets(t *testing.T) {
 
 	// The state filter narrows the total but leaves the facet base untouched.
 	narrowed, narrowedFacets, err := svc.CountProvisional(ctx, ProvisionalFilter{
-		NamePrefix: filter.NamePrefix,
-		States:     []string{"deferred"},
+		NameContains: filter.NameContains,
+		States:       []string{"deferred"},
 	}, true)
 	testutil.AssertNoError(t, err, "count narrowed by state")
 	if narrowed != 1 {

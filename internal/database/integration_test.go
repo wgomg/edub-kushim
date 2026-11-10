@@ -1161,16 +1161,16 @@ func TestSearchPrefixQueriesCaseInsensitive(t *testing.T) {
 		assertEqual(t, pts[0].Name, "author", "seeded author type matched")
 	})
 
-	t.Run("deleted tag list and count ignore case", func(t *testing.T) {
+	t.Run("deleted tag list and count match case-insensitively", func(t *testing.T) {
 		assertNoError(t, q.UpsertDeletedTag(ctx, UpsertDeletedTagParams{Name: "OldBlockedTag", Kind: "blocked"}), "upsert deleted tag")
 
-		rows, err := q.ListDeletedTags(ctx, ListDeletedTagsParams{NamePrefix: "OLDBLOCKEDTAG", PageLimit: 10, PageOffset: 0})
-		assertNoError(t, err, "list deleted tags by mixed-case prefix")
+		rows, err := q.ListDeletedTags(ctx, ListDeletedTagsParams{NamePattern: "%oldblockedtag%", PageLimit: 10, PageOffset: 0})
+		assertNoError(t, err, "list deleted tags by mixed-case name")
 		assertEqual(t, len(rows), 1, "one deleted tag matched")
 		assertEqual(t, rows[0].Name, "OldBlockedTag", "matched deleted tag")
 
-		count, err := q.CountDeletedTags(ctx, "OLDBLOCKEDTAG")
-		assertNoError(t, err, "count deleted tags by mixed-case prefix")
+		count, err := q.CountDeletedTags(ctx, "%oldblockedtag%")
+		assertNoError(t, err, "count deleted tags by mixed-case name")
 		assertEqual(t, count, int64(1), "count agrees with list")
 	})
 

@@ -154,3 +154,11 @@ func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
 }
+
+// LikeContains builds the ILIKE pattern that matches text literally anywhere in the target string: the
+// LIKE metacharacters '\', '%' and '_' are escaped, so user text carries no wildcard meaning. Empty
+// text yields '%%', which matches every value; callers that treat an empty query as "no filter" keep
+// their own empty-query guard.
+func LikeContains(text string) string {
+	return "%" + escapeLike(text) + "%"
+}

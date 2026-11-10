@@ -702,15 +702,15 @@ After the database returns rows, the handler batch-fetches tags and people for a
 
 ### Autocomplete System
 
-Five API endpoints support progressive filtering in the UI via case-insensitive prefix search — `ILIKE` with the caller appending `%` (no full-text index needed):
+Five API endpoints support progressive filtering in the UI via case-insensitive substring search — `ILIKE` with the caller wrapping the text in `%` (no full-text index needed):
 
-| Endpoint                        | Source table    | SQL pattern                        |
-| ------------------------------- | --------------- | ---------------------------------- |
-| `GET /api/v1/tags?q=fin`        | `tag`           | `WHERE name ILIKE 'fin%' LIMIT 50` |
-| `GET /api/v1/people?q=john`     | `people`        | Same pattern                       |
-| `GET /api/v1/people-types?q=`   | `people_type`   | Same pattern                       |
-| `GET /api/v1/document-types?q=` | `document_type` | Same pattern                       |
-| `GET /api/v1/tags/deleted?q=`   | `deleted_tag`   | Same pattern                       |
+| Endpoint                        | Source table    | SQL pattern                         |
+| ------------------------------- | --------------- | ----------------------------------- |
+| `GET /api/v1/tags?q=fin`        | `tag`           | `WHERE name ILIKE '%fin%' LIMIT 50` |
+| `GET /api/v1/people?q=john`     | `people`        | Same pattern                        |
+| `GET /api/v1/people-types?q=`   | `people_type`   | Same pattern                        |
+| `GET /api/v1/document-types?q=` | `document_type` | Same pattern                        |
+| `GET /api/v1/tags/deleted?q=`   | `deleted_tag`   | Same pattern                        |
 
 ### Saved Searches
 
