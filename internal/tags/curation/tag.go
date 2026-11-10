@@ -528,11 +528,13 @@ func (s *Tag) Retire(ctx context.Context, id int64) (types.RetireStatus, error) 
 
 // Accept waives one provisional value's review deferral at an operator's request: when the value's latest
 // current-version verdict deferred the value and no identity or composition hold still withholds it from
-// promotion, accepted_at is stamped so the promotion floor decides instead of the review queue. The hold
-// refusals exist because waiving the deferral alone could not move a held value; a promoted value keeps
-// Demote as its path. The row is locked and re-checked, so any concurrent promotion or acceptance is
-// refused rather than overwritten. The verdict stays in the journal untouched — only the standing stamp
-// records the operator's decision.
+// promotion, accepted_at is stamped so the promotion floor decides instead of the review queue. The waiver
+// covers one fresh verdict: a verdict newer than the stamp (a rubric version change or a re-judge) re-opens
+// the deferral, and accepting again replaces the stamp; an acceptance that still post-dates the current
+// verdict is refused as already accepted. The hold refusals exist because waiving the deferral alone could
+// not move a held value; a promoted value keeps Demote as its path. The row is locked and re-checked, so
+// concurrent promotions and acceptances are refused rather than overwritten. The verdict stays in the
+// journal untouched — only the standing stamp records the operator's decision.
 func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -551,9 +553,6 @@ func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) 
 	if tag.PromotedAt.Valid {
 		return types.AcceptNotProvisional, nil
 	}
-	if tag.AcceptedAt.Valid {
-		return types.AcceptAlready, nil
-	}
 
 	verdicts, err := txQ.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
 		PolicyVersion: analyzer.TagQualityVersion,
@@ -565,6 +564,9 @@ func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) 
 	if len(verdicts) == 0 || !verdicts[0].Outcome.Valid ||
 		verdicts[0].Outcome.String != tags.AdmissionDefer.String() {
 		return types.AcceptNotDeferred, nil
+	}
+	if tag.AcceptedAt.Valid && tag.AcceptedAt.Time.After(verdicts[0].FreshVerdictAt) {
+		return types.AcceptAlready, nil
 	}
 
 	held, err := tags.IdentityHeldNames(ctx, txQ, []string{tag.Name})

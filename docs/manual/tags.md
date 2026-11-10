@@ -133,7 +133,7 @@ row, and the manual split on every compound entry and row, overriding whatever t
 | **Approve** | promotes the tag into the shared vocabulary; overrides undecided verdicts and holds, but a decided drop is re-demoted by the next reconciliation run |
 | **Reject** | deletes the tag *and blocklists the name*, so enrichment never proposes it again (restorable from the Deleted tab) |
 | **Retire** | deletes the tag without blocklisting the name, so enrichment may propose the value again |
-| **Accept as provisional** | waives a review deferral: the tag stops being deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it; offered only when no identity or split hold still withholds the tag |
+| **Accept as provisional** | waives a review deferral: the tag stops being deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it; a newer verdict (a rubric version change or a re-judge) re-opens the deferral so the action can be used again; offered only when no identity or split hold still withholds the tag |
 | **Rename** | changes the name in place; the journals are keyed by name, so the tag shows no verdict until it is judged again under the new name |
 | **Fold into *value*** | collapses this tag onto its held store value: documents move, this name becomes an alias and leaves the vocabulary |
 | **Fold into…** | folds this tag onto any other live tag you pick: its documents move onto the kept value, this name becomes an alias and stops existing as a tag; seeded inventory cannot be folded away |

@@ -95,7 +95,7 @@
 		{
 			icon: 'circle-check',
 			name: 'Accept as provisional',
-			text: 'Waives a review deferral: the tag is no longer deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it. Offered only when no identity or split hold still withholds the tag.'
+			text: 'Waives a review deferral: the tag is no longer deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it. A newer verdict (a rubric version change or a re-judge) re-opens the deferral so the action can be used again. Offered only when no identity or split hold still withholds the tag.'
 		},
 		{
 			icon: 'edit',

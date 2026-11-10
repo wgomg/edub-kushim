@@ -64,8 +64,7 @@ WHERE id = ANY(@tag_ids::bigint[])
 -- name: AcceptTag :exec
 UPDATE tag SET accepted_at = now()
 WHERE id = $1
-  AND promoted_at IS NULL
-  AND accepted_at IS NULL;
+  AND promoted_at IS NULL;
 
 -- name: ListPromotedTagsForDemotion :many
 SELECT id, name, promoted_at, created_at FROM tag

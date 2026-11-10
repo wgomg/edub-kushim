@@ -17,7 +17,6 @@ const acceptTag = `-- name: AcceptTag :exec
 UPDATE tag SET accepted_at = now()
 WHERE id = $1
   AND promoted_at IS NULL
-  AND accepted_at IS NULL
 `
 
 func (q *Queries) AcceptTag(ctx context.Context, id int64) error {
