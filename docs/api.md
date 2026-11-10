@@ -2859,7 +2859,7 @@ ProvisionalTagListResponse is one page of provisional tags: the filtered total f
 
 ### ProvisionalTagResponse
 
-ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a value whose fresh verdict has since re-decided it reads as deferred again.
+ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a value whose fresh verdict has since re-decided it reads as deferred again. IdentityFoldClass carries the judge's fold-relation class behind the identity hold, empty when the hold has none or predates it.
 
 | Field | Type | Required |
 |---|---|---|
@@ -2874,6 +2874,7 @@ ProvisionalTagResponse describes a tag awaiting review, with its latest verdict 
 | `demoted_reason` | string | no |
 | `document_count` | integer | yes |
 | `id` | integer | yes |
+| `identity_fold_class` | string | no |
 | `identity_hold` | string | no |
 | `name` | string | yes |
 | `pending_identity` | integer | yes |

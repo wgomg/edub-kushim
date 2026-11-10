@@ -319,9 +319,9 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 			report.Provisional.ZeroAssign++
 			continue
 		}
-		if anchor, ok := held[t.Name]; ok {
+		if hold, ok := held[t.Name]; ok {
 			report.Provisional.Skipped++
-			r.logger.Info("", "tag reconcile: identity hold %q (anchor=%q) — left for review", t.Name, anchor)
+			r.logger.Info("", "tag reconcile: identity hold %q (anchor=%q) — left for review", t.Name, hold.Anchor)
 			continue
 		}
 		if reason, ok := compositionHeld[t.Name]; ok {
@@ -540,9 +540,9 @@ func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, 
 	var massDecay []database.ListPromotedTagsForDemotionRow
 	var rejudge []database.ListPromotedTagsForDemotionRow
 	for _, t := range worklist {
-		if anchor, ok := held[t.Name]; ok {
+		if hold, ok := held[t.Name]; ok {
 			report.Demotion.Held++
-			r.logger.Info("", "tag reconcile: demotion identity hold %q (anchor=%q) — left for review", t.Name, anchor)
+			r.logger.Info("", "tag reconcile: demotion identity hold %q (anchor=%q) — left for review", t.Name, hold.Anchor)
 			continue
 		}
 		if reason, ok := compositionHeld[t.Name]; ok {

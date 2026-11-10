@@ -2903,7 +2903,7 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 	_, err = env.client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
 		Kind:           tags.IdentityKindFoldGate,
 		Candidate:      "hold candidate tag",
-		Criteria:       []byte(`{"proposed_fold":"hold anchor tag"}`),
+		Criteria:       []byte(`{"proposed_fold":"hold anchor tag","fold_class":"relational_adjective"}`),
 		Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
 		RuleSetVersion: tags.IdentityRuleSetVersion,
 	})
@@ -2922,6 +2922,7 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 		if tag.ID == candidateID {
 			found = true
 			testutil.AssertEqual(t, tag.IdentityHold, "hold anchor tag", "identity hold anchor")
+			testutil.AssertEqual(t, tag.IdentityFoldClass, "relational_adjective", "identity fold class")
 		}
 	}
 	if !found {

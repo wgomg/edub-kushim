@@ -39,10 +39,12 @@ import (
 // a store-anchored orthographic or permutation twin resolves mechanically without a judge. v10 drops the
 // similarity context from the pair-adjudication prompt — the two terms are the gate's only evidence — so
 // the judged criteria are pinned under the new stamp. v11 embeds the shared tag definition in the identity
-// and pair-adjudication prompts. The relation gate that now precedes fold evidence carries its own stamp
+// and pair-adjudication prompts. v12 adds the informational fold_class question after the three booleans: the
+// judging body labels the term's fold-relation class; the three boolean answers remain the decision gate, and
+// the held kinds are unchanged. The relation gate that now precedes fold evidence carries its own stamp
 // (RelationRuleSetVersion) because it is an additive precondition: gating a proposal must not retire the
 // fold verdicts recorded under this version.
-const IdentityRuleSetVersion = "v11"
+const IdentityRuleSetVersion = "v12"
 
 // RelationRuleSetVersion pins the relation gate's prompt and criteria text, the judged precondition a fold
 // proposal passes before any fold evidence exists. It is a separate stamp because the gate is additive: an
@@ -635,16 +637,22 @@ func ResolveAliases(ctx context.Context, q *database.Queries, names []string) (m
 	return out, nil
 }
 
-// IdentityHeldNames maps each held candidate name to the live store value
-// its refused fold targeted. A name is held when, under the current rule
-// set, the latest fold_gate verdict rejected the fold or the latest
-// base_form verdict leaves the name standing, and the proposal's target is
-// a live tag — either refusal blocks the fold. Unheld names are absent
-// from the result; empty input returns an empty map.
-func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string) (map[string]string, error) {
+// IdentityHold is one withheld candidate's review detail: the live store anchor its refused fold targeted,
+// and the judge's fold-relation class behind the refusal (empty when the verdict predates the question).
+type IdentityHold struct {
+	Anchor    string
+	FoldClass string
+}
+
+// IdentityHeldNames maps each held candidate name to the live store value its refused fold targeted and the
+// judged fold-relation class beside it. A name is held when, under the current rule set, the latest
+// fold_gate verdict rejected the fold or the latest base_form verdict leaves the name standing, and the
+// proposal's target is a live tag — either refusal blocks the fold. Unheld names are absent from the
+// result; empty input returns an empty map.
+func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string) (map[string]IdentityHold, error) {
 	normalized := distinctNames(names, textnorm.NormalizeTag)
 	if len(normalized) == 0 {
-		return map[string]string{}, nil
+		return map[string]IdentityHold{}, nil
 	}
 
 	rows, err := q.ListIdentityHeldNames(ctx, database.ListIdentityHeldNamesParams{
@@ -655,7 +663,7 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 	if err != nil {
 		return nil, err
 	}
-	held := make(map[string]string)
+	held := make(map[string]IdentityHold)
 	for _, row := range rows {
 		if row.Anchor == "" {
 			continue
@@ -665,7 +673,7 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 		if !refused {
 			continue
 		}
-		held[row.Candidate] = row.Anchor
+		held[row.Candidate] = IdentityHold{Anchor: row.Anchor, FoldClass: row.FoldClass}
 	}
 	return held, nil
 }

@@ -131,6 +131,11 @@ cached per candidate and anchor under `RelationRuleSetVersion`.
   not `colony`, and it is not reduced to `colonialism` either — that is J3/J4's decision,
   not a fold).
 
+The base-form call also labels the term's fold-relation class — `relational_adjective`,
+`inflection`, `derivation`, or `none` — as informational evidence beside the boolean
+answers. The label is persisted with the verdict and shown with a review hold; the fold
+decision reads only the three boolean answers.
+
 **J2 — Fold gate.** Confirms that a mechanically proposed fold preserves denotation
 (V2) before registration. The gate covers every fold that changes the lexical form —
 plural→singular, verb→lemma, adjective→noun. Style rewrites (M1) do not pass the gate.
@@ -204,8 +209,9 @@ blocklisted.
 ### 3.6 Evidence record
 
 Per candidate or pair: the key; the proposed fold, its relation-gate verdict under
-`RelationRuleSetVersion`, and its J1/J2/J5 result; the J3 verdict with criteria and model
-versions (the M8 class, with no model, for a mechanically resolved pair); the J4 direction
+`RelationRuleSetVersion`, and its J1/J2/J5 result with the judged fold-relation class; the
+J3 verdict with criteria and model versions (the M8 class, with no model, for a
+mechanically resolved pair); the J4 direction
 and reason; any alias made; the identity rule-set version; the review outcome when deferred;
 and the operator's separation row over a refused fold, which clears the hold without
 applying the fold. Consumers are D1's canonicalization work, the review

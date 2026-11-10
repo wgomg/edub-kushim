@@ -319,9 +319,9 @@ func (s *Tag) CountPendingIdentity(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// IdentityHeldNames returns, per name, the live store anchor its refused
-// fold targeted; names without a hold are absent from the result.
-func (s *Tag) IdentityHeldNames(ctx context.Context, names []string) (map[string]string, error) {
+// IdentityHeldNames returns, per name, the hold detail its refused fold produced — the live store anchor and
+// the judged fold-relation class beside it; names without a hold are absent from the result.
+func (s *Tag) IdentityHeldNames(ctx context.Context, names []string) (map[string]tags.IdentityHold, error) {
 	held, err := tags.IdentityHeldNames(ctx, s.client.Queries, names)
 	if err != nil {
 		return nil, errs.FromDB(err, "identity held names")

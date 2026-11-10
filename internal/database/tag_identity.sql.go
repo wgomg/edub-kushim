@@ -201,7 +201,9 @@ func (q *Queries) LatestTagIdentityEventsForCandidates(ctx context.Context, arg 
 }
 
 const listIdentityHeldNames = `-- name: ListIdentityHeldNames :many
-SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict, (criteria->>'proposed_fold')::text AS anchor
+SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict,
+       (criteria->>'proposed_fold')::text AS anchor,
+       (COALESCE(criteria->>'fold_class', ''))::text AS fold_class
 FROM tag_identity_event e
 WHERE e.rule_set_version = $1
   AND e.verdict IS NOT NULL
@@ -222,6 +224,7 @@ type ListIdentityHeldNamesRow struct {
 	Kind      string
 	Verdict   sql.NullString
 	Anchor    string
+	FoldClass string
 }
 
 // ListIdentityHeldNames compares the anchor by direct equality, not the
@@ -242,6 +245,7 @@ func (q *Queries) ListIdentityHeldNames(ctx context.Context, arg ListIdentityHel
 			&i.Kind,
 			&i.Verdict,
 			&i.Anchor,
+			&i.FoldClass,
 		); err != nil {
 			return nil, err
 		}

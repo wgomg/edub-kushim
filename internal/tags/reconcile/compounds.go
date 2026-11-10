@@ -54,7 +54,7 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: compound identity hold lookup: %v", err)
-		held = map[string]string{}
+		held = map[string]tags.IdentityHold{}
 	}
 	compositionHeld, states, err := tags.CompositionReview(ctx, r.client.Queries, names, analyzer.TagSplitVersion)
 	if err != nil {
@@ -92,7 +92,7 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 		report.Skips[skip]++
 		switch skip {
 		case "identity_hold":
-			r.logger.Debug("", "tag reconcile: compound %q is identity-held (anchor=%q) — left for review", name, held[name])
+			r.logger.Debug("", "tag reconcile: compound %q is identity-held (anchor=%q) — left for review", name, held[name].Anchor)
 		case "composition_hold":
 			r.logger.Debug("", "tag reconcile: compound %q is composition-held (reason=%s) — left for review", name, compositionHeld[name])
 		}
@@ -117,8 +117,8 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 // entry comes with the tally key naming why the sweep has nothing to do. A recorded operator split rule
 // outranks it on both paths, and for the journal-driven candidates that remain, the compound arm and the
 // opening gate's probe both read membership through it, so the two cannot disagree about what work is due.
-func compoundEntryFor(name string, promoted bool, docCount int64, held, compositionHeld map[string]string,
-	states map[string]tags.CompositionState) (*compoundEntry, string) {
+func compoundEntryFor(name string, promoted bool, docCount int64, held map[string]tags.IdentityHold,
+	compositionHeld map[string]string, states map[string]tags.CompositionState) (*compoundEntry, string) {
 	if _, ok := held[name]; ok {
 		return nil, "identity_hold"
 	}

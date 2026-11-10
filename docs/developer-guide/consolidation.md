@@ -133,7 +133,10 @@ adjudication stays outside it:
   unrelated pair is dropped and the candidate registers as its own value, so no fold
   evidence or hold exists for it. A related pair reaches one identity-judge call per
   flagged candidate that answers three binary criteria: fold to base form, fold preserves
-  denotation, conventional written form. A fold applies only when all three confirm. A
+  denotation, conventional written form. A fold applies only when all three confirm. The
+  same call also labels the term's fold-relation class — `relational_adjective`,
+  `inflection`, `derivation`, or `none` — persisted beside the three answers and shown in
+  the review queue with the hold; it never participates in the fold decision. A
   refused fold whose proposal targeted a live store value is the disjoint-twin risk: the
   birth is held for review — provisional plus an evidence-derived promotion hold that
   blocks inline and sweep promotion until an operator resolves it.

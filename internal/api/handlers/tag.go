@@ -372,17 +372,19 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		for i, t := range rows {
+			hold := held[t.Name]
 			responses[i] = ProvisionalTagResponse{
 				ID:            t.ID,
 				Name:          t.Name,
 				DocumentCount: t.DocumentCount,
 				// the list query coalesces created_at, so the value is always present
-				CreatedAt:       t.CreatedAt.Time,
-				PendingIdentity: pending[t.Name],
-				IdentityHold:    held[t.Name],
-				CompositionHold: compositionHeld[t.Name],
-				DemotedReason:   t.DemotedReason.String,
-				Compound:        tags.ClassifyShape(t.Name) == tags.ShapeCompound,
+				CreatedAt:         t.CreatedAt.Time,
+				PendingIdentity:   pending[t.Name],
+				IdentityHold:      hold.Anchor,
+				IdentityFoldClass: hold.FoldClass,
+				CompositionHold:   compositionHeld[t.Name],
+				DemotedReason:     t.DemotedReason.String,
+				Compound:          tags.ClassifyShape(t.Name) == tags.ShapeCompound,
 			}
 			if composition, ok := compositionByCandidate[t.Name]; ok {
 				responses[i].CompositionReason = composition.Reason
@@ -1266,8 +1268,9 @@ type TagQualityVerdictInfo struct {
 }
 
 // ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
-// provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral,
-// so a value whose fresh verdict has since re-decided it reads as deferred again.
+// provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a
+// value whose fresh verdict has since re-decided it reads as deferred again. IdentityFoldClass carries the
+// judge's fold-relation class behind the identity hold, empty when the hold has none or predates it.
 type ProvisionalTagResponse struct {
 	ID                int64                  `json:"id"`
 	Name              string                 `json:"name"`
@@ -1276,6 +1279,7 @@ type ProvisionalTagResponse struct {
 	Verdict           *TagQualityVerdictInfo `json:"verdict"`
 	PendingIdentity   int64                  `json:"pending_identity"`
 	IdentityHold      string                 `json:"identity_hold,omitempty"`
+	IdentityFoldClass string                 `json:"identity_fold_class,omitempty"`
 	CompositionHold   string                 `json:"composition_hold,omitempty"`
 	CompositionReason string                 `json:"composition_reason,omitempty"`
 	CompositionAction tags.CompositionAction `json:"composition_action,omitempty"`

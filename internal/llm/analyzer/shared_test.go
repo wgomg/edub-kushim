@@ -2132,6 +2132,32 @@ func TestParseTagIdentityResponse(t *testing.T) {
 			n:       1,
 			wantErr: true,
 		},
+		{
+			name:    "declared fold class is carried",
+			content: `{"terms":[{"index":0,"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true,"fold_class":"relational_adjective"}]}`,
+			n:       1,
+			wantErr: false,
+			want0: &TagIdentityResult{
+				Index: 0, FoldToBase: true, FoldPreservesDenotation: true, ConventionalForm: true,
+				FoldClass: "relational_adjective",
+			},
+		},
+		{
+			name:    "undeclared fold class reads as empty",
+			content: `{"terms":[{"index":0,"fold_to_base":true,"fold_preserves_denotation":true,"conventional_form":true,"fold_class":"adjective-ish"}]}`,
+			n:       1,
+			wantErr: false,
+			want0: &TagIdentityResult{
+				Index: 0, FoldToBase: true, FoldPreservesDenotation: true, ConventionalForm: true,
+			},
+		},
+		{
+			name:           "fold class without a boolean stays missing",
+			content:        `{"terms":[{"index":0,"fold_class":"inflection"}]}`,
+			n:              1,
+			wantErr:        true,
+			wantIncomplete: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2194,6 +2220,7 @@ func TestParseTagIdentityResponse_BareArrayPositional(t *testing.T) {
 func TestTagIdentityResult_CriteriaRecord(t *testing.T) {
 	result := TagIdentityResult{
 		FoldToBase: true, FoldPreservesDenotation: true, ConventionalForm: false,
+		FoldClass: "inflection",
 	}
 
 	raw := result.CriteriaRecord("buildings")
@@ -2210,6 +2237,9 @@ func TestTagIdentityResult_CriteriaRecord(t *testing.T) {
 	if stored.ConventionalForm == nil || *stored.ConventionalForm {
 		t.Error("conventional_form = true, want false")
 	}
+	if stored.FoldClass != "inflection" {
+		t.Errorf("fold_class = %q, want inflection", stored.FoldClass)
+	}
 	var envelope struct {
 		ProposedFold string `json:"proposed_fold"`
 	}
@@ -2223,6 +2253,23 @@ func TestTagIdentityResult_CriteriaRecord(t *testing.T) {
 	empty := result.CriteriaRecord("")
 	if strings.Contains(string(empty), "proposed_fold") {
 		t.Errorf("fold-less record should omit proposed_fold: %s", empty)
+	}
+	classless := TagIdentityResult{
+		FoldToBase: true, FoldPreservesDenotation: true, ConventionalForm: true,
+	}
+	if raw := classless.CriteriaRecord(""); strings.Contains(string(raw), "fold_class") {
+		t.Errorf("class-less record should omit fold_class: %s", raw)
+	}
+}
+
+func TestTagIdentityCriteria_String(t *testing.T) {
+	withClass := (TagIdentityResult{FoldToBase: true, FoldClass: "derivation"}).Criteria().String()
+	if !strings.Contains(withClass, "fold_class=derivation") {
+		t.Errorf("String() = %q, want the class appended when set", withClass)
+	}
+	withoutClass := (TagIdentityResult{FoldToBase: true}).Criteria().String()
+	if strings.Contains(withoutClass, "fold_class") {
+		t.Errorf("String() = %q, want no class segment when unset", withoutClass)
 	}
 }
 

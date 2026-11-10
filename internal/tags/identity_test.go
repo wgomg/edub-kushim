@@ -763,12 +763,16 @@ func TestIdentityHeldNames(t *testing.T) {
 
 	database.MustCreateTag(t, q, "zqholdanchor")
 
-	seed := func(kind, candidate, verdict, anchor string) {
+	seed := func(kind, candidate, verdict, anchor, foldClass string) {
 		t.Helper()
+		criteria := `{"proposed_fold":"` + anchor + `"}`
+		if foldClass != "" {
+			criteria = `{"proposed_fold":"` + anchor + `","fold_class":"` + foldClass + `"}`
+		}
 		if _, err := q.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
 			Kind:           kind,
 			Candidate:      candidate,
-			Criteria:       []byte(`{"proposed_fold":"` + anchor + `"}`),
+			Criteria:       []byte(criteria),
 			Verdict:        sql.NullString{String: verdict, Valid: true},
 			RuleSetVersion: IdentityRuleSetVersion,
 		}); err != nil {
@@ -776,18 +780,18 @@ func TestIdentityHeldNames(t *testing.T) {
 		}
 	}
 	// the gate's refusal alone holds the name
-	seed(IdentityKindBaseForm, "political", IdentityVerdictFold, "zqholdanchor")
-	seed(IdentityKindFoldGate, "political", IdentityVerdictRejected, "zqholdanchor")
+	seed(IdentityKindBaseForm, "political", IdentityVerdictFold, "zqholdanchor", "")
+	seed(IdentityKindFoldGate, "political", IdentityVerdictRejected, "zqholdanchor", "relational_adjective")
 	// base_form=stand blocks despite a confirming gate (the mining class)
-	seed(IdentityKindBaseForm, "mining", IdentityVerdictStand, "zqholdanchor")
-	seed(IdentityKindFoldGate, "mining", IdentityVerdictConfirmed, "zqholdanchor")
+	seed(IdentityKindBaseForm, "mining", IdentityVerdictStand, "zqholdanchor", "")
+	seed(IdentityKindFoldGate, "mining", IdentityVerdictConfirmed, "zqholdanchor", "")
 	// a refused proposal onto a dead anchor is not a hold
-	seed(IdentityKindFoldGate, "ghosty", IdentityVerdictRejected, "zqghost")
+	seed(IdentityKindFoldGate, "ghosty", IdentityVerdictRejected, "zqghost", "")
 	// a confirmed fold with a standing base form never held
-	seed(IdentityKindBaseForm, "folded", IdentityVerdictFold, "zqholdanchor")
-	seed(IdentityKindFoldGate, "folded", IdentityVerdictConfirmed, "zqholdanchor")
+	seed(IdentityKindBaseForm, "folded", IdentityVerdictFold, "zqholdanchor", "")
+	seed(IdentityKindFoldGate, "folded", IdentityVerdictConfirmed, "zqholdanchor", "")
 	// conventional-form rows are out of scope for the hold
-	seed(IdentityKindConventionalForm, "formatted", IdentityVerdictDefer, "zqholdanchor")
+	seed(IdentityKindConventionalForm, "formatted", IdentityVerdictDefer, "zqholdanchor", "")
 
 	held, err := IdentityHeldNames(ctx, q, []string{
 		"political", "mining", "ghosty", "folded", "formatted", "unjudged",
@@ -798,11 +802,17 @@ func TestIdentityHeldNames(t *testing.T) {
 	if len(held) != 2 {
 		t.Errorf("held = %v, want exactly the two refused names", held)
 	}
-	if held["political"] != "zqholdanchor" {
-		t.Errorf("political anchor = %q, want the live store value", held["political"])
+	if held["political"].Anchor != "zqholdanchor" {
+		t.Errorf("political anchor = %q, want the live store value", held["political"].Anchor)
 	}
-	if held["mining"] != "zqholdanchor" {
-		t.Errorf("mining anchor = %q, want base_form=stand to hold despite a confirming gate", held["mining"])
+	if held["political"].FoldClass != "relational_adjective" {
+		t.Errorf("political fold class = %q, want the judged class carried from the criteria", held["political"].FoldClass)
+	}
+	if held["mining"].Anchor != "zqholdanchor" {
+		t.Errorf("mining anchor = %q, want base_form=stand to hold despite a confirming gate", held["mining"].Anchor)
+	}
+	if held["mining"].FoldClass != "" {
+		t.Errorf("mining fold class = %q, want empty when the criteria carries none", held["mining"].FoldClass)
 	}
 
 	empty, err := IdentityHeldNames(ctx, q, nil)

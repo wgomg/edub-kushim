@@ -601,6 +601,21 @@
 	function verdictMeta(tag) {
 		return [tag.verdict.model, formatDateTime(tag.verdict.verdict_at)].filter(Boolean).join(' · ');
 	}
+
+	function foldClassLabel(foldClass) {
+		switch (foldClass) {
+			case 'relational_adjective':
+				return 'relational adjective';
+			case 'inflection':
+				return 'inflection';
+			case 'derivation':
+				return 'derivation';
+			case 'none':
+				return 'no fold class';
+			default:
+				return '';
+		}
+	}
 </script>
 
 <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -749,12 +764,15 @@
 							>
 						{/if}
 						{#if tag.identity_hold}
+							{@const foldClass = foldClassLabel(tag.identity_fold_class)}
 							<button
 								type="button"
 								class="{pillWarn} {pillButton}"
-								title="The identity judge refused a fold of this tag onto that store value; promotion waits for review"
+								title="The identity judge refused a fold of this tag onto that store value; promotion waits for review{foldClass
+									? ` · fold class: ${foldClass}`
+									: ''}"
 								onclick={() => openHelp('identity-hold')}
-								>identity hold → {tag.identity_hold}</button
+								>identity hold → {tag.identity_hold}{foldClass ? ` · ${foldClass}` : ''}</button
 							>
 						{/if}
 						{#if tag.composition_hold}

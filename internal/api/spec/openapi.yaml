@@ -7377,8 +7377,9 @@ components:
       type: object
       description: |-
         ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
-        provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral,
-        so a value whose fresh verdict has since re-decided it reads as deferred again.
+        provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a
+        value whose fresh verdict has since re-decided it reads as deferred again. IdentityFoldClass carries the
+        judge's fold-relation class behind the identity hold, empty when the hold has none or predates it.
       properties:
         accepted_at:
           type: string
@@ -7412,6 +7413,8 @@ components:
           type: integer
         id:
           type: integer
+        identity_fold_class:
+          type: string
         identity_hold:
           type: string
         name:

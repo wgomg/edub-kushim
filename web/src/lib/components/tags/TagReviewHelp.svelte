@@ -219,6 +219,16 @@
 			genuinely different values — the hold clears and this tag keeps answering to its own verdict and
 			promotion floor. Approving promotes it into the vocabulary immediately instead.
 		</p>
+		<p class={text}>
+			When the judge labelled the term's fold relation, the pill also shows the class: a
+			<b class="text-parchment-300">relational adjective</b> (its noun denotes the same thing), an
+			<b class="text-parchment-300">inflection</b> (a plural or other inflected form), a
+			<b class="text-parchment-300">derivation</b> (a lexicalized derivation or gerund naming its
+			own concept), or <b class="text-parchment-300">no fold class</b>. The class is evidence for
+			the review decision, not the decision itself: a refusal beside a recognised relational
+			adjective may still deserve the fold, while a refusal that saw no relation at all points the
+			other way.
+		</p>
 	</section>
 
 	<section id="help-identity-pending">

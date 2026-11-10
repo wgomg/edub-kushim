@@ -825,9 +825,9 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		if !ok || !tags.DecidePromotion(decision.Outcome, counts[c.id], floor) {
 			continue
 		}
-		if anchor, ok := held[c.name]; ok {
+		if hold, ok := held[c.name]; ok {
 			e.logger.Debug(reqID, "tagquality[%s]: identity hold %q (anchor=%q) — left for review",
-				analyzer.TagQualityVersion, c.name, anchor)
+				analyzer.TagQualityVersion, c.name, hold.Anchor)
 			heldSkips++
 			continue
 		}

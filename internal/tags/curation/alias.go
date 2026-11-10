@@ -352,12 +352,12 @@ func (s *Tag) Separate(ctx context.Context, id int64) (types.SeparateStatus, err
 	if err != nil {
 		return types.SeparateWithoutHold, errs.FromDB(err, "load separate identity hold")
 	}
-	anchor, ok := held[name]
+	hold, ok := held[name]
 	if !ok {
 		return types.SeparateWithoutHold, nil
 	}
 
-	criteria, _ := json.Marshal(map[string]string{"proposed_fold": anchor})
+	criteria, _ := json.Marshal(map[string]string{"proposed_fold": hold.Anchor})
 	kinds := tags.IdentityHoldKinds()
 	rows := make([]tags.EvidenceRow, 0, len(kinds))
 	for _, kind := range kinds {
@@ -377,7 +377,7 @@ func (s *Tag) Separate(ctx context.Context, id int64) (types.SeparateStatus, err
 	}
 
 	s.logger.Info("", "identity[%s]: operator separate %q from %q (reason=human-separate)",
-		tags.IdentityRuleSetVersion, name, anchor)
+		tags.IdentityRuleSetVersion, name, hold.Anchor)
 	return types.SeparateApplied, nil
 }
 

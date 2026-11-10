@@ -225,6 +225,27 @@ describe('ProvisionalReview verdict labels', () => {
 		await renderLabel(tag({ identity_hold: 'politics' }), 'identity hold → politics');
 	});
 
+	it('shows the fold class beside the identity hold', async () => {
+		await renderLabel(
+			tag({ identity_hold: 'politics', identity_fold_class: 'relational_adjective' }),
+			'identity hold → politics · relational adjective'
+		);
+	});
+
+	it('shows the no-fold class label when the judge answered none', async () => {
+		await renderLabel(
+			tag({ identity_hold: 'politics', identity_fold_class: 'none' }),
+			'identity hold → politics · no fold class'
+		);
+	});
+
+	it('hides an unrecognized fold class', async () => {
+		await renderLabel(
+			tag({ identity_hold: 'politics', identity_fold_class: 'adjective-ish' }),
+			'identity hold → politics'
+		);
+	});
+
 	it('shows the split hold with its reason', async () => {
 		await renderLabel(tag({ composition_hold: 'split_defer' }), 'split hold → split_defer');
 	});
@@ -318,10 +339,13 @@ describe('ProvisionalReview filters and paging', () => {
 				})
 			)
 		);
-		expect(goto).toHaveBeenLastCalledWith('/tags?prov_criteria=person_class%3Areal_individual#provisional', {
-			shallow: true,
-			replace: true
-		});
+		expect(goto).toHaveBeenLastCalledWith(
+			'/tags?prov_criteria=person_class%3Areal_individual#provisional',
+			{
+				shallow: true,
+				replace: true
+			}
+		);
 	});
 
 	it('sends a review state to the API and syncs it to the URL', async () => {

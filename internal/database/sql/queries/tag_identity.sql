@@ -42,7 +42,9 @@ ORDER BY kind, candidate, COALESCE(partner, ''), created_at DESC;
 -- boundaries, and house form only rewrites ordinals and roman numerals,
 -- which this class lacks.
 -- name: ListIdentityHeldNames :many
-SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict, (criteria->>'proposed_fold')::text AS anchor
+SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict,
+       (criteria->>'proposed_fold')::text AS anchor,
+       (COALESCE(criteria->>'fold_class', ''))::text AS fold_class
 FROM tag_identity_event e
 WHERE e.rule_set_version = @rule_set_version
   AND e.verdict IS NOT NULL
