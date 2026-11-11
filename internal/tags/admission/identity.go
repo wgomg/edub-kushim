@@ -492,7 +492,7 @@ func (a *Adjudicator) relationGateAnswers(ctx context.Context, candidates []*ide
 	if len(uncached) == 0 {
 		return out, rows, nil
 	}
-	if !a.runner.HasTagIdentityJudge() {
+	if !a.runner.HasTagAdjudicator() {
 		a.logger.Info(reqID, "relation gate[%s]: judge not configured — %d proposals stay pending", tags.RelationRuleSetVersion, len(uncached))
 		for _, cand := range uncached {
 			rows = append(rows, tags.EvidenceRow{
@@ -648,7 +648,7 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 	if len(uncached) == 0 {
 		return out, nil
 	}
-	if !a.runner.HasTagIdentityJudge() {
+	if !a.runner.HasTagAdjudicator() {
 		a.logger.Info(reqID, "identity[%s]: judge not configured — %d candidates stay provisional", tags.IdentityRuleSetVersion, len(uncached))
 		return out, nil
 	}
@@ -779,7 +779,7 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 			tags.IdentityRuleSetVersion, class, p.query, p.target)
 	}
 
-	if !a.config.Enricher.TagAdjudicator.Enabled || !a.runner.HasTagAdjudicator() {
+	if !a.runner.HasTagAdjudicator() {
 		for _, p := range unresolved {
 			if p.decided {
 				a.recordIdentityPair(ctx, docID, p, reqID)

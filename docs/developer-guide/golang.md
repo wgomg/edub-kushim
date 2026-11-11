@@ -253,7 +253,8 @@ func (c *CompositeExtractor) Extract(ctx context.Context, path string, mimeType 
 ```
 
 The same pattern repeats for `ocr.OCR`, `converter.DocumentConverter`,
-`pdfoptimizer.PdfOptimizer`, `textreducer.TextReducer`, `analyzer.ContentAnalyzer`,
+`pdfoptimizer.PdfOptimizer`, `textreducer.TextReducer`, `analyzer.Analyzer` /
+`analyzer.TagAdjudicator` / `analyzer.TagQualityJudge`,
 `matcher.Matcher` / `matcher.Embedder`.
 
 Two styles of factory coexist, and the distinction is idiomatic:
@@ -278,7 +279,9 @@ type Runner struct {
 	pdfOptimizer     pdfoptimizer.PdfOptimizer
 	documentConverter converter.DocumentConverter
 	tagMatcher       matcher.Matcher
-	contentAnalyzer  analyzer.ContentAnalyzer
+	contentAnalyzer  analyzer.Analyzer
+	tagAdjudicator   analyzer.TagAdjudicator
+	tagQualityJudge  analyzer.TagQualityJudge
 	textReducer      textreducer.TextReducer
 }
 ```

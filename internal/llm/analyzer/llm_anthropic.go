@@ -16,9 +16,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
-// LlmAnthropic is the Anthropic Messages-API implementation of
-// ContentAnalyzer, gated by the model catalog's capabilities (thinking
-// budget, temperature, prompt caching).
+// LlmAnthropic is the Anthropic Messages-API implementation of the Analyzer, TagAdjudicator and the
+// TagQualityJudge contracts, gated by the model catalog's capabilities (thinking budget, temperature,
+// prompt caching).
 type LlmAnthropic struct {
 	logger         *log.Logger
 	config         config.ToolConfig
@@ -427,9 +427,4 @@ func (l *LlmAnthropic) JudgeTagIdentity(ctx context.Context, candidates []TagIde
 // JudgeTagRelations gates fold proposals through the Anthropic API before the fold judge sees them.
 func (l *LlmAnthropic) JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error) {
 	return judgedAnthropic(ctx, l, TagRelationSystemMessage, BuildTagRelationPrompt(candidates), "tag relation gate", len(candidates), judgedOutputBudget, ParseTagRelationResponse)
-}
-
-// Name identifies the Anthropic implementation.
-func (l *LlmAnthropic) Name() string {
-	return "anthropic"
 }

@@ -102,7 +102,7 @@ func (r *IdentityResolver) ResolvePending(ctx context.Context, budget int) (*Ide
 		return report, nil
 	}
 	cfg := r.getConfig()
-	if !cfg.Enricher.TagAdjudicator.Enabled || !r.runner.HasTagAdjudicator() {
+	if !r.runner.HasTagAdjudicator() {
 		pending, err := r.client.Queries.CountPendingTagIdentityEvents(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("count pending identity events: %w", err)
@@ -156,7 +156,7 @@ func (r *IdentityResolver) resolveCandidates(ctx context.Context, cfg *config.Co
 	if len(candidates) == 0 {
 		return
 	}
-	if !r.runner.HasTagIdentityJudge() {
+	if !r.runner.HasTagAdjudicator() {
 		report.Deferred += len(candidates)
 		r.logger.Info("", "tag identity: identity judge not configured — %d candidates stay pending", len(candidates))
 		return
@@ -273,7 +273,7 @@ func (r *IdentityResolver) resolveGateCandidates(ctx context.Context, cfg *confi
 	if len(names) == 0 {
 		return
 	}
-	if !r.runner.HasTagIdentityJudge() {
+	if !r.runner.HasTagAdjudicator() {
 		report.Deferred += len(names)
 		r.logger.Info("", "tag identity: identity judge not configured — %d relation gates stay pending", len(names))
 		return

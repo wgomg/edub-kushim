@@ -921,6 +921,17 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		}
 	}
 
+	if cfg.Enricher.TagAdjudicator.Enabled {
+		if err := validateJudgeSection("enricher.tag_adjudicator", &cfg.Enricher.TagAdjudicator.Llm, cfg.ResolvedAdjudicatorLlm()); err != nil {
+			return err
+		}
+	}
+	if cfg.Enricher.TagQuality.Enabled {
+		if err := validateJudgeSection("enricher.tag_quality", &cfg.Enricher.TagQuality.Llm, cfg.ResolvedQualityLlm()); err != nil {
+			return err
+		}
+	}
+
 	if cfg.Enricher.TagReconcile.Interval <= 0 {
 		cfg.Enricher.TagReconcile.Interval = 7
 	}
@@ -1115,6 +1126,29 @@ func finalizeConfig(cfg *Config, configDir string) error {
 		}
 	}
 
+	return nil
+}
+
+// validateJudgeSection checks one judged section's LLM configuration: the section may not name only one
+// of provider or model, because the all-or-nothing resolver would silently discard the partial stanza,
+// and the resolved provider and model must be set, so an enabled judge with nothing to judge with fails
+// at load instead of at the first call. The adapter is deliberately not required: the adapter factory
+// keeps its documented default of treating any non-anthropic value as openai-compatible, and requiring
+// it here would reject judged sections that worked before. Token is not required either: local and compatible
+// endpoints legitimately run without one.
+func validateJudgeSection(section string, llm *LlmConfig, resolved LlmConfig) error {
+	if (llm.Provider == "") != (llm.Model == "") {
+		return fmt.Errorf("%s.llm requires both provider and model when either is set", section)
+	}
+	if resolved.Provider == "" {
+		return fmt.Errorf("%s.llm.provider is required when the section is enabled", section)
+	}
+	if resolved.Model == "" {
+		return fmt.Errorf("%s.llm.model is required when the section is enabled", section)
+	}
+	if llm.RequestDelay < 0 || llm.RequestDelay > maxRequestDelaySeconds {
+		return fmt.Errorf("%s.llm.request_delay must be between 0 and %d", section, maxRequestDelaySeconds)
+	}
 	return nil
 }
 

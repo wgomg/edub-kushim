@@ -17,7 +17,7 @@ import (
 )
 
 type fakeAdjudicator struct {
-	analyzer.ContentAnalyzer
+	analyzer.TagAdjudicator
 	adjudicate func(pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
 	calls      int
 }

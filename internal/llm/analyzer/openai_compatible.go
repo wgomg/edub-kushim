@@ -16,9 +16,9 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
-// LlmOpenAiCompatible is the OpenAI-compatible chat-completions
-// implementation of ContentAnalyzer, gated by the model catalog's
-// capabilities (thinking, temperature, structured output).
+// LlmOpenAiCompatible is the OpenAI-compatible chat-completions implementation of the Analyzer, the
+// TagAdjudicator and TagQualityJudge contracts, gated by the model catalog's capabilities (thinking,
+// temperature, structured output).
 type LlmOpenAiCompatible struct {
 	logger         *log.Logger
 	config         config.ToolConfig
@@ -548,9 +548,4 @@ func (l *LlmOpenAiCompatible) JudgeTagIdentity(ctx context.Context, candidates [
 // JudgeTagRelations gates fold proposals through the compatible API before the fold judge sees them.
 func (l *LlmOpenAiCompatible) JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error) {
 	return judgedOpenAI(ctx, l, TagRelationSystemMessage, BuildTagRelationPrompt(candidates), "tag relation gate", len(candidates), judgedOutputBudget, ParseTagRelationResponse)
-}
-
-// Name identifies the OpenAI-compatible implementation.
-func (l *LlmOpenAiCompatible) Name() string {
-	return "openai-compatible"
 }

@@ -175,8 +175,6 @@ func (m *mockContentAnalyzer) JudgeTagPhraseFolds(_ context.Context, _ []analyze
 	return nil, nil
 }
 
-func (m *mockContentAnalyzer) Name() string { return "mock" }
-
 func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -495,7 +493,7 @@ func TestIsProviderError(t *testing.T) {
 	}
 }
 
-func runnerWithFallback(primary, fallback analyzer.ContentAnalyzer) *Runner {
+func runnerWithFallback(primary, fallback analyzer.Analyzer) *Runner {
 	r := &Runner{
 		logger: log.NewDiscardLogger(),
 		config: &config.Config{
@@ -515,7 +513,7 @@ func runnerWithFallback(primary, fallback analyzer.ContentAnalyzer) *Runner {
 		contentAnalyzer: primary,
 	}
 	if fallback != nil {
-		r.fallbackAnalyzers = []analyzer.ContentAnalyzer{fallback}
+		r.fallbackAnalyzers = []analyzer.Analyzer{fallback}
 		r.fallbackMeta = []fallbackMeta{{Provider: "fallback", Model: "f1"}}
 	}
 	return r
@@ -718,7 +716,7 @@ func TestAnalyzeContent_FallbackChainWalksToSuccess(t *testing.T) {
 			},
 		},
 		contentAnalyzer:   primary,
-		fallbackAnalyzers: []analyzer.ContentAnalyzer{fb0, fb1},
+		fallbackAnalyzers: []analyzer.Analyzer{fb0, fb1},
 		fallbackMeta:      []fallbackMeta{{Provider: "fb0", Model: "f0"}, {Provider: "fb1", Model: "f1"}},
 	}
 
@@ -763,7 +761,7 @@ func TestAnalyzeContent_FallbackChainPropagatesLastFailure(t *testing.T) {
 			},
 		},
 		contentAnalyzer:   primary,
-		fallbackAnalyzers: []analyzer.ContentAnalyzer{fb0, fb1},
+		fallbackAnalyzers: []analyzer.Analyzer{fb0, fb1},
 		fallbackMeta:      []fallbackMeta{{Provider: "fb0", Model: "f0"}, {Provider: "fb1", Model: "f1"}},
 	}
 

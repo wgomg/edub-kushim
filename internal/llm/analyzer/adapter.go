@@ -1,9 +1,8 @@
-// Package analyzer is the LLM integration for document enrichment and the
-// tag subsystem's judged decisions: the document-analysis adapter family
-// (Anthropic and OpenAI-compatible), the prompt builders and response
-// parsers of every judged step, and the provider gates (content size,
-// token limits, credits). The tools runner fronts this package; the
-// pipeline's policy layer stays free of LLM specifics.
+// Package analyzer is the LLM integration for document enrichment and the tag subsystem's judged decisions:
+// the three contracts the tools runner holds (Analyzer, TagAdjudicator, TagQualityJudge), the Anthropic and
+// OpenAI-compatible implementations behind them, the prompt builders and response parsers of every judged
+// step, and the provider gates (content size, token limits, credits). The tools runner fronts this package;
+// the pipeline's policy layer stays free of LLM specifics.
 package analyzer
 
 import (
@@ -35,10 +34,10 @@ type TypeRef struct {
 	Description string
 }
 
-// ContentAnalyzer is the LLM analysis and judging seam the tools runner
-// holds; both client implementations satisfy it behind the model
-// catalog's capability gates.
-type ContentAnalyzer interface {
+// Analyzer is the document-analysis contract the tools runner holds: the passes that turn a document's
+// reduced text into its title, type, tags, people and language, behind the model catalog's capability
+// gates.
+type Analyzer interface {
 	// Analyze extracts title, document type, tags with details, people and
 	// language from the reduced text, against the offered type options and
 	// the existing-tag suggestions.
@@ -46,6 +45,12 @@ type ContentAnalyzer interface {
 	// AnalyzeDocType refines the document type from the text's head and
 	// tail, given the previous analysis pass.
 	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
+}
+
+// TagAdjudicator is the tag subsystem's judged-decisions contract for every pass whose answer comes from
+// a model. It is served by the single model configured under enricher.tag_adjudicator; the quality rubric
+// is not part of it.
+type TagAdjudicator interface {
 	// Adjudicate answers the same-intent tag pairs: one verdict per pair,
 	// with the direction when the verdict is same.
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
@@ -58,10 +63,6 @@ type ContentAnalyzer interface {
 	// JudgeTagConflicts arbitrates the compounds whose constituent verdicts disagree with the compound
 	// reading, choosing split, keep, or defer for each.
 	JudgeTagConflicts(ctx context.Context, candidates []TagConflictCandidate) ([]TagConflictResult, error)
-	// JudgeTagQuality considers the document text for the subject-matter criterion and the tag alone for
-	// the remaining criteria, answering the rubric and the judge's abstention. The dimension question is
-	// not asked here: the parts pass owns it and the gate stamps its verdict.
-	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
 	// JudgeTagTranslations returns each value's English canonical form, or the value unchanged when it is
 	// already English: the language guard's judged translation.
 	JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
@@ -79,8 +80,16 @@ type ContentAnalyzer interface {
 	// JudgeTagRelations gates fold proposals: it decides only whether the candidate and its store anchor are
 	// semantically related enough for a canonical-form judgment, never whether the fold itself is correct.
 	JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error)
-	// Name identifies the implementation.
-	Name() string
+}
+
+// TagQualityJudge is the tag quality rubric's judged contract, served by the model configured under the
+// enricher.tag_quality section. The dimension question belongs to the adjudicator's parts pass and is
+// not asked here.
+type TagQualityJudge interface {
+	// JudgeTagQuality considers the document text for the subject-matter criterion and the tag alone for
+	// the remaining criteria, answering the rubric and the judge's abstention. The dimension question is
+	// not asked here: the parts pass owns it and the gate stamps its verdict.
+	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
 }
 
 // AnalysisResult is one analysis pass's outcome: title, document type,
@@ -99,11 +108,20 @@ type AnalysisResult struct {
 	PassContext *json.RawMessage `json:"-"`
 }
 
-// NewContentAnalyzer builds the adapter the LLM configuration names:
-// anthropic maps to the Anthropic adapter, anything else to the
-// OpenAI-compatible one. The registry supplies the capability gates; the
-// adapters skip them when the model is not cataloged.
-func NewContentAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags int, reg *llm.Registry) (ContentAnalyzer, error) {
+// adapter is the constructible union of the three contracts: both client implementations satisfy every
+// one of them, so a single constructor can serve any role while each factory narrows the returned value
+// to the contract its role consumes.
+type adapter interface {
+	Analyzer
+	TagAdjudicator
+	TagQualityJudge
+}
+
+// newAdapter builds the client implementation the LLM configuration names: anthropic maps to the Anthropic
+// adapter, anything else to the OpenAI-compatible one. The registry supplies the capability gates; the
+// adapters skip them when the model is not cataloged. The prompt template and minimum tag count only feed
+// the analysis calls.
+func newAdapter(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags int, reg *llm.Registry) (adapter, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("registry is required for %q adapter", llmCfg.Adapter)
 	}
@@ -115,4 +133,34 @@ func NewContentAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *confi
 	default:
 		return NewLlmOpenAiCompatible(logger, cfg, llmCfg, caps, promptTemplate, minTags, reg)
 	}
+}
+
+// NewAnalyzer builds the document-analysis adapter the LLM configuration names, carrying the prompt
+// template and minimum tag count its calls render.
+func NewAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, promptTemplate string, minTags int, reg *llm.Registry) (Analyzer, error) {
+	a, err := newAdapter(logger, cfg, llmCfg, promptTemplate, minTags, reg)
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// NewTagAdjudicator builds the judged-decisions adapter the LLM configuration names; the analysis-only
+// prompt settings do not apply to this role.
+func NewTagAdjudicator(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, reg *llm.Registry) (TagAdjudicator, error) {
+	a, err := newAdapter(logger, cfg, llmCfg, "", 0, reg)
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// NewTagQualityJudge builds the quality-rubric adapter the LLM configuration names; the analysis-only
+// prompt settings do not apply to this role.
+func NewTagQualityJudge(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, reg *llm.Registry) (TagQualityJudge, error) {
+	a, err := newAdapter(logger, cfg, llmCfg, "", 0, reg)
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
 }

@@ -160,7 +160,7 @@ func TestPlanIdentity_JudgeFailureWarns(t *testing.T) {
 			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
 		},
 	})
-	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -266,7 +266,7 @@ func TestPlanIdentity_ConfirmedFoldAppliesWithoutPendingRows(t *testing.T) {
 	setUnexportedField(t, runner, "config", &config.Config{
 		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
 	})
-	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -343,7 +343,7 @@ func TestPlanIdentity_GateUnrelatedDropsFold(t *testing.T) {
 			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
 		},
 	})
-	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -443,7 +443,7 @@ func TestPlanIdentity_CachedGateUnrelatedSkipsJudge(t *testing.T) {
 			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
 		},
 	})
-	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -508,7 +508,7 @@ func TestPlanIdentity_CachedGateAnchorMismatchRejudges(t *testing.T) {
 			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
 		},
 	})
-	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -570,7 +570,7 @@ func TestPlanIdentity_DerivationalFoldResolvesOntoStoreNoun(t *testing.T) {
 	setUnexportedField(t, runner, "config", &config.Config{
 		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
 	})
-	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -633,14 +633,6 @@ type mockAdjudicator struct {
 	qualityCall     int
 	translationCall int
 	phraseFoldCall  int
-}
-
-func (m *mockAdjudicator) Analyze(_ context.Context, _ string, _ []analyzer.TypeRef, _ []analyzer.TypeRef, _ []string) (*analyzer.AnalysisResult, error) {
-	return nil, nil
-}
-
-func (m *mockAdjudicator) AnalyzeDocType(_ context.Context, _ *analyzer.AnalysisResult, _ string, _ []analyzer.TypeRef, _ analyzer.DocMetadata) (string, error) {
-	return "", nil
 }
 
 func (m *mockAdjudicator) Adjudicate(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
@@ -722,8 +714,6 @@ func (m *mockAdjudicator) JudgeTagPhraseFolds(ctx context.Context, candidates []
 	}
 	return nil, nil
 }
-
-func (m *mockAdjudicator) Name() string { return "mock-adjudicator" }
 
 type mockTagMatcher struct {
 	rankFn func(ctx context.Context, docId string, queries []string) ([]matcher.RankResult, error)
@@ -2465,7 +2455,7 @@ func TestApplyTagQuality_CreditErrorEscapes(t *testing.T) {
 
 func TestPlanIdentity_CreditErrorEscapes(t *testing.T) {
 	a, _, adj := newTestAdjudicator(t)
-	setUnexportedField(t, a.runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, a.runner, "tagAdjudicator", adj)
 	adj.identityFn = func(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
 		return nil, creditExhausted()
 	}
@@ -2491,7 +2481,7 @@ func TestPlanIdentity_CreditErrorEscapes(t *testing.T) {
 
 func TestIdentityAnswers_CreditErrorStopsRemainingBatches(t *testing.T) {
 	a, _, adj := newTestAdjudicator(t)
-	setUnexportedField(t, a.runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, a.runner, "tagAdjudicator", adj)
 	adj.identityFn = func(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
 		return nil, creditExhausted()
 	}
@@ -2523,7 +2513,7 @@ func TestIdentityAnswers_CreditErrorStopsRemainingBatches(t *testing.T) {
 func TestIdentityAnswers_PartialSalvage(t *testing.T) {
 	a, _, adj := newTestAdjudicator(t)
 	a.config.Enricher.TagAdjudicator.Llm = config.LlmConfig{Provider: "test", Model: "test-model"}
-	setUnexportedField(t, a.runner, "tagIdentityJudge", adj)
+	setUnexportedField(t, a.runner, "tagAdjudicator", adj)
 	var buf bytes.Buffer
 	a.logger = log.NewLoggerWithWriter(&buf)
 	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {

@@ -141,9 +141,12 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
   [semantic matching guide](../developer-guide/semantic-matching.md).
 - `tag_adjudicator` — optional LLM verdicts for tag identity and the language guard
   (`enabled` default `false`; `timeout` falls back to `contentanalyzer.timeout` when `0`;
-  an empty `provider`/`model` inherits the content analyzer's LLM at use time).
+  an empty `provider`/`model` inherits the content analyzer's LLM at startup). Setting
+  only one of `provider`/`model`, or enabling the section with no provider/model to
+  inherit, fails configuration load with an error naming the key.
 - `tag_quality` — the admission judge for newly emitted tags (`enabled` default `false`,
-  same timeout/LLM inheritance; the judge model should differ from the generator's).
+  same timeout/LLM inheritance and startup validation; the judge model should differ from
+  the generator's).
 - `tag_reconcile` — scheduled re-adjudication: `enabled` (`false`), `report_only`
   (`true` — the first run is always report-only), `interval` (days, `7`), `time`
   (`02:00`), `max_rejudge` (`200`), `max_retag` (`1000`), `dead_tag_grace_days` (`7` —

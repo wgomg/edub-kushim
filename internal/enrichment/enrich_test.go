@@ -169,48 +169,6 @@ func (r *suggestionRecorder) AnalyzeDocType(context.Context, *analyzer.AnalysisR
 	return "", nil
 }
 
-func (r *suggestionRecorder) Adjudicate(context.Context, []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagParts(context.Context, []string) ([]analyzer.TagPartResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagCompounds(context.Context, []string) ([]analyzer.TagCompoundResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagConflicts(context.Context, []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagQuality(context.Context, string, []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagIdentity(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagRelations(context.Context, []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagTranslations(context.Context, []string) ([]analyzer.TagTranslationResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagAudit(context.Context, string, []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) JudgeTagPhraseFolds(context.Context, []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
-	return nil, nil
-}
-
-func (r *suggestionRecorder) Name() string { return "suggestion-recorder" }
-
 // TestEnrich_SuggestionInjectionBar drives one enrichment pass to the
 // analysis seam and asserts what the matcher suggestions the injection bar
 // let through, including the designed empty result when nothing clears it.

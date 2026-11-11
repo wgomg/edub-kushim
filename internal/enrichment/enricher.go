@@ -56,12 +56,11 @@ type Enricher struct {
 	mu        sync.Mutex
 }
 
-// NewEnricher wires the coordinator: the config, the database, the
-// curation tag service every tag write goes through, and the matcher. It
-// builds the tools runner (reduction, analysis, matching) and the
-// admission adjudicator from the same parts.
+// NewEnricher wires the coordinator: the config, the database, the curation tag service every tag write
+// goes through, and the matcher. It builds the tools runner (reduction, analysis, matching and tag judging)
+// and the admission adjudicator from the same parts.
 func NewEnricher(cfg *config.Config, logger *log.Logger, client *database.Client, tag *curation.Tag, matcher matcher.Matcher) *Enricher {
-	runner := tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, matcher,
+	runner := tools.NewRunnerWithMatcher(logger, cfg, []string{"textreducer", "contentanalyzer", "tagjudge", "tagmatcher"}, matcher,
 		textreducer.NewReductionCache(logger, client, cfg))
 	return &Enricher{
 		config:    cfg,

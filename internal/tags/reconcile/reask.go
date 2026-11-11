@@ -56,7 +56,7 @@ func (r *ReaskRunner) Reask(ctx context.Context, budget int) (*ReaskReport, erro
 		return report, nil
 	}
 	cfg := r.getConfig()
-	if !cfg.Enricher.TagAdjudicator.Enabled || !r.runner.HasTagAdjudicator() {
+	if !r.runner.HasTagAdjudicator() {
 		return report, nil
 	}
 

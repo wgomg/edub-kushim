@@ -40,8 +40,9 @@ func newIdentityResolver(t *testing.T, adjudicatorEnabled bool) (*IdentityResolv
 			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
 		},
 	})
-	setUnexportedField(t, runner, "tagAdjudicator", adj)
-	setUnexportedField(t, runner, "tagIdentityJudge", adj)
+	if adjudicatorEnabled {
+		setUnexportedField(t, runner, "tagAdjudicator", adj)
+	}
 
 	cfg := &config.Config{
 		Enricher: config.EnricherConfig{

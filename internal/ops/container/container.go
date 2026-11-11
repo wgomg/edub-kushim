@@ -192,7 +192,7 @@ func (c *Container) GetMatcherClient() *matcher.MatcherClient {
 	return c.matcherClient
 }
 
-// GetTagToolsRunner returns the text reducer, content analyzer, and tag matcher tools over the matcher
+// GetTagToolsRunner returns the text reducer, the tag judges, and the tag matcher tools over the matcher
 // client, with reduction caching bound to the database. When the database is unreachable it logs and
 // builds the runner without the cache; the tag pass fails on its own database access anyway.
 func (c *Container) GetTagToolsRunner() *tools.Runner {
@@ -205,7 +205,7 @@ func (c *Container) GetTagToolsRunner() *tools.Runner {
 		} else {
 			reductionCache = textreducer.NewReductionCache(c.logger, client, cfg)
 		}
-		c.tagToolsRunner = tools.NewRunnerWithMatcher(c.logger, cfg, []string{"textreducer", "contentanalyzer", "tagmatcher"}, c.GetMatcherClient(), reductionCache)
+		c.tagToolsRunner = tools.NewRunnerWithMatcher(c.logger, cfg, []string{"textreducer", "tagjudge", "tagmatcher"}, c.GetMatcherClient(), reductionCache)
 	}
 	return c.tagToolsRunner
 }

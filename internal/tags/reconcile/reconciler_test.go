@@ -1234,7 +1234,7 @@ func TestSweepPromotedTags_MassDecayGraceAndFloor(t *testing.T) {
 
 // fakeQualityJudge answers the rubric and the parts pass so the re-judge paths run without an LLM.
 type fakeQualityJudge struct {
-	analyzer.ContentAnalyzer
+	analyzer.TagAdjudicator
 	quality []analyzer.TagQualityResult
 }
 
@@ -1251,7 +1251,7 @@ func (f *fakeQualityJudge) JudgeTagParts(_ context.Context, values []string) ([]
 }
 
 // newQualityJudgeReconciler wires a reconciler whose runner answers through judge.
-func newQualityJudgeReconciler(t *testing.T, client *database.Client, judge analyzer.ContentAnalyzer) *Reconciler {
+func newQualityJudgeReconciler(t *testing.T, client *database.Client, judge *fakeQualityJudge) *Reconciler {
 	t.Helper()
 	logger := testutil.NewTestLogger()
 	runner := &tools.Runner{}

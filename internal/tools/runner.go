@@ -52,11 +52,10 @@ type Runner struct {
 	thumbnailer       thumbnail.Thumbnailer
 	documentConverter converter.DocumentConverter
 	tagMatcher        matcher.Matcher
-	contentAnalyzer   analyzer.ContentAnalyzer
-	tagAdjudicator    analyzer.ContentAnalyzer
-	tagQualityJudge   analyzer.ContentAnalyzer
-	tagIdentityJudge  analyzer.ContentAnalyzer
-	fallbackAnalyzers []analyzer.ContentAnalyzer
+	contentAnalyzer   analyzer.Analyzer
+	tagAdjudicator    analyzer.TagAdjudicator
+	tagQualityJudge   analyzer.TagQualityJudge
+	fallbackAnalyzers []analyzer.Analyzer
 	fallbackMeta      []fallbackMeta
 	textReducer       textreducer.TextReducer
 	reductionCache    *textreducer.ReductionCache
@@ -154,10 +153,11 @@ func runWithTimeout[T any](ctx context.Context, fn func() (T, error)) (T, error)
 
 // NewRunner instantiates the adapters for the named tools from cfg. The names are the capability keys
 // below ("textextractor", "ocr", "converter", "pdfoptimizer", "thumbnail", "textreducer", "contentanalyzer",
-// "tagmatcher"); an unknown name is logged and skipped. A requested adapter whose constructor fails
-// is logged with its cause and left nil, so the later "not configured" failure traces back to a cause
-// named here. The provider and model catalogs are loaded from the config directory; a load failure is
-// logged, leaving the analyzer adapters unconfigured.
+// "tagjudge", "tagmatcher"); an unknown name is logged and skipped. "contentanalyzer" builds the document
+// analyzer and its fallbacks; "tagjudge" builds the tag adjudicator and the quality judge. A requested
+// adapter whose constructor fails is logged with its cause and left nil, so the later "not configured"
+// failure traces back to a cause named here. The provider and model catalogs are loaded from the config
+// directory; a load failure is logged, leaving the analyzer adapters unconfigured.
 func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 	r := &Runner{logger: logger, config: cfg}
 
@@ -239,42 +239,42 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 			}
 			r.textReducer = tr
 		case "contentanalyzer":
-			ca, caErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, reg)
+			ca, caErr := analyzer.NewAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &cfg.Enricher.ContentAnalyzer.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, reg)
 			if caErr != nil {
 				logger.Error("", "create content analyzer: %v", caErr)
 			}
 			r.contentAnalyzer = ca
-			if cfg.Enricher.TagAdjudicator.Enabled {
-				adjLlm := cfg.ResolvedAdjudicatorLlm()
-				adj, adjErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, reg)
-				if adjErr != nil {
-					logger.Error("", "create tag adjudicator: %v", adjErr)
-				} else {
-					r.tagAdjudicator = adj
-					r.tagIdentityJudge = adj
-				}
-			}
-			if cfg.Enricher.TagQuality.Enabled {
-				qLlm := cfg.ResolvedQualityLlm()
-				q, qErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, cfg.Enricher.ContentAnalyzer.PromptTemplate, 0, reg)
-				if qErr != nil {
-					logger.Error("", "create tag quality judge: %v", qErr)
-				} else {
-					r.tagQualityJudge = q
-				}
-			}
 			for i := range cfg.Enricher.ContentAnalyzer.Fallbacks {
 				fb := &cfg.Enricher.ContentAnalyzer.Fallbacks[i]
 				if !fb.Enabled {
 					continue
 				}
-				fbCa, fbErr := analyzer.NewContentAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, reg)
+				fbCa, fbErr := analyzer.NewAnalyzer(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.ContentAnalyzer.Timeout) * time.Second}, &fb.Llm, cfg.Enricher.ContentAnalyzer.PromptTemplate, cfg.Enricher.ContentAnalyzer.MinTags, reg)
 				if fbErr != nil {
 					logger.Error("", "create fallback content analyzer: %v", fbErr)
 					continue
 				}
 				r.fallbackAnalyzers = append(r.fallbackAnalyzers, fbCa)
 				r.fallbackMeta = append(r.fallbackMeta, fallbackMeta{Provider: fb.Llm.Provider, Model: fb.Llm.Model})
+			}
+		case "tagjudge":
+			if cfg.Enricher.TagAdjudicator.Enabled {
+				adjLlm := cfg.ResolvedAdjudicatorLlm()
+				adj, adjErr := analyzer.NewTagAdjudicator(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, reg)
+				if adjErr != nil {
+					logger.Error("", "create tag adjudicator: %v", adjErr)
+				} else {
+					r.tagAdjudicator = adj
+				}
+			}
+			if cfg.Enricher.TagQuality.Enabled {
+				qLlm := cfg.ResolvedQualityLlm()
+				q, qErr := analyzer.NewTagQualityJudge(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, reg)
+				if qErr != nil {
+					logger.Error("", "create tag quality judge: %v", qErr)
+				} else {
+					r.tagQualityJudge = q
+				}
 			}
 		case "tagmatcher":
 			// no adapter to build: the matcher is injected by NewRunnerWithMatcher
@@ -692,32 +692,26 @@ func (r *Runner) JudgeTagPhraseFolds(ctx context.Context, candidates []analyzer.
 	})
 }
 
-// HasTagIdentityJudge reports whether a tag identity judge is configured.
-func (r *Runner) HasTagIdentityJudge() bool {
-	return r.tagIdentityJudge != nil
-}
-
-// JudgeTagIdentity lets the LLM judge the identity of candidate tags
-// against the existing vocabulary. Returns an error when no judge was
-// configured.
+// JudgeTagIdentity lets the LLM adjudicator judge the identity of candidate tags against the existing
+// vocabulary. Returns an error when no adjudicator was configured.
 func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
-	if r.tagIdentityJudge == nil {
-		return nil, fmt.Errorf("tag identity judge not configured")
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
 	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagIdentityResult, error) {
-		return r.tagIdentityJudge.JudgeTagIdentity(ctx, candidates)
+		return r.tagAdjudicator.JudgeTagIdentity(ctx, candidates)
 	})
 }
 
-// JudgeTagRelations gates fold proposals against the existing vocabulary through the same judge the
+// JudgeTagRelations gates fold proposals against the existing vocabulary through the same adjudicator the
 // identity step uses, so both share a single adjudicator configuration and timeout; it returns an error
-// when no judge was configured.
+// when no adjudicator was configured.
 func (r *Runner) JudgeTagRelations(ctx context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
-	if r.tagIdentityJudge == nil {
-		return nil, fmt.Errorf("tag relation gate not configured")
+	if r.tagAdjudicator == nil {
+		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
 	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagRelationResult, error) {
-		return r.tagIdentityJudge.JudgeTagRelations(ctx, candidates)
+		return r.tagAdjudicator.JudgeTagRelations(ctx, candidates)
 	})
 }
 

@@ -15,7 +15,7 @@ adding a new model/provider.
 ## Table of contents
 
 1. [Orientation](#1-orientation)
-2. [The ContentAnalyzer interface](#2-the-contentanalyzer-interface)
+2. [The analyzer contracts](#2-the-analyzer-contracts)
 3. [The prompt contract](#3-the-prompt-contract)
 4. [The Anthropic adapter](#4-the-anthropic-adapter)
 5. [The OpenAI-compatible adapter](#5-the-openai-compatible-adapter)
@@ -37,7 +37,7 @@ pieces:
 
 | Piece | Files | Role |
 |---|---|---|
-| `ContentAnalyzer` interface | `analyzer/adapter.go` | the capability contract |
+| `Analyzer` / `TagAdjudicator` / `TagQualityJudge` interfaces | `analyzer/adapter.go` | the three role contracts (analysis, judged decisions, quality rubric) |
 | Anthropic adapter | `analyzer/llm_anthropic.go` | Claude via `POST /messages` |
 | OpenAI-compatible adapter | `analyzer/openai_compatible.go` | anything with a `/chat/completions` API |
 | Prompt, parse and gate logic | `analyzer/prompt.go` · `analyzer/facets.go` · `analyzer/gates.go` · the per-step files | system prompt, template, JSON cleaning, pre-flight errors, judged-step prompts/parsers |
@@ -53,9 +53,9 @@ the whole batch pauses (§10).
 
 ---
 
-## 2. The ContentAnalyzer interface
+## 2. The analyzer contracts
 
-`internal/llm/analyzer/adapter.go:33-82`:
+`internal/llm/analyzer/adapter.go:32-109`:
 
 ```go
 type TypeRef struct {
@@ -63,16 +63,25 @@ type TypeRef struct {
   Description string
 }
 
-type ContentAnalyzer interface {
+type Analyzer interface {
   Analyze(ctx context.Context, text string, docTypes []TypeRef, peopleTypes []TypeRef, tagSuggestions []string) (*AnalysisResult, error)
   AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
+}
+
+type TagAdjudicator interface {
   Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
   JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error)
   JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
-  JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
+  JudgeTagConflicts(ctx context.Context, candidates []TagConflictCandidate) ([]TagConflictResult, error)
+  JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
+  JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error)
+  JudgeTagPhraseFolds(ctx context.Context, candidates []TagPhraseFoldCandidate) ([]TagPhraseFoldResult, error)
   JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
   JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error)
-  Name() string
+}
+
+type TagQualityJudge interface {
+  JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
 }
 
 type AnalysisResult struct {
@@ -87,6 +96,12 @@ type AnalysisResult struct {
   PassContext *json.RawMessage `json:"-"`
 }
 ```
+
+The runner holds one value per role: `Analyzer` for the analysis calls, `TagAdjudicator`
+for the pair verdict and every judged pass served by the model configured under
+`enricher.tag_adjudicator`, and `TagQualityJudge` for the quality rubric under
+`enricher.tag_quality`. Both client implementations satisfy all three. The bullets
+below describe the methods and result fields individually.
 
 - `Analyze` — the main call: full text (already reduced), the known document
   types and people types (to constrain the answer), and tag suggestions (the
@@ -170,11 +185,15 @@ type AnalysisResult struct {
   per-document admission tallies (assignments, births, promotions, rejects,
   defers, composition dispositions) the batch settle bookend aggregates.
 
-The factory (`adapter.go:84-100`) requires the model registry, looks up the
-configured provider/model capabilities, and switches on `Llm.Adapter`:
-`"anthropic"` → the Anthropic adapter, anything else → the
-OpenAI-compatible adapter (the default branch — unknown adapter names
-silently mean "openai-compatible").
+The factories (`adapter.go:124-166`) require the model registry, look up the
+configured provider/model capabilities, and share one adapter switch on
+`Llm.Adapter`: `"anthropic"` → the Anthropic adapter, anything else → the
+OpenAI-compatible adapter (the default branch — unknown adapter names silently
+mean "openai-compatible"). `NewAnalyzer` takes the prompt template and minimum
+tag count the analysis calls render and builds the Runner's `contentanalyzer`
+capability (including its fallbacks); `NewTagAdjudicator` and
+`NewTagQualityJudge` build the two judged roles for the Runner's `tagjudge`
+capability and take no analysis prompt settings.
 
 ---
 
@@ -530,10 +549,10 @@ layer for the four judged steps (below). Timeout enforcement comes from
 adapters' `http.Client` deliberately has no timeout of its own.
 
 **Provider fallback** — when `enricher.contentanalyzer.fallbacks` is configured
-(a list of `{enabled, llm}` blocks), the Runner builds one `ContentAnalyzer`
-per **enabled** entry (same factory, same prompt template) and keeps them in
+(a list of `{enabled, llm}` blocks), the Runner builds one `Analyzer`
+per **enabled** entry (`NewAnalyzer`, same prompt settings) and keeps them in
 list order. `AnalyzeContent` and `AnalyzeDocType` classify each primary error
-with `isProviderError` (`runner.go:668-675`): anything that is *not* a
+with `isProviderError` (`runner.go:718-725`): anything that is *not* a
 request-side or lifecycle failure — i.e. not `ContentTooLargeError`,
 `TokenLimitError`, `context.Canceled`, or `context.DeadlineExceeded` — walks
 the fallback chain in order, retrying the same request through each enabled
@@ -879,7 +898,7 @@ for i := range 2 {
 
 ## 11. Configuration knobs
 
-Under `enricher` (`internal/config/config.go:164-195`):
+Under `enricher` (`internal/config/config.go:366-377`):
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -902,11 +921,18 @@ Under `enricher` (`internal/config/config.go:164-195`):
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
 | `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; `no_anchor_similarity = 0.60` is an internal pinned constant, and the promotion floor is `enricher.tag_reconcile.recurrence_floor` (default 10 live documents) |
 
-Validation (`finalizeConfig`, `config.go:447-460`): when content analysis is
+Validation (`finalizeConfig`, `config.go:804-933`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three
-separate errors, so setup can't silently half-configure. `Reasoning` is
-programmatic-only (`yaml:"-"`); the reasoning behavior otherwise comes from the
-catalog's `disable_reasoning` flag and `reasoning_efforts` list.
+separate errors, so setup can't silently half-configure. The two judged
+sections are validated when enabled: a stanza naming only one of
+`provider`/`model` is rejected (the all-or-nothing resolver would otherwise
+silently fall back to the analyzer's whole LLM), the resolved provider and
+model are required, and `request_delay` must be 0–60. The judged `adapter`
+stays optional — the factory's default (anything non-`anthropic` →
+OpenAI-compatible) applies, so a section that sets only provider/model keeps
+loading. `Reasoning` is programmatic-only (`yaml:"-"`); the reasoning behavior
+otherwise comes from the catalog's `disable_reasoning` flag and
+`reasoning_efforts` list.
 
 ---
 
