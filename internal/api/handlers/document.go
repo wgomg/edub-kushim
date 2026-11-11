@@ -1170,15 +1170,17 @@ type PersonListResponse struct {
 // name-searched, the MatchedAlias that the search text matched anywhere in the name; document surfaces
 // leave both empty.
 type TagResponse struct {
-	ID            int64              `json:"id"`
-	Name          string             `json:"name"`
-	DocumentCount int64              `json:"document_count"`
-	Promoted      bool               `json:"promoted"`
-	Seeded        bool               `json:"seeded"`
-	Compound      bool               `json:"compound,omitempty"`
-	CreatedAt     *time.Time         `json:"created_at,omitempty"`
-	Aliases       []TagAliasResponse `json:"aliases,omitempty"`
-	MatchedAlias  string             `json:"matched_alias,omitempty"`
+	ID                   int64              `json:"id"`
+	Name                 string             `json:"name"`
+	DocumentCount        int64              `json:"document_count"`
+	Promoted             bool               `json:"promoted"`
+	Seeded               bool               `json:"seeded"`
+	Compound             bool               `json:"compound,omitempty"`
+	StandingSource       string             `json:"standing_source,omitempty"`
+	CriteriaDisagreement string             `json:"criteria_disagreement,omitempty"`
+	CreatedAt            *time.Time         `json:"created_at,omitempty"`
+	Aliases              []TagAliasResponse `json:"aliases,omitempty"`
+	MatchedAlias         string             `json:"matched_alias,omitempty"`
 }
 
 // TagAliasResponse is one recorded alias of a tag: the alternate spelling of a name, and whether the

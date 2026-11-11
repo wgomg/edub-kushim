@@ -216,6 +216,7 @@ stateDiagram-v2
     Provisional --> Promoted : promotion — admission evidence; influence granted
     Promoted --> Demoted : demotion — influence revoked
     Demoted --> Promoted : re-admission
+    Demoted --> Provisional : restore — rule-driven demotion cleared
     Provisional --> Blocked : operator ban — name must never return
     Blocked --> [*]
     note right of Demoted : existence retained, influence revoked
@@ -232,7 +233,12 @@ stateDiagram-v2
   is not a value once its decision has stood past the retention window; a value with no
   live extension is removed by the dead-tag sweep instead. Neither captures the name in
   the blocklist — rebirth is suppressed by the versioned verdict cache until a
-  criteria-version bump re-judges it.
+  criteria-version bump re-judges it. Operator-accepted rows are never removed.
+- **Operator adjudication** (definition §8 item 13) outranks rule re-application: a standing
+  an operator granted or accepted survives a criteria-version re-judgment — the run records
+  the fresh verdict and reports the disagreement but revokes nothing — mass decay still
+  applies, an operator separation is terminal across rule-set versions, and a rule-driven
+  demotion can be restored to provisional standing for a fresh judgment.
 
 ## 5. Standing duties
 

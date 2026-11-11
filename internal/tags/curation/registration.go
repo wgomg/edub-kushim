@@ -14,12 +14,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// Create plans and applies registrations for the names in one
-// transaction: conflicts resolve to the existing tag, aliases apply to
-// their canonical, and new tags are born (provisional where the identity
-// machinery flags them) and embedded into the matcher store.
-func (s *Tag) Create(ctx context.Context, names []string) ([]types.CreateResult[database.Tag], error) {
-	return s.create(ctx, names, false)
+// Create plans and applies registrations for the names in one transaction: conflicts resolve to the
+// existing tag, aliases apply to their canonical, and new tags are born (provisional where the identity
+// machinery flags them) and embedded into the matcher store. standingSource records the provenance of any
+// promotion the registration performs: an operator-created value keeps its standing through any later
+// criteria-version re-judgments, an automatic one does not.
+func (s *Tag) Create(ctx context.Context, names []string, standingSource string) ([]types.CreateResult[database.Tag], error) {
+	return s.create(ctx, names, false, standingSource)
 }
 
 // CreateAndUnblock is Create plus clearing the deleted-tag blocklist
@@ -27,7 +28,7 @@ func (s *Tag) Create(ctx context.Context, names []string) ([]types.CreateResult[
 // cleared-blocklist path keeps working. The blocklist re-check inside the
 // plan is exempted for the same reason.
 func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]types.CreateResult[database.Tag], error) {
-	results, err := s.create(ctx, names, true)
+	results, err := s.create(ctx, names, true, tags.StandingOperator)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +45,7 @@ func (s *Tag) CreateAndUnblock(ctx context.Context, names []string) ([]types.Cre
 	return results, nil
 }
 
-func (s *Tag) create(ctx context.Context, names []string, ignoreBlocklist bool) ([]types.CreateResult[database.Tag], error) {
+func (s *Tag) create(ctx context.Context, names []string, ignoreBlocklist bool, standingSource string) ([]types.CreateResult[database.Tag], error) {
 	plan, err := s.buildPlan(ctx, s.client.Queries, names, ignoreBlocklist)
 	if err != nil {
 		return nil, err
@@ -57,7 +58,7 @@ func (s *Tag) create(ctx context.Context, names []string, ignoreBlocklist bool) 
 	defer tx.Rollback()
 
 	txQ := s.client.Queries.WithTx(tx)
-	results, newNames, err := s.CreatePlannedTx(ctx, txQ, plan, false)
+	results, newNames, err := s.CreatePlannedTx(ctx, txQ, plan, false, standingSource)
 	if err != nil {
 		return nil, err
 	}
@@ -121,12 +122,12 @@ func (s *Tag) storeView(ctx context.Context, q *database.Queries, names []string
 	return view, nil
 }
 
-// CreatePlannedTx applies a planned registration set inside the caller's
-// transaction: it resolves each disposition against the live store, writes
-// the plan's aliases, records the plan's identity evidence, and promotes
-// non-provisional new tags unless quarantined. It returns the per-
-// registration results and the names it created.
-func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tags.Plan, quarantined bool) ([]types.CreateResult[database.Tag], []string, error) {
+// CreatePlannedTx applies a planned registration set inside the caller's transaction: it resolves each
+// disposition against the live store, writes the plan's aliases, records identity evidence, and promotes
+// non-provisional new tags unless quarantined, recording standingSource as the promotion provenance
+// (operator for an explicit create, auto for the enrichment path). It returns the registration results
+// and the names it created.
+func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tags.Plan, quarantined bool, standingSource string) ([]types.CreateResult[database.Tag], []string, error) {
 	results := make([]types.CreateResult[database.Tag], len(plan.Registrations))
 	var newNames []string
 	var promoteIDs []int64
@@ -270,7 +271,10 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 	}
 
 	if !quarantined && len(promoteIDs) > 0 {
-		if _, err := q.PromoteTags(ctx, promoteIDs); err != nil {
+		if _, err := q.PromoteTags(ctx, database.PromoteTagsParams{
+			StandingSource: standingSource,
+			TagIds:         promoteIDs,
+		}); err != nil {
 			return nil, nil, errs.FromDB(err, "promote new tags")
 		}
 	}

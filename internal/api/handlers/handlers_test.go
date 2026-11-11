@@ -535,13 +535,13 @@ func TestTagCrud(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("create tag", func(t *testing.T) {
-		r, err := env.tagSvc.Create(ctx, []string{"test-tag-1"})
+		r, err := env.tagSvc.Create(ctx, []string{"test-tag-1"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create")
 		testutil.AssertEqual(t, r[0].Status, itypes.Created, "created")
 	})
 
 	t.Run("duplicate tag", func(t *testing.T) {
-		r, err := env.tagSvc.Create(ctx, []string{"test-tag-1"})
+		r, err := env.tagSvc.Create(ctx, []string{"test-tag-1"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "duplicate")
 		testutil.AssertEqual(t, r[0].Status, itypes.Conflict, "conflict")
 	})
@@ -2869,7 +2869,7 @@ func TestAddDocumentTag_ClearsOrphanMark(t *testing.T) {
 func TestListProvisional(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	// Create a tag and manually set promoted_at = NULL to make it provisional.
 	tagID := database.MustCreateTag(t, env.client.Queries, "prov-handler-tag")
@@ -2906,7 +2906,7 @@ func TestListProvisional(t *testing.T) {
 func TestListProvisionalIdentityHold(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "hold-anchor-tag")
 	candidateID := database.MustCreateTag(t, env.client.Queries, "hold-candidate-tag")
@@ -2954,7 +2954,7 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 func TestListProvisionalComposition(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	heldID := database.MustCreateTag(t, env.client.Queries, "world war 2")
 	degradedID := database.MustCreateTag(t, env.client.Queries, "degraded split compound")
@@ -2984,7 +2984,7 @@ func TestListProvisionalComposition(t *testing.T) {
 			CriteriaVersion: analyzer.TagSplitVersion,
 		},
 	}}
-	_, _, err = env.tagSvc.CreatePlannedTx(ctx, env.client.WithTx(tx), plan, false)
+	_, _, err = env.tagSvc.CreatePlannedTx(ctx, env.client.WithTx(tx), plan, false, "auto")
 	testutil.AssertNoError(t, err, "write composition events")
 	testutil.AssertNoError(t, tx.Commit(), "commit composition events")
 
@@ -3023,7 +3023,7 @@ func TestListProvisionalComposition(t *testing.T) {
 func TestListProvisionalFilters(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "prov-filter-doc")
 
@@ -3261,9 +3261,9 @@ func TestListProvisionalFilters(t *testing.T) {
 func TestTagListCreatedAt(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
-	_, err := env.tagSvc.Create(ctx, []string{"created at tag"})
+	_, err := env.tagSvc.Create(ctx, []string{"created at tag"}, tags.StandingAuto)
 	testutil.AssertNoError(t, err, "create")
 
 	w := rec()
@@ -3316,7 +3316,7 @@ func TestTagListCreatedAt(t *testing.T) {
 func TestListProvisionalSortOrder(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "prov-sort-doc")
 	seed := func(name, createdAt string) {
@@ -3369,7 +3369,7 @@ func TestListProvisionalSortOrder(t *testing.T) {
 // as compound and a single word does not, so the split actions can gate on it.
 func TestTagListCompoundFlag(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "compound flag doc")
 	for _, name := range []string{"compound flag value", "solitude"} {
@@ -3404,7 +3404,7 @@ func TestTagListCompoundFlag(t *testing.T) {
 func TestListAuditFlagsCarriesDocumentUUID(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "audit-uuid-doc")
 	var wantUUID string
@@ -3439,7 +3439,7 @@ func TestListAuditFlagsCarriesDocumentUUID(t *testing.T) {
 func TestPromoteTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	t.Run("promote provisional tag", func(t *testing.T) {
 		// Create a tag and set promoted_at = NULL to make it provisional.
@@ -3456,7 +3456,7 @@ func TestPromoteTag(t *testing.T) {
 
 	t.Run("already promoted returns 409", func(t *testing.T) {
 		// a base-form name is not flagged by M2 and promotes at birth
-		results, err := env.tagSvc.Create(ctx, []string{"promote-handler"})
+		results, err := env.tagSvc.Create(ctx, []string{"promote-handler"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create")
 		tagID := results[0].Entity.ID
 
@@ -3487,7 +3487,7 @@ func TestPromoteTag(t *testing.T) {
 func TestDemoteTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	demote := func(id string) *httptest.ResponseRecorder {
 		w := rec()
@@ -3544,7 +3544,7 @@ func TestDemoteTag(t *testing.T) {
 
 func TestReevaluateIdentity(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	type reevaluateResponse struct {
 		BatchID       string `json:"batch_id"`
@@ -3581,7 +3581,7 @@ func TestTagSiblingsEndpoint(t *testing.T) {
 	if _, err := env.client.DB().ExecContext(ctx, "DELETE FROM tag_measurement"); err != nil {
 		t.Fatalf("clear measurement journal: %v", err)
 	}
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	type reading struct {
 		A    string `json:"a"`
@@ -3749,7 +3749,7 @@ func TestBatchOverviewNotFound(t *testing.T) {
 func TestFoldTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	fold := func(body FoldTagRequest) *httptest.ResponseRecorder {
 		w := rec()
@@ -3824,7 +3824,7 @@ func TestFoldTag(t *testing.T) {
 func TestRetireTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	retire := func(id string) *httptest.ResponseRecorder {
 		w := rec()
@@ -3877,7 +3877,7 @@ func TestRetireTag(t *testing.T) {
 func TestAcceptTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	accept := func(id string) *httptest.ResponseRecorder {
 		w := rec()
@@ -3971,7 +3971,7 @@ func TestAcceptTag(t *testing.T) {
 func TestSeparateTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	separate := func(id string) *httptest.ResponseRecorder {
 		w := rec()
@@ -4055,7 +4055,7 @@ func TestSeparateTag(t *testing.T) {
 func TestCompositionDecision(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	decide := func(id string, body CompositionDecisionRequest) *httptest.ResponseRecorder {
 		w := rec()
@@ -4152,7 +4152,7 @@ func TestCompositionDecision(t *testing.T) {
 func TestSplitTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	split := func(body SplitTagRequest) *httptest.ResponseRecorder {
 		w := rec()
@@ -4215,7 +4215,7 @@ func TestSplitTag(t *testing.T) {
 // answers 204 while dropping it, a second revert answers 404, and a blank name answers 400.
 func TestSplitRuleHandlers(t *testing.T) {
 	env := newHandlerTestEnv(t)
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "split rule handler compound")
 	w := rec()
@@ -4281,7 +4281,7 @@ func TestSplitRuleHandlers(t *testing.T) {
 func TestRejudgeTag(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	type rejudgeResponse struct {
 		BatchID       string `json:"batch_id"`
@@ -4383,7 +4383,7 @@ func TestRejudgeTag(t *testing.T) {
 func TestListProvisionalStateFilter(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "state filter anchor")
 	docID := database.CreateUniqueDocument(t, env.client.Queries, "state filter doc")
@@ -4459,7 +4459,7 @@ func TestListProvisionalStateFilter(t *testing.T) {
 		Reason:          tags.CompositionReasonSplitDefer,
 		CriteriaVersion: analyzer.TagSplitVersion,
 	}}}
-	_, _, err = env.tagSvc.CreatePlannedTx(ctx, env.client.WithTx(tx), plan, false)
+	_, _, err = env.tagSvc.CreatePlannedTx(ctx, env.client.WithTx(tx), plan, false, "auto")
 	testutil.AssertNoError(t, err, "write composition events")
 	testutil.AssertNoError(t, tx.Commit(), "commit composition events")
 
@@ -4606,7 +4606,7 @@ func TestListProvisionalStateFilter(t *testing.T) {
 func TestListProvisionalCompositionAction(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	cases := []struct {
 		name        string
@@ -4663,7 +4663,7 @@ func TestListProvisionalCompositionAction(t *testing.T) {
 func TestTagListAliases(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	database.MustCreateTag(t, env.client.Queries, "alias list canonical")
 	database.MustCreateTag(t, env.client.Queries, "alias list loser")
@@ -4745,7 +4745,7 @@ func TestTagListAliases(t *testing.T) {
 func TestRemoveAliasEndpoint(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	remove := func(name string) *httptest.ResponseRecorder {
 		w := rec()
@@ -4796,7 +4796,7 @@ func TestRemoveAliasEndpoint(t *testing.T) {
 func TestPromoteAliasEndpoint(t *testing.T) {
 	env := newHandlerTestEnv(t)
 	ctx := context.Background()
-	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, env.logger)
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
 
 	promote := func(name string) *httptest.ResponseRecorder {
 		w := rec()

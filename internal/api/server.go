@@ -275,7 +275,7 @@ func registerRoutes(
 
 	taskHandler := handlers.NewTaskHandler(services, client, logger, getConfig)
 
-	tagHandler := handlers.NewTagHandler(tag, tagIdentity, tagAudit, tagRejudge, logger)
+	tagHandler := handlers.NewTagHandler(tag, tagIdentity, tagAudit, tagRejudge, getConfig, logger)
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
 	mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(http.HandlerFunc(tagHandler.ListDeleted)))
 	mux.Handle("GET /api/v1/tags/provisional", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListProvisional)))
@@ -302,6 +302,8 @@ func registerRoutes(
 	mux.Handle("POST /api/v1/tags/{id}/composition", RequireRole(editor...)(http.HandlerFunc(tagHandler.CompositionDecision)))
 	mux.Handle("POST /api/v1/tags/{id}/retire", RequireRole(editor...)(http.HandlerFunc(tagHandler.RetireTag)))
 	mux.Handle("POST /api/v1/tags/{id}/accept", RequireRole(editor...)(http.HandlerFunc(tagHandler.AcceptTag)))
+	mux.Handle("POST /api/v1/tags/{id}/restore", RequireRole(editor...)(http.HandlerFunc(tagHandler.RestoreTag)))
+	mux.Handle("POST /api/v1/tags/restore-verdict-demoted", RequireRole(editor...)(http.HandlerFunc(tagHandler.RestoreVerdictDemoted)))
 	mux.Handle("POST /api/v1/tags/{id}/separate", RequireRole(editor...)(http.HandlerFunc(tagHandler.SeparateTag)))
 	mux.Handle("POST /api/v1/tags/{id}/rejudge", RequireRole(editor...)(http.HandlerFunc(tagHandler.RejudgeTag)))
 

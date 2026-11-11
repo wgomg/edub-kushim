@@ -61,3 +61,25 @@ func (s *TagRejudge) Enqueue(ctx context.Context, spec task.BatchSpec, tagID int
 	}
 	return result.BatchID, false, nil
 }
+
+// EnqueueMany queues a re-judge per tag in a single batch and reports alreadyQueued when every requested
+// tag already has live work for the scope; the dedup index decides per task, so a partially covered batch
+// still creates the missing ones.
+func (s *TagRejudge) EnqueueMany(ctx context.Context, spec task.BatchSpec, tagIDs []int64, scope tags.RejudgeScope) (batchID string, alreadyQueued bool, err error) {
+	specs := make([]task.TaskSpec, 0, len(tagIDs))
+	for _, id := range tagIDs {
+		tagSpecs, err := RejudgeSpecs(id, scope)
+		if err != nil {
+			return "", false, err
+		}
+		specs = append(specs, tagSpecs...)
+	}
+	result, err := s.enqueuer.EnqueueBatch(ctx, spec, specs)
+	if err != nil {
+		return "", false, errs.FromDB(err, "create tag rejudge tasks")
+	}
+	if result.BatchID == "" {
+		return "", true, nil
+	}
+	return result.BatchID, false, nil
+}

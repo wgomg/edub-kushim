@@ -27,6 +27,19 @@
 	// it fired, so the rubric counts only the five substantive checks
 	const rubricCriteria = criteria.filter((c) => c.key !== 'defer');
 
+	// the demotion triggers a restore may clear: rule-driven revocations the current rules re-derive
+	// mass decay and operator demotions are standing decisions, not verdicts, and are not restorable
+	const verdictDemotionReasons = new Set([
+		'single_signal',
+		'judge_defer',
+		'corroborated_failures',
+		'person_facet',
+		'person_review',
+		'deterministic_only',
+		'no_dimension',
+		'part_rejected'
+	]);
+
 	const cardClass =
 		'grid grid-cols-1 gap-2 rounded-lg border border-clay-800 bg-clay-900 p-3.5 md:grid-cols-[minmax(0,1fr)_16rem] md:gap-x-3 md:pl-4';
 	const contentClass = 'order-1 flex min-w-0 flex-col gap-1.5 md:col-start-1 md:row-start-1';
@@ -324,6 +337,26 @@
 		provisional.reload();
 	}
 
+	async function restore(tag) {
+		const ok = await confirmStore.confirm({
+			title: 'Restore to provisional',
+			message: `Restore "${tag.name}" to provisional? The demotion is cleared and the value is re-judged by the current rules; it promotes if they admit it at the floor.`
+		});
+		if (!ok) return;
+		acting = tag.id;
+		const result = await api.tags.restore(tag.id);
+		acting = null;
+		if (result.ok) {
+			toastStore.success(`Restored "${tag.name}" to provisional`);
+			if (onchanged) onchanged();
+		} else if (result.status === 409) {
+			toastStore.error(result.data?.error ?? 'The tag cannot be restored');
+		} else {
+			toastStore.error('Failed to restore the tag');
+		}
+		provisional.reload();
+	}
+
 	async function foldInto(tag) {
 		const anchor = tag.identity_hold;
 		const ok = await confirmStore.confirm({
@@ -592,7 +625,9 @@
 	function verdictTitle(tag) {
 		if (!tag.verdict) return 'Never judged — no verdict was recorded when this tag was born';
 		if (isAccepted(tag))
-			return 'An operator accepted this deferral; the value now waits for the promotion floor';
+			return tag.criteria_disagreement
+				? `An operator accepted this value; the current criteria disagree (${tag.criteria_disagreement}) but the operator decision stands`
+				: 'An operator accepted this deferral; the value now waits for the promotion floor';
 		if (tag.verdict.pass) return 'The quality judge admitted this tag';
 		if (verdictOutcome(tag) === 'defer') return 'The quality judge deferred this tag to review';
 		return 'The quality judge rejected this tag';
@@ -755,6 +790,15 @@
 							title={verdictTitle(tag)}
 							onclick={() => openHelp('verdict')}>{verdictLabel(tag)}</button
 						>
+						{#if tag.criteria_disagreement}
+							<button
+								type="button"
+								class="{pillWarn} {pillButton}"
+								title="The current criteria no longer admit this value; the operator acceptance stands until reviewed"
+								onclick={() => openHelp('accepted')}
+								>current criteria: {tag.criteria_disagreement}</button
+							>
+						{/if}
 						{#if tag.pending_identity > 0}
 							<button
 								type="button"
@@ -796,7 +840,7 @@
 							<button
 								type="button"
 								class="{pillWarn} {pillButton}"
-								title="This tag's standing was revoked; approve to restore it"
+								title="This tag's standing was revoked; restore it to re-judge under the current rules, or approve to promote it directly"
 								onclick={() => openHelp('demoted')}
 								>demoted → {demotionLabel(tag.demoted_reason)}</button
 							>
@@ -873,6 +917,18 @@
 							>
 								<Icon name="split" size={13} />
 								Split…
+							</button>
+						{/if}
+						{#if tag.demoted_at && verdictDemotionReasons.has(tag.demoted_reason)}
+							<button
+								type="button"
+								class={btnUtil}
+								title="Clear this rule-driven demotion and re-judge the value under the current rules"
+								disabled={acting === tag.id}
+								onclick={() => restore(tag)}
+							>
+								<Icon name="restore" size={13} />
+								Restore
 							</button>
 						{/if}
 						<button

@@ -27,8 +27,12 @@ A promoted tag can lose its standing again (**demotion**): its live mass may fal
 mass-decay sweep waits until the tag is older than `demotion_grace_days`, disabled by default), a
 fresh judgment may reject or defer it, a decided compound drop may go through, or an editor may demote
 it from the Vocabulary tab. A demoted value keeps its documents and its history and returns to the
-review queue, where approving it restores its standing. Decided non-values that stay unchallenged for
-the retention window are eventually removed by the scheduled sweep.
+review queue: approving it restores its standing, and a demotion the rules produced can instead be
+cleared with **Restore**, which re-judges the value. Editor decisions outrank later rule changes: a
+value approved or accepted by an editor keeps its standing through a criteria-version re-judgment —
+the run records the disagreement, shown by the amber `current criteria` pill, but revokes nothing —
+and an accepted value is never removed by retention. Decided non-values that stay unchallenged for the
+retention window are eventually removed by the scheduled sweep.
 
 ## The queue settles over time
 
@@ -88,6 +92,7 @@ matching section of the guide.
 | `awaiting promotion floor` | green | admitted by the judge; waiting for enough live documents |
 | `deferred to review` | amber | the judge abstained or the evidence was inconclusive |
 | `accepted — awaiting promotion floor` | green | an operator waived the deferral; the value waits for the promotion floor |
+| `current criteria → *reason*` | amber | the current rules disagree with an editor decision that still stands — beside an accepted value, or on a Vocabulary row whose standing an editor granted |
 | `judge rejected` | amber | the judge found the value failing the rubric |
 | `identity pending` | amber | a fold proposal's relation gate or a same-intent claim about this tag awaits the identity pass |
 | `identity hold → *value*` | amber | the identity judge refused to fold this tag onto that value; when the judge labelled the term's fold relation, the badge also shows the class — relational adjective, inflection, derivation, or no fold class — as evidence for the review decision, not the decision itself |
@@ -104,8 +109,8 @@ matching section of the guide.
 | `sample_disagreement` | two corpus samples disagree about the compound | split now, or keep whole |
 | `relational_keep` | the compound selects more than its parts share, so it is not their product; a keep resting only on parts the store has not promoted yet waits on store maturity instead of reaching review | apply the parts alongside, or keep whole |
 | `judge_unavailable` | no split judge answered; nothing was decided | re-judge once a judge is configured |
-| `no_dimension` | the compound was decided to name no dimension | retire it — approving does not stick for a decided drop |
-| `part_rejected` | every part of the split was rejected | retire it — approving does not stick for a decided drop |
+| `no_dimension` | the compound was decided to name no dimension | approve to keep it — later runs report the disagreement but do not revoke it — or retire it |
+| `part_rejected` | every part of the split was rejected | approve to keep it — later runs report the disagreement but do not revoke it — or retire it |
 
 ### Demotion reasons
 
@@ -122,6 +127,10 @@ matching section of the guide.
 | `single_signal` | deferred on a single failing signal |
 | `operator` | an editor demoted it from the Vocabulary tab |
 
+Rule-driven reasons — `no_dimension`, `part_rejected`, `judge_defer`, `corroborated_failures`,
+`person_facet`, `person_review`, `deterministic_only` and `single_signal` — can be cleared with
+**Restore**; `mass_decay` and `operator` cannot, because no rule re-derives them.
+
 ## Actions
 
 Every action is available from the entry that needs it; the queue only shows the actions its badges
@@ -130,10 +139,11 @@ row, and the manual split on every compound entry and row, overriding whatever t
 
 | Action | What it does |
 |---|---|
-| **Approve** | promotes the tag into the shared vocabulary; overrides undecided verdicts and holds, but a decided drop is re-demoted by the next reconciliation run |
+| **Approve** | promotes the tag into the shared vocabulary; overrides undecided verdicts and holds. The promotion is an editor decision: later criteria-version re-judgments report a disagreement but never revoke it, and only mass decay still applies |
 | **Reject** | deletes the tag *and blocklists the name*, so enrichment never proposes it again (restorable from the Deleted tab) |
 | **Retire** | deletes the tag without blocklisting the name, so enrichment may propose the value again |
-| **Accept as provisional** | waives a review deferral: the tag stops being deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it; a newer verdict (a rubric version change or a re-judge) re-opens the deferral so the action can be used again; offered only when no identity or split hold still withholds the tag |
+| **Accept as provisional** | waives a review deferral: the tag stops being deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it; the waiver is durable — a newer verdict, including a rubric version change or a re-judge, never re-opens it, and only promotion, rejection or retirement ends it; offered only when no identity or split hold still withholds the tag |
+| **Restore to provisional** | clears a rule-driven demotion and queues a fresh judgment under the current rules: the value returns to plain provisional standing with no demoted badge, and the fresh verdict promotes it at the floor, leaves it for review, or rejects it; mass-decay and editor demotions are not restorable |
 | **Rename** | changes the name in place; the journals are keyed by name, so the tag shows no verdict until it is judged again under the new name |
 | **Fold into *value*** | collapses this tag onto its held store value: documents move, this name becomes an alias and leaves the vocabulary |
 | **Fold into…** | folds this tag onto any other live tag you pick: its documents move onto the kept value, this name becomes an alias and stops existing as a tag; seeded inventory cannot be folded away |

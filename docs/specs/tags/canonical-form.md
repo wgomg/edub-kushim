@@ -214,7 +214,8 @@ J3 verdict with criteria and model versions (the M8 class, with no model, for a
 mechanically resolved pair); the J4 direction
 and reason; any alias made; the identity rule-set version; the review outcome when deferred;
 and the operator's separation row over a refused fold, which clears the hold without
-applying the fold. Consumers are D1's canonicalization work, the review
+applying the fold and is terminal for its (candidate, anchor) pair — a later rule-set
+version re-judges the fold but cannot re-impose the hold. Consumers are D1's canonicalization work, the review
 surfaces, and later calibration — it is evidence, not a verdict machine.
 
 ## 4. Scenarios and worked examples

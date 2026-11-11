@@ -150,12 +150,14 @@ func (r *Reconciler) hasCompoundWork(ctx context.Context) (bool, error) {
 	}
 	names := make([]string, 0, len(rows))
 	promoted := make(map[string]bool, len(rows))
+	standings := make(map[string]string, len(rows))
 	for _, row := range rows {
 		if tags.ClassifyShape(row.Name) != tags.ShapeCompound || tags.IsPeriodClass(tags.HouseForm(row.Name)) {
 			continue
 		}
 		names = append(names, row.Name)
 		promoted[row.Name] = row.PromotedAt.Valid
+		standings[row.Name] = row.StandingSource
 	}
 	if len(names) == 0 {
 		return false, nil
@@ -180,7 +182,7 @@ func (r *Reconciler) hasCompoundWork(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("probe compound composition states: %w", err)
 	}
 	for _, name := range names {
-		if entry, _ := compoundEntryFor(name, promoted[name], 0, held, compositionHeld, states); entry != nil {
+		if entry, _ := compoundEntryFor(name, promoted[name], standings[name], 0, held, compositionHeld, states); entry != nil {
 			return true, nil
 		}
 	}

@@ -376,16 +376,17 @@ type SystemSignal struct {
 }
 
 type Tag struct {
-	ID            int64
-	Name          string
-	CreatedAt     sql.NullTime
-	OrphanedSince sql.NullTime
-	PromotedAt    sql.NullTime
-	DemotedAt     sql.NullTime
-	DemotedReason sql.NullString
-	Seeded        bool
-	ModifiedAt    time.Time
-	AcceptedAt    sql.NullTime
+	ID             int64
+	Name           string
+	CreatedAt      sql.NullTime
+	OrphanedSince  sql.NullTime
+	PromotedAt     sql.NullTime
+	DemotedAt      sql.NullTime
+	DemotedReason  sql.NullString
+	Seeded         bool
+	ModifiedAt     time.Time
+	AcceptedAt     sql.NullTime
+	StandingSource string
 }
 
 type TagAlias struct {
@@ -453,6 +454,16 @@ type TagIdentityEvent struct {
 	Verdict        sql.NullString
 	Model          sql.NullString
 	RuleSetVersion string
+	CreatedAt      time.Time
+}
+
+type TagIdentityHoldDecision struct {
+	RuleSetVersion string
+	Candidate      string
+	Kind           string
+	Verdict        sql.NullString
+	Anchor         string
+	FoldClass      string
 	CreatedAt      time.Time
 }
 

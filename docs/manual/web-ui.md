@@ -170,8 +170,8 @@ The vocabulary workspace with six tabs, deep-linkable by hash (`/tags#provisiona
 
 | Tab | Contents |
 |---|---|
-| **Vocabulary** | All tags with counts, creation date and standing; editors can create, rename, fold and demote from here and remove or promote a tag's alias chips; `?q=` matches names and aliases |
-| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote, reject, accept a deferral, fold a tag into any other live value, and the contextual hold actions; filters by name, rubric criteria and review state, with quick views and live per-state counts in the state menu |
+| **Vocabulary** | All tags with counts, creation date and standing; editors can create, rename, fold and demote from here and remove or promote a tag's alias chips; an amber pill marks a standing an editor granted when the current criteria disagree; `?q=` matches names and aliases |
+| **New tags** (provisional) | The review queue: rubric verdicts, identity/composition holds, promote, reject, accept a deferral, restore a rule-driven demotion, fold a tag into any other live value, and the contextual hold actions; filters by name, rubric criteria and review state, with quick views and live per-state counts in the state menu |
 | **Deleted** | The blocklist of rejected names, restorable |
 | **Split rules** | Every recorded manual split — the name with the components future emissions apply in its place; editors can revert a rule, which leaves components and the documents already on them untouched |
 | **Coverage** | Open coverage flags from the audit pass — titles link to their documents; apply, dismiss, or register a missing name |

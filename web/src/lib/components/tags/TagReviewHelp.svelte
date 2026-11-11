@@ -95,7 +95,12 @@
 		{
 			icon: 'circle-check',
 			name: 'Accept as provisional',
-			text: 'Waives a review deferral: the tag is no longer deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it. A newer verdict (a rubric version change or a re-judge) re-opens the deferral so the action can be used again. Offered only when no identity or split hold still withholds the tag.'
+			text: 'Waives a review deferral: the tag is no longer deferred and waits for the promotion floor like any admitted value, promoting once enough live documents carry it. The waiver is durable: a newer verdict — including a rubric version change — never re-opens the deferral while the acceptance stands, and only promotion, rejection or retirement ends it. Offered only when no identity or split hold still withholds the tag.'
+		},
+		{
+			icon: 'restore',
+			name: 'Restore to provisional',
+			text: 'Clears a rule-driven demotion (single_signal, judge_defer, corroborated_failures, person_facet, person_review, deterministic_only, no_dimension, part_rejected) and re-judges the value under the current rules. The value returns to plain provisional standing with no demoted badge and promotes only if the fresh verdict admits it at the floor. Mass-decay and operator demotions are not restorable — no rule re-derives them.'
 		},
 		{
 			icon: 'edit',
@@ -279,7 +284,10 @@
 		<h3 class={sectionTitle}>Demoted</h3>
 		<p class={text}>
 			The value's standing was revoked, so it is provisional again. Approve restores it; reject
-			deletes it. The reason names what revoked it:
+			deletes it. When the reason is rule-driven (a verdict), <b class="text-parchment-300"
+				>Restore</b
+			> clears the demotion and re-judges the value under the current rules instead. Mass decay and operator
+			demotions are not restorable. The reason names what revoked it:
 		</p>
 		<ul class="mt-2 flex flex-col gap-1">
 			{#each demotedReasons as reason (reason)}
@@ -289,6 +297,36 @@
 				</li>
 			{/each}
 		</ul>
+	</section>
+
+	<section id="help-accepted">
+		<h3 class={sectionTitle}>Accepted and current-criteria disagreement</h3>
+		<p class={text}>
+			An operator acceptance is a standing decision, not a one-verdict waiver: the value keeps
+			waiting for the promotion floor even when a later verdict — including a rubric version change
+			— would defer or reject it. The amber <span class={code}
+				>current criteria: &lt;reason&gt;</span
+			>
+			pill records that disagreement; it never changes the acceptance. Reject or retire the value to end
+			it, or approve it to promote it now.
+		</p>
+		<p class="mt-2 {text}">
+			Promotions an operator granted carry the same durability on the Vocabulary tab: the sweep
+			re-judges them for evidence, shows the same amber pill when the criteria disagree, and never
+			demotes them. Only mass decay — live documents falling below the recurrence floor — still
+			applies.
+		</p>
+	</section>
+
+	<section id="help-restore">
+		<h3 class={sectionTitle}>Restore to provisional</h3>
+		<p class={text}>
+			Clears a rule-driven demotion and queues a fresh judgment under the current rules. The value
+			returns to plain provisional standing — not demoted, not promoted — and the fresh verdict
+			decides it: admit at the floor promotes it, a defer leaves it for review, and a reject leaves
+			it rejected. Restoring is the remedy for a demotion that a criteria-version re-judgment
+			produced against an operator decision; mass-decay and operator demotions are not restorable.
+		</p>
 	</section>
 
 	<section id="help-actions">

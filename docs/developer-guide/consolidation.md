@@ -139,7 +139,9 @@ adjudication stays outside it:
   the review queue with the hold; it never participates in the fold decision. A
   refused fold whose proposal targeted a live store value is the disjoint-twin risk: the
   birth is held for review — provisional plus an evidence-derived promotion hold that
-  blocks inline and sweep promotion until an operator resolves it.
+  blocks inline and sweep promotion until an operator resolves it. An operator separation
+  clears the hold and is terminal for its (candidate, anchor) pair: a later rule-set version
+  re-judges the fold but cannot re-impose the hold.
 - **Same-intent pairs (J3/J4)** — pinned variant classes resolve `same` mechanically;
   the rest go to the pair adjudicator (`same` / `variant` / `related`, plus a direction
   for `same`). `same` yields the alias disposition.
@@ -333,6 +335,13 @@ Influence is revocable (definition §6.4): a promoted value that stops qualifyin
 demoted, which clears `promoted_at`, records the reason, and removes the name from the
 store while the row and its assignments stay.
 
+The row records the provenance of its standing (`tag.standing_source`): a promotion an
+operator granted — an approval, an operator create, or an acceptance-governed sweep or
+re-judge promotion — is `operator`, and every automatic promotion is `auto`. A
+criteria-version re-judgment of an `operator` row records the fresh verdict and reports the
+disagreement, but revokes nothing: only mass decay still applies, and the standing ends
+through an explicit operator action. An `auto` row answers to the ordinary demotion rules.
+
 Verdict-less provisionals — judge outages and re-emitted legacy rows — are not re-judged
 in flight: a name already present in the tag table is not novel, so the judge never sees
 it again. They are re-judged by the reconciliation sweep once they pass
@@ -343,8 +352,13 @@ Operators resolve what remains from the tags page's "New tags" tab or the API:
 the latest verdict; `POST /api/v1/tags/{id}/promote` promotes one through the same path
 the sweep uses; `POST /api/v1/tags/{id}/accept` waives a recorded deferral so the value
 stops being parked for review and answers to the promotion floor like any admitted value,
-the waiver holding until a newer verdict re-decides the name; one waiver covers one fresh
-verdict, so accepting again waives the newer deferral.
+the waiver durable: a newer verdict, including a rubric version change or a re-judge, does
+not re-open it, and only promotion, rejection or retirement ends it.
+`POST /api/v1/tags/{id}/restore` clears a rule-driven demotion in one transaction — the
+stamps and the current-version quality verdicts and composition judgments, never operator
+rows — enqueues the fresh quality judgment before the commit, and returns the value to
+provisional standing; the bulk endpoint restores a bounded page and reports the remaining
+backlog.
 `POST /api/v1/tags/{id}/separate` records that an identity-held name is its own value,
 clearing the hold so the promotion paths stop skipping it. Rejecting a provisional tag
 is a normal tag delete, so the name lands in the `deleted_tag` blocklist and enrichment
@@ -444,8 +458,9 @@ twin arm for the run rather than degrading its safety gates.
 `provisional_grace_days` (default 30), oldest first. A stored verdict the decision
 re-derives as admit plus at least the configured `recurrence_floor` (default 10) live
 documents promotes the name with no judge call; defer
-and reject verdicts stay queued for review, except a defer an operator has accepted,
-which follows the same floor rule; verdict-less names are re-judged one at a
+and reject verdicts stay queued for review, except a defer an operator has accepted, which
+follows the same floor rule; a fresh rejection of an accepted value is reported without
+reverting the acceptance; verdict-less names are re-judged one at a
 time (the tag's first live document, reduced with the tag-matcher arithmetic, one retry
 on failure) and promoted when admitted. Zero-assignment rows are only counted — the
 orphan sweep owns them; rows whose assignments all sit on trashed documents re-judge to
@@ -458,8 +473,11 @@ subject to `demotion_grace_days` (default 0, disabled) — a younger tag keeps i
 or a stale verdict that re-judges to reject or defer. A value carrying a current-version
 verdict is respected as it stands; seeded values never enter the worklist; identity- or
 composition-held names, a missing judge, and a failed lookup leave the value promoted.
-Each demotion goes through `Tag.Demote`, which clears `promoted_at`, records the reason,
-and removes the name from the embedding store.
+An operator-granted standing is re-judged for evidence but never revoked by the verdict:
+the fresh verdict is recorded, the value stays promoted, and the run reports the kept
+disagreement; only mass decay still applies. A rule-driven demotion is reversible through
+the restore action (§7). Each demotion goes through `Tag.Demote`, which clears
+`promoted_at`, records the reason, and removes the name from the embedding store.
 
 **Dead-tag hygiene** — the same run sweeps tags with no live document: a tag whose
 `orphaned_since` mark is older than `dead_tag_grace_days` (default 7) is deleted and
@@ -472,9 +490,9 @@ they cannot be resurrected outside the restore flow.
 **Retention** — the same run removes rows the current rules have decided are not values:
 a decided composition drop (`no_dimension`, `part_rejected`) or an admission reject under
 the current criteria versions whose decision has stood for `retention_days` (default 90).
-Seeded values, identity-held names, alias targets, promoted rows (which demote first), and
-rows with no live document never remove; the window anchors on the first current-version
-decision, so re-emissions do not reset it. Removal deletes the row and its assignments
+Seeded values, identity-held names, alias targets, operator-accepted rows, promoted rows
+(which demote first), and rows with no live document never remove; the window anchors on
+the first current-version decision, so re-emissions do not reset it. Removal deletes the row and its assignments
 and writes nothing to the deleted-tag blocklist: a re-proposed name stays suppressed by
 the versioned verdict cache until a criteria-version bump re-judges it. Removals are
 bounded by `max_rejudge` per run.
@@ -489,7 +507,8 @@ each claim once, so the twin arm and the identity pass converge on whichever run
 **Report** — each run persists a full JSON report as its task result: worklist counts per
 category, judged/confirmed, flips by direction, aliases with reassignment counts, compound
 splits, twin counts and the consumed measurement run, skip reasons, the provisional-sweep
-counts, the demotion block with per-trigger counts and named entries, and the retention
+counts, the demotion block with per-trigger counts and named entries, the kept-disagreement
+entries (operator decisions a fresh verdict disagrees with), and the retention
 block (removed and planned entries with their evidence reasons, plus held and
 orphan-owned counts). Served by
 `GET /api/v1/tags/reconciliation/report` and the task's `result` field; the web UI
@@ -582,6 +601,10 @@ quality band constants are internals; see the
 - **Dead names cannot resurrect** — the registration path re-checks the `deleted_tag`
   blocklist, fold application skips deleted targets, dead-target verdict rows are
   deleted, and every operator delete is recorded in the blocklist.
+- **Operator decisions outrank rule re-application** — an operator-granted standing or
+  acceptance survives a criteria-version re-judgment with a report entry, never a silent
+  revocation; rule-driven demotions are reversible through restore; retention never removes
+  an accepted row; separations are terminal across rule-set versions.
 
 ## 13. Gotchas
 

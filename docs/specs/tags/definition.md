@@ -466,6 +466,13 @@ suppression rides the versioned verdict cache, not the blocklist: the name does 
 while its rejecting criteria version is current, and a criteria-version bump re-opens
 judgment. Demotion remains the influence-only path for everything else.
 
+Operator adjudication bounds both exceptions (§8 item 13): a standing an operator granted
+survives rule re-application — the sweep records the fresh verdict as evidence and reports
+the disagreement, but revokes nothing — and a demotion the rules produced can be reversed
+by the operator's restore, which returns the value to provisional standing for a fresh
+judgment. Mass decay still applies to operator-granted standing, and retention never
+removes a row an operator accepted.
+
 ### 6.5 Decision layer: features, not verdicts
 
 No single signal — not the LLM judge's verdict, not recurrence, not one set predicate —
@@ -577,7 +584,8 @@ The questions the definition leaves to policy, and their decided answers:
    alias to the canonical label) and the scheduled sweep that re-applies the current rules
    to stored tags (legacy non-compliance, older judge standards, mass decay). Demotion
    revokes influence only — existence and assignments stay, history remains auditable, and
-   promotion is not one-way.
+   promotion is not one-way. Operator-granted standing is exempt from the verdict-driven
+   trigger, and a rule-driven revocation is reversible through restore (item 13).
 5. **Completeness mechanics.** Both paths with separated roles: the generation contract is
    the primary producer — it emits the applicable dimensions as the document is read — and
    an audit verifies and repairs as a separate pass. The acceptance test: a document
@@ -588,6 +596,8 @@ The questions the definition leaves to policy, and their decided answers:
    actions, and hypothetical usage logs carry no weight against recurrence or in any
    decision. The review surfaces serve error correction and gray-zone arbitration;
    preference-like behavior would be an explicit opt-in feature outside the mechanism.
+   Lifecycle adjudications (item 13) are decisions about standing, not preference signals
+   about a value's worth: they resolve the gray band the rule set delegated to review.
 7. **Axis grouping — none.** The vocabulary stays emergent: no stored or derived axis
    structure, and no review depends on one. Missing anchors are the mechanical residue of
    decomposition and completeness or a user action — the contract may propose a broad
@@ -621,9 +631,9 @@ The questions the definition leaves to policy, and their decided answers:
     admission reject under the current criteria versions) is removed after its decision
     has stood for the retention window (pinned default 90 days; item 9 owns the number).
     Neither removal captures the name in the blocklist. Seeded values, identity-held
-    names, alias targets, deferrals, admit-below-floor pending candidates and sub-floor
-    demoted values never remove; promoted rows demote first (item 4); absence of evidence
-    never acts.
+    names, alias targets, deferrals, admit-below-floor pending candidates, operator-accepted
+    rows and sub-floor demoted values never remove; promoted rows demote first (item 4);
+    absence of evidence never acts.
 12. **Person facet — classified, not guessed.** The person question is answered as a
     classification of the tag alone — store-global, like the other tag-intrinsic criteria:
     `not_person`, `real_individual`, `mythological_or_legendary`, `fictional` or `uncertain`.
@@ -633,6 +643,17 @@ The questions the definition leaves to policy, and their decided answers:
     contested — answers `uncertain` rather than guessing, so eponym names that are also
     subjects (`washington`, `tesla`) defer instead of admitting; that recall cost is
     accepted in exchange for never dropping a legitimate dimension as a person.
+13. **Operator adjudication — durable.** Approving, accepting, separating and restoring are
+    lifecycle adjudications, not preference signals: they outrank the verdicts they resolved,
+    including a later criteria-version re-judgment. An operator-granted standing survives a
+    re-judgment — the sweep records the fresh verdict and reports the disagreement, but
+    revokes nothing, and only mass decay (item 4) still applies; an accepted deferral
+    survives while the value is provisional, through re-judges and rule-set changes alike.
+    Retention never removes an accepted row (item 11). An operator separation is terminal for
+    its (candidate, anchor) pair across rule-set versions. A rule-driven demotion can be
+    restored by an operator: the action clears the demotion stamps and the current-version
+    judge rows — never operator rows — returning the value to provisional standing for a
+    fresh judgment.
 
 ## 9. Operative statements
 

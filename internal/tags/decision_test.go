@@ -312,62 +312,41 @@ func TestDecideComposition(t *testing.T) {
 
 func TestWithAcceptance(t *testing.T) {
 	accepted := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-	fresh := accepted.Add(-time.Hour)
-	epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	cases := []struct {
-		name           string
-		derived        AdmissionDecision
-		acceptedAt     time.Time
-		freshVerdictAt time.Time
-		want           AdmissionDecision
+		name       string
+		derived    AdmissionDecision
+		acceptedAt time.Time
+		want       AdmissionDecision
 	}{
 		{
-			name:           "no acceptance keeps the derived decision",
-			derived:        AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
-			freshVerdictAt: fresh,
-			want:           AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
+			name:    "no acceptance keeps the derived decision",
+			derived: AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
+			want:    AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
 		},
 		{
-			name:           "an acceptance older than the fresh verdict does not govern",
-			derived:        AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
-			acceptedAt:     fresh.Add(-time.Hour),
-			freshVerdictAt: fresh,
-			want:           AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
+			name:       "a stamped acceptance waives any defer",
+			derived:    AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
+			acceptedAt: accepted,
+			want:       AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonOperatorAccept},
 		},
 		{
-			name:           "an acceptance newer than the fresh verdict waives the defer",
-			derived:        AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonSingleSignal},
-			acceptedAt:     accepted,
-			freshVerdictAt: fresh,
-			want:           AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonOperatorAccept},
+			name:       "an acceptance never waives a rejection",
+			derived:    AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonCorroborated},
+			acceptedAt: accepted,
+			want:       AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonCorroborated},
 		},
 		{
-			name:           "an acceptance never waives a rejection",
-			derived:        AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonCorroborated},
-			acceptedAt:     accepted,
-			freshVerdictAt: fresh,
-			want:           AdmissionDecision{Outcome: AdmissionReject, Reason: ReasonCorroborated},
-		},
-		{
-			name:           "an acceptance never overrides an admission",
-			derived:        AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonAdmitted},
-			acceptedAt:     accepted,
-			freshVerdictAt: fresh,
-			want:           AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonAdmitted},
-		},
-		{
-			name:           "an acceptance governs while no fresh verdict exists",
-			derived:        AdmissionDecision{Outcome: AdmissionDefer, Reason: ReasonJudgeDefer},
-			acceptedAt:     accepted,
-			freshVerdictAt: epoch,
-			want:           AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonOperatorAccept},
+			name:       "an acceptance never overrides an admission",
+			derived:    AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonAdmitted},
+			acceptedAt: accepted,
+			want:       AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonAdmitted},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := WithAcceptance(tc.derived, tc.acceptedAt, tc.freshVerdictAt)
+			got := WithAcceptance(tc.derived, tc.acceptedAt)
 			if got != tc.want {
 				t.Errorf("WithAcceptance(...) = {Outcome:%v Reason:%q}, want {Outcome:%v Reason:%q}",
 					got.Outcome, got.Reason, tc.want.Outcome, tc.want.Reason)

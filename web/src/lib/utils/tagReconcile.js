@@ -78,6 +78,10 @@ export function demotedValues(report = {}) {
 	return (report?.report_only ? report?.planned_demotions : report?.demoted) ?? [];
 }
 
+export function notifiedValues(report = {}) {
+	return report?.notified ?? [];
+}
+
 export function demotionCountGroups(report = {}) {
 	const counts = report?.demotion ?? {};
 	return Object.entries(demotionReasonLabels)

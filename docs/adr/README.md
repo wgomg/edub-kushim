@@ -19,5 +19,6 @@ protects against.
 | 0010 | [Document type: described candidates, head/tail refinement](0010-document-type-described-candidates-head-tail-refinement.md) | accepted |
 | 0011 | [Intake dedup by content hash](0011-intake-dedup-by-content-hash.md) | accepted |
 | 0012 | [Shared tag vocabulary lives in internal/types](0012-shared-tag-vocabulary-lives-in-types.md) | accepted |
+| 0013 | [Operator adjudications outrank versioned verdicts](0013-operator-adjudications-outrank-versioned-verdicts.md) | accepted |
 
 Living docs that depend on these decisions link here instead of restating them.

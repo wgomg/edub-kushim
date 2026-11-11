@@ -7,6 +7,7 @@
 		demotionCountGroups,
 		demotionLabel,
 		notActedGroups,
+		notifiedValues,
 		splitKeepFlips,
 		sumReassigned,
 		worklistReasons,
@@ -40,6 +41,7 @@
 	const notActed = $derived(notActedGroups(report?.skips, report?.capped, report?.no_documents));
 	const notActedTotal = $derived(notActed.reduce((sum, group) => sum + group.count, 0));
 	const demotions = $derived(demotedValues(report));
+	const notified = $derived(notifiedValues(report));
 	const demotionCounts = $derived(demotionCountGroups(report));
 	const siblings = $derived(report?.siblings ?? {});
 
@@ -279,6 +281,39 @@
 						</summary>
 						<ul class="space-y-1 border-t border-clay-800 px-4 py-3">
 							{#each demotions as entry, i (i)}
+								<li class="text-sm text-parchment-300">
+									<span class="font-mono">{entry.name}</span>
+									<span class="text-parchment-600" aria-hidden="true">—</span>
+									<span class="text-parchment-500">{demotionLabel(entry.reason)}</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				{/if}
+
+				{#if notified.length > 0}
+					<details class="group rounded-lg border border-clay-800 bg-clay-950">
+						<summary
+							class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-parchment-200 [&::-webkit-details-marker]:hidden"
+						>
+							<span>
+								Kept against the current criteria ({notified.length})
+							</span>
+							<svg
+								class="size-4 shrink-0 text-parchment-500 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+								viewBox="0 0 20 20"
+								fill="currentColor"
+								aria-hidden="true"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</summary>
+						<ul class="space-y-1 border-t border-clay-800 px-4 py-3">
+							{#each notified as entry, i (i)}
 								<li class="text-sm text-parchment-300">
 									<span class="font-mono">{entry.name}</span>
 									<span class="text-parchment-600" aria-hidden="true">—</span>

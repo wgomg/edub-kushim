@@ -587,6 +587,19 @@ GetTagReconcileReport serves the latest completed reconcile task's report.
 | 404 | string |
 | 500 | string |
 
+#### `POST /api/v1/tags/restore-verdict-demoted`
+
+RestoreVerdictDemoted restores one bounded page of rule-driven demotions and enqueues their fresh re-judges in one batch, returning how many were restored and how many matching values remain for a follow-up call.
+
+| Status | Body |
+|---|---|
+| 200 | object |
+| 202 | object |
+| 400 | object |
+| 404 | no body |
+| 409 | object |
+| 500 | string |
+
 #### `GET /api/v1/tags/siblings`
 
 ListSiblings serves the latest measurement run's near-contained tag pairs for review.
@@ -771,6 +784,22 @@ RejudgeTag enqueues one on-demand re-judge of a tag's quality verdict or its com
 | `id` | path | string | yes | — |
 
 Request body (required) (`application/json`): [RejudgeTagRequest](#rejudgetagrequest)
+
+| Status | Body |
+|---|---|
+| 202 | object |
+| 400 | object |
+| 404 | string |
+| 409 | object |
+| 500 | string |
+
+#### `POST /api/v1/tags/{id}/restore`
+
+RestoreTag clears one verdict-driven demotion and enqueues the fresh re-judge that decides the value under the current rules, returning the batch that carries it.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `id` | path | string | yes | — |
 
 | Status | Body |
 |---|---|
@@ -2859,7 +2888,7 @@ ProvisionalTagListResponse is one page of provisional tags: the filtered total f
 
 ### ProvisionalTagResponse
 
-ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a value whose fresh verdict has since re-decided it reads as deferred again. IdentityFoldClass carries the judge's fold-relation class behind the identity hold, empty when the hold has none or predates it.
+ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it provisional. AcceptedAt is set whenever an operator acceptance is stamped: the waiver is durable, so a later verdict never re-opens the deferral it waived. CriteriaDisagreement carries the current verdict's non-admission reason beside an acceptance, so the queue can show that the operator decision outranks the fresh judgment. IdentityFoldClass carries the judge's fold-relation class behind the identity hold, empty when the hold has none or predates it.
 
 | Field | Type | Required |
 |---|---|---|
@@ -2870,6 +2899,7 @@ ProvisionalTagResponse describes a tag awaiting review, with its latest verdict 
 | `composition_reason` | string | no |
 | `compound` | boolean | no |
 | `created_at` | string (date-time) | yes |
+| `criteria_disagreement` | string | no |
 | `demoted_at` | string (date-time) | no |
 | `demoted_reason` | string | no |
 | `document_count` | integer | yes |
@@ -2878,6 +2908,7 @@ ProvisionalTagResponse describes a tag awaiting review, with its latest verdict 
 | `identity_hold` | string | no |
 | `name` | string | yes |
 | `pending_identity` | integer | yes |
+| `standing_source` | string | no |
 | `verdict` | [TagQualityVerdictInfo](#tagqualityverdictinfo) (nullable) | yes |
 
 ### ReclaimConfigResponse
@@ -3191,12 +3222,14 @@ TagResponse carries a tag on the vocabulary and document surfaces: the vocabular
 | `aliases` | array of [TagAliasResponse](#tagaliasresponse) | no |
 | `compound` | boolean | no |
 | `created_at` | string (date-time) | no |
+| `criteria_disagreement` | string | no |
 | `document_count` | integer | yes |
 | `id` | integer | yes |
 | `matched_alias` | string | no |
 | `name` | string | yes |
 | `promoted` | boolean | yes |
 | `seeded` | boolean | yes |
+| `standing_source` | string | no |
 
 ### TaskProgressResponse
 

@@ -3542,6 +3542,61 @@ paths:
             text/plain; charset=utf-8:
               schema:
                 type: string
+  /api/v1/tags/{id}/restore:
+    post:
+      summary: RestoreTag clears one verdict-driven demotion and enqueues the fresh re-judge that decides the value under the current rules, returning the batch that carries it.
+      operationId: postApiV1TagsByIdRestore
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  already_queued:
+                    type: boolean
+                  batch_id:
+                    type: string
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/tags/{id}/retire:
     post:
       summary: RetireTag removes one provisional tag without blocklisting its name.
@@ -4339,6 +4394,63 @@ paths:
             text/plain; charset=utf-8:
               schema:
                 type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+  /api/v1/tags/restore-verdict-demoted:
+    post:
+      summary: RestoreVerdictDemoted restores one bounded page of rule-driven demotions and enqueues their fresh re-judges in one batch, returning how many were restored and how many matching values remain for a follow-up call.
+      operationId: postApiV1TagsRestoreVerdictDemoted
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  remaining:
+                    type: integer
+                  restored:
+                    type: integer
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  already_queued:
+                    type: boolean
+                  batch_id:
+                    type: string
+                  remaining:
+                    type: integer
+                  restored:
+                    type: integer
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "404":
+          description: Not Found
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
         "500":
           description: Internal Server Error
           content:
@@ -7377,9 +7489,11 @@ components:
       type: object
       description: |-
         ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
-        provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a
-        value whose fresh verdict has since re-decided it reads as deferred again. IdentityFoldClass carries the
-        judge's fold-relation class behind the identity hold, empty when the hold has none or predates it.
+        provisional. AcceptedAt is set whenever an operator acceptance is stamped: the waiver is durable, so a
+        later verdict never re-opens the deferral it waived. CriteriaDisagreement carries the current verdict's
+        non-admission reason beside an acceptance, so the queue can show that the operator decision outranks the
+        fresh judgment. IdentityFoldClass carries the judge's fold-relation class behind the identity hold, empty
+        when the hold has none or predates it.
       properties:
         accepted_at:
           type: string
@@ -7404,6 +7518,8 @@ components:
         created_at:
           type: string
           format: date-time
+        criteria_disagreement:
+          type: string
         demoted_at:
           type: string
           format: date-time
@@ -7421,6 +7537,8 @@ components:
           type: string
         pending_identity:
           type: integer
+        standing_source:
+          type: string
         verdict:
           anyOf:
             - $ref: '#/components/schemas/TagQualityVerdictInfo'
@@ -7971,6 +8089,8 @@ components:
         created_at:
           type: string
           format: date-time
+        criteria_disagreement:
+          type: string
         document_count:
           type: integer
         id:
@@ -7983,6 +8103,8 @@ components:
           type: boolean
         seeded:
           type: boolean
+        standing_source:
+          type: string
       required:
         - id
         - name

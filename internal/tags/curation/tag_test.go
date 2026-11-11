@@ -33,7 +33,7 @@ func TestTag_NormalizeAtSave(t *testing.T) {
 		// seed-tags.sql seeds "c++"; submitting "C++ " (uppercase + trailing
 		// space) must normalize to "c++" and surface as a conflict, proving
 		// Create normalizes at the save chokepoint.
-		results, err := svc.Create(ctx, []string{"C++ "})
+		results, err := svc.Create(ctx, []string{"C++ "}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create")
 		testutil.AssertEqual(t, len(results), 1, "one result")
 		testutil.AssertEqual(t, results[0].Status, types.Conflict, "conflict against seeded c++")
@@ -44,7 +44,7 @@ func TestTag_NormalizeAtSave(t *testing.T) {
 		// Create a fresh tag, then rename it to a form that normalizes to the
 		// same stored name. Update must return Noop without touching the
 		// embedding store (prevents store churn on equivalent renames).
-		createResults, err := svc.Create(ctx, []string{"Machine Learning"})
+		createResults, err := svc.Create(ctx, []string{"Machine Learning"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create")
 		testutil.AssertEqual(t, createResults[0].Status, types.Created, "created")
 		id := createResults[0].Entity.ID
@@ -68,7 +68,7 @@ func TestTag_CreatePlannedTx_Rollback(t *testing.T) {
 
 	plan, err := svc.buildPlan(ctx, txQ, []string{"tx-test-1", "tx-test-2"}, false)
 	testutil.AssertNoError(t, err, "build plan")
-	results, newNames, err := svc.CreatePlannedTx(ctx, txQ, plan, false)
+	results, newNames, err := svc.CreatePlannedTx(ctx, txQ, plan, false, "auto")
 	testutil.AssertNoError(t, err, "create planned tx")
 	testutil.AssertEqual(t, len(results), 2, "two results")
 	testutil.AssertEqual(t, len(newNames), 2, "two new names")
@@ -82,7 +82,7 @@ func TestTag_CreatePlannedTx_Rollback(t *testing.T) {
 
 	// Rollback: the tags must not be visible to a new query outside the tx.
 	tx.Rollback()
-	results2, err := svc.Create(ctx, []string{"tx-test-1"})
+	results2, err := svc.Create(ctx, []string{"tx-test-1"}, tags.StandingAuto)
 	testutil.AssertNoError(t, err, "re-create after rollback")
 	// After rollback, the tags don't exist, so Create should create them fresh.
 	if results2[0].Status != types.Created {
@@ -175,7 +175,7 @@ func TestTag_Create_PromotesBirth(t *testing.T) {
 	svc, client := newTestTag(t)
 	ctx := context.Background()
 
-	results, err := svc.Create(ctx, []string{"promote-test-1", "promote-test-2"})
+	results, err := svc.Create(ctx, []string{"promote-test-1", "promote-test-2"}, tags.StandingAuto)
 	testutil.AssertNoError(t, err, "create")
 	testutil.AssertEqual(t, len(results), 2, "two results")
 	for _, r := range results {
@@ -213,7 +213,7 @@ func TestTag_Create_MidBatchFailureRollsBackWholeBatch(t *testing.T) {
 			`ALTER TABLE tag DROP CONSTRAINT IF EXISTS tag_rejects_poison`)
 	})
 
-	_, err = svc.Create(ctx, []string{"atomic rollback probe", "poison tag"})
+	_, err = svc.Create(ctx, []string{"atomic rollback probe", "poison tag"}, tags.StandingAuto)
 	testutil.AssertError(t, err, "create must surface the failing insert")
 
 	_, err = client.Queries.GetTagByName(ctx, "atomic rollback probe")
@@ -231,7 +231,7 @@ func TestTag_CreatePlannedTx_Quarantined_LeavesProvisional(t *testing.T) {
 
 	plan, err := svc.buildPlan(ctx, txQ, []string{"quarantined-tag"}, false)
 	testutil.AssertNoError(t, err, "build plan")
-	results, newNames, err := svc.CreatePlannedTx(ctx, txQ, plan, true)
+	results, newNames, err := svc.CreatePlannedTx(ctx, txQ, plan, true, "auto")
 	testutil.AssertNoError(t, err, "create planned tx quarantined")
 	testutil.AssertEqual(t, len(results), 1, "one result")
 	testutil.AssertEqual(t, len(newNames), 1, "one new name")
@@ -259,7 +259,7 @@ func TestTag_Update_OnlyReembedsPromotedTags(t *testing.T) {
 	}
 
 	// Create a promoted tag (via Create, which promotes).
-	createResults, err := svc.Create(ctx, []string{"update-reembed-src"})
+	createResults, err := svc.Create(ctx, []string{"update-reembed-src"}, tags.StandingAuto)
 	testutil.AssertNoError(t, err, "create promoted tag")
 	testutil.AssertEqual(t, createResults[0].Status, types.Created, "created")
 	promotedID := createResults[0].Entity.ID
@@ -293,7 +293,7 @@ func TestTag_CreateAndUnblock(t *testing.T) {
 
 	// Create alone must refuse a blocklisted name and keep the blocklist row:
 	// the automatic paths rely on it to keep guarding a deleted name.
-	results, err := svc.Create(ctx, []string{"recreate me"})
+	results, err := svc.Create(ctx, []string{"recreate me"}, tags.StandingAuto)
 	testutil.AssertNoError(t, err, "create")
 	testutil.AssertEqual(t, results[0].Status, types.Invalid, "blocklisted name is not registered")
 	if _, err := client.Queries.GetDeletedTag(ctx, "recreate me"); err != nil {
@@ -734,7 +734,7 @@ func TestTag_Promote(t *testing.T) {
 
 	t.Run("already promoted", func(t *testing.T) {
 		// a base-form name is not flagged by M2 and promotes at birth
-		results, err := svc.Create(ctx, []string{"promote-tag"})
+		results, err := svc.Create(ctx, []string{"promote-tag"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create")
 		testutil.AssertEqual(t, results[0].Status, types.Created, "created")
 		tagID := results[0].Entity.ID
@@ -759,7 +759,7 @@ func TestTag_Demote(t *testing.T) {
 	svc := NewTag(client, testutil.NewTestLogger(), embedder)
 
 	t.Run("demotion revokes the store copy and records why", func(t *testing.T) {
-		results, err := svc.Create(ctx, []string{"demote-standings"})
+		results, err := svc.Create(ctx, []string{"demote-standings"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create")
 		tagID := results[0].Entity.ID
 		name := results[0].Entity.Name
@@ -786,7 +786,7 @@ func TestTag_Demote(t *testing.T) {
 	})
 
 	t.Run("promoting again restores standing and clears the record", func(t *testing.T) {
-		results, err := svc.Create(ctx, []string{"demote-restored"})
+		results, err := svc.Create(ctx, []string{"demote-restored"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create")
 		tagID := results[0].Entity.ID
 		name := results[0].Entity.Name
@@ -918,7 +918,7 @@ func TestTag_ApplyAliasPlan(t *testing.T) {
 	}
 
 	t.Run("registration consults the alias", func(t *testing.T) {
-		results, err := svc.Create(ctx, []string{"alias loser tag"})
+		results, err := svc.Create(ctx, []string{"alias loser tag"}, tags.StandingAuto)
 		testutil.AssertNoError(t, err, "create through alias")
 		testutil.AssertEqual(t, len(results), 1, "one result")
 		testutil.AssertEqual(t, results[0].Status, types.Apply, "apply through alias")
@@ -957,7 +957,7 @@ func TestTag_CreatePlannedTx_StoresNormalizedName(t *testing.T) {
 		Name:        "Boundary Topic",
 		Disposition: tags.DispositionRegister,
 	}}}
-	results, _, err := svc.CreatePlannedTx(ctx, txQ, plan, false)
+	results, _, err := svc.CreatePlannedTx(ctx, txQ, plan, false, "auto")
 	testutil.AssertNoError(t, err, "create planned")
 	testutil.AssertEqual(t, len(results), 1, "one result")
 	testutil.AssertEqual(t, results[0].Status, types.Created, "created")
@@ -1010,7 +1010,7 @@ func TestTag_CreatePlannedTx_WritesCompositionEvidence(t *testing.T) {
 			Reconstructible: &notReconstructible,
 		},
 	}}
-	_, _, err = svc.CreatePlannedTx(ctx, txQ, plan, false)
+	_, _, err = svc.CreatePlannedTx(ctx, txQ, plan, false, "auto")
 	testutil.AssertNoError(t, err, "create planned tx")
 	testutil.AssertNoError(t, tx.Commit(), "commit composition evidence")
 
@@ -1080,7 +1080,7 @@ func TestTag_CreatePlannedTx_HousesCompositionCandidate(t *testing.T) {
 		Reason:          tags.CompositionReasonNamedUnitReconstructible,
 		CriteriaVersion: analyzer.TagSplitVersion,
 	}}}
-	_, _, err = svc.CreatePlannedTx(ctx, txQ, plan, false)
+	_, _, err = svc.CreatePlannedTx(ctx, txQ, plan, false, "auto")
 	testutil.AssertNoError(t, err, "create planned tx")
 	testutil.AssertNoError(t, tx.Commit(), "commit composition evidence")
 
@@ -1635,4 +1635,203 @@ func TestTag_PromoteAlias(t *testing.T) {
 		testutil.AssertNoError(t, err, "promote")
 		testutil.AssertEqual(t, status, types.AliasPromoteNotFound, "status")
 	})
+}
+
+// TestTag_Restore pins the restore contract: a rule-driven demotion is cleared with its current-version
+// judge rows, the caller's re-judge is enqueued before the commit, and a failed enqueue rolls the restore
+// back. Operator and mass-decay demotions are not restorable, and a promoted value has nothing to clear.
+func TestTag_Restore(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	const admitCriteria = `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}`
+
+	seedDemoted := func(t *testing.T, name, reason string) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = now(), standing_source = 'operator' WHERE id = $1", id); err != nil {
+			t.Fatalf("set standing: %v", err)
+		}
+		docID := database.CreateUniqueDocument(t, client.Queries, name+" doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		database.MustInsertTagQualityEvent(t, client.Queries, docID, name, admitCriteria, "admit", analyzer.TagQualityVersion)
+		if _, status, err := svc.Demote(ctx, id, reason); err != nil || status != types.DemoteDemoted {
+			t.Fatalf("demote %q: status=%v err=%v", name, status, err)
+		}
+		return id
+	}
+
+	t.Run("clears the demotion and the current-version verdicts", func(t *testing.T) {
+		name := "restore rule driven"
+		id := seedDemoted(t, name, tags.ReasonSingleSignal)
+		enqueued := false
+
+		status, err := svc.Restore(ctx, id, func() error {
+			enqueued = true
+			return nil
+		})
+		testutil.AssertNoError(t, err, "restore")
+		testutil.AssertEqual(t, status, types.RestoreApplied, "applied")
+		if !enqueued {
+			t.Error("the restore enqueues the fresh re-judge")
+		}
+
+		tag, err := svc.Get(ctx, id)
+		testutil.AssertNoError(t, err, "re-fetch")
+		if tag.PromotedAt.Valid || tag.DemotedAt.Valid || tag.DemotedReason.Valid {
+			t.Error("the value returns to plain provisional standing")
+		}
+		testutil.AssertEqual(t, tag.StandingSource, tags.StandingAuto, "the demotion reset the provenance")
+
+		events, err := svc.LatestQualityEventsForNames(ctx, []string{name})
+		testutil.AssertNoError(t, err, "latest verdicts")
+		testutil.AssertEqual(t, len(events), 0, "the current-version verdict is deleted for a fresh judgment")
+	})
+
+	t.Run("a failed enqueue rolls the restore back", func(t *testing.T) {
+		id := seedDemoted(t, "restore enqueue failure", tags.ReasonSingleSignal)
+
+		_, err := svc.Restore(ctx, id, func() error { return errors.New("enqueue boom") })
+		if err == nil {
+			t.Fatal("the enqueue failure must surface")
+		}
+
+		var demoted bool
+		var reason string
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT demoted_at IS NOT NULL, coalesce(demoted_reason, '') FROM tag WHERE id = $1", id).
+				Scan(&demoted, &reason),
+			"read the row")
+		if !demoted {
+			t.Error("the rollback keeps the demotion")
+		}
+		testutil.AssertEqual(t, reason, tags.ReasonSingleSignal, "the trigger survives the rollback")
+	})
+
+	t.Run("an operator demotion is not restorable", func(t *testing.T) {
+		id := seedDemoted(t, "restore operator demotion", "operator")
+
+		status, err := svc.Restore(ctx, id, func() error { return nil })
+		testutil.AssertNoError(t, err, "restore")
+		testutil.AssertEqual(t, status, types.RestoreNotApplicable, "not applicable")
+	})
+
+	t.Run("a promoted value has nothing to clear", func(t *testing.T) {
+		results, err := svc.Create(ctx, []string{"restorepromotedvalue"}, tags.StandingAuto)
+		testutil.AssertNoError(t, err, "create")
+		testutil.AssertEqual(t, results[0].Status, types.Created, "created")
+
+		status, err := svc.Restore(ctx, results[0].Entity.ID, func() error { return nil })
+		testutil.AssertNoError(t, err, "restore")
+		testutil.AssertEqual(t, status, types.RestoreNotDemoted, "not demoted")
+	})
+}
+
+// TestTag_RestoreVerdictDemoted pins the bulk restore's page bound, remaining backlog, and reason filter:
+// only rule-driven demotions are selected, one call restores at most the requested page, and the returned
+// remainder drains on the next call.
+func TestTag_RestoreVerdictDemoted(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	const admitCriteria = `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}`
+	seed := func(t *testing.T, name, reason, age string) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = now() WHERE id = $1", id); err != nil {
+			t.Fatalf("set standing: %v", err)
+		}
+		docID := database.CreateUniqueDocument(t, client.Queries, name+" doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		database.MustInsertTagQualityEvent(t, client.Queries, docID, name, admitCriteria, "admit", analyzer.TagQualityVersion)
+		if _, status, err := svc.Demote(ctx, id, reason); err != nil || status != types.DemoteDemoted {
+			t.Fatalf("demote %q: status=%v err=%v", name, status, err)
+		}
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET demoted_at = now() - $2::interval WHERE id = $1", id, age); err != nil {
+			t.Fatalf("stagger the demotion: %v", err)
+		}
+		return id
+	}
+
+	first := seed(t, "restore page first", tags.ReasonSingleSignal, "3 minutes")
+	excluded := seed(t, "restore page excluded", tags.DemotionMassDecay, "2 minutes")
+	second := seed(t, "restore page second", tags.ReasonJudgeDefer, "1 minute")
+
+	var enqueued [][]int64
+	collect := func(ids []int64) error {
+		enqueued = append(enqueued, append([]int64(nil), ids...))
+		return nil
+	}
+
+	restored, remaining, err := svc.RestoreVerdictDemoted(ctx, 1, collect)
+	testutil.AssertNoError(t, err, "first page")
+	testutil.AssertEqual(t, restored, 1, "one row per page")
+	testutil.AssertEqual(t, remaining, int64(1), "one rule-driven demotion still waits")
+	if len(enqueued) != 1 || len(enqueued[0]) != 1 || enqueued[0][0] != first {
+		t.Fatalf("enqueued = %v, want the oldest rule-driven row", enqueued)
+	}
+
+	restored, remaining, err = svc.RestoreVerdictDemoted(ctx, 1, collect)
+	testutil.AssertNoError(t, err, "second page")
+	testutil.AssertEqual(t, restored, 1, "the remainder drains")
+	testutil.AssertEqual(t, remaining, int64(0), "nothing left")
+	if len(enqueued) != 2 || enqueued[1][0] != second {
+		t.Fatalf("enqueued = %v, want the second rule-driven row", enqueued)
+	}
+
+	restored, remaining, err = svc.RestoreVerdictDemoted(ctx, 1, collect)
+	testutil.AssertNoError(t, err, "empty page")
+	testutil.AssertEqual(t, restored, 0, "nothing to restore")
+	testutil.AssertEqual(t, remaining, int64(0), "nothing left")
+	testutil.AssertEqual(t, len(enqueued), 2, "an empty page enqueues nothing")
+
+	for _, id := range []int64{first, second} {
+		var demoted bool
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx, "SELECT demoted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&demoted),
+			"read the restored row")
+		if demoted {
+			t.Error("the restored value keeps no demotion stamp")
+		}
+	}
+	var excludedDemoted bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx, "SELECT demoted_at IS NOT NULL FROM tag WHERE id = $1", excluded).
+			Scan(&excludedDemoted),
+		"read the excluded row")
+	if !excludedDemoted {
+		t.Error("a mass-decay demotion is not a rule-driven restore target")
+	}
+}
+
+// TestTag_Promote_StandingProvenance pins the provenance mapping: an approval keeps its standing through
+// later criteria-version re-judgments, while a sweep promotion stays open to the ordinary demotion rules.
+func TestTag_Promote_StandingProvenance(t *testing.T) {
+	svc, client := newTestTag(t)
+	ctx := context.Background()
+
+	id := database.MustCreateTag(t, client.Queries, "provenance value")
+	if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+		t.Fatalf("set provisional: %v", err)
+	}
+	if _, status, err := svc.Promote(ctx, id, tags.PromoteReasonHumanApprove); err != nil || status != types.PromotePromoted {
+		t.Fatalf("promote as operator: status=%v err=%v", status, err)
+	}
+	tag, err := svc.Get(ctx, id)
+	testutil.AssertNoError(t, err, "read the approved row")
+	testutil.AssertEqual(t, tag.StandingSource, tags.StandingOperator, "an approval pins the standing")
+
+	if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+		t.Fatalf("set provisional again: %v", err)
+	}
+	if _, status, err := svc.Promote(ctx, id, tags.PromoteReasonSweep); err != nil || status != types.PromotePromoted {
+		t.Fatalf("promote by sweep: status=%v err=%v", status, err)
+	}
+	tag, err = svc.Get(ctx, id)
+	testutil.AssertNoError(t, err, "read the swept row")
+	testutil.AssertEqual(t, tag.StandingSource, tags.StandingAuto, "a sweep promotion stays re-judgeable")
 }

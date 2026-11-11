@@ -340,6 +340,9 @@ export const api = {
 			}),
 		retire: (id) => requestRaw(`/api/v1/tags/${id}/retire`, { method: 'POST' }),
 		accept: (id) => requestRaw(`/api/v1/tags/${id}/accept`, { method: 'POST' }),
+		restore: (id) => requestRaw(`/api/v1/tags/${id}/restore`, { method: 'POST' }),
+		restoreVerdictDemoted: () =>
+			requestRaw('/api/v1/tags/restore-verdict-demoted', { method: 'POST' }),
 		separate: (id) => requestRaw(`/api/v1/tags/${id}/separate`, { method: 'POST' }),
 		rejudge: (id, scope) =>
 			requestRaw(`/api/v1/tags/${id}/rejudge`, {

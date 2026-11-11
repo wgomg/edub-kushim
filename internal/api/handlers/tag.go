@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
+	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -41,16 +43,18 @@ func matcherUnavailableResponse(w http.ResponseWriter) {
 // the identity reevaluation trigger, the completeness audit trigger and coverage review surface, the
 // operator's fold and composition decisions, retirement, and on-demand re-judging, backed by curation.
 type TagHandler struct {
-	tag      *curation.Tag
-	identity *curation.TagIdentity
-	audit    *curation.TagAudit
-	rejudge  *curation.TagRejudge
-	logger   *log.Logger
+	tag       *curation.Tag
+	identity  *curation.TagIdentity
+	audit     *curation.TagAudit
+	rejudge   *curation.TagRejudge
+	getConfig func() *config.Config
+	logger    *log.Logger
 }
 
-// NewTagHandler wires the tag handler to the curation services.
-func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, audit *curation.TagAudit, rejudge *curation.TagRejudge, logger *log.Logger) *TagHandler {
-	return &TagHandler{tag: tag, identity: identity, audit: audit, rejudge: rejudge, logger: logger}
+// NewTagHandler wires the tag handler to the curation services and the live configuration, which bounds
+// the bulk restore to the same re-judge budget the sweep uses.
+func NewTagHandler(tag *curation.Tag, identity *curation.TagIdentity, audit *curation.TagAudit, rejudge *curation.TagRejudge, getConfig func() *config.Config, logger *log.Logger) *TagHandler {
+	return &TagHandler{tag: tag, identity: identity, audit: audit, rejudge: rejudge, getConfig: getConfig, logger: logger}
 }
 
 // List serves the paged tag listing with a name search and document counts.
@@ -82,7 +86,7 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, Compound: tags.ClassifyShape(t.Name) == tags.ShapeCompound, CreatedAt: tagCreatedAt(t.CreatedAt)}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, Compound: tags.ClassifyShape(t.Name) == tags.ShapeCompound, StandingSource: t.StandingSource, CreatedAt: tagCreatedAt(t.CreatedAt)}
 			}
 		}
 	} else {
@@ -94,12 +98,17 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			responses = make([]TagResponse, len(result))
 			for i, t := range result {
-				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, Compound: tags.ClassifyShape(t.Name) == tags.ShapeCompound, CreatedAt: tagCreatedAt(t.CreatedAt)}
+				responses[i] = TagResponse{ID: t.ID, Name: t.Name, DocumentCount: t.DocumentCount, Promoted: t.PromotedAt.Valid, Seeded: t.Seeded, Compound: tags.ClassifyShape(t.Name) == tags.ShapeCompound, StandingSource: t.StandingSource, CreatedAt: tagCreatedAt(t.CreatedAt)}
 			}
 		}
 	}
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "list tags", err)
+		return
+	}
+
+	if err := h.attachCriteriaDisagreement(ctx, responses); err != nil {
+		writeServiceError(w, h.logger, reqID, "list tag criteria disagreement", err)
 		return
 	}
 
@@ -136,6 +145,36 @@ func (h *TagHandler) attachAliases(ctx context.Context, rows []TagResponse, quer
 				rows[i].MatchedAlias = alias.AliasName
 			}
 		}
+	}
+	return nil
+}
+
+// attachCriteriaDisagreement fills each promoted operator-standing tag with the reason the current criteria
+// no longer admit it, so the vocabulary can flag the disagreement without changing standing. Automatic
+// standings carry no flag: the sweep owns their lifecycle and their demotion is the notice.
+func (h *TagHandler) attachCriteriaDisagreement(ctx context.Context, rows []TagResponse) error {
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.Promoted && row.StandingSource == tags.StandingOperator {
+			names = append(names, row.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	events, err := h.tag.LatestQualityEventsForNames(ctx, names)
+	if err != nil {
+		return err
+	}
+	reasons := make(map[string]string, len(events))
+	for _, e := range events {
+		decision := admission.DecisionFromStored(e.Criteria, e.Pass, tags.AdmissionFeatures{})
+		if decision.Outcome != tags.AdmissionAdmit {
+			reasons[e.TagName] = decision.Reason
+		}
+	}
+	for i := range rows {
+		rows[i].CriteriaDisagreement = reasons[rows[i].Name]
 	}
 	return nil
 }
@@ -322,6 +361,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		verdicts := make(map[string]TagQualityVerdictInfo, len(events))
+		disagreements := make(map[string]string, len(events))
 		for _, e := range events {
 			info := TagQualityVerdictInfo{
 				Pass:      e.Pass,
@@ -334,6 +374,9 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				info.Criteria = &criteria
 			}
 			verdicts[e.TagName] = info
+			if decision := admission.DecisionFromStored(e.Criteria, e.Pass, tags.AdmissionFeatures{}); decision.Outcome != tags.AdmissionAdmit {
+				disagreements[e.TagName] = decision.Reason
+			}
 		}
 		pending, err := h.tag.PendingIdentityCounts(ctx, names)
 		if err != nil {
@@ -383,6 +426,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				IdentityFoldClass: hold.FoldClass,
 				CompositionHold:   compositionHeld[t.Name],
 				DemotedReason:     t.DemotedReason.String,
+				StandingSource:    t.StandingSource,
 				Compound:          tags.ClassifyShape(t.Name) == tags.ShapeCompound,
 			}
 			if composition, ok := compositionByCandidate[t.Name]; ok {
@@ -394,9 +438,10 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				demotedAt := t.DemotedAt.Time
 				responses[i].DemotedAt = &demotedAt
 			}
-			if t.AcceptedAt.Valid && t.AcceptedAt.Time.After(t.FreshVerdictAt) {
+			if t.AcceptedAt.Valid {
 				acceptedAt := t.AcceptedAt.Time
 				responses[i].AcceptedAt = &acceptedAt
+				responses[i].CriteriaDisagreement = disagreements[t.Name]
 			}
 			if v, ok := verdicts[t.Name]; ok {
 				responses[i].Verdict = &v
@@ -499,7 +544,7 @@ func (h *TagHandler) PromoteTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, status, err := h.tag.Promote(ctx, id, "human-approve")
+	_, status, err := h.tag.Promote(ctx, id, tags.PromoteReasonHumanApprove)
 	if err != nil {
 		writeServiceError(w, h.logger, reqID, "promote tag", err)
 		return
@@ -797,6 +842,92 @@ func (h *TagHandler) AcceptTag(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "Another review concern still holds this tag"})
 	}
+}
+
+// RestoreTag clears one verdict-driven demotion and enqueues the fresh re-judge that decides the value
+// under the current rules, returning the batch that carries it.
+func (h *TagHandler) RestoreTag(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	var batchID string
+	var alreadyQueued bool
+	status, err := h.tag.Restore(ctx, id, func() error {
+		var enqueueErr error
+		batchID, alreadyQueued, enqueueErr = h.rejudge.Enqueue(ctx, spec, id, tags.RejudgeScopeQuality)
+		return enqueueErr
+	})
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "restore tag", err)
+		return
+	}
+
+	switch status {
+	case types.RestoreApplied:
+	case types.RestoreNotFound:
+		http.Error(w, "Tag not found", http.StatusNotFound)
+		return
+	case types.RestoreNotDemoted:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Tag is not demoted"})
+		return
+	default:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "This demotion is not rule-driven and cannot be restored"})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"batch_id":       batchID,
+		"already_queued": alreadyQueued,
+	})
+}
+
+// RestoreVerdictDemoted restores one bounded page of rule-driven demotions and enqueues their fresh
+// re-judges in one batch, returning how many were restored and how many matching values remain for a
+// follow-up call.
+func (h *TagHandler) RestoreVerdictDemoted(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	limit := h.getConfig().Enricher.TagReconcile.MaxRejudge
+	spec, err := task.NewBatchSpec(types.Batch.Origin.API, "")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	var batchID string
+	var alreadyQueued bool
+	restored, remaining, err := h.tag.RestoreVerdictDemoted(ctx, limit, func(ids []int64) error {
+		var enqueueErr error
+		batchID, alreadyQueued, enqueueErr = h.rejudge.EnqueueMany(ctx, spec, ids, tags.RejudgeScopeQuality)
+		return enqueueErr
+	})
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "restore verdict-demoted tags", err)
+		return
+	}
+	if restored == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"restored": 0, "remaining": 0})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"restored":       restored,
+		"remaining":      remaining,
+		"batch_id":       batchID,
+		"already_queued": alreadyQueued,
+	})
 }
 
 // SeparateTag records the operator's decision that one identity-held provisional tag names its own value,
@@ -1267,26 +1398,30 @@ type TagQualityVerdictInfo struct {
 }
 
 // ProvisionalTagResponse describes a tag awaiting review, with its latest verdict and what keeps it
-// provisional. AcceptedAt is set only while an operator acceptance still waives the recorded deferral, so a
-// value whose fresh verdict has since re-decided it reads as deferred again. IdentityFoldClass carries the
-// judge's fold-relation class behind the identity hold, empty when the hold has none or predates it.
+// provisional. AcceptedAt is set whenever an operator acceptance is stamped: the waiver is durable, so a
+// later verdict never re-opens the deferral it waived. CriteriaDisagreement carries the current verdict's
+// non-admission reason beside an acceptance, so the queue can show that the operator decision outranks the
+// fresh judgment. IdentityFoldClass carries the judge's fold-relation class behind the identity hold, empty
+// when the hold has none or predates it.
 type ProvisionalTagResponse struct {
-	ID                int64                  `json:"id"`
-	Name              string                 `json:"name"`
-	DocumentCount     int64                  `json:"document_count"`
-	CreatedAt         time.Time              `json:"created_at"`
-	Verdict           *TagQualityVerdictInfo `json:"verdict"`
-	PendingIdentity   int64                  `json:"pending_identity"`
-	IdentityHold      string                 `json:"identity_hold,omitempty"`
-	IdentityFoldClass string                 `json:"identity_fold_class,omitempty"`
-	CompositionHold   string                 `json:"composition_hold,omitempty"`
-	CompositionReason string                 `json:"composition_reason,omitempty"`
-	CompositionAction tags.CompositionAction `json:"composition_action,omitempty"`
-	CompositionParts  []string               `json:"composition_parts,omitempty"`
-	DemotedAt         *time.Time             `json:"demoted_at,omitempty"`
-	DemotedReason     string                 `json:"demoted_reason,omitempty"`
-	AcceptedAt        *time.Time             `json:"accepted_at,omitempty"`
-	Compound          bool                   `json:"compound,omitempty"`
+	ID                   int64                  `json:"id"`
+	Name                 string                 `json:"name"`
+	DocumentCount        int64                  `json:"document_count"`
+	CreatedAt            time.Time              `json:"created_at"`
+	Verdict              *TagQualityVerdictInfo `json:"verdict"`
+	PendingIdentity      int64                  `json:"pending_identity"`
+	IdentityHold         string                 `json:"identity_hold,omitempty"`
+	IdentityFoldClass    string                 `json:"identity_fold_class,omitempty"`
+	CompositionHold      string                 `json:"composition_hold,omitempty"`
+	CompositionReason    string                 `json:"composition_reason,omitempty"`
+	CompositionAction    tags.CompositionAction `json:"composition_action,omitempty"`
+	CompositionParts     []string               `json:"composition_parts,omitempty"`
+	DemotedAt            *time.Time             `json:"demoted_at,omitempty"`
+	DemotedReason        string                 `json:"demoted_reason,omitempty"`
+	AcceptedAt           *time.Time             `json:"accepted_at,omitempty"`
+	StandingSource       string                 `json:"standing_source,omitempty"`
+	CriteriaDisagreement string                 `json:"criteria_disagreement,omitempty"`
+	Compound             bool                   `json:"compound,omitempty"`
 }
 
 // compositionView is one candidate's latest composition journal row as the queue reads it: the

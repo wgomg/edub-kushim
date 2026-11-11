@@ -46,6 +46,7 @@
 		const parts = [];
 		if (p.promoted) parts.push(`${formatNumber(p.promoted)} promoted`);
 		if (p.rejudged) parts.push(`${formatNumber(p.rejudged)} re-judged`);
+		if (p.notified) parts.push(`${formatNumber(p.notified)} kept against the current criteria`);
 		if (p.deferred) parts.push(`${formatNumber(p.deferred)} deferred to review`);
 		if (p.no_judge) parts.push(`${formatNumber(p.no_judge)} awaiting the judge`);
 		if (p.zero_assignment) parts.push(`${formatNumber(p.zero_assignment)} without documents`);

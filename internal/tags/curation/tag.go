@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"sort"
 	"time"
 
@@ -520,12 +521,13 @@ func (s *Tag) Retire(ctx context.Context, id int64) (types.RetireStatus, error) 
 // Accept waives one provisional value's review deferral at an operator's request: when the value's latest
 // current-version verdict deferred the value and no identity or composition hold still withholds it from
 // promotion, accepted_at is stamped so the promotion floor decides instead of the review queue. The waiver
-// covers one fresh verdict: a verdict newer than the stamp (a rubric version change or a re-judge) re-opens
-// the deferral, and accepting again replaces the stamp; an acceptance that still post-dates the current
-// verdict is refused as already accepted. The hold refusals exist because waiving the deferral alone could
-// not move a held value; a promoted value keeps Demote as its path. The row is locked and re-checked, so
-// concurrent promotions and acceptances are refused rather than overwritten. The verdict stays in the
-// journal untouched — only the standing stamp records the operator's decision.
+// is durable: a later verdict — a rubric version change or a re-judge — never re-opens the deferral while
+// the stamp is set, and only promotion (which consumes it), an operator reject, or an operator retire ends
+// it. A value that already carries the stamp is refused as already accepted. The hold refusals exist
+// because waiving the deferral alone could not move a held value; a promoted value keeps Demote as its
+// path. The row is locked and re-checked, so concurrent promotions and acceptances are refused rather than
+// overwritten. The verdict stays in the journal untouched — only the standing stamp records the operator's
+// decision.
 func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -544,6 +546,9 @@ func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) 
 	if tag.PromotedAt.Valid {
 		return types.AcceptNotProvisional, nil
 	}
+	if tag.AcceptedAt.Valid {
+		return types.AcceptAlready, nil
+	}
 
 	verdicts, err := txQ.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
 		PolicyVersion: analyzer.TagQualityVersion,
@@ -555,9 +560,6 @@ func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) 
 	if len(verdicts) == 0 || !verdicts[0].Outcome.Valid ||
 		verdicts[0].Outcome.String != tags.AdmissionDefer.String() {
 		return types.AcceptNotDeferred, nil
-	}
-	if tag.AcceptedAt.Valid && tag.AcceptedAt.Time.After(verdicts[0].FreshVerdictAt) {
-		return types.AcceptAlready, nil
 	}
 
 	held, err := tags.IdentityHeldNames(ctx, txQ, []string{tag.Name})
@@ -587,9 +589,10 @@ func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) 
 	return types.AcceptApplied, nil
 }
 
-// Promote promotes one provisional tag and embeds it; already-promoted
-// and not-found cases are reported through the status, and reason goes to
-// the audit log.
+// Promote promotes one provisional tag and embeds it; already-promoted and not-found cases are reported
+// through the status, and reason goes to the audit log. The reason also decides the row's own standing
+// provenance: the operator paths keep the promotion through later criteria-version re-judgments, the
+// automatic paths stay re-judgeable.
 func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Tag, types.PromoteStatus, error) {
 	tag, err := s.Get(ctx, id)
 	if err != nil {
@@ -602,7 +605,10 @@ func (s *Tag) Promote(ctx context.Context, id int64, reason string) (database.Ta
 		return tag, types.PromoteAlreadyPromoted, nil
 	}
 
-	promoted, err := s.client.Queries.PromoteTags(ctx, []int64{id})
+	promoted, err := s.client.Queries.PromoteTags(ctx, database.PromoteTagsParams{
+		StandingSource: tags.StandingSourceForPromoteReason(reason),
+		TagIds:         []int64{id},
+	})
 	if err != nil {
 		return tag, types.PromoteNotFound, errs.FromDB(err, "promote tag")
 	}
@@ -657,6 +663,136 @@ func (s *Tag) Demote(ctx context.Context, id int64, reason string) (database.Tag
 	return tag, types.DemoteDemoted, nil
 }
 
+// clearRestoredJudgeRows removes demotion stamps and the current-version judge rows a restore clears: the
+// quality verdicts and the composition judgments, never operator rows. It returns how many stamps it
+// cleared, so a caller can distinguish a vanished row from a cleared one. The caller owns the transaction
+// and the surrounding locks.
+func clearRestoredJudgeRows(ctx context.Context, q *database.Queries, ids []int64, names []string) (int64, error) {
+	cleared, err := q.ClearDemotionStamps(ctx, database.ClearDemotionStampsParams{
+		TagIds:  ids,
+		Reasons: tags.VerdictDemotionReasons,
+	})
+	if err != nil {
+		return 0, errs.FromDB(err, "clear demotion stamps")
+	}
+	if _, err := q.DeleteCurrentQualityVerdicts(ctx, database.DeleteCurrentQualityVerdictsParams{
+		Names:         names,
+		PolicyVersion: analyzer.TagQualityVersion,
+	}); err != nil {
+		return 0, errs.FromDB(err, "delete restored verdicts")
+	}
+	stored := make([]string, 0, len(names))
+	for _, name := range names {
+		stored = append(stored, tags.StoredName(name))
+	}
+	if _, err := q.DeleteCurrentCompositionJudgments(ctx, database.DeleteCurrentCompositionJudgmentsParams{
+		Candidates:      stored,
+		CriteriaVersion: analyzer.TagSplitVersion,
+	}); err != nil {
+		return 0, errs.FromDB(err, "delete restored composition judgments")
+	}
+	return cleared, nil
+}
+
+// Restore clears one rule-driven demotion: the stamps are removed and the current-version judge rows —
+// quality verdicts and composition judgments, never operator rows — are deleted, so the value returns to
+// plain provisional standing with no demoted badge and the caller's re-judge task decides it fresh under
+// the current rules. The re-judge is enqueued before the transaction commits, so a failed enqueue rolls it
+// back instead of leaving a value restored with no fresh judgment. Mass-decay and operator demotions are
+// refused — no rule re-derives them — and a promoted value has no demotion to clear. The row is locked, so
+// a concurrent promotion or restore is refused rather than overwritten.
+func (s *Tag) Restore(ctx context.Context, id int64, enqueue func() error) (types.RestoreStatus, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return types.RestoreNotFound, errs.FromDB(err, "begin restore tag")
+	}
+	defer tx.Rollback()
+	txQ := s.client.WithTx(tx)
+
+	tag, err := txQ.GetTagForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.RestoreNotFound, nil
+		}
+		return types.RestoreNotFound, errs.FromDB(err, "lock restored tag")
+	}
+	if tag.PromotedAt.Valid {
+		return types.RestoreNotDemoted, nil
+	}
+	if !slices.Contains(tags.VerdictDemotionReasons, tag.DemotedReason.String) {
+		return types.RestoreNotApplicable, nil
+	}
+
+	cleared, err := clearRestoredJudgeRows(ctx, txQ, []int64{id}, []string{tag.Name})
+	if err != nil {
+		return types.RestoreNotFound, err
+	}
+	if cleared == 0 {
+		return types.RestoreNotDemoted, nil
+	}
+	if err := enqueue(); err != nil {
+		return types.RestoreNotFound, err
+	}
+	if err := tx.Commit(); err != nil {
+		return types.RestoreNotFound, errs.FromDB(err, "commit restore tag")
+	}
+
+	s.logger.Info("", "tagquality[%s]: restore %q (reason=human-restore)",
+		analyzer.TagQualityVersion, tag.Name)
+	return types.RestoreApplied, nil
+}
+
+// RestoreVerdictDemoted restores up to maxRows currently demoted values whose reason is rule-driven and
+// reports how many matching values are still waiting, so one call is bounded like every other re-judge
+// worklist and the operator repeats it to drain the backlog. The selected rows are locked, their stamps
+// and current-version judge rows are cleared in one transaction, and the caller's enqueue runs before the
+// commit so a failed enqueue rolls the whole batch back. Values demoted by mass decay or by an operator are
+// never selected.
+func (s *Tag) RestoreVerdictDemoted(ctx context.Context, maxRows int, enqueue func([]int64) error) (int, int64, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, errs.FromDB(err, "begin restore verdict-demoted tags")
+	}
+	defer tx.Rollback()
+	txQ := s.client.WithTx(tx)
+
+	total, err := txQ.CountVerdictDemotedTags(ctx, tags.VerdictDemotionReasons)
+	if err != nil {
+		return 0, 0, errs.FromDB(err, "count verdict-demoted tags")
+	}
+	rows, err := txQ.ListVerdictDemotedTagsForUpdate(ctx, database.ListVerdictDemotedTagsForUpdateParams{
+		Reasons: tags.VerdictDemotionReasons,
+		MaxRows: int32(maxRows),
+	})
+	if err != nil {
+		return 0, 0, errs.FromDB(err, "lock verdict-demoted tags")
+	}
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+
+	ids := make([]int64, 0, len(rows))
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+		names = append(names, row.Name)
+	}
+	if _, err := clearRestoredJudgeRows(ctx, txQ, ids, names); err != nil {
+		return 0, 0, err
+	}
+	if err := enqueue(ids); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, errs.FromDB(err, "commit restore verdict-demoted tags")
+	}
+
+	remaining := max(total-int64(len(rows)), 0)
+	s.logger.Info("", "tagquality[%s]: restore %d verdict-demoted tags (remaining=%d)",
+		analyzer.TagQualityVersion, len(rows), remaining)
+	return len(rows), remaining, nil
+}
+
 // nameFilterPattern builds the ILIKE pattern for a name-contains filter; empty text leaves the name
 // dimension unfiltered, which the queries' empty-pattern guard expects.
 func nameFilterPattern(text string) string {
@@ -691,7 +827,7 @@ func (s *Tag) RestoreDeleted(ctx context.Context, name string) (database.Deleted
 	if err != nil {
 		return database.DeletedTag{}, errs.FromDB(err, "restore deleted tag")
 	}
-	if _, err := s.Create(ctx, []string{row.Name}); err != nil {
+	if _, err := s.Create(ctx, []string{row.Name}, tags.StandingOperator); err != nil {
 		return row, err
 	}
 	if err := s.client.Queries.DeleteDeletedTag(ctx, name); err != nil {

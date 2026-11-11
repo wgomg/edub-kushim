@@ -11,6 +11,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
+	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
@@ -1229,4 +1230,327 @@ func TestSweepPromotedTags_MassDecayGraceAndFloor(t *testing.T) {
 			"SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", above).Scan(&promoted),
 		"read the above-floor row")
 	testutil.AssertEqual(t, promoted, true, "four live documents clear a floor of three")
+}
+
+// fakeQualityJudge answers the rubric and the parts pass so the re-judge paths run without an LLM.
+type fakeQualityJudge struct {
+	analyzer.ContentAnalyzer
+	quality []analyzer.TagQualityResult
+}
+
+func (f *fakeQualityJudge) JudgeTagQuality(_ context.Context, _ string, _ []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+	return f.quality, nil
+}
+
+func (f *fakeQualityJudge) JudgeTagParts(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	results := make([]analyzer.TagPartResult, len(values))
+	for i := range values {
+		results[i] = analyzer.TagPartResult{Index: i, Dimensional: true}
+	}
+	return results, nil
+}
+
+// newQualityJudgeReconciler wires a reconciler whose runner answers through judge.
+func newQualityJudgeReconciler(t *testing.T, client *database.Client, judge analyzer.ContentAnalyzer) *Reconciler {
+	t.Helper()
+	logger := testutil.NewTestLogger()
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", log.NewDiscardLogger())
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{}},
+	})
+	setUnexportedField(t, runner, "tagQualityJudge", judge)
+	setUnexportedField(t, runner, "tagAdjudicator", judge)
+	return &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		runner: runner,
+		logger: logger,
+	}
+}
+
+// TestSweepPromotedTags_OperatorStandingNotifiesWithoutDemoting pins the invariant: a criteria-version
+// re-judge that disagrees with an operator-promoted value keeps its standing and reports the reason, while
+// the same fresh verdict demotes an automatically promoted value.
+func TestSweepPromotedTags_OperatorStandingNotifiesWithoutDemoting(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+
+	pinned := database.MustCreateTag(t, client.Queries, "pinned sweep value")
+	auto := database.MustCreateTag(t, client.Queries, "auto sweep value")
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = now(), standing_source = 'operator' WHERE id = $1", pinned); err != nil {
+		t.Fatalf("set pinned standing: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = now() WHERE id = $1", auto); err != nil {
+		t.Fatalf("set auto standing: %v", err)
+	}
+	database.MustAddDocumentTag(t, client.Queries,
+		database.CreateUniqueDocument(t, client.Queries, "pinned sweep document"), pinned)
+	database.MustAddDocumentTag(t, client.Queries,
+		database.CreateUniqueDocument(t, client.Queries, "auto sweep document"), auto)
+
+	judge := &fakeQualityJudge{quality: []analyzer.TagQualityResult{{
+		Index: 0, SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassNotPerson,
+		Atomic: true, NotFormGenre: true, Defer: true,
+	}}}
+	r := newQualityJudgeReconciler(t, client, judge)
+	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagReconcile: config.TagReconcileConfig{MaxRejudge: 10, RecurrenceFloor: 0},
+	}}
+	report := &Report{Skips: map[string]int{}}
+	r.sweepPromotedTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Demotion.Rejudged, 2, "both values are re-judged")
+	testutil.AssertEqual(t, report.Demotion.Notified, 1, "only the operator-standing value is kept")
+	testutil.AssertEqual(t, report.Demotion.Demoted, 1, "the automatic value loses its influence")
+	if len(report.Notified) != 1 || report.Notified[0].Name != "pinned sweep value" ||
+		report.Notified[0].Reason != tags.ReasonJudgeDefer {
+		t.Fatalf("notified = %+v, want the pinned value named with the fresh verdict", report.Notified)
+	}
+
+	var promoted, demoted bool
+	var reason string
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			`SELECT promoted_at IS NOT NULL, demoted_at IS NOT NULL, coalesce(demoted_reason, '')
+			 FROM tag WHERE id = $1`, pinned).Scan(&promoted, &demoted, &reason),
+		"read the pinned row")
+	if !promoted || demoted {
+		t.Error("operator standing survives the criteria disagreement")
+	}
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			`SELECT promoted_at IS NOT NULL, demoted_at IS NOT NULL, coalesce(demoted_reason, '')
+			 FROM tag WHERE id = $1`, auto).Scan(&promoted, &demoted, &reason),
+		"read the automatic row")
+	if promoted || !demoted {
+		t.Error("the automatic value answers to the demotion rules")
+	}
+	testutil.AssertEqual(t, reason, tags.ReasonJudgeDefer, "the row names the fresh trigger")
+}
+
+// TestSweepProvisionalTags_AcceptanceSurvivesFreshReject pins the durable waiver: a fresh rejection of an
+// accepted value keeps the acceptance, leaves the value for review, and reports the disagreement.
+func TestSweepProvisionalTags_AcceptanceSurvivesFreshReject(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+
+	id := database.MustCreateTag(t, client.Queries, "accepted reject value")
+	if _, err := client.DB().ExecContext(ctx, `UPDATE tag SET promoted_at = NULL,
+		created_at = now() - interval '90 days', accepted_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatalf("seed the accepted provisional value: %v", err)
+	}
+	database.MustAddDocumentTag(t, client.Queries,
+		database.CreateUniqueDocument(t, client.Queries, "accepted reject document"), id)
+
+	judge := &fakeQualityJudge{quality: []analyzer.TagQualityResult{{
+		Index: 0, SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassRealIndividual,
+		Atomic: true, NotFormGenre: true,
+	}}}
+	r := newQualityJudgeReconciler(t, client, judge)
+	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30, RecurrenceFloor: 10, MaxRejudge: 10},
+	}}
+	report := &Report{Skips: map[string]int{}}
+	r.sweepProvisionalTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Provisional.Worklist, 1, "worklist")
+	testutil.AssertEqual(t, report.Provisional.Rejudged, 1, "the fresh verdict ran")
+	testutil.AssertEqual(t, report.Provisional.Notified, 1, "the accepted value reports the disagreement")
+	testutil.AssertEqual(t, report.Provisional.Deferred, 0, "an accepted value is not merely deferred")
+	testutil.AssertEqual(t, report.Provisional.Promoted, 0, "a rejection never promotes")
+
+	var promoted, accepted bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx,
+			"SELECT promoted_at IS NOT NULL, accepted_at IS NOT NULL FROM tag WHERE id = $1", id).
+			Scan(&promoted, &accepted),
+		"read the row")
+	if promoted {
+		t.Error("the rejected value stays provisional")
+	}
+	if !accepted {
+		t.Error("the fresh rejection must not revert the operator acceptance")
+	}
+}
+
+// TestRejudge_QualityScope_HeldTagStaysProvisional pins the hold gate: an admitting re-judge still leaves
+// an identity-held value for review instead of promoting it.
+func TestRejudge_QualityScope_HeldTagStaysProvisional(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+
+	id := database.MustCreateTag(t, client.Queries, "held rejudge value")
+	database.MustCreateTag(t, client.Queries, "held rejudge anchor")
+	if _, err := client.DB().ExecContext(ctx,
+		"UPDATE tag SET promoted_at = NULL, created_at = now() - interval '1 day' WHERE id = $1", id); err != nil {
+		t.Fatalf("make provisional: %v", err)
+	}
+	database.MustAddDocumentTag(t, client.Queries,
+		database.CreateUniqueDocument(t, client.Queries, "held rejudge document"), id)
+	if _, err := client.DB().ExecContext(ctx, `
+		INSERT INTO tag_identity_event (kind, candidate, criteria, verdict, model, rule_set_version)
+		VALUES ('fold_gate', $1, '{"proposed_fold":"held rejudge anchor"}'::jsonb, 'rejected', 'judge', $2)`,
+		"held rejudge value", tags.IdentityRuleSetVersion); err != nil {
+		t.Fatalf("seed the identity hold: %v", err)
+	}
+
+	judge := &fakeQualityJudge{quality: []analyzer.TagQualityResult{{
+		Index: 0, SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassNotPerson,
+		Atomic: true, NotFormGenre: true,
+	}}}
+	r := newQualityJudgeReconciler(t, client, judge)
+	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagReconcile: config.TagReconcileConfig{RecurrenceFloor: 1},
+	}}
+	r.getConfig = func() *config.Config { return cfg }
+
+	report, err := r.Rejudge(ctx, RejudgeRequest{TagID: id, Scope: string(tags.RejudgeScopeQuality)})
+	testutil.AssertNoError(t, err, "rejudge")
+	if report.Promoted {
+		t.Error("a held value must not promote on an admitting verdict")
+	}
+	if !report.Held {
+		t.Error("the identity hold keeps the value for review")
+	}
+	var promoted bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx, "SELECT promoted_at IS NOT NULL FROM tag WHERE id = $1", id).Scan(&promoted),
+		"read the row")
+	if promoted {
+		t.Error("the held value stays provisional")
+	}
+}
+
+// TestSweepRetentionTags_SparesAcceptedRows pins the retention exemption: an accepted value past the
+// window is not even a worklist candidate, while an otherwise identical unaccepted value is removed.
+func TestSweepRetentionTags_SparesAcceptedRows(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	const rejectCriteria = `{"subject_matter":false,"dimension":false,"person_class":"not_person","atomic":false,"not_form_genre":false}`
+	seed := func(t *testing.T, name string, accepted bool) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = NULL, created_at = now() - interval '100 days' WHERE id = $1", id); err != nil {
+			t.Fatalf("backdate provisional tag: %v", err)
+		}
+		docID := database.CreateUniqueDocument(t, client.Queries, name+" doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		database.MustInsertTagQualityEvent(t, client.Queries, docID, name, rejectCriteria, "reject", analyzer.TagQualityVersion)
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag_quality_event SET verdict_at = now() - interval '100 days' WHERE tag_name = $1", name); err != nil {
+			t.Fatalf("age the verdict: %v", err)
+		}
+		if accepted {
+			if _, err := client.DB().ExecContext(ctx,
+				"UPDATE tag SET accepted_at = now() WHERE id = $1", id); err != nil {
+				t.Fatalf("stamp the acceptance: %v", err)
+			}
+		}
+		return id
+	}
+
+	expired := seed(t, "expired reject value", false)
+	accepted := seed(t, "accepted reject value", true)
+
+	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagReconcile: config.TagReconcileConfig{RetentionDays: 90, MaxRejudge: 10},
+	}}
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		logger: logger,
+	}
+	report := &Report{Skips: map[string]int{}}
+	r.sweepRetentionTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Retention.Worklist, 1, "the accepted row never enters the worklist")
+	testutil.AssertEqual(t, report.Retention.Removed, 1, "the unaccepted decided non-value is removed")
+
+	var expiredExists, acceptedExists bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM tag WHERE id = $1)", expired).Scan(&expiredExists),
+		"read the expired row")
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM tag WHERE id = $1)", accepted).Scan(&acceptedExists),
+		"read the accepted row")
+	if expiredExists {
+		t.Error("the unaccepted decided non-value is past its retention window")
+	}
+	if !acceptedExists {
+		t.Error("the acceptance keeps the row out of retention")
+	}
+}
+
+// TestBuildCompoundWorklist_OperatorStandingNotifiesInsteadOfDemoting pins the composition arm of the
+// invariant: a decided drop of an operator-promoted compound is reported, never revoked.
+func TestBuildCompoundWorklist_OperatorStandingNotifiesInsteadOfDemoting(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	r := &Reconciler{client: client, logger: testutil.NewTestLogger()}
+
+	database.MustCreateTag(t, client.Queries, "operator drop standing")
+	if _, err := client.DB().ExecContext(ctx, `UPDATE tag SET promoted_at = now(),
+		standing_source = 'operator' WHERE name = 'operator drop standing'`); err != nil {
+		t.Fatalf("set operator standing: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx, `
+		INSERT INTO tag_composition_event
+		    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+		VALUES (NULL, $1, '[]'::jsonb, 'drop', $2, $3, now())`,
+		tags.StoredName("operator drop standing"), tags.CompositionReasonNoDimension,
+		analyzer.TagSplitVersion); err != nil {
+		t.Fatalf("seed the decided drop: %v", err)
+	}
+	allTags, err := client.Queries.ListAllTags(ctx)
+	testutil.AssertNoError(t, err, "list tags")
+
+	report := &Report{Skips: map[string]int{}}
+	entries := r.buildCompoundWorklist(ctx, allTags, nil, report)
+
+	if len(entries) != 1 {
+		t.Fatalf("entries = %v, want the decided drop on operator standing", entries)
+	}
+	if !entries[0].notify {
+		t.Error("a decided drop on operator standing is reported, not revoked")
+	}
+	if entries[0].demote {
+		t.Error("the operator decision outranks the composition journal")
+	}
+	testutil.AssertEqual(t, entries[0].reason, tags.CompositionReasonNoDimension, "the journal reason")
 }

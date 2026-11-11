@@ -15,14 +15,16 @@ import (
 )
 
 type compoundEntry struct {
-	name         string
-	docCount     int64
-	pendingApply bool // a split a prior run decided but did not apply: it needs applying, not judging
-	split        bool
-	components   []string
-	demote       bool // a decided drop whose influence still stands: revoke it, do not judge or split
-	reason       string
-	skipReason   string
+	name           string
+	docCount       int64
+	pendingApply   bool // a split a prior run decided but did not apply: it needs applying, not judging
+	split          bool
+	components     []string
+	demote         bool // a decided drop whose influence still stands: revoke it, do not judge or split
+	notify         bool // a decided drop on operator standing: keep it and report the disagreement
+	standingSource string
+	reason         string
+	skipReason     string
 }
 
 // Pending applications and decided drops lead the worklist so a run cap only ever defers the lightest
@@ -30,6 +32,7 @@ type compoundEntry struct {
 func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []database.Tag, tagCounts map[string]int64, report *Report) []*compoundEntry {
 	var names []string
 	promoted := make(map[string]bool, len(allTags))
+	standings := make(map[string]string, len(allTags))
 	for _, t := range allTags {
 		if tags.ClassifyShape(t.Name) != tags.ShapeCompound {
 			continue
@@ -46,6 +49,7 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 		}
 		names = append(names, t.Name)
 		promoted[t.Name] = t.PromotedAt.Valid
+		standings[t.Name] = t.StandingSource
 	}
 	if len(names) == 0 {
 		return nil
@@ -75,16 +79,17 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 	for _, name := range names {
 		if parts := rules[tags.StoredName(name)]; len(parts) > 0 {
 			entries = append(entries, &compoundEntry{
-				name:         name,
-				docCount:     tagCounts[name],
-				pendingApply: true,
-				split:        true,
-				components:   parts,
-				reason:       "operator",
+				name:           name,
+				docCount:       tagCounts[name],
+				pendingApply:   true,
+				split:          true,
+				components:     parts,
+				standingSource: standings[name],
+				reason:         tags.CompositionReasonOperator,
 			})
 			continue
 		}
-		entry, skip := compoundEntryFor(name, promoted[name], tagCounts[name], held, compositionHeld, states)
+		entry, skip := compoundEntryFor(name, promoted[name], standings[name], tagCounts[name], held, compositionHeld, states)
 		if entry != nil {
 			entries = append(entries, entry)
 			continue
@@ -113,23 +118,27 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 }
 
 // compoundEntryFor classifies one stored compound candidate into the work it represents: an application owed
-// for a decided split, a demotion owed for a decided drop still promoted, or a judgment owed otherwise. A nil
-// entry comes with the tally key naming why the sweep has nothing to do. A recorded operator split rule
-// outranks it on both paths, and for the journal-driven candidates that remain, the compound arm and the
-// opening gate's probe both read membership through it, so the two cannot disagree about what work is due.
-func compoundEntryFor(name string, promoted bool, docCount int64, held map[string]tags.IdentityHold,
+// for a decided split, a demotion owed for a decided drop still promoted, a notification owed for a decided
+// drop on operator standing, or a judgment owed otherwise. A nil entry comes with the tally key naming why
+// the sweep has nothing to do. A recorded operator split rule outranks it on both paths, and for the
+// journal-driven candidates that remain, the compound arm and the opening gate's probe both read membership
+// through it, so the two cannot disagree about what work is due.
+func compoundEntryFor(name string, promoted bool, standingSource string, docCount int64, held map[string]tags.IdentityHold,
 	compositionHeld map[string]string, states map[string]tags.CompositionState) (*compoundEntry, string) {
 	if _, ok := held[name]; ok {
 		return nil, "identity_hold"
 	}
 	state, ok := states[tags.StoredName(name)]
 	if ok && state.Decided && state.Disposition == tags.CompositionSplit {
-		return &compoundEntry{name: name, docCount: docCount, pendingApply: true}, ""
+		return &compoundEntry{name: name, docCount: docCount, pendingApply: true, standingSource: standingSource}, ""
 	}
 	if ok && state.Decided && state.Disposition == tags.CompositionDrop {
 		if promoted {
 			// every drop reason is a hold reason, so the held map carries the demotion reason
-			return &compoundEntry{name: name, docCount: docCount, demote: true, reason: compositionHeld[name]}, ""
+			if standingSource == tags.StandingOperator {
+				return &compoundEntry{name: name, docCount: docCount, notify: true, standingSource: standingSource, reason: compositionHeld[name]}, ""
+			}
+			return &compoundEntry{name: name, docCount: docCount, demote: true, standingSource: standingSource, reason: compositionHeld[name]}, ""
 		}
 		return nil, "decided"
 	}
@@ -139,7 +148,7 @@ func compoundEntryFor(name string, promoted bool, docCount int64, held map[strin
 	if ok && state.Decided {
 		return nil, "decided"
 	}
-	return &compoundEntry{name: name, docCount: docCount}, ""
+	return &compoundEntry{name: name, docCount: docCount, standingSource: standingSource}, ""
 }
 
 // Stored compounds are judged through the same entry point the emission gate uses, so a verdict binds
@@ -150,8 +159,8 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		componentFilter := analyzer.NewTagFilter(nil, nil, nil)
 		for _, e := range entries {
-			if e.demote || e.split {
-				// a demotion or a decided operator rule is not judged here
+			if e.demote || e.notify || e.split {
+				// a demotion, a notification, or a decided operator rule is not judged here
 				continue
 			}
 			if textnorm.SplitJointTag(e.name) == nil {
@@ -173,7 +182,7 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 	judged := make([]*compoundEntry, 0, len(entries))
 	candidates := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.demote || e.split {
+		if e.demote || e.notify || e.split {
 			continue
 		}
 		judged = append(judged, e)
@@ -195,6 +204,11 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 			judged[i].components = row.Parts
 			judged[i].reason = "adjudicated"
 		case tags.CompositionDrop:
+			if judged[i].standingSource == tags.StandingOperator {
+				judged[i].notify = true
+				judged[i].reason = row.Reason
+				continue
+			}
 			judged[i].demote = true
 			judged[i].reason = row.Reason
 		default:
@@ -219,6 +233,11 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 
 func (r *Reconciler) planCompoundSplits(entries []*compoundEntry, report *Report) {
 	for _, e := range entries {
+		if e.notify {
+			notifyKept(report, &report.Demotion.Notified, e.name, e.reason)
+			r.logger.Info("", "tag reconcile (report-only): operator-standing compound %q disagrees with the current split criteria (reason=%s) — kept", e.name, e.reason)
+			continue
+		}
 		if e.demote {
 			report.Demotion.NoDimension++
 			r.planDemotion(report, e.name, e.reason)
@@ -247,6 +266,9 @@ func (r *Reconciler) applyCompoundSplits(ctx context.Context, cfg *config.Config
 
 	for _, e := range entries {
 		switch {
+		case e.notify:
+			notifyKept(report, &report.Demotion.Notified, e.name, e.reason)
+			r.logger.Info("", "tag reconcile: operator-standing compound %q disagrees with the current split criteria (reason=%s) — kept", e.name, e.reason)
 		case e.demote:
 			// demotions move no documents, so they never consume the re-tag budget
 			report.Demotion.NoDimension++
@@ -309,7 +331,7 @@ func (r *Reconciler) applyCompoundSplit(ctx context.Context, e *compoundEntry, s
 		return 0, fmt.Errorf("tag %q no longer in store", e.name)
 	}
 
-	outcome, err := r.tag.SplitCompound(ctx, compound.ID, e.name, e.components, false)
+	outcome, err := r.tag.SplitCompound(ctx, compound.ID, e.name, e.components, false, tags.StandingAuto)
 	if err != nil {
 		return 0, err
 	}

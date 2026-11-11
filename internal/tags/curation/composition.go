@@ -55,16 +55,17 @@ type SplitOutcome struct {
 // compound, re-points its documents onto them, clears the components' orphan marks, deletes the row,
 // and removes the name from the matcher store. Name is the compound's stored name as the caller read
 // it: a row renamed since then refuses the split (CompositionConflict). requireProvisional refuses a
-// compound promoted after the caller's check; the reconciliation sweep splits promoted compounds
-// itself, so it passes false. A refused decision removes any part rows it created, so a failed split
-// leaves no new vocabulary behind.
-func (s *Tag) SplitCompound(ctx context.Context, compoundID int64, name string, parts []string, requireProvisional bool) (SplitOutcome, error) {
+// compound promoted after the caller's check; the reconciliation sweep splits promoted compounds itself,
+// so it passes false. standingSource records the provenance of the promotions the split performs: an
+// operator split pins its parts, a rule-driven one does not. A refused decision removes any part rows it
+// created, so a failed split leaves no new vocabulary behind.
+func (s *Tag) SplitCompound(ctx context.Context, compoundID int64, name string, parts []string, requireProvisional bool, standingSource string) (SplitOutcome, error) {
 	cleaned := cleanCompositionParts(parts, name)
 	if len(cleaned) == 0 {
 		return SplitOutcome{Status: types.CompositionInvalid}, nil
 	}
 
-	componentIDs, created, ok, err := s.createCompositionParts(ctx, cleaned)
+	componentIDs, created, ok, err := s.createCompositionParts(ctx, cleaned, standingSource)
 	if err != nil {
 		return SplitOutcome{Status: types.CompositionInvalid}, err
 	}
@@ -149,7 +150,7 @@ func (s *Tag) Split(ctx context.Context, name string, parts []string) (types.Com
 		return types.CompositionSeeded, nil
 	}
 
-	outcome, err := s.SplitCompound(ctx, compound.ID, compound.Name, parts, false)
+	outcome, err := s.SplitCompound(ctx, compound.ID, compound.Name, parts, false, tags.StandingOperator)
 	if err != nil || outcome.Status != types.CompositionApplied {
 		return outcome.Status, err
 	}
@@ -159,7 +160,7 @@ func (s *Tag) Split(ctx context.Context, name string, parts []string) (types.Com
 // applyOperatorSplit runs the shared split and journals the operator's decision so the review
 // surface and the sweep read the same record a judge writes.
 func (s *Tag) applyOperatorSplit(ctx context.Context, compound database.Tag, parts []string) (types.CompositionStatus, error) {
-	outcome, err := s.SplitCompound(ctx, compound.ID, compound.Name, parts, true)
+	outcome, err := s.SplitCompound(ctx, compound.ID, compound.Name, parts, true, tags.StandingOperator)
 	if err != nil || outcome.Status != types.CompositionApplied {
 		return outcome.Status, err
 	}
@@ -244,7 +245,7 @@ func (s *Tag) RevertOperatorSplit(ctx context.Context, name string) (types.Compo
 func (s *Tag) applyOperatorKeep(ctx context.Context, compound database.Tag, parts []string) (types.CompositionStatus, error) {
 	cleaned := cleanCompositionParts(parts, compound.Name)
 	if len(cleaned) > 0 {
-		componentIDs, created, ok, err := s.createCompositionParts(ctx, cleaned)
+		componentIDs, created, ok, err := s.createCompositionParts(ctx, cleaned, tags.StandingOperator)
 		if err != nil {
 			return types.CompositionInvalid, err
 		}
@@ -312,8 +313,8 @@ type createdParts struct {
 // createCompositionParts creates the requested parts and returns their ids plus the rows it created.
 // A part the store refuses reports ok false after the rows created so far are removed, so the caller
 // never proceeds with a subset.
-func (s *Tag) createCompositionParts(ctx context.Context, parts []string) ([]int64, createdParts, bool, error) {
-	results, err := s.Create(ctx, parts)
+func (s *Tag) createCompositionParts(ctx context.Context, parts []string, standingSource string) ([]int64, createdParts, bool, error) {
+	results, err := s.Create(ctx, parts, standingSource)
 	if err != nil {
 		return nil, createdParts{}, false, err
 	}

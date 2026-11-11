@@ -100,6 +100,7 @@ type Report struct {
 	Demotion              DemotionCounts       `json:"demotion"`
 	Demoted               []DemotionEntry      `json:"demoted,omitempty"`
 	PlannedDemotions      []DemotionEntry      `json:"planned_demotions,omitempty"`
+	Notified              []DemotionEntry      `json:"notified,omitempty"`
 	Capped                int                  `json:"capped,omitempty"`
 	NoDocuments           int                  `json:"no_documents,omitempty"`
 	Swept                 int                  `json:"swept,omitempty"`
@@ -145,13 +146,14 @@ type MeasurementRun struct {
 
 // ProvisionalCounts tallies what the run did with provisional tags:
 // worklist hits, zero-assignment outcomes, promotions, rejudgements,
-// deferrals, judge misses, skips and failures.
+// deferrals, notified acceptance disagreements, judge misses, skips and failures.
 type ProvisionalCounts struct {
 	Worklist   int `json:"worklist"`
 	ZeroAssign int `json:"zero_assignment"`
 	Promoted   int `json:"promoted"`
 	Rejudged   int `json:"rejudged"`
 	Deferred   int `json:"deferred"`
+	Notified   int `json:"notified"`
 	NoJudge    int `json:"no_judge"`
 	Skipped    int `json:"skipped"`
 	Failed     int `json:"failed"`
@@ -197,13 +199,16 @@ type CompoundSplitEntry struct {
 }
 
 // DemotionCounts reports the demotion arm's work and outcomes by trigger. The counts do not partition the
-// applied total — a held name is counted and skipped — so they describe dispositions, not a sum.
+// applied total — a held name is counted and skipped — so they describe dispositions, not a sum. Notified
+// counts operator-standing values a fresh verdict no longer admits: they keep their standing, and the
+// report lists them in its own kept-values section.
 type DemotionCounts struct {
 	Worklist    int `json:"worklist"`
 	MassDecay   int `json:"mass_decay"`
 	NoDimension int `json:"no_dimension"`
 	Rejudged    int `json:"rejudged"`
 	Demoted     int `json:"demoted"`
+	Notified    int `json:"notified"`
 	Held        int `json:"held"`
 	NoJudge     int `json:"no_judge"`
 	Skipped     int `json:"skipped"`

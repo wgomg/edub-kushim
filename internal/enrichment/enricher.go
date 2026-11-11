@@ -529,7 +529,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	defer tx.Rollback()
 	txQ := e.client.WithTx(tx)
 
-	results, newNames, err := e.tag.CreatePlannedTx(ctx, txQ, identityPlan, quarantine)
+	results, newNames, err := e.tag.CreatePlannedTx(ctx, txQ, identityPlan, quarantine, tags.StandingAuto)
 	if err != nil {
 		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("batch create tags: %w", err)}
 	}
@@ -790,7 +790,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		}
 		for _, row := range rows {
 			decision := admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
-			decisionByName[row.TagName] = tags.WithAcceptance(decision, acceptedAtByName[row.TagName], row.FreshVerdictAt)
+			decisionByName[row.TagName] = tags.WithAcceptance(decision, acceptedAtByName[row.TagName])
 		}
 	}
 
@@ -818,6 +818,8 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 
 	var eligible []candidate
 	var promoteIDs []int64
+	var operatorIDs []int64
+	var autoIDs []int64
 	heldSkips := 0
 	floor := int64(e.config.Enricher.TagReconcile.RecurrenceFloor)
 	for _, c := range candidates {
@@ -839,6 +841,11 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		}
 		eligible = append(eligible, c)
 		promoteIDs = append(promoteIDs, c.id)
+		if decision.Reason == tags.ReasonOperatorAccept {
+			operatorIDs = append(operatorIDs, c.id)
+		} else {
+			autoIDs = append(autoIDs, c.id)
+		}
 	}
 	e.logger.Debug(reqID, "tagquality[%s]: promotion run considered=%d promoted=%d held=%d (rule_set=decision-%s floor=%d)",
 		analyzer.TagQualityVersion, len(candidates), len(promoteIDs), heldSkips, tags.DecisionRuleSetVersion, floor)
@@ -846,9 +853,23 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		return nil
 	}
 
-	if _, err := q.PromoteTags(ctx, promoteIDs); err != nil {
-		e.logger.Error(reqID, "tag quality promotion failed: %v", err)
-		return nil
+	if len(operatorIDs) > 0 {
+		if _, err := q.PromoteTags(ctx, database.PromoteTagsParams{
+			StandingSource: tags.StandingOperator,
+			TagIds:         operatorIDs,
+		}); err != nil {
+			e.logger.Error(reqID, "tag quality promotion failed: %v", err)
+			return nil
+		}
+	}
+	if len(autoIDs) > 0 {
+		if _, err := q.PromoteTags(ctx, database.PromoteTagsParams{
+			StandingSource: tags.StandingAuto,
+			TagIds:         autoIDs,
+		}); err != nil {
+			e.logger.Error(reqID, "tag quality promotion failed: %v", err)
+			return nil
+		}
 	}
 
 	promoted := make([]string, len(eligible))

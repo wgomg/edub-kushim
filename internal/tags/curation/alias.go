@@ -289,7 +289,7 @@ func (s *Tag) PromoteAlias(ctx context.Context, name string) (types.AliasPromote
 	if err != nil {
 		return types.AliasPromoteNotApplied, database.Tag{}, err
 	}
-	results, newNames, err := s.CreatePlannedTx(ctx, txQ, plan, false)
+	results, newNames, err := s.CreatePlannedTx(ctx, txQ, plan, false, tags.StandingOperator)
 	if err != nil {
 		return types.AliasPromoteNotApplied, database.Tag{}, err
 	}
@@ -322,12 +322,13 @@ func (s *Tag) RecordIdentityEvidence(ctx context.Context, rows []tags.EvidenceRo
 }
 
 // Separate records the operator's decision that one identity-held provisional tag names its own value
-// instead of the anchor its refused fold proposed. Operator separation rows are journaled for every
-// hold kind under the current rule set version, so the hold lookup stops withholding the value while
-// every later fold decision keeps refusing the fold. The tag itself is untouched — it stays provisional
-// and answers to its verdict — and both promotion paths already gate on the hold, so clearing the record
-// is what releases it. A promoted tag has left the review queue and a tag without an identity hold has
-// nothing to separate, so both are refused through the status.
+// instead of the anchor its refused fold proposed. Operator separation rows are journaled for every hold
+// kind and outrank later judge refusals of the same (candidate, anchor) pair across rule-set versions, so
+// the hold lookup stops withholding the value while every later fold decision keeps refusing the fold — a
+// criteria-version bump can never re-impose the hold the operator cleared. The tag stays untouched: it
+// remains provisional and answers to its verdict, and both promotion paths gate on the hold, so clearing
+// the record is what releases it. A promoted tag has left the review queue, and a tag without an identity
+// hold has nothing to separate; both are refused through the status.
 func (s *Tag) Separate(ctx context.Context, id int64) (types.SeparateStatus, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {

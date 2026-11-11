@@ -289,7 +289,7 @@ func (r *Reconciler) applyKeepFlip(ctx context.Context, e *entry, blocklist map[
 		return 0, false, err
 	}
 
-	results, err := r.tag.Create(ctx, []string{e.query})
+	results, err := r.tag.Create(ctx, []string{e.query}, tags.StandingAuto)
 	if err != nil {
 		return 0, false, fmt.Errorf("create query tag: %w", err)
 	}

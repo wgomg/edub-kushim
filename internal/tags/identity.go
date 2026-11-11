@@ -647,8 +647,10 @@ type IdentityHold struct {
 // IdentityHeldNames maps each held candidate name to the live store value its refused fold targeted and the
 // judged fold-relation class beside it. A name is held when, under the current rule set, the latest
 // fold_gate verdict rejected the fold or the latest base_form verdict leaves the name standing, and the
-// proposal's target is a live tag — either refusal blocks the fold. Unheld names are absent from the
-// result; empty input returns an empty map.
+// proposal's target is a live tag — either refusal blocks the fold. An operator separation outranks a
+// later refusal of the same (candidate, anchor) pair from any rule-set version, so a criteria-version bump
+// cannot re-impose a hold the operator cleared; a refusal naming a different anchor is a new claim and
+// withholds as usual. Unheld names are absent from the result; empty input returns an empty map.
 func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string) (map[string]IdentityHold, error) {
 	normalized := distinctNames(names, textnorm.NormalizeTag)
 	if len(normalized) == 0 {

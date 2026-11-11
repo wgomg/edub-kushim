@@ -151,3 +151,16 @@ const (
 	SeparateWithoutHold
 	SeparateApplied
 )
+
+// RestoreStatus reports how a demotion restore resolved: the tag is missing, it is not demoted (a promoted
+// or never-demoted value has nothing to clear), the recorded demotion is not rule-driven (mass decay and
+// operator demotions are not restored), or the demotion was cleared for re-judging.
+type RestoreStatus int
+
+// The restore outcomes, in iota order.
+const (
+	RestoreNotFound RestoreStatus = iota
+	RestoreNotDemoted
+	RestoreNotApplicable
+	RestoreApplied
+)

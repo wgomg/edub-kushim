@@ -249,22 +249,70 @@ func DecideComposition(f CompositionFeatures) CompositionDecision {
 // not_person boolean leaves the feature set for the five-class person_class answer, a documented individual
 // rejects as person_facet independent of subject_matter, the non-real and undecided classes (and an absent
 // class) defer as person_review before the corroborated ladder, and only a tag naming no person continues
-// to it — the demotion and retention rules unchanged.
-const DecisionRuleSetVersion = "v12"
+// to it — the demotion and retention rules unchanged. v13 adds the operator-precedence rules: a sweep
+// records fresh verdicts as evidence and notifies, but never revokes a promotion an operator granted
+// (standing_source 'operator') and never re-opens an acceptance; retention never removes an accepted row;
+// and an operator separation is terminal for its (candidate, anchor) pair across rule-set versions.
+const DecisionRuleSetVersion = "v13"
 
 // DecidePromotion reports whether an admitted candidate at or above the configured floor promotes.
 func DecidePromotion(outcome AdmissionOutcome, liveMass int64, floor int64) bool {
 	return outcome == AdmissionAdmit && liveMass >= floor
 }
 
-// WithAcceptance resolves one derived decision against an operator acceptance: a review deferral waived
-// after the current policy version's fresh verdict admits the value to the ordinary promotion floor, so a
-// provisional tag can still wait for recurrence instead of being promoted or deleted outright. A missing
-// acceptance, an acceptance older than the fresh verdict (a newer decision always re-decides), or a
-// decision that is not a defer all keep the derived decision; a missing fresh verdict arrives as the
-// epoch, so an acceptance still governs until a verdict replaces it.
-func WithAcceptance(derived AdmissionDecision, acceptedAt, freshVerdictAt time.Time) AdmissionDecision {
-	if acceptedAt.IsZero() || !acceptedAt.After(freshVerdictAt) || derived.Outcome != AdmissionDefer {
+// VerdictDemotionReasons is the closed set of triggers a verdict-driven demotion records: the admission
+// decision's own reasons plus the composition reasons a decided drop demotes under. A demotion stamped with
+// one of these is a rule-driven revocation — the restore action's scope — as opposed to a mass-decay or an
+// operator demotion, which no rule re-derives.
+var VerdictDemotionReasons = []string{
+	ReasonJudgeDefer,
+	ReasonNoDimension,
+	ReasonPersonFacet,
+	ReasonPersonReview,
+	ReasonCorroborated,
+	ReasonDeterministicOnly,
+	ReasonSingleSignal,
+	CompositionReasonPartRejected,
+}
+
+// Standing provenance recorded on a promoted tag row. Operator standing is a human decision and outlives
+// criteria-version re-judgments: a sweep records the fresh verdict as evidence and notifies, never demotes.
+// Automatic standing answers to the ordinary demotion rules, mass decay included.
+const (
+	StandingAuto     = "auto"
+	StandingOperator = "operator"
+)
+
+// Promotion reasons recorded in the audit log. Producers and the provenance mapping share these names, so
+// a new promotion path cannot silently fall back to automatic standing by inventing a spelling.
+const (
+	PromoteReasonHumanApprove    = "human-approve"
+	PromoteReasonSweep           = "sweep"
+	PromoteReasonSweepAccepted   = "sweep-accepted"
+	PromoteReasonRejudge         = "rejudge"
+	PromoteReasonRejudgeAccepted = "rejudge-accepted"
+)
+
+// StandingSourceForPromoteReason maps a promotion's audit reason to the provenance the row records. Human
+// approval and the acceptance-governed paths are operator decisions; every automatic path stays auto and
+// answers to the ordinary demotion rules.
+func StandingSourceForPromoteReason(reason string) string {
+	switch reason {
+	case PromoteReasonHumanApprove, PromoteReasonSweepAccepted, PromoteReasonRejudgeAccepted:
+		return StandingOperator
+	default:
+		return StandingAuto
+	}
+}
+
+// WithAcceptance resolves one derived decision against an operator acceptance: while an acceptance is
+// stamped on a provisional value, any defer — cached or freshly judged — admits it to the ordinary promotion
+// floor, so a criteria-version bump or a re-judge never re-opens the deferral the operator waived. A
+// rejection is never waived (the operator rejects to remove the value), and a missing acceptance still
+// keeps the derived decision. The acceptance is consumed by promotion and revoked only by an operator
+// action, never by a newer verdict.
+func WithAcceptance(derived AdmissionDecision, acceptedAt time.Time) AdmissionDecision {
+	if acceptedAt.IsZero() || derived.Outcome != AdmissionDefer {
 		return derived
 	}
 	return AdmissionDecision{Outcome: AdmissionAdmit, Reason: ReasonOperatorAccept}

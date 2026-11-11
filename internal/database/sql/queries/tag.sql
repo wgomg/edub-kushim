@@ -47,6 +47,7 @@ UPDATE tag SET
     demoted_at = NULL,
     demoted_reason = NULL,
     accepted_at = NULL,
+    standing_source = @standing_source::text,
     modified_at = now()
 WHERE id = ANY(@tag_ids::bigint[])
   AND promoted_at IS NULL;
@@ -56,6 +57,7 @@ UPDATE tag SET
     promoted_at = NULL,
     demoted_at = now(),
     demoted_reason = @reason::text,
+    standing_source = 'auto',
     modified_at = now()
 WHERE id = ANY(@tag_ids::bigint[])
   AND promoted_at IS NOT NULL
@@ -67,7 +69,7 @@ WHERE id = $1
   AND promoted_at IS NULL;
 
 -- name: ListPromotedTagsForDemotion :many
-SELECT id, name, promoted_at, created_at FROM tag
+SELECT id, name, promoted_at, created_at, standing_source FROM tag
 WHERE promoted_at IS NOT NULL
   AND NOT seeded
 ORDER BY promoted_at;
@@ -135,13 +137,10 @@ WHERE id = ANY(@tag_ids::bigint[])
 
 -- name: ListProvisionalTagsWithDocumentCount :many
 SELECT v.id, v.name, v.created_at, v.demoted_at, v.demoted_reason, v.accepted_at,
-       v.fresh_verdict_at, v.document_count
+       v.document_count, v.standing_source
 FROM (
     SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
-           t.demoted_at, t.demoted_reason, t.accepted_at,
-           coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
-                     WHERE f.tag_name = t.name AND f.policy_version = @policy_version
-                       AND f.verdict_model IS NOT NULL), 'epoch'::timestamptz)::timestamptz AS fresh_verdict_at,
+           t.demoted_at, t.demoted_reason, t.accepted_at, t.standing_source,
            (SELECT COUNT(*) FROM document_tag dt
             JOIN document d ON d.id = dt.document_id
             WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count,
@@ -150,12 +149,7 @@ FROM (
                     CASE WHEN qe.pass THEN 'admit'
                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
                          ELSE 'reject' END) AS outcome_class,
-           (t.accepted_at IS NOT NULL
-            AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
-                                          WHERE f.tag_name = t.name
-                                            AND f.policy_version = @policy_version
-                                            AND f.verdict_model IS NOT NULL),
-                                         'epoch'::timestamptz)) AS accepted,
+           t.accepted_at IS NOT NULL AS accepted,
            flag.identity_pending, flag.identity_hold, flag.split_hold,
            flag.degraded_unversioned, flag.composition_blocks, flag.demoted
     FROM tag t
@@ -170,7 +164,8 @@ FROM (
     -- journal_flags gate keeps them out of the unfiltered plan and out of all the legacy verdict-only
     -- paths; each EXISTS mirrors the Go helper the matching response pill reads, so a drift in just
     -- one cannot possibly diverge from the other: identity_pending mirrors PendingTagIdentityCountsByNames,
-    -- identity_hold mirrors ListIdentityHeldNames plus the refusal pairing in IdentityHeldNames, and
+    -- identity_hold reads the same tag_identity_hold_decision view as ListIdentityHeldNames plus the
+    -- refusal pairing in IdentityHeldNames, and
     -- split_hold mirrors CompositionReview's compositionHolds reasons; the composition_blocks mirrors
     -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests; a relational
     -- keep resting on the promoted-parts proxy is store-maturity pending, not a review obligation, so the
@@ -183,20 +178,14 @@ FROM (
                           AND (ie.candidate = t.name OR ie.partner = t.name))
             ELSE false END AS identity_pending,
             CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ie.candidate, ie.kind)
-                                   ie.kind, ie.verdict, ie.criteria ->> 'proposed_fold' AS anchor
-                            FROM tag_identity_event ie
-                            WHERE ie.rule_set_version = @identity_rule_set_version
-                              AND ie.verdict IS NOT NULL
-                              AND ie.kind = ANY(@identity_hold_kinds::text[])
-                              AND ie.candidate = t.name
-                              AND EXISTS (SELECT 1 FROM tag anchor_tag
-                                          WHERE anchor_tag.name = ie.criteria ->> 'proposed_fold')
-                            ORDER BY ie.candidate, ie.kind, ie.created_at DESC
-                        ) held
-                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
-                           OR held.kind = 'base_form' AND held.verdict = 'stand')
+                EXISTS (SELECT 1 FROM tag_identity_hold_decision held
+                        WHERE held.rule_set_version = @identity_rule_set_version
+                          AND held.candidate = t.name
+                          AND held.kind = ANY(@identity_hold_kinds::text[])
+                          AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                      WHERE anchor_tag.name = held.anchor)
+                          AND (held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                               OR held.kind = 'base_form' AND held.verdict = 'stand'))
             ELSE false END AS identity_hold,
             CASE WHEN @journal_flags::boolean THEN
                 EXISTS (SELECT 1 FROM (
@@ -248,8 +237,8 @@ FROM (
            OR coalesce(qe.criteria ->> 'defer', 'absent') = @defer_state::text)
 ) v
   -- legacy rows carry no outcome: derive it the same way the ui's verdict outcome does; the pass guard
-  -- keeps unjudged tags in the 'none' class; an operator acceptance newer than the tag's fresh verdict
-  -- waives the deferral, so the tag reads as admitted
+  -- keeps unjudged tags in the 'none' class; an operator acceptance is durable, so the tag reads as
+  -- admitted while it is stamped
 WHERE (@verdict_state::text = ''
        OR (@verdict_state::text = 'none' AND v.no_verdict)
        OR (@verdict_state::text <> 'none'
@@ -352,12 +341,7 @@ FROM (
                     CASE WHEN qe.pass THEN 'admit'
                          WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
                          ELSE 'reject' END) AS outcome_class,
-           (t.accepted_at IS NOT NULL
-            AND t.accepted_at > coalesce((SELECT MAX(f.verdict_at) FROM tag_quality_event f
-                                          WHERE f.tag_name = t.name
-                                            AND f.policy_version = @policy_version
-                                            AND f.verdict_model IS NOT NULL),
-                                         'epoch'::timestamptz)) AS accepted,
+           t.accepted_at IS NOT NULL AS accepted,
            flag.identity_pending, flag.identity_hold, flag.split_hold,
            flag.degraded_unversioned, flag.composition_blocks, flag.demoted
     FROM tag t
@@ -376,20 +360,14 @@ FROM (
                           AND (ie.candidate = t.name OR ie.partner = t.name))
             ELSE false END AS identity_pending,
             CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ie.candidate, ie.kind)
-                                   ie.kind, ie.verdict, ie.criteria ->> 'proposed_fold' AS anchor
-                            FROM tag_identity_event ie
-                            WHERE ie.rule_set_version = @identity_rule_set_version
-                              AND ie.verdict IS NOT NULL
-                              AND ie.kind = ANY(@identity_hold_kinds::text[])
-                              AND ie.candidate = t.name
-                              AND EXISTS (SELECT 1 FROM tag anchor_tag
-                                          WHERE anchor_tag.name = ie.criteria ->> 'proposed_fold')
-                            ORDER BY ie.candidate, ie.kind, ie.created_at DESC
-                        ) held
-                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
-                           OR held.kind = 'base_form' AND held.verdict = 'stand')
+                EXISTS (SELECT 1 FROM tag_identity_hold_decision held
+                        WHERE held.rule_set_version = @identity_rule_set_version
+                          AND held.candidate = t.name
+                          AND held.kind = ANY(@identity_hold_kinds::text[])
+                          AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                      WHERE anchor_tag.name = held.anchor)
+                          AND (held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                               OR held.kind = 'base_form' AND held.verdict = 'stand'))
             ELSE false END AS identity_hold,
             CASE WHEN @journal_flags::boolean THEN
                 EXISTS (SELECT 1 FROM (
@@ -483,6 +461,8 @@ SELECT t.id, t.name, t.created_at
 FROM tag t
 WHERE t.promoted_at IS NULL
   AND NOT t.seeded
+  AND t.accepted_at IS NULL
+  AND t.standing_source <> 'operator'
   AND t.created_at < @cutoff::timestamptz
   AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
 ORDER BY t.created_at;
@@ -492,14 +472,49 @@ DELETE FROM tag t
 WHERE t.id = ANY(@tag_ids::bigint[])
   AND NOT t.seeded
   AND t.promoted_at IS NULL
+  AND t.accepted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
 RETURNING t.name;
+
+-- name: ListVerdictDemotedTagsForUpdate :many
+SELECT id, name FROM tag
+WHERE promoted_at IS NULL
+  AND demoted_at IS NOT NULL
+  AND NOT seeded
+  AND demoted_reason = ANY(@reasons::text[])
+ORDER BY demoted_at
+LIMIT @max_rows
+FOR UPDATE;
+
+-- name: CountVerdictDemotedTags :one
+SELECT COUNT(*) FROM tag
+WHERE promoted_at IS NULL
+  AND demoted_at IS NOT NULL
+  AND NOT seeded
+  AND demoted_reason = ANY(@reasons::text[]);
+
+-- name: ClearDemotionStamps :execrows
+UPDATE tag SET demoted_at = NULL, demoted_reason = NULL, modified_at = now()
+WHERE id = ANY(@tag_ids::bigint[])
+  AND promoted_at IS NULL
+  AND demoted_reason = ANY(@reasons::text[]);
+
+-- name: DeleteCurrentQualityVerdicts :execrows
+DELETE FROM tag_quality_event
+WHERE tag_name = ANY(@names::text[])
+  AND policy_version = @policy_version::text;
+
+-- name: DeleteCurrentCompositionJudgments :execrows
+DELETE FROM tag_composition_event
+WHERE candidate = ANY(@candidates::text[])
+  AND criteria_version = @criteria_version::text
+  AND reason NOT IN ('operator', 'operator_keep');
 
 -- the reconcile opening gate's probes: each answers whether its arm's work set is non-empty, mirroring the
 -- arm query beside it, so a signal-clear pass can report zero work without building the store view
 
 -- name: ListStoredCompoundCandidates :many
-SELECT name, promoted_at FROM tag
+SELECT name, promoted_at, standing_source FROM tag
 WHERE NOT seeded
 ORDER BY name;
 
@@ -521,6 +536,8 @@ SELECT EXISTS (
     SELECT 1 FROM tag t
     WHERE t.promoted_at IS NULL
       AND NOT t.seeded
+      AND t.accepted_at IS NULL
+      AND t.standing_source <> 'operator'
       AND t.created_at < @cutoff::timestamptz
       AND NOT EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id)
 );

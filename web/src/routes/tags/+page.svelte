@@ -339,6 +339,13 @@
 			{#if col.key === 'name'}
 				<div>
 					<span>{row.name}</span>
+					{#if row.promoted && row.standing_source === 'operator' && row.criteria_disagreement}
+						<span
+							class="ms-1.5 inline-flex items-center rounded-full bg-amber-600/20 px-2 py-0.5 font-mono text-[0.6875rem] text-amber-400"
+							title="This promotion is an operator decision; the current criteria no longer admit the value, but the sweep only notifies and never revokes it"
+							>current criteria: {row.criteria_disagreement}</span
+						>
+					{/if}
 					{#if row.aliases?.length > 0}
 						<div class="mt-1 flex flex-wrap items-center gap-1">
 							{#each row.aliases as alias (alias.name)}

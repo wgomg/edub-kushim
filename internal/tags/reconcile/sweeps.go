@@ -233,9 +233,17 @@ func (r *Reconciler) sweepRetentionTags(ctx context.Context, cfg *config.Config,
 }
 
 type provisionalEntry struct {
-	id   int64
-	name string
-	docs int64
+	id         int64
+	name       string
+	docs       int64
+	acceptedAt time.Time
+}
+
+// notifyKept records one operator decision the current criteria disagree with: the caller's tally and one
+// named report entry. The value keeps its standing; only an operator changes it.
+func notifyKept(report *Report, tally *int, name, reason string) {
+	*tally++
+	report.Notified = append(report.Notified, DemotionEntry{Name: name, Reason: reason})
 }
 
 // provisionalOutcome applies one provisional tag's decision: an admitted
@@ -333,12 +341,17 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 
 		row, ok := verdicts[t.Name]
 		if !ok {
-			rejudge = append(rejudge, &provisionalEntry{id: t.ID, name: t.Name, docs: docs})
+			rejudge = append(rejudge, &provisionalEntry{id: t.ID, name: t.Name, docs: docs, acceptedAt: t.AcceptedAt.Time})
 			continue
 		}
 		decision := admission.DecisionFromStored(row.Criteria, row.Pass, tags.AdmissionFeatures{})
-		decision = tags.WithAcceptance(decision, t.AcceptedAt.Time, row.FreshVerdictAt)
-		if promote, _ := r.provisionalOutcome(t.Name, decision, docs, floor); !promote {
+		decision = tags.WithAcceptance(decision, t.AcceptedAt.Time)
+		if promote, deferred := r.provisionalOutcome(t.Name, decision, docs, floor); !promote {
+			if deferred && t.AcceptedAt.Valid {
+				notifyKept(report, &report.Provisional.Notified, t.Name, decision.Reason)
+				r.logger.Info("", "tag reconcile: accepted tag %q disagrees with current criteria (reason=%s) — kept for review",
+					t.Name, decision.Reason)
+			}
 			continue
 		}
 
@@ -348,7 +361,11 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 				t.Name, docs, verdictModelLabel(row.VerdictModel), tags.DecisionRuleSetVersion, floor)
 			continue
 		}
-		if _, status, err := r.tag.Promote(ctx, t.ID, "sweep"); err != nil {
+		promoteReason := tags.PromoteReasonSweep
+		if decision.Reason == tags.ReasonOperatorAccept {
+			promoteReason = tags.PromoteReasonSweepAccepted
+		}
+		if _, status, err := r.tag.Promote(ctx, t.ID, promoteReason); err != nil {
 			r.logger.Error("", "tag reconcile: promote provisional tag %q: %v", t.Name, err)
 		} else if status == types.PromotePromoted {
 			report.Provisional.Promoted++
@@ -468,13 +485,24 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 		}
 		report.Provisional.Rejudged++
 
+		decision = tags.WithAcceptance(decision, e.acceptedAt)
 		if promote, deferred := r.provisionalOutcome(e.name, decision, e.docs, floor); !promote {
 			if deferred {
-				report.Provisional.Deferred++
+				if e.acceptedAt.IsZero() {
+					report.Provisional.Deferred++
+				} else {
+					notifyKept(report, &report.Provisional.Notified, e.name, decision.Reason)
+					r.logger.Info("", "tag reconcile: accepted tag %q disagrees with current criteria (reason=%s) — kept for review",
+						e.name, decision.Reason)
+				}
 			}
 			continue
 		}
-		if _, status, err := r.tag.Promote(ctx, e.id, "sweep"); err != nil {
+		promoteReason := tags.PromoteReasonSweep
+		if decision.Reason == tags.ReasonOperatorAccept {
+			promoteReason = tags.PromoteReasonSweepAccepted
+		}
+		if _, status, err := r.tag.Promote(ctx, e.id, promoteReason); err != nil {
 			r.logger.Error("", "tag reconcile: promote provisional tag %q: %v", e.name, err)
 		} else if status == types.PromotePromoted {
 			report.Provisional.Promoted++
@@ -487,8 +515,9 @@ func (r *Reconciler) rejudgeProvisionalTags(ctx context.Context, cfg *config.Con
 // sweepPromotedTags withdraws the standing of values the current rules no longer back: their live mass fell
 // below the configured recurrence floor, or a stale verdict re-judges to reject or defer. A value younger
 // than the demotion grace keeps its standing instead of decaying. A current-version verdict is respected as
-// it stands, so an operator's promotion survives until the next criteria version; held names and judge
-// failures stay promoted.
+// it stands. Operator standing outranks the rules: a promoted value whose row records standing_source
+// 'operator' is re-judged for evidence and notified on a disagreement, never demoted by the verdict — only
+// mass decay still applies to it. Held names and judge failures stay promoted.
 func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, report *Report) {
 	floor := int64(cfg.Enricher.TagReconcile.RecurrenceFloor)
 	graceDays := cfg.Enricher.TagReconcile.DemotionGraceDays
@@ -617,6 +646,12 @@ func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, 
 		}
 		report.Demotion.Rejudged++
 		if decision.Outcome == tags.AdmissionAdmit {
+			continue
+		}
+		if t.StandingSource == tags.StandingOperator {
+			notifyKept(report, &report.Demotion.Notified, t.Name, decision.Reason)
+			r.logger.Info("", "tag reconcile: operator-standing %q disagrees with current criteria (reason=%s) — kept, notified",
+				t.Name, decision.Reason)
 			continue
 		}
 		r.demote(ctx, report, t.ID, t.Name, decision.Reason)

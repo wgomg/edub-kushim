@@ -303,8 +303,17 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
    demote owns that case) deletes a provisional tag *without* blocklisting its name.
    `POST /api/v1/tags/{id}/accept` (`204`; `404` unknown tag, `409` when promoted, already
    accepted, not deferred to review, or still held by an identity or composition hold) waives a
-   review deferral so the tag waits for the promotion floor like any admitted value; a newer
-   verdict re-opens the deferral, so the call can waive it again.
+   review deferral so the tag waits for the promotion floor like any admitted value; the waiver is
+   durable — a newer verdict, including a rubric version change or a re-judge, never re-opens it,
+   and only promotion, rejection or retirement ends it.
+   `POST /api/v1/tags/{id}/restore` (`202` with `batch_id`/`already_queued`; `404` unknown
+   tag, `409` when the tag is not demoted or the demotion is not rule-driven) clears a
+   rule-driven demotion — the stamps and the current-version judge rows, never operator
+   rows — returns the tag to provisional standing, and queues the fresh judgment.
+   `POST /api/v1/tags/restore-verdict-demoted` (`200` with `{"restored": 0, "remaining": 0}`
+   when nothing matches; `202` with `{restored, remaining, batch_id, already_queued}`)
+   restores one bounded page of rule-driven demotions and reports the remaining backlog;
+   repeat the call to drain it.
    `POST /api/v1/tags/{id}/separate` (`204`; `404` unknown tag, `409` when promoted or when no
    identity hold withholds the tag) records that an identity-held tag names its own value: the hold
    clears and the tag keeps answering to its verdict and the promotion floor. Renaming reuses

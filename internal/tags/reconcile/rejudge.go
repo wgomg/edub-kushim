@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // RejudgeRequest is the payload of one on-demand re-judge task: the stored tag and which judge to
@@ -22,13 +23,17 @@ type RejudgeRequest struct {
 	Scope string `json:"scope"`
 }
 
-// RejudgeReport is the stored result of one re-judge: what was judged and how it resolved.
+// RejudgeReport is the stored result of one re-judge: what was judged and how it resolved, whether the
+// fresh decision promoted the value at the recurrence floor, and whether an identity or composition hold
+// kept it for review instead.
 type RejudgeReport struct {
-	TagID   int64  `json:"tag_id"`
-	Name    string `json:"name"`
-	Scope   string `json:"scope"`
-	Outcome string `json:"outcome,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	TagID    int64  `json:"tag_id"`
+	Name     string `json:"name"`
+	Scope    string `json:"scope"`
+	Outcome  string `json:"outcome,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Promoted bool   `json:"promoted,omitempty"`
+	Held     bool   `json:"held,omitempty"`
 }
 
 // RejudgeTaskHandler runs one on-demand re-judge as a blocking task; the report it returns is stored
@@ -97,8 +102,41 @@ func (r *Reconciler) Rejudge(ctx context.Context, req RejudgeRequest) (RejudgeRe
 			}
 			return RejudgeReport{}, err
 		}
+		decision = tags.WithAcceptance(decision, tag.AcceptedAt.Time)
 		report.Outcome = decision.Outcome.String()
 		report.Reason = decision.Reason
+
+		liveCounts, err := tags.NewStore(r.client.Queries).LiveMass(ctx, []int64{tag.ID})
+		if err != nil {
+			return RejudgeReport{}, fmt.Errorf("count live mass for tag %q: %w", tag.Name, err)
+		}
+		held, err := tags.IdentityHeldNames(ctx, r.client.Queries, []string{tag.Name})
+		if err != nil {
+			return RejudgeReport{}, fmt.Errorf("check identity holds for tag %q: %w", tag.Name, err)
+		}
+		compositionHeld, err := tags.CompositionHeldNames(ctx, r.client.Queries, []string{tag.Name}, analyzer.TagSplitVersion)
+		if err != nil {
+			return RejudgeReport{}, fmt.Errorf("check composition holds for tag %q: %w", tag.Name, err)
+		}
+		floor := int64(cfg.Enricher.TagReconcile.RecurrenceFloor)
+		if _, identityHeld := held[tag.Name]; identityHeld {
+			report.Held = true
+			r.logger.Info("", "tag reconcile: rejudged %q is identity-held — left for review", tag.Name)
+		} else if compositionReason, compositionHeld := compositionHeld[tag.Name]; compositionHeld {
+			report.Held = true
+			r.logger.Info("", "tag reconcile: rejudged %q is composition-held (reason=%s) — left for review",
+				tag.Name, compositionReason)
+		} else if tags.DecidePromotion(decision.Outcome, liveCounts[tag.ID], floor) {
+			reason := tags.PromoteReasonRejudge
+			if decision.Reason == tags.ReasonOperatorAccept {
+				reason = tags.PromoteReasonRejudgeAccepted
+			}
+			if _, status, err := r.tag.Promote(ctx, tag.ID, reason); err != nil {
+				return RejudgeReport{}, fmt.Errorf("promote re-judged tag %q: %w", tag.Name, err)
+			} else if status == types.PromotePromoted {
+				report.Promoted = true
+			}
+		}
 	case tags.RejudgeScopeComposition:
 		if !cfg.Enricher.TagAdjudicator.Enabled {
 			return RejudgeReport{}, errors.New("tag adjudicator is not configured")

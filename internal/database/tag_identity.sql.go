@@ -201,16 +201,13 @@ func (q *Queries) LatestTagIdentityEventsForCandidates(ctx context.Context, arg 
 }
 
 const listIdentityHeldNames = `-- name: ListIdentityHeldNames :many
-SELECT DISTINCT ON (candidate, kind) candidate, kind, verdict,
-       (criteria->>'proposed_fold')::text AS anchor,
-       (COALESCE(criteria->>'fold_class', ''))::text AS fold_class
-FROM tag_identity_event e
-WHERE e.rule_set_version = $1
-  AND e.verdict IS NOT NULL
-  AND e.kind = ANY($2::text[])
-  AND e.candidate = ANY($3::text[])
-  AND EXISTS (SELECT 1 FROM tag t WHERE t.name = e.criteria->>'proposed_fold')
-ORDER BY candidate, kind, created_at DESC
+SELECT held.candidate, held.kind, held.verdict, held.anchor, held.fold_class
+FROM tag_identity_hold_decision held
+WHERE held.rule_set_version = $1
+  AND held.kind = ANY($2::text[])
+  AND held.candidate = ANY($3::text[])
+  AND EXISTS (SELECT 1 FROM tag t WHERE t.name = held.anchor)
+ORDER BY held.candidate, held.kind, held.created_at DESC
 `
 
 type ListIdentityHeldNamesParams struct {
@@ -230,7 +227,9 @@ type ListIdentityHeldNamesRow struct {
 // ListIdentityHeldNames compares the anchor by direct equality, not the
 // house-form key: both sides are normalized word forms at their write
 // boundaries, and house form only rewrites ordinals and roman numerals,
-// which this class lacks.
+// which this class lacks. The effective decision and the operator-separation
+// precedence live in the tag_identity_hold_decision view, which the queue's
+// identity_hold flag reads too.
 func (q *Queries) ListIdentityHeldNames(ctx context.Context, arg ListIdentityHeldNamesParams) ([]ListIdentityHeldNamesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listIdentityHeldNames, arg.RuleSetVersion, pq.Array(arg.Kinds), pq.Array(arg.Candidates))
 	if err != nil {
