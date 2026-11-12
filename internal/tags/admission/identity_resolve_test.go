@@ -42,6 +42,7 @@ func newIdentityResolver(t *testing.T, adjudicatorEnabled bool) (*IdentityResolv
 	})
 	if adjudicatorEnabled {
 		setUnexportedField(t, runner, "tagAdjudicator", adj)
+		setUnexportedField(t, runner, "tagLexicalGate", adj)
 	}
 
 	cfg := &config.Config{

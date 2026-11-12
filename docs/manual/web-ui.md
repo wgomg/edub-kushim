@@ -226,7 +226,7 @@ as a **hub** plus one focused page per area:
 |---|---|---|
 | Intake | `/settings/intake` | uploads & server, watched inbox, accepted file types, office converter |
 | Processing | `/settings/processing` | OCR, text extraction, PDF optimizer, thumbnails, throughput & recovery |
-| Enrichment | `/settings/enrichment` | content analyzer, tag matcher, adjudicator, quality, reconciliation, measurement, workers |
+| Enrichment | `/settings/enrichment` | content analyzer, tag matcher, adjudicator, lexical gate, quality, reconciliation, measurement, workers |
 | AI providers & models | `/settings/models` | the provider/model catalog (master–detail editor) |
 | Storage | `/settings/storage` | directories, trash retention, database connection |
 | Safety | `/settings/safety` | backups (per-mode schedules), mirror |
@@ -312,7 +312,8 @@ amber banner is the same signal at global scope.
   model cascading selectors, token with show/hide, temperature, pause-on-credit-error,
   request delay, prompt template, doc-type refinement, fallback LLMs with reorder), text
   reducer, tag matcher (timeout, reduce target words, chunk size, model, backend), tag
-  adjudicator and tag quality (each can inherit the analyzer's model), tag reconciliation and
+  adjudicator, tag lexical gate (inherits the adjudicator's model, then the analyzer's)
+  and tag quality (each can inherit the analyzer's model), tag reconciliation and
   measurement schedules, enrichment workers. An at-a-glance strip links to the catalog page.
 - **Models** — master–detail: filterable provider pane (`?provider=` deep-link), model table
   with capability chips and a *Used by* column; add/edit/remove side panels stage catalog

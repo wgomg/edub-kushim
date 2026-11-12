@@ -1235,6 +1235,8 @@ func TestSweepPromotedTags_MassDecayGraceAndFloor(t *testing.T) {
 // fakeQualityJudge answers the rubric and the parts pass so the re-judge paths run without an LLM.
 type fakeQualityJudge struct {
 	analyzer.TagAdjudicator
+	analyzer.TagLexicalGate
+	analyzer.TagQualityJudge
 	quality []analyzer.TagQualityResult
 }
 
@@ -1261,6 +1263,7 @@ func newQualityJudgeReconciler(t *testing.T, client *database.Client, judge *fak
 	})
 	setUnexportedField(t, runner, "tagQualityJudge", judge)
 	setUnexportedField(t, runner, "tagAdjudicator", judge)
+	setUnexportedField(t, runner, "tagLexicalGate", judge)
 	return &Reconciler{
 		client: client,
 		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),

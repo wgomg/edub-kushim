@@ -42,6 +42,13 @@
 		}
 	}
 
+	function onTagLexicalGateAdapterChange() {
+		if (!cfg.enricher.tag_lexical_gate.llm.adapter) {
+			cfg.enricher.tag_lexical_gate.llm.provider = '';
+			cfg.enricher.tag_lexical_gate.llm.model = '';
+		}
+	}
+
 	function onTagQualityAdapterChange() {
 		if (!cfg.enricher.tag_quality.llm.adapter) {
 			cfg.enricher.tag_quality.llm.provider = '';
@@ -633,6 +640,107 @@
 						advancedOnly
 						bind:value={cfg.enricher.tag_adjudicator.llm.request_delay}
 					/>
+				</div>
+			{/if}
+		</Card>
+
+		<Card
+			title="Tag lexical gate"
+			name="tag lexical gate llm inherit split parts compounds translation"
+			description="Context-free judged passes: tag parts, compounds and the language guard."
+		>
+			{#if cfg.enricher.tag_adjudicator.enabled}
+				<div class="grid gap-4 sm:grid-cols-2">
+					<UnitField
+						id="tag-lexical-gate-timeout"
+						label="Timeout"
+						unit="s"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						hint="0 = no deadline"
+						bind:value={cfg.enricher.tag_lexical_gate.timeout}
+					/>
+					<div class="field">
+						<label
+							for="tag-lexical-gate-adapter"
+							class="text-[0.8125rem] font-medium text-parchment-200">Adapter</label
+						>
+						<select
+							id="tag-lexical-gate-adapter"
+							name="tag-lexical-gate-adapter"
+							bind:value={cfg.enricher.tag_lexical_gate.llm.adapter}
+							onchange={onTagLexicalGateAdapterChange}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							<option value="">Inherit from tag adjudicator</option>
+							{#each Object.keys(llmModels.adapters) as adapter (adapter)}
+								<option value={adapter}>{adapter}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label
+							for="tag-lexical-gate-provider"
+							class="text-[0.8125rem] font-medium text-parchment-200">Provider</label
+						>
+						<select
+							id="tag-lexical-gate-provider"
+							name="tag-lexical-gate-provider"
+							bind:value={cfg.enricher.tag_lexical_gate.llm.provider}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							<option value="">Inherit from tag adjudicator</option>
+							{#each adapterProviders(cfg.enricher.tag_lexical_gate.llm) as provider (provider)}
+								<option value={provider}>{provider}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label
+							for="tag-lexical-gate-model"
+							class="text-[0.8125rem] font-medium text-parchment-200">Model</label
+						>
+						<select
+							id="tag-lexical-gate-model"
+							name="tag-lexical-gate-model"
+							bind:value={cfg.enricher.tag_lexical_gate.llm.model}
+							class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+						>
+							<option value="">Inherit from tag adjudicator</option>
+							{#each providerModels(cfg.enricher.tag_lexical_gate.llm) as model (model.id)}
+								<option value={model.id}>{model.id}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label
+							for="tag-lexical-gate-token"
+							class="text-[0.8125rem] font-medium text-parchment-200">Token</label
+						>
+						<TokenField
+							id="tag-lexical-gate-token"
+							bind:value={cfg.enricher.tag_lexical_gate.llm.token}
+						/>
+					</div>
+					<UnitField
+						id="tag-lexical-gate-request-delay"
+						label="Request delay"
+						unit="s"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						max="60"
+						step="0.1"
+						advancedOnly
+						bind:value={cfg.enricher.tag_lexical_gate.llm.request_delay}
+					/>
+				</div>
+			{:else}
+				<div class="mt-1">
+					<Note variant="info"
+						>The lexical gate is active while the tag adjudicator is enabled.</Note
+					>
 				</div>
 			{/if}
 		</Card>

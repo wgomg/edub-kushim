@@ -554,7 +554,10 @@ analyzer enabled toggle + adapter/provider/model cascading selectors (loaded fro
 catalog) + token + temperature + pause on credit error + request delay + doc type
 refinement + fallback LLM list; tag matcher timeout/reduce-target-words/chunk-size/Hugot
 model/backend; tag adjudicator enabled toggle + timeout + LLM sub-block (adapter/provider/
-model with an "Inherit from content analyzer" option, token, request delay); tag
+model with an "Inherit from content analyzer" option, token, request delay); tag lexical
+gate timeout + LLM sub-block (no toggle of its own, active while the adjudicator is
+enabled; inherits the adjudicator's model, then the analyzer's); tag quality LLM sub-block;
+tag
 reconciliation enabled/report-only toggles, interval, preferred time, max pairs judged per
 run, max documents re-tagged per run, orphan tag grace period; text reducer engine/timeout/target-words; backup
 enabled/disabled, fallback output path, per-mode schedule list (mode, interval, preferred

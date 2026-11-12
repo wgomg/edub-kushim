@@ -37,7 +37,7 @@ pieces:
 
 | Piece | Files | Role |
 |---|---|---|
-| `Analyzer` / `TagAdjudicator` / `TagQualityJudge` interfaces | `analyzer/adapter.go` | the three role contracts (analysis, judged decisions, quality rubric) |
+| `Analyzer` / `TagAdjudicator` / `TagLexicalGate` / `TagQualityJudge` interfaces | `analyzer/adapter.go` | the four role contracts (analysis, semantic judging, context-free gate, document reading) |
 | Anthropic adapter | `analyzer/llm_anthropic.go` | Claude via `POST /messages` |
 | OpenAI-compatible adapter | `analyzer/openai_compatible.go` | anything with a `/chat/completions` API |
 | Prompt, parse and gate logic | `analyzer/prompt.go` · `analyzer/facets.go` · `analyzer/gates.go` · the per-step files | system prompt, template, JSON cleaning, pre-flight errors, judged-step prompts/parsers |
@@ -55,7 +55,7 @@ the whole batch pauses (§10).
 
 ## 2. The analyzer contracts
 
-`internal/llm/analyzer/adapter.go:32-109`:
+`internal/llm/analyzer/adapter.go:40-102`:
 
 ```go
 type TypeRef struct {
@@ -70,18 +70,21 @@ type Analyzer interface {
 
 type TagAdjudicator interface {
   Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
-  JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error)
-  JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
   JudgeTagConflicts(ctx context.Context, candidates []TagConflictCandidate) ([]TagConflictResult, error)
-  JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
-  JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error)
   JudgeTagPhraseFolds(ctx context.Context, candidates []TagPhraseFoldCandidate) ([]TagPhraseFoldResult, error)
   JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
   JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error)
 }
 
+type TagLexicalGate interface {
+  JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error)
+  JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
+  JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
+}
+
 type TagQualityJudge interface {
   JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
+  JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error)
 }
 
 type AnalysisResult struct {
@@ -98,9 +101,10 @@ type AnalysisResult struct {
 ```
 
 The runner holds one value per role: `Analyzer` for the analysis calls, `TagAdjudicator`
-for the pair verdict and every judged pass served by the model configured under
-`enricher.tag_adjudicator`, and `TagQualityJudge` for the quality rubric under
-`enricher.tag_quality`. Both client implementations satisfy all three. The bullets
+for the semantic passes served by the model configured under
+`enricher.tag_adjudicator`, `TagLexicalGate` for the context-free gate passes under
+`enricher.tag_lexical_gate`, and `TagQualityJudge` for the document-reading calls under
+`enricher.tag_quality`. Both client implementations satisfy all four. The bullets
 below describe the methods and result fields individually.
 
 - `Analyze` — the main call: full text (already reduced), the known document
@@ -123,15 +127,21 @@ below describe the methods and result fields individually.
   request built from `BuildTagPartPrompt` and parsed by
   `ParseTagPartResponse` (an entry without a complete dimensional answer is
   missing; a truncated reply carries its entries alongside
-  `*IncompleteReplyError`). Used by the enricher's decomposition step when
-  `enricher.tag_adjudicator.enabled` is true.
+  `*IncompleteReplyError`). Used by the enricher's decomposition step under
+  `enricher.tag_lexical_gate` (active while `enricher.tag_adjudicator.enabled` is
+  true).
 - `JudgeTagCompounds` — the split gate's compound pass: reads what each
   compound phrase denotes (`named_unit` / `composition` / `no_dimension`, plus
   an abstention) with a temperature-0 request built from
   `BuildTagCompoundPrompt` and parsed by `ParseTagCompoundResponse` (an entry
   outside the trichotomy is missing; a truncated reply carries its entries
   alongside `*IncompleteReplyError`). Used by the enricher's decomposition step
-  and the reconciliation compound sweep under the same toggle.
+  and the reconciliation compound sweep under the same section.
+- `JudgeTagTranslations` — the language guard's judged translation: returns each
+  value's English canonical form, or the value unchanged when it is already
+  English, with a temperature-0 request built from `BuildTagTranslationPrompt` and
+  parsed by `ParseTagTranslationResponse`. Used by the language guard under
+  `enricher.tag_lexical_gate`.
 - `JudgeTagConflicts` — the split gate's conflict arbiter: settles the compounds
   whose constituent verdicts disagree with the compound reading (`split` /
   `keep` / `defer`) with a temperature-0 request built from
@@ -169,6 +179,13 @@ below describe the methods and result fields individually.
   an omitted `defer` reads as false). Used by the enricher when
   `enricher.tag_quality.enabled` is true; see the
   [semantic matching guide](semantic-matching.md#rubric-judge-for-novel-tags).
+- `JudgeTagAudit` — the completeness audit's applicability call: decides whether
+  each flagged dimension is a subject the document is about, reading the reduced
+  document text and abstaining when unclear, with a temperature-0 request built
+  from `BuildTagAuditPrompt` and parsed by `ParseTagAuditResponse`. Served by the
+  same instance, model, and timeout as `JudgeTagQuality`, so the audit can judge
+  with the adjudicator disabled; a schedule with no resolved endpoint runs without
+  a judge and leaves the flagged dimensions for review.
 - `TagDetails` — the typed mirror of `Tags`, one `{term, category}` entry per
   annotated tag. `category` is folded to `topic` / `form_genre` / `place` /
   `person` / `work` / `other` (a missing or unknown value becomes `other`),
@@ -185,14 +202,14 @@ below describe the methods and result fields individually.
   per-document admission tallies (assignments, births, promotions, rejects,
   defers, composition dispositions) the batch settle bookend aggregates.
 
-The factories (`adapter.go:124-166`) require the model registry, look up the
+The factories (`adapter.go:151-191`) require the model registry, look up the
 configured provider/model capabilities, and share one adapter switch on
 `Llm.Adapter`: `"anthropic"` → the Anthropic adapter, anything else → the
 OpenAI-compatible adapter (the default branch — unknown adapter names silently
 mean "openai-compatible"). `NewAnalyzer` takes the prompt template and minimum
 tag count the analysis calls render and builds the Runner's `contentanalyzer`
-capability (including its fallbacks); `NewTagAdjudicator` and
-`NewTagQualityJudge` build the two judged roles for the Runner's `tagjudge`
+capability (including its fallbacks); `NewTagAdjudicator`, `NewTagLexicalGate`, and
+`NewTagQualityJudge` build the three judged roles for the Runner's `tagjudge`
 capability and take no analysis prompt settings.
 
 ---
@@ -667,8 +684,8 @@ are `providers.<name>[.<field>]` and `models.<provider>/<model>[.<field>]`).
 Removal carries two guards: a provider that still owns models is rejected
 unless `cascade` deletes them together, and `llmInUse` rejects a provider or
 model the enricher configuration names (the content analyzer, its fallbacks,
-the tag adjudicator and the tag quality judge — enabled or not; a nil config
-lifts the guard). `ResetCatalogFiles` is the package-level recovery path: it
+the tag adjudicator, the tag lexical gate, and the tag quality judge — enabled or
+not; a nil config lifts the guard). `ResetCatalogFiles` is the package-level recovery path: it
 works without a loadable registry (a mangled catalog cannot be loaded), each
 partial scope validates its result against the catalog it leaves in place —
 reading only that file, so it can repair its own mangled one — and the full
@@ -919,15 +936,20 @@ Under `enricher` (`internal/config/config.go:366-377`):
 | `tagmatcher.min_suggestion_similarity` | model-derived (`0.52` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
 | `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
-| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags; `no_anchor_similarity = 0.60` is an internal pinned constant, and the promotion floor is `enricher.tag_reconcile.recurrence_floor` (default 10 live documents) |
+| `tag_lexical_gate.timeout` / `llm.*` | adjudicator timeout / adjudicator llm | context-free gate: parts, compound reading, and language-guard translation; resolves its own stanza, then the adjudicator's, then the analyzer's |
+| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags and the coverage audit's applicability call; `no_anchor_similarity = 0.60` is an internal pinned constant, and the promotion floor is `enricher.tag_reconcile.recurrence_floor` (default 10 live documents) |
 
 Validation (`finalizeConfig`, `config.go:804-933`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three
-separate errors, so setup can't silently half-configure. The two judged
-sections are validated when enabled: a stanza naming only one of
+separate errors, so setup can't silently half-configure. The adjudicator and the
+gate it carries are validated when the adjudicator is enabled, and the quality
+judge when its own gate is enabled: a stanza naming only one of
 `provider`/`model` is rejected (the all-or-nothing resolver would otherwise
-silently fall back to the analyzer's whole LLM), the resolved provider and
-model are required, and `request_delay` must be 0–60. The judged `adapter`
+silently fall back to the whole inherited LLM), the resolved provider and model
+are required, and `request_delay` must be 0–60. With only
+`tag_audit`/`tag_maintenance` enabled, the quality stanza gets the same stanza and
+delay checks but may stay unconfigured; those schedules then run without a judge
+and leave the flagged dimensions for review. The judged `adapter`
 stays optional — the factory's default (anything non-`anthropic` →
 OpenAI-compatible) applies, so a section that sets only provider/model keeps
 loading. `Reasoning` is programmatic-only (`yaml:"-"`); the reasoning behavior

@@ -139,14 +139,22 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
   suggestions reaching the analyzer, minimum `3`), and `hugot` (`model`
   `BAAI/bge-m3`, `backend` `ort` | `GO`). Full tuning: the
   [semantic matching guide](../developer-guide/semantic-matching.md).
-- `tag_adjudicator` — optional LLM verdicts for tag identity and the language guard
+- `tag_adjudicator` — optional LLM verdicts for tag identity and same-intent pairs
   (`enabled` default `false`; `timeout` falls back to `contentanalyzer.timeout` when `0`;
   an empty `provider`/`model` inherits the content analyzer's LLM at startup). Setting
   only one of `provider`/`model`, or enabling the section with no provider/model to
   inherit, fails configuration load with an error naming the key.
-- `tag_quality` — the admission judge for newly emitted tags (`enabled` default `false`,
-  same timeout/LLM inheritance and startup validation; the judge model should differ from
-  the generator's).
+- `tag_lexical_gate` — the context-free judged passes: tag parts, the compound reading,
+  and the language guard's translation. It has no `enabled` of its own — it is active
+  whenever `tag_adjudicator.enabled` is set. An empty `provider`/`model` inherits
+  `tag_adjudicator`'s LLM, then the content analyzer's; `timeout` follows the same chain.
+  A half-written stanza or an out-of-range `request_delay` fails configuration load.
+- `tag_quality` — the admission judge for newly emitted tags and the document reader
+  behind the coverage audit (`enabled` default `false`, same timeout/LLM inheritance as
+  `tag_adjudicator`; the judge model should differ from the generator's). A resolved
+  provider/model is required when this gate is enabled; with only `tag_audit` or
+  `tag_maintenance` enabled the stanza is hygiene-checked but may stay unconfigured —
+  those schedules then run without a judge.
 - `tag_reconcile` — scheduled re-adjudication: `enabled` (`false`), `report_only`
   (`true` — the first run is always report-only), `interval` (days, `7`), `time`
   (`02:00`), `max_rejudge` (`200`), `max_retag` (`1000`), `dead_tag_grace_days` (`7` —

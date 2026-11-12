@@ -12,6 +12,7 @@
 		const cfg = settingsStore.cfg;
 		add('Analyzer', cfg.enricher.contentanalyzer.llm);
 		add('Adjudicator', cfg.enricher.tag_adjudicator.llm);
+		add('Lexical gate', cfg.enricher.tag_lexical_gate.llm);
 		add('Quality judge', cfg.enricher.tag_quality.llm);
 		(cfg.enricher.contentanalyzer.fallbacks ?? []).forEach((fallback, index) => {
 			add(`Fallback ${index + 1}`, fallback.llm);

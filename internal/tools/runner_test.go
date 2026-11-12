@@ -109,10 +109,12 @@ func TestOptimizePdf_WithTimeout_ContextHasDeadline(t *testing.T) {
 
 // mockContentAnalyzer records the context for each analysis call.
 type mockContentAnalyzer struct {
-	analyzeFn        func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error)
-	analyzeDocTypeFn func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error)
-	adjudicateFn     func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
-	judgeTagPartsFn  func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
+	analyzeFn         func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error)
+	analyzeDocTypeFn  func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error)
+	adjudicateFn      func(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error)
+	judgeTagPartsFn   func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error)
+	judgeTagQualityFn func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error)
+	judgeTagAuditFn   func(ctx context.Context, text string, candidates []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error)
 }
 
 func (m *mockContentAnalyzer) Analyze(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
@@ -151,7 +153,10 @@ func (m *mockContentAnalyzer) JudgeTagConflicts(_ context.Context, _ []analyzer.
 	return nil, nil
 }
 
-func (m *mockContentAnalyzer) JudgeTagQuality(_ context.Context, _ string, _ []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+func (m *mockContentAnalyzer) JudgeTagQuality(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+	if m.judgeTagQualityFn != nil {
+		return m.judgeTagQualityFn(ctx, text, candidates)
+	}
 	return nil, nil
 }
 
@@ -167,7 +172,10 @@ func (m *mockContentAnalyzer) JudgeTagTranslations(_ context.Context, _ []string
 	return nil, nil
 }
 
-func (m *mockContentAnalyzer) JudgeTagAudit(_ context.Context, _ string, _ []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+func (m *mockContentAnalyzer) JudgeTagAudit(ctx context.Context, text string, candidates []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+	if m.judgeTagAuditFn != nil {
+		return m.judgeTagAuditFn(ctx, text, candidates)
+	}
 	return nil, nil
 }
 
@@ -243,11 +251,11 @@ func TestAnalyzeDocType_TimeoutAppliesDeadline(t *testing.T) {
 	}
 }
 
-// TestJudgeTagParts_TimeoutAndMissingAdapter covers the judged-call path the split gate's two passes share:
-// the configured adjudicator timeout must reach the judge's context, and a runner without an adjudicator
-// fails fast instead of returning an empty batch that would read as a judge outage.
+// TestJudgeTagParts_TimeoutAndMissingAdapter covers the judged-call path the split gate's parts pass
+// uses: the configured gate timeout must reach the judge's context, and a runner without a gate fails
+// fast instead of returning an empty batch that would read as a judge outage.
 func TestJudgeTagParts_TimeoutAndMissingAdapter(t *testing.T) {
-	t.Run("the adjudicator timeout reaches the judge", func(t *testing.T) {
+	t.Run("the gate timeout reaches the judge", func(t *testing.T) {
 		var receivedCtx context.Context
 		mock := &mockContentAnalyzer{
 			judgeTagPartsFn: func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error) {
@@ -257,8 +265,8 @@ func TestJudgeTagParts_TimeoutAndMissingAdapter(t *testing.T) {
 		}
 		r := &Runner{
 			logger:         log.NewDiscardLogger(),
-			config:         &config.Config{Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 90}}},
-			tagAdjudicator: mock,
+			config:         &config.Config{Enricher: config.EnricherConfig{TagLexicalGate: config.TagLexicalGateConfig{Timeout: 90}}},
+			tagLexicalGate: mock,
 		}
 
 		if _, err := r.JudgeTagParts(context.Background(), []string{"russia"}); err != nil {
@@ -269,13 +277,71 @@ func TestJudgeTagParts_TimeoutAndMissingAdapter(t *testing.T) {
 		}
 	})
 
-	t.Run("no adjudicator is a not-configured failure", func(t *testing.T) {
+	t.Run("no gate is a not-configured failure", func(t *testing.T) {
 		r := &Runner{
 			logger: log.NewDiscardLogger(),
 			config: &config.Config{},
 		}
 		if _, err := r.JudgeTagParts(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "not configured") {
 			t.Errorf("error = %v, want a not-configured failure", err)
+		}
+		if _, err := r.JudgeTagCompounds(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "tag lexical gate not configured") {
+			t.Errorf("error = %v, want the gate identity in the failure", err)
+		}
+		if _, err := r.JudgeTagTranslations(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "tag lexical gate not configured") {
+			t.Errorf("error = %v, want the gate identity in the failure", err)
+		}
+	})
+}
+
+// TestJudgeTagQuality_AuditSharesTheDocumentJudge pins the audit move's contract: quality and audit call
+// the same instance with the quality timeout, while the adjudicator's pairs and identity calls keep
+// theirs.
+func TestJudgeTagQuality_AuditSharesTheDocumentJudge(t *testing.T) {
+	newDocJudge := func(t *testing.T, timeout int, qualityFn func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error), auditFn func(ctx context.Context, text string, candidates []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error)) *Runner {
+		t.Helper()
+		mock := &mockContentAnalyzer{judgeTagQualityFn: qualityFn, judgeTagAuditFn: auditFn}
+		return &Runner{
+			logger:          log.NewDiscardLogger(),
+			config:          &config.Config{Enricher: config.EnricherConfig{TagQuality: config.TagQualityConfig{Timeout: timeout}}},
+			tagQualityJudge: mock,
+		}
+	}
+
+	t.Run("quality and audit use the quality timeout", func(t *testing.T) {
+		var qualityCtx, auditCtx context.Context
+		r := newDocJudge(t, 90,
+			func(ctx context.Context, _ string, _ []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+				qualityCtx = ctx
+				return []analyzer.TagQualityResult{}, nil
+			},
+			func(ctx context.Context, _ string, _ []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+				auditCtx = ctx
+				return []analyzer.TagAuditResult{}, nil
+			},
+		)
+
+		if _, err := r.JudgeTagQuality(context.Background(), "", nil); err != nil {
+			t.Fatalf("unexpected quality error: %v", err)
+		}
+		if _, err := r.JudgeTagAudit(context.Background(), "", nil); err != nil {
+			t.Fatalf("unexpected audit error: %v", err)
+		}
+		if _, ok := qualityCtx.Deadline(); !ok {
+			t.Error("quality context should have a deadline when timeout>0")
+		}
+		if _, ok := auditCtx.Deadline(); !ok {
+			t.Error("audit context should have a deadline when timeout>0")
+		}
+	})
+
+	t.Run("no judge fails both document calls the same way", func(t *testing.T) {
+		r := &Runner{logger: log.NewDiscardLogger(), config: &config.Config{}}
+		if _, err := r.JudgeTagQuality(context.Background(), "", nil); err == nil || !strings.Contains(err.Error(), "tag quality judge not configured") {
+			t.Errorf("error = %v, want the document judge identity", err)
+		}
+		if _, err := r.JudgeTagAudit(context.Background(), "", nil); err == nil || !strings.Contains(err.Error(), "tag quality judge not configured") {
+			t.Errorf("error = %v, want the document judge identity", err)
 		}
 	})
 }

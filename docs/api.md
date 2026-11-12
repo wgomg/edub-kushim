@@ -2517,6 +2517,7 @@ EnricherConfigResponse is the enricher section's API view.
 | `contentanalyzer` | [ContentAnalyzerResponse](#contentanalyzerresponse) | yes |
 | `tag_adjudicator` | [TagAdjudicatorConfigResponse](#tagadjudicatorconfigresponse) | yes |
 | `tag_audit` | [TagAuditConfigResponse](#tagauditconfigresponse) | yes |
+| `tag_lexical_gate` | [TagLexicalGateConfigResponse](#taglexicalgateconfigresponse) | yes |
 | `tag_maintenance` | [TagMaintenanceConfigResponse](#tagmaintenanceconfigresponse) | yes |
 | `tag_measure` | [TagMeasureConfigResponse](#tagmeasureconfigresponse) | yes |
 | `tag_quality` | [TagQualityConfigResponse](#tagqualityconfigresponse) | yes |
@@ -3106,6 +3107,15 @@ TagAuditConfigResponse is the coverage audit section's API view.
 | `interval` | number | yes |
 | `sample_size` | integer | yes |
 | `time` | string | yes |
+
+### TagLexicalGateConfigResponse
+
+TagLexicalGateConfigResponse is the lexical gate section's API view: active while the adjudicator is enabled, with no toggle of its own.
+
+| Field | Type | Required |
+|---|---|---|
+| `llm` | [TagAdjudicatorLlmResponse](#tagadjudicatorllmresponse) | yes |
+| `timeout` | integer | yes |
 
 ### TagListResponse
 

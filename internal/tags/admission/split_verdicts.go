@@ -30,18 +30,27 @@ const tagCompoundDeferStatus = "defer"
 // failure retries once, an incomplete reply salvages the entries it returned and defers only the missing
 // ones, every other non-credit failure leaves the verdicts absent, and credit exhaustion is the only error.
 type VerdictStore struct {
-	queries  *database.Queries
-	runner   *tools.Runner
-	logger   *log.Logger
-	model    string
-	promoted map[string]struct{}
+	queries   *database.Queries
+	runner    *tools.Runner
+	logger    *log.Logger
+	gateModel string
+	foldModel string
+	promoted  map[string]struct{}
 }
 
-// NewVerdictStore wires the store to its queries, judge runner, logger, and the model a fresh verdict row
-// records. promoted is the promoted store values' key set (Key(storeName)); a fresh false dimension
-// verdict on a promoted value is deferred rather than cached.
-func NewVerdictStore(queries *database.Queries, runner *tools.Runner, logger *log.Logger, model string, promoted map[string]struct{}) *VerdictStore {
-	return &VerdictStore{queries: queries, runner: runner, logger: logger, model: model, promoted: promoted}
+// VerdictModels names the judging models a fresh verdict row records: Gate judges the parts and compound
+// passes, Fold the phrase-context folds the adjudicator judges.
+type VerdictModels struct {
+	Gate string
+	Fold string
+}
+
+// NewVerdictStore wires the store to its queries, judge runner, logger, and the models a fresh verdict
+// row records: models.Gate stamps the parts and compound rows the lexical gate judges, models.Fold the
+// phrase-context folds the adjudicator judges. promoted is the promoted store values' key set
+// (Key(storeName)); a fresh false dimension verdict on a promoted value is deferred rather than cached.
+func NewVerdictStore(queries *database.Queries, runner *tools.Runner, logger *log.Logger, models VerdictModels, promoted map[string]struct{}) *VerdictStore {
+	return &VerdictStore{queries: queries, runner: runner, logger: logger, gateModel: models.Gate, foldModel: models.Fold, promoted: promoted}
 }
 
 // PartDimensionFeature reads a value's parts verdict into the quality gate's dimension feature: a real
@@ -223,7 +232,7 @@ func (s *VerdictStore) insertPartVerdict(ctx context.Context, q *database.Querie
 		Value:         value,
 		Criteria:      criteria,
 		Dimensional:   r.Dimensional,
-		VerdictModel:  sql.NullString{String: s.model, Valid: s.model != ""},
+		VerdictModel:  sql.NullString{String: s.gateModel, Valid: s.gateModel != ""},
 		PolicyVersion: analyzer.TagPartDimensionVersion,
 	})
 	if err != nil {
@@ -398,7 +407,7 @@ func (s *VerdictStore) writePhraseFoldVerdict(ctx context.Context, docId int64, 
 		Anchor:          key.Anchor,
 		Criteria:        criteria,
 		Fold:            r.Fold,
-		VerdictModel:    sql.NullString{String: s.model, Valid: s.model != ""},
+		VerdictModel:    sql.NullString{String: s.foldModel, Valid: s.foldModel != ""},
 		CriteriaVersion: analyzer.TagPhraseFoldVersion,
 	})
 	if err != nil {
@@ -500,13 +509,13 @@ func (s *VerdictStore) insertCompoundVerdict(ctx context.Context, q *database.Qu
 	if err != nil {
 		criteria = json.RawMessage("{}")
 	}
-	fresh := CompoundVerdict{Status: r.Status, Deferred: r.Defer, Model: s.model}
+	fresh := CompoundVerdict{Status: r.Status, Deferred: r.Defer, Model: s.gateModel}
 	n, err := q.InsertTagCompoundStatusEvent(ctx, database.InsertTagCompoundStatusEventParams{
 		DocumentID:           sql.NullInt64{Int64: docId, Valid: docId != 0},
 		Candidate:            candidate,
 		Status:               compoundRowStatus(r),
 		Criteria:             criteria,
-		VerdictModel:         sql.NullString{String: s.model, Valid: s.model != ""},
+		VerdictModel:         sql.NullString{String: s.gateModel, Valid: s.gateModel != ""},
 		SplitCriteriaVersion: analyzer.TagSplitVersion,
 	})
 	if err != nil {

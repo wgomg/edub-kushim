@@ -388,7 +388,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		r.logger.Info("", "tag reconcile (report-only): would re-judge %d provisional tags older than %d days", len(rejudge), graceDays)
 		return
 	}
-	if !r.runner.HasTagQualityJudge() {
+	if !cfg.Enricher.TagQuality.Enabled || !r.runner.HasTagQualityJudge() {
 		report.Provisional.NoJudge = len(rejudge)
 		r.logger.Info("", "tag reconcile: tag quality judge is not configured — %d provisional tags stay queued", len(rejudge))
 		return
@@ -446,7 +446,7 @@ func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, 
 	res := results[0]
 	// the parts pass owns the dimension question: resolve its verdict for this name and stamp it, so a
 	// re-judged name is not decided on a fabricated false dimension; an absent or abstained verdict defers
-	partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, cfg.ResolvedAdjudicatorLlm().Model, nil)
+	partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, admission.VerdictModels{Gate: cfg.ResolvedLexicalGateLlm().Model, Fold: cfg.ResolvedAdjudicatorLlm().Model}, nil)
 	dimension, abstain, verr := partStore.DimensionFeature(ctx, name, docID, "")
 	if verr != nil {
 		return tags.AdmissionDecision{}, "", verr
@@ -627,7 +627,7 @@ func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, 
 		r.logger.Info("", "tag reconcile (report-only): would re-judge %d promoted tags under the current criteria", len(rejudge))
 		return
 	}
-	if !r.runner.HasTagQualityJudge() {
+	if !cfg.Enricher.TagQuality.Enabled || !r.runner.HasTagQualityJudge() {
 		report.Demotion.NoJudge = len(rejudge)
 		r.logger.Info("", "tag reconcile: tag quality judge is not configured — %d promoted tags keep their influence", len(rejudge))
 		return

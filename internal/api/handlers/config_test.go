@@ -188,6 +188,42 @@ func TestConfigResponseFrom_TagMatcherAndAuditSurfaced(t *testing.T) {
 	}
 }
 
+// TestConfigResponseFrom_TagLexicalGateSurfaced pins the gate section the settings UI reads back from
+// GET /config: it has no enabled toggle (the gate rides the adjudicator's) and round-trips timeout plus
+// the whole llm endpoint, so an operator edit survives a UI save.
+func TestConfigResponseFrom_TagLexicalGateSurfaced(t *testing.T) {
+	cfg := config.DefaultConfig("/tmp/test")
+	resp := ConfigResponseFrom(cfg)
+
+	if resp.Enricher.TagLexicalGate.Timeout != 0 {
+		t.Errorf("default Timeout = %d, want 0 (inherit the adjudicator's)", resp.Enricher.TagLexicalGate.Timeout)
+	}
+	got := resp.Enricher.TagLexicalGate.Llm
+	if got.Provider != "" || got.Model != "" || got.Adapter != "" || got.Token != "" || got.RequestDelay != 0 {
+		t.Errorf("default Llm = %+v, want the empty (inherited) stanza", got)
+	}
+
+	cfg.Enricher.TagAdjudicator.Enabled = true
+	cfg.Enricher.TagLexicalGate.Timeout = 45
+	cfg.Enricher.TagLexicalGate.Llm.Adapter = "openai-compatible"
+	cfg.Enricher.TagLexicalGate.Llm.Provider = "openai"
+	cfg.Enricher.TagLexicalGate.Llm.Model = "gpt-5-mini"
+	cfg.Enricher.TagLexicalGate.Llm.Token = "tok"
+	cfg.Enricher.TagLexicalGate.Llm.RequestDelay = 1.5
+	resp = ConfigResponseFrom(cfg)
+
+	if resp.Enricher.TagLexicalGate.Timeout != 45 {
+		t.Errorf("Timeout = %d, want 45 after setting", resp.Enricher.TagLexicalGate.Timeout)
+	}
+	if resp.Enricher.TagLexicalGate.Llm.Adapter != "openai-compatible" ||
+		resp.Enricher.TagLexicalGate.Llm.Provider != "openai" ||
+		resp.Enricher.TagLexicalGate.Llm.Model != "gpt-5-mini" ||
+		resp.Enricher.TagLexicalGate.Llm.Token != "tok" ||
+		resp.Enricher.TagLexicalGate.Llm.RequestDelay != 1.5 {
+		t.Errorf("Llm = %+v, want the overridden endpoint", resp.Enricher.TagLexicalGate.Llm)
+	}
+}
+
 // TestConfigResponseFrom_TagMaintenanceSurfaced pins the maintenance-routine section the settings UI reads
 // back from GET /config: defaults first and overridden values second, so the card round-trips the
 // operator's schedule instead of re-persisting the defaults on every save.

@@ -42,8 +42,9 @@ func newTestVerdictStoreWithPromoted(t *testing.T, adj *mockAdjudicator, promote
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
-	return NewVerdictStore(q, runner, logger, "test-model", promoted), q, database.CreateUniqueDocument(t, q, "verdict-store")
+	return NewVerdictStore(q, runner, logger, VerdictModels{Gate: "test-model", Fold: "test-model"}, promoted), q, database.CreateUniqueDocument(t, q, "verdict-store")
 }
 
 // TestWriteCompoundVerdict_ConflictComparesReading pins the conflict reread's comparison: the stored row and
@@ -365,13 +366,14 @@ func newTestVerdictStoreClient(t *testing.T, adj *mockAdjudicator) (*VerdictStor
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 	for _, table := range []string{"tag_part_dimension_event", "tag_compound_status_event"} {
 		if _, err := client.DB().ExecContext(context.Background(), "DELETE FROM "+table); err != nil {
 			t.Fatalf("reset %s: %v", table, err)
 		}
 	}
 	docID := database.CreateUniqueDocument(t, client.Queries, "supersede")
-	return NewVerdictStore(client.Queries, runner, logger, "test-model", nil), client, docID
+	return NewVerdictStore(client.Queries, runner, logger, VerdictModels{Gate: "test-model", Fold: "test-model"}, nil), client, docID
 }
 
 // seedPartDefer writes a cached abstention as another worker would have left it, so the supersession must

@@ -1132,6 +1132,7 @@ type EnricherConfigResponse struct {
 	ContentAnalyzer ContentAnalyzerResponse      `json:"contentanalyzer"`
 	TagMatcher      TagMatcherResponse           `json:"tagmatcher"`
 	TagAdjudicator  TagAdjudicatorConfigResponse `json:"tag_adjudicator"`
+	TagLexicalGate  TagLexicalGateConfigResponse `json:"tag_lexical_gate"`
 	TagQuality      TagQualityConfigResponse     `json:"tag_quality"`
 	TagReconcile    TagReconcileConfigResponse   `json:"tag_reconcile"`
 	TagMeasure      TagMeasureConfigResponse     `json:"tag_measure"`
@@ -1149,6 +1150,13 @@ type TagQualityConfigResponse struct {
 // TagAdjudicatorConfigResponse is the adjudicator section's API view.
 type TagAdjudicatorConfigResponse struct {
 	Enabled bool                      `json:"enabled"`
+	Timeout int                       `json:"timeout"`
+	Llm     TagAdjudicatorLlmResponse `json:"llm"`
+}
+
+// TagLexicalGateConfigResponse is the lexical gate section's API view: active while the adjudicator is
+// enabled, with no toggle of its own.
+type TagLexicalGateConfigResponse struct {
 	Timeout int                       `json:"timeout"`
 	Llm     TagAdjudicatorLlmResponse `json:"llm"`
 }
@@ -1388,6 +1396,12 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagAdjudicator.Llm.Model = cfg.Enricher.TagAdjudicator.Llm.Model
 	resp.Enricher.TagAdjudicator.Llm.Token = cfg.Enricher.TagAdjudicator.Llm.Token
 	resp.Enricher.TagAdjudicator.Llm.RequestDelay = cfg.Enricher.TagAdjudicator.Llm.RequestDelay
+	resp.Enricher.TagLexicalGate.Timeout = cfg.Enricher.TagLexicalGate.Timeout
+	resp.Enricher.TagLexicalGate.Llm.Adapter = cfg.Enricher.TagLexicalGate.Llm.Adapter
+	resp.Enricher.TagLexicalGate.Llm.Provider = cfg.Enricher.TagLexicalGate.Llm.Provider
+	resp.Enricher.TagLexicalGate.Llm.Model = cfg.Enricher.TagLexicalGate.Llm.Model
+	resp.Enricher.TagLexicalGate.Llm.Token = cfg.Enricher.TagLexicalGate.Llm.Token
+	resp.Enricher.TagLexicalGate.Llm.RequestDelay = cfg.Enricher.TagLexicalGate.Llm.RequestDelay
 	resp.Enricher.TagQuality.Enabled = cfg.Enricher.TagQuality.Enabled
 	resp.Enricher.TagQuality.Timeout = cfg.Enricher.TagQuality.Timeout
 	resp.Enricher.TagQuality.Llm.Adapter = cfg.Enricher.TagQuality.Llm.Adapter

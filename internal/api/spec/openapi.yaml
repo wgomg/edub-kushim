@@ -6767,6 +6767,8 @@ components:
           $ref: '#/components/schemas/TagAdjudicatorConfigResponse'
         tag_audit:
           $ref: '#/components/schemas/TagAuditConfigResponse'
+        tag_lexical_gate:
+          $ref: '#/components/schemas/TagLexicalGateConfigResponse'
         tag_maintenance:
           $ref: '#/components/schemas/TagMaintenanceConfigResponse'
         tag_measure:
@@ -6787,6 +6789,7 @@ components:
         - contentanalyzer
         - tagmatcher
         - tag_adjudicator
+        - tag_lexical_gate
         - tag_quality
         - tag_reconcile
         - tag_measure
@@ -7871,6 +7874,19 @@ components:
         - interval
         - time
         - sample_size
+    TagLexicalGateConfigResponse:
+      type: object
+      description: |-
+        TagLexicalGateConfigResponse is the lexical gate section's API view: active while the adjudicator is
+        enabled, with no toggle of its own.
+      properties:
+        llm:
+          $ref: '#/components/schemas/TagAdjudicatorLlmResponse'
+        timeout:
+          type: integer
+      required:
+        - timeout
+        - llm
     TagListResponse:
       type: object
       description: TagListResponse is one page of the tag listing.

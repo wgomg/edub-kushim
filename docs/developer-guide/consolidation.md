@@ -166,7 +166,7 @@ things`, `black bloc`) stay whole, and a compound whose key already exists in th
 - **Detection**: every canonical tag of two to three words in Latin script with at least
   one content part is a candidate (`tags.ClassifyShape` = `ShapeCompound`).
 - **Decision**: with the tag adjudicator enabled, the split decision runs two context-free
-  judged passes (same adjudicator as tag pairs) — a **parts pass**
+  judged passes (the `enricher.tag_lexical_gate` model) — a **parts pass**
   (`analyzer.TagPartDimensionVersion`) judges each fold-resolved content word on its own,
   and a **compound pass** (`analyzer.TagSplitVersion`) reads the phrase as a named unit,
   a plain composition, or a phrase with no retrievable dimension — and the two answer sets
@@ -554,6 +554,14 @@ enricher:
   #     model: 'gpt-4o'
   #     token: ''
   #     request_delay: 1
+  # tag_lexical_gate:           # context-free judged passes; active while tag_adjudicator.enabled is set
+  #   timeout: 120               # defaults to tag_adjudicator.timeout, then contentanalyzer.timeout when 0
+  #   llm:                       # defaults to tag_adjudicator.llm, then contentanalyzer.llm when empty
+  #     adapter: 'openai-compatible'
+  #     provider: 'openai'
+  #     model: 'gpt-4o'
+  #     token: ''
+  #     request_delay: 1
   # tag_quality:                 # optional rubric judge for newly emitted tags
   #   enabled: false             # disabled by default — enable after configuring LLM
   #   timeout: 120               # defaults to contentanalyzer.timeout when 0
@@ -576,10 +584,11 @@ enricher:
   #   demotion_grace_days: 0     # days since creation before the mass-decay demotion may hit a tag (0 disables)
 ```
 
-All three blocks are also editable on the Settings page ("Tag adjudicator", "Tag quality",
-and "Tag reconciliation" cards), including an "Inherit from content analyzer" option for
-the judge LLMs — leaving the LLM fields empty follows the content analyzer's model even
-after it changes. The identity-candidate floor, the identity rule-set version, and the
+All four blocks are also editable on the Settings page ("Tag adjudicator", "Tag lexical
+gate", "Tag quality", and "Tag reconciliation" cards), including an "Inherit" option for
+the judged LLMs — leaving the fields empty follows the configured fallback chain (the gate
+follows the adjudicator's LLM, then the analyzer's; the adjudicator and quality follow the
+analyzer's) even after it changes. The identity-candidate floor, the identity rule-set version, and the
 quality band constants are internals; see the
 [semantic matching guide](semantic-matching.md) for the per-model floor values.
 

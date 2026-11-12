@@ -43,6 +43,7 @@ function ensureAll() {
 	ensureTagAuditBlock();
 	ensureTagMaintenanceBlock();
 	ensureTagAdjudicatorBlock();
+	ensureTagLexicalGateBlock();
 	ensureTagQualityBlock();
 	ensureContentAnalyzerTags();
 	ensureTagMatcherTopN();
@@ -147,6 +148,16 @@ function ensureTagAdjudicatorBlock() {
 	if (cfg.enricher.tag_adjudicator) return;
 	cfg.enricher.tag_adjudicator = {
 		enabled: false,
+		timeout: 0,
+		llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
+	};
+}
+
+function ensureTagLexicalGateBlock() {
+	if (!cfg) return;
+	if (!cfg.enricher) cfg.enricher = {};
+	if (cfg.enricher.tag_lexical_gate) return;
+	cfg.enricher.tag_lexical_gate = {
 		timeout: 0,
 		llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
 	};
@@ -260,6 +271,14 @@ function bodyFromConfig() {
 		'enricher.tag_adjudicator.llm.token': cfg.enricher.tag_adjudicator.llm.token,
 		'enricher.tag_adjudicator.llm.request_delay': Number(
 			cfg.enricher.tag_adjudicator.llm.request_delay
+		),
+		'enricher.tag_lexical_gate.timeout': Number(cfg.enricher.tag_lexical_gate.timeout),
+		'enricher.tag_lexical_gate.llm.adapter': cfg.enricher.tag_lexical_gate.llm.adapter,
+		'enricher.tag_lexical_gate.llm.provider': cfg.enricher.tag_lexical_gate.llm.provider,
+		'enricher.tag_lexical_gate.llm.model': cfg.enricher.tag_lexical_gate.llm.model,
+		'enricher.tag_lexical_gate.llm.token': cfg.enricher.tag_lexical_gate.llm.token,
+		'enricher.tag_lexical_gate.llm.request_delay': Number(
+			cfg.enricher.tag_lexical_gate.llm.request_delay
 		),
 		'enricher.tag_quality.enabled': cfg.enricher.tag_quality.enabled,
 		'enricher.tag_quality.timeout': Number(cfg.enricher.tag_quality.timeout),

@@ -70,7 +70,7 @@ func (r *ReaskRunner) Reask(ctx context.Context, budget int) (*ReaskReport, erro
 		queries,
 		r.runner,
 		r.logger,
-		cfg.ResolvedAdjudicatorLlm().Model,
+		admission.VerdictModels{Gate: cfg.ResolvedLexicalGateLlm().Model, Fold: cfg.ResolvedAdjudicatorLlm().Model},
 		tags.PromotedKeys(tags.StoreNames(promotedNames)),
 	)
 

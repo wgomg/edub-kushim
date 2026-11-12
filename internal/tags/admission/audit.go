@@ -510,7 +510,7 @@ func (a *AuditRunner) auditDocument(ctx context.Context, docID, sweep int64, vie
 	}
 
 	cfg := a.cfg()
-	judgeModel := cfg.ResolvedAdjudicatorLlm().Model
+	judgeModel := cfg.ResolvedQualityLlm().Model
 	llmText := text
 	if r, rerr := a.runner.ReduceContent(ctx, text, matcher.TargetWordCount(int(content.WordCount), cfg.Enricher.TextReducer.TargetWords)); rerr == nil {
 		llmText = r.Text
@@ -527,7 +527,7 @@ func (a *AuditRunner) auditDocument(ctx context.Context, docID, sweep int64, vie
 	var judgeWork []flaggedDim
 	var records []tags.CoverageRecord
 
-	if a.runner.HasTagAdjudicator() {
+	if a.runner.HasTagQualityJudge() {
 		result, merr := a.runner.MatchTags(ctx, strconv.FormatInt(docID, 10), tagsText)
 		if merr != nil {
 			stats.matcherMissing = true

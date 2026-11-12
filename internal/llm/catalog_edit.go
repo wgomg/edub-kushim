@@ -484,9 +484,9 @@ func modelInputFrom(m modelEntry) ModelInput {
 	}
 }
 
-// llmInUse reports whether any configured LLM endpoint — the analyzer, a fallback, the tag adjudicator
-// or the tag quality judge — names provider and, when model is non-empty, that exact model; an empty
-// model matches any model of the provider, and a nil config counts as not in use.
+// llmInUse reports whether any configured LLM endpoint — the analyzer, a fallback, the tag adjudicator,
+// the tag lexical gate or the tag quality judge — names provider and, when model is non-empty, that
+// exact model; an empty model matches any model of the provider, and a nil config counts as not in use.
 func llmInUse(cfg *config.Config, provider, model string) bool {
 	if cfg == nil || provider == "" {
 		return false
@@ -500,6 +500,9 @@ func llmInUse(cfg *config.Config, provider, model string) bool {
 		}
 	}
 	if llmEndpointMatches(cfg.Enricher.TagAdjudicator.Llm, provider, model) {
+		return true
+	}
+	if llmEndpointMatches(cfg.Enricher.TagLexicalGate.Llm, provider, model) {
 		return true
 	}
 	return llmEndpointMatches(cfg.Enricher.TagQuality.Llm, provider, model)

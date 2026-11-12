@@ -92,7 +92,7 @@ func (r *Reconciler) Rejudge(ctx context.Context, req RejudgeRequest) (RejudgeRe
 	report := RejudgeReport{TagID: tag.ID, Name: tag.Name, Scope: req.Scope}
 	switch tags.RejudgeScope(req.Scope) {
 	case tags.RejudgeScopeQuality:
-		if !r.runner.HasTagQualityJudge() {
+		if !cfg.Enricher.TagQuality.Enabled || !r.runner.HasTagQualityJudge() {
 			return RejudgeReport{}, errors.New("tag quality judge is not configured")
 		}
 		decision, _, err := r.rejudgeStoredName(ctx, cfg, tag.ID, tag.Name)

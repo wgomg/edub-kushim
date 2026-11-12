@@ -236,7 +236,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 // parts test reads the substrate's reconstructibility over each judged cover; a compound the store does not
 // hold has no extension, so the prospective ladder's promoted-parts proxy answers for it.
 func (a *Adjudicator) JudgeCompounds(ctx context.Context, candidates []string, liveNames map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]tags.CompositionRow, error) {
-	store := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model, tags.PromotedKeys(promotedNames))
+	store := NewVerdictStore(a.queries, a.runner, a.logger, VerdictModels{Gate: a.config.ResolvedLexicalGateLlm().Model, Fold: a.config.ResolvedAdjudicatorLlm().Model}, tags.PromotedKeys(promotedNames))
 	substrate := tags.NewStore(a.queries)
 	fans := make(map[string]Fan, len(candidates))
 	for _, candidate := range candidates {
@@ -1381,7 +1381,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 		for i, n := range uncached {
 			names[i] = n.emitted
 		}
-		partStore := NewVerdictStore(a.queries, a.runner, a.logger, a.config.ResolvedAdjudicatorLlm().Model, tags.PromotedGuardKeys(dbNames))
+		partStore := NewVerdictStore(a.queries, a.runner, a.logger, VerdictModels{Gate: a.config.ResolvedLexicalGateLlm().Model, Fold: a.config.ResolvedAdjudicatorLlm().Model}, tags.PromotedGuardKeys(dbNames))
 		var derr error
 		dimensionVerdicts, derr = partStore.Parts(ctx, names, docId, reqID)
 		if derr != nil {

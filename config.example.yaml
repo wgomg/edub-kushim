@@ -159,6 +159,15 @@ enricher:
   #     token: ''
   #     request_delay: 1
 
+  # tag_lexical_gate:           # context-free judged passes; active while tag_adjudicator.enabled is set
+  #   timeout: 120               # defaults to tag_adjudicator.timeout, then contentanalyzer.timeout when 0
+  #   llm:                       # defaults to tag_adjudicator.llm, then contentanalyzer.llm when empty
+  #     adapter: 'openai-compatible'
+  #     provider: 'openai'
+  #     model: 'gpt-4o'
+  #     token: ''
+  #     request_delay: 1
+
   # tag_quality:                 # rubric judge for newly emitted tags (judge LLM should differ from the generator)
   #   enabled: false             # disabled by default
   #   timeout: 120               # defaults to contentanalyzer.timeout when 0

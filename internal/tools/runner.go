@@ -54,6 +54,7 @@ type Runner struct {
 	tagMatcher        matcher.Matcher
 	contentAnalyzer   analyzer.Analyzer
 	tagAdjudicator    analyzer.TagAdjudicator
+	tagLexicalGate    analyzer.TagLexicalGate
 	tagQualityJudge   analyzer.TagQualityJudge
 	fallbackAnalyzers []analyzer.Analyzer
 	fallbackMeta      []fallbackMeta
@@ -266,14 +267,27 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 				} else {
 					r.tagAdjudicator = adj
 				}
-			}
-			if cfg.Enricher.TagQuality.Enabled {
-				qLlm := cfg.ResolvedQualityLlm()
-				q, qErr := analyzer.NewTagQualityJudge(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, reg)
-				if qErr != nil {
-					logger.Error("", "create tag quality judge: %v", qErr)
+				gateLlm := cfg.ResolvedLexicalGateLlm()
+				gate, gateErr := analyzer.NewTagLexicalGate(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedLexicalGateTimeout()) * time.Second}, &gateLlm, reg)
+				if gateErr != nil {
+					logger.Error("", "create tag lexical gate: %v", gateErr)
 				} else {
-					r.tagQualityJudge = q
+					r.tagLexicalGate = gate
+				}
+			}
+			if cfg.Enricher.TagQuality.Enabled || cfg.Enricher.TagAudit.Enabled || cfg.Enricher.TagMaintenance.Enabled {
+				qLlm := cfg.ResolvedQualityLlm()
+				if qLlm.Provider == "" || qLlm.Model == "" {
+					// the audit and maintenance schedules run without a judge when no endpoint resolves;
+					// only the quality gate hard-requires one at load
+					logger.Info("", "tag quality judge not configured — judged tag steps stay deferred")
+				} else {
+					q, qErr := analyzer.NewTagQualityJudge(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, reg)
+					if qErr != nil {
+						logger.Error("", "create tag quality judge: %v", qErr)
+					} else {
+						r.tagQualityJudge = q
+					}
 				}
 			}
 		case "tagmatcher":
@@ -609,25 +623,25 @@ func (r *Runner) AdjudicateTags(ctx context.Context, pairs []analyzer.TagPairEvi
 	})
 }
 
-// JudgeTagParts asks the LLM adjudicator whether each value, on its own, names a subject a searcher would
-// filter by. Returns an error when no adjudicator was configured.
+// JudgeTagParts asks the LLM gate whether each value, on its own, names a subject a searcher would
+// filter by. Returns an error when no gate was configured.
 func (r *Runner) JudgeTagParts(ctx context.Context, values []string) ([]analyzer.TagPartResult, error) {
-	if r.tagAdjudicator == nil {
-		return nil, fmt.Errorf("tag adjudicator not configured")
+	if r.tagLexicalGate == nil {
+		return nil, fmt.Errorf("tag lexical gate not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagPartResult, error) {
-		return r.tagAdjudicator.JudgeTagParts(ctx, values)
+	return runJudged(ctx, r.config.ResolvedLexicalGateTimeout(), func(ctx context.Context) ([]analyzer.TagPartResult, error) {
+		return r.tagLexicalGate.JudgeTagParts(ctx, values)
 	})
 }
 
-// JudgeTagCompounds asks the LLM adjudicator what each compound phrase denotes. Returns an error when no
-// adjudicator was configured.
+// JudgeTagCompounds asks the LLM gate what each compound phrase denotes. Returns an error when no gate
+// was configured.
 func (r *Runner) JudgeTagCompounds(ctx context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
-	if r.tagAdjudicator == nil {
-		return nil, fmt.Errorf("tag adjudicator not configured")
+	if r.tagLexicalGate == nil {
+		return nil, fmt.Errorf("tag lexical gate not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagCompoundResult, error) {
-		return r.tagAdjudicator.JudgeTagCompounds(ctx, candidates)
+	return runJudged(ctx, r.config.ResolvedLexicalGateTimeout(), func(ctx context.Context) ([]analyzer.TagCompoundResult, error) {
+		return r.tagLexicalGate.JudgeTagCompounds(ctx, candidates)
 	})
 }
 
@@ -642,7 +656,8 @@ func (r *Runner) JudgeTagConflicts(ctx context.Context, candidates []analyzer.Ta
 	})
 }
 
-// HasTagQualityJudge reports whether a tag quality judge is configured.
+// HasTagQualityJudge reports whether a tag quality judge is configured; it serves the quality rubric
+// and the coverage audit.
 func (r *Runner) HasTagQualityJudge() bool {
 	return r.tagQualityJudge != nil
 }
@@ -658,25 +673,25 @@ func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []
 	})
 }
 
-// JudgeTagTranslations asks the LLM adjudicator for each value's English canonical form — the language
-// guard's judged translation. Returns an error when no adjudicator was configured.
+// JudgeTagTranslations asks the LLM gate for each value's English canonical form — the language guard's
+// judged translation. Returns an error when no gate was configured.
 func (r *Runner) JudgeTagTranslations(ctx context.Context, values []string) ([]analyzer.TagTranslationResult, error) {
-	if r.tagAdjudicator == nil {
-		return nil, fmt.Errorf("tag adjudicator not configured")
+	if r.tagLexicalGate == nil {
+		return nil, fmt.Errorf("tag lexical gate not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagTranslationResult, error) {
-		return r.tagAdjudicator.JudgeTagTranslations(ctx, values)
+	return runJudged(ctx, r.config.ResolvedLexicalGateTimeout(), func(ctx context.Context) ([]analyzer.TagTranslationResult, error) {
+		return r.tagLexicalGate.JudgeTagTranslations(ctx, values)
 	})
 }
 
-// JudgeTagAudit asks the LLM adjudicator whether each flagged dimension is a subject the document is about
-// — the completeness audit's applicability call. Returns an error when no adjudicator was configured.
+// JudgeTagAudit asks the LLM quality judge whether each flagged dimension is a subject the document is
+// about — the completeness audit's applicability call. Returns an error when no judge was configured.
 func (r *Runner) JudgeTagAudit(ctx context.Context, text string, candidates []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
-	if r.tagAdjudicator == nil {
-		return nil, fmt.Errorf("tag adjudicator not configured")
+	if r.tagQualityJudge == nil {
+		return nil, fmt.Errorf("tag quality judge not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagAuditResult, error) {
-		return r.tagAdjudicator.JudgeTagAudit(ctx, text, candidates)
+	return runJudged(ctx, r.config.ResolvedQualityTimeout(), func(ctx context.Context) ([]analyzer.TagAuditResult, error) {
+		return r.tagQualityJudge.JudgeTagAudit(ctx, text, candidates)
 	})
 }
 

@@ -48,6 +48,7 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -161,6 +162,7 @@ func TestPlanIdentity_JudgeFailureWarns(t *testing.T) {
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -267,6 +269,7 @@ func TestPlanIdentity_ConfirmedFoldAppliesWithoutPendingRows(t *testing.T) {
 		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -344,6 +347,7 @@ func TestPlanIdentity_GateUnrelatedDropsFold(t *testing.T) {
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -444,6 +448,7 @@ func TestPlanIdentity_CachedGateUnrelatedSkipsJudge(t *testing.T) {
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -509,6 +514,7 @@ func TestPlanIdentity_CachedGateAnchorMismatchRejudges(t *testing.T) {
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -571,6 +577,7 @@ func TestPlanIdentity_DerivationalFoldResolvesOntoStoreNoun(t *testing.T) {
 		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 
 	a := &Adjudicator{
 		config: &config.Config{
@@ -768,6 +775,7 @@ func newTestAdjudicator(t *testing.T) (*Adjudicator, *database.Queries, *mockAdj
 		},
 	})
 	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
 	setUnexportedField(t, runner, "tagMatcher", matcher)
 
 	a := &Adjudicator{
@@ -1625,6 +1633,7 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 	setUnexportedField(t, runner, "config", cfg)
 	if adj != nil {
 		setUnexportedField(t, runner, "tagAdjudicator", adj)
+		setUnexportedField(t, runner, "tagLexicalGate", adj)
 	}
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -2056,6 +2065,7 @@ func TestDecomposeTags_StoreExistingWithoutAdjudicatorStaysSkipped(t *testing.T)
 	adj := &mockAdjudicator{partFn: partsDimensional, compoundFn: compoundsStatus(analyzer.TagCompoundComposition)}
 	a, docID := newSplitAdjudicator(t, adj, &buf)
 	setUnexportedField(t, a.runner, "tagAdjudicator", nil)
+	setUnexportedField(t, a.runner, "tagLexicalGate", nil)
 	filter := analyzer.NewTagFilter(nil, nil, nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 

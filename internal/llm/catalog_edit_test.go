@@ -117,6 +117,23 @@ func TestRemoveInUseGuard(t *testing.T) {
 	}
 }
 
+// TestRemoveInUseGuardLexicalGate pins the catalog guard for the new lexical gate section: a model
+// referenced only by tag_lexical_gate.llm blocks removal, and dropping that reference lifts it.
+func TestRemoveInUseGuardLexicalGate(t *testing.T) {
+	r := newMutableRegistry(t)
+	inUse := &config.Config{Enricher: config.EnricherConfig{TagLexicalGate: config.TagLexicalGateConfig{
+		Llm: config.LlmConfig{Provider: "zhipu", Model: "glm-5"},
+	}}}
+
+	if err := r.RemoveModel("zhipu", "glm-5", inUse); err == nil {
+		t.Error("remove model referenced by tag_lexical_gate: want an in-use conflict")
+	}
+	inUse.Enricher.TagLexicalGate.Llm = config.LlmConfig{}
+	if err := r.RemoveModel("zhipu", "glm-5", inUse); err != nil {
+		t.Errorf("remove after dropping the gate reference: %v, want success", err)
+	}
+}
+
 // TestResetRecoversMangledCatalogs pins the recovery contract: a corrupt file fails the load, and each
 // reset scope repairs its own file — the partial reset must not parse the file it is about to replace.
 func TestResetRecoversMangledCatalogs(t *testing.T) {

@@ -1,8 +1,8 @@
 // Package analyzer is the LLM integration for document enrichment and the tag subsystem's judged decisions:
-// the three contracts the tools runner holds (Analyzer, TagAdjudicator, TagQualityJudge), the Anthropic and
-// OpenAI-compatible implementations behind them, the prompt builders and response parsers of every judged
-// step, and the provider gates (content size, token limits, credits). The tools runner fronts this package;
-// the pipeline's policy layer stays free of LLM specifics.
+// the four contracts the tools runner holds (Analyzer, TagAdjudicator, TagLexicalGate, TagQualityJudge), the
+// Anthropic and OpenAI-compatible implementations behind them, the prompt builders and response parsers of
+// every judged step, and the provider gates (content size, token limits, credits). The tools runner fronts
+// this package; the pipeline's policy layer stays free of LLM specifics.
 package analyzer
 
 import (
@@ -47,29 +47,18 @@ type Analyzer interface {
 	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
 }
 
-// TagAdjudicator is the tag subsystem's judged-decisions contract for every pass whose answer comes from
-// a model. It is served by the single model configured under enricher.tag_adjudicator; the quality rubric
-// is not part of it.
+// TagAdjudicator is the tag subsystem's semantic judging contract: the passes that compare tag values
+// against each other or against the store — pair adjudication, conflict arbitration, residual
+// phrase-context folds, canonical-form identity and fold-relation gating. It is served by the single
+// model configured under enricher.tag_adjudicator; the context-free gate passes and the quality rubric
+// are not part of it.
 type TagAdjudicator interface {
 	// Adjudicate answers the same-intent tag pairs: one verdict per pair,
 	// with the direction when the verdict is same.
 	Adjudicate(ctx context.Context, pairs []TagPairEvidence) ([]TagVerdictResult, error)
-	// JudgeTagParts decides whether each value, on its own, names a subject a searcher would filter by: the
-	// context-free dimensional question the split gate's parts pass asks.
-	JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error)
-	// JudgeTagCompounds decides what each compound phrase denotes: the context-free named_unit/composition/no_dimension trichotomy the split
-	// gate's compound pass asks.
-	JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
 	// JudgeTagConflicts arbitrates the compounds whose constituent verdicts disagree with the compound
 	// reading, choosing split, keep, or defer for each.
 	JudgeTagConflicts(ctx context.Context, candidates []TagConflictCandidate) ([]TagConflictResult, error)
-	// JudgeTagTranslations returns each value's English canonical form, or the value unchanged when it is
-	// already English: the language guard's judged translation.
-	JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
-	// JudgeTagAudit decides whether each flagged dimension is a subject the document is about — the
-	// completeness audit's applicability call, reading about-ness from the document and abstaining when it
-	// is unclear.
-	JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error)
 	// JudgeTagPhraseFolds decides whether each part, in the context of its phrase, denotes the candidate
 	// anchor value: the residual phrase-context fold the seam asks when a multi-base part's primary-sense
 	// base is not live while another attested base is.
@@ -77,19 +66,40 @@ type TagAdjudicator interface {
 	// JudgeTagIdentity decides the canonical written form of candidate
 	// tags: folds, denotation preservation, conventional form.
 	JudgeTagIdentity(ctx context.Context, candidates []TagIdentityCandidate) ([]TagIdentityResult, error)
-	// JudgeTagRelations gates fold proposals: it decides only whether the candidate and its store anchor are
-	// semantically related enough for a canonical-form judgment, never whether the fold itself is correct.
+	// JudgeTagRelations gates fold proposals: it decides only whether the candidate and its store anchor
+	// are semantically related enough that a canonical-form judgment is meaningful, never whether the fold
+	// itself is correct.
 	JudgeTagRelations(ctx context.Context, candidates []TagRelationCandidate) ([]TagRelationResult, error)
 }
 
-// TagQualityJudge is the tag quality rubric's judged contract, served by the model configured under the
-// enricher.tag_quality section. The dimension question belongs to the adjudicator's parts pass and is
-// not asked here.
+// TagLexicalGate is the tag subsystem's context-free classification contract: the dimensional parts
+// pass, the compound reading and the language guard's translation, judged on the values themselves and
+// never in a sense inferred from a phrase. It is served by the model configured under
+// enricher.tag_lexical_gate.
+type TagLexicalGate interface {
+	// JudgeTagParts decides whether each value, on its own, names a subject a searcher would filter by: the
+	// context-free dimensional question the split gate's parts pass asks.
+	JudgeTagParts(ctx context.Context, values []string) ([]TagPartResult, error)
+	// JudgeTagCompounds decides what each compound phrase denotes: the context-free
+	// named_unit/composition/no_dimension trichotomy the split gate's compound pass asks.
+	JudgeTagCompounds(ctx context.Context, candidates []string) ([]TagCompoundResult, error)
+	// JudgeTagTranslations returns each value's English canonical form, or the value unchanged when it is
+	// already English: the language guard's judged translation.
+	JudgeTagTranslations(ctx context.Context, values []string) ([]TagTranslationResult, error)
+}
+
+// TagQualityJudge is the tag subsystem's document-reading judging contract: the quality rubric over novel
+// tags and the coverage audit's applicability call. It is served by the model configured under
+// enricher.tag_quality. The dimension question belongs to the gate's parts pass and is not asked here.
 type TagQualityJudge interface {
 	// JudgeTagQuality considers the document text for the subject-matter criterion and the tag alone for
 	// the remaining criteria, answering the rubric and the judge's abstention. The dimension question is
 	// not asked here: the parts pass owns it and the gate stamps its verdict.
 	JudgeTagQuality(ctx context.Context, text string, candidates []TagQualityCandidate) ([]TagQualityResult, error)
+	// JudgeTagAudit decides whether each flagged dimension is a subject the document is about — the
+	// completeness audit's applicability call, reading about-ness from the document and abstaining when it
+	// is unclear.
+	JudgeTagAudit(ctx context.Context, text string, candidates []TagAuditCandidate) ([]TagAuditResult, error)
 }
 
 // AnalysisResult is one analysis pass's outcome: title, document type,
@@ -108,12 +118,13 @@ type AnalysisResult struct {
 	PassContext *json.RawMessage `json:"-"`
 }
 
-// adapter is the constructible union of the three contracts: both client implementations satisfy every
+// adapter is the constructible union of the four contracts: both client implementations satisfy every
 // one of them, so a single constructor can serve any role while each factory narrows the returned value
 // to the contract its role consumes.
 type adapter interface {
 	Analyzer
 	TagAdjudicator
+	TagLexicalGate
 	TagQualityJudge
 }
 
@@ -145,7 +156,7 @@ func NewAnalyzer(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmCo
 	return a, nil
 }
 
-// NewTagAdjudicator builds the judged-decisions adapter the LLM configuration names; the analysis-only
+// NewTagAdjudicator builds the semantic judging adapter the LLM configuration names; the analysis-only
 // prompt settings do not apply to this role.
 func NewTagAdjudicator(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, reg *llm.Registry) (TagAdjudicator, error) {
 	a, err := newAdapter(logger, cfg, llmCfg, "", 0, reg)
@@ -155,8 +166,18 @@ func NewTagAdjudicator(logger *log.Logger, cfg config.ToolConfig, llmCfg *config
 	return a, nil
 }
 
-// NewTagQualityJudge builds the quality-rubric adapter the LLM configuration names; the analysis-only
+// NewTagLexicalGate builds the context-free gate adapter the LLM configuration names; the analysis-only
 // prompt settings do not apply to this role.
+func NewTagLexicalGate(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, reg *llm.Registry) (TagLexicalGate, error) {
+	a, err := newAdapter(logger, cfg, llmCfg, "", 0, reg)
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// NewTagQualityJudge builds the document-reading judge adapter the LLM configuration names; the
+// analysis-only prompt settings do not apply to this role.
 func NewTagQualityJudge(logger *log.Logger, cfg config.ToolConfig, llmCfg *config.LlmConfig, reg *llm.Registry) (TagQualityJudge, error) {
 	a, err := newAdapter(logger, cfg, llmCfg, "", 0, reg)
 	if err != nil {
