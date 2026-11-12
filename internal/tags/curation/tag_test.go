@@ -599,6 +599,18 @@ func TestTag_CountProvisionalStateFacets(t *testing.T) {
 	seed("prov facets deferred", `{"defer":true}`, false, "")
 	seed("prov facets reject", `{"atomic":false}`, false, "reject")
 	seed("prov facets unjudged", "", false, "")
+	// an old-stamp hold exercises the stamp-agnostic identity_hold lateral in both SQL copies
+	database.MustCreateTag(t, client.Queries, "provfacetsanchor")
+	seed("prov facets old hold", "", false, "")
+	if _, err := client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindFoldGate,
+		Candidate:      "prov facets old hold",
+		Criteria:       []byte(`{"proposed_fold":"provfacetsanchor"}`),
+		Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+		RuleSetVersion: "v9",
+	}); err != nil {
+		t.Fatalf("seed the old-stamp refused fold: %v", err)
+	}
 
 	filter := ProvisionalFilter{NameContains: "prov facets "}
 
@@ -617,13 +629,13 @@ func TestTag_CountProvisionalStateFacets(t *testing.T) {
 	}
 
 	want := map[string]int64{
-		"no_verdict":       1,
+		"no_verdict":       2,
 		"admitted":         1,
 		"deferred":         1,
 		"rejected":         1,
 		"accepted":         0,
 		"identity_pending": 0,
-		"identity_hold":    0,
+		"identity_hold":    1,
 		"split_hold":       0,
 		"degraded":         0,
 		"demoted":          0,
@@ -1411,6 +1423,25 @@ func TestTag_Accept(t *testing.T) {
 		testutil.AssertEqual(t, acceptedAt(t, id), false, "no stamp")
 	})
 
+	t.Run("refuses a value an older rule-set identity hold still withholds", func(t *testing.T) {
+		id := seedDeferred(t, "accept old held value", "defer")
+		database.MustCreateTag(t, client.Queries, "accept old hold anchor")
+		if _, err := client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+			Kind:           tags.IdentityKindFoldGate,
+			Candidate:      "accept old held value",
+			Criteria:       []byte(`{"proposed_fold":"accept old hold anchor"}`),
+			Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+			RuleSetVersion: "v9",
+		}); err != nil {
+			t.Fatalf("seed the old-stamp refused fold: %v", err)
+		}
+
+		status, err := svc.Accept(ctx, id)
+		testutil.AssertNoError(t, err, "accept")
+		testutil.AssertEqual(t, status, types.AcceptHeld, "status")
+		testutil.AssertEqual(t, acceptedAt(t, id), false, "no stamp")
+	})
+
 	t.Run("reports a missing value", func(t *testing.T) {
 		status, err := svc.Accept(ctx, 999999)
 		testutil.AssertNoError(t, err, "accept")
@@ -1506,6 +1537,45 @@ func TestTag_Separate(t *testing.T) {
 		status, err := svc.Separate(ctx, 999999)
 		testutil.AssertNoError(t, err, "separate")
 		testutil.AssertEqual(t, status, types.SeparateNotFound, "status")
+	})
+
+	t.Run("clears a hold minted under an older rule set", func(t *testing.T) {
+		anchor := "separate old anchor value"
+		name := "separate old held value"
+		database.MustCreateTag(t, client.Queries, anchor)
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id); err != nil {
+			t.Fatalf("set provisional: %v", err)
+		}
+		if _, err := client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+			Kind:           tags.IdentityKindFoldGate,
+			Candidate:      name,
+			Criteria:       []byte(`{"proposed_fold":"` + anchor + `"}`),
+			Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+			RuleSetVersion: "v9",
+		}); err != nil {
+			t.Fatalf("seed the old-stamp refused fold: %v", err)
+		}
+		before, err := tags.IdentityHeldNamesAnyVersion(ctx, client.Queries, []string{name})
+		testutil.AssertNoError(t, err, "identity holds")
+		if len(before) == 0 {
+			t.Fatal("the old-stamp seed must hold the value before the separation")
+		}
+
+		status, err := svc.Separate(ctx, id)
+		testutil.AssertNoError(t, err, "separate")
+		testutil.AssertEqual(t, status, types.SeparateApplied, "status")
+
+		after, err := tags.IdentityHeldNamesAnyVersion(ctx, client.Queries, []string{name})
+		testutil.AssertNoError(t, err, "identity holds")
+		if len(after) != 0 {
+			t.Errorf("holds = %v, the separation must clear the old-stamp hold", after)
+		}
+		testutil.AssertEqual(t, provisional(t, id), true, "value stays provisional")
+
+		status, err = svc.Separate(ctx, id)
+		testutil.AssertNoError(t, err, "second separate")
+		testutil.AssertEqual(t, status, types.SeparateWithoutHold, "second status")
 	})
 }
 

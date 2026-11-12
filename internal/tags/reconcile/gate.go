@@ -173,7 +173,7 @@ func (r *Reconciler) hasCompoundWork(ctx context.Context) (bool, error) {
 		}
 	}
 
-	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, r.client.Queries, names)
 	if err != nil {
 		return false, fmt.Errorf("probe compound identity holds: %w", err)
 	}

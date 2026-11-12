@@ -152,24 +152,28 @@ FROM (
                           AND (ie.candidate = t.name OR ie.partner = t.name))
             ELSE false END AS identity_pending,
             CASE WHEN $4::boolean THEN
-                EXISTS (SELECT 1 FROM tag_identity_hold_decision held
-                        WHERE held.rule_set_version = $5
-                          AND held.candidate = t.name
-                          AND held.kind = ANY($6::text[])
-                          AND EXISTS (SELECT 1 FROM tag anchor_tag
-                                      WHERE anchor_tag.name = held.anchor)
-                          AND (held.kind = 'fold_gate' AND held.verdict = 'rejected'
-                               OR held.kind = 'base_form' AND held.verdict = 'stand'))
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (held.candidate, held.kind)
+                                   held.kind, held.verdict, held.anchor
+                            FROM tag_identity_hold_decision held
+                            WHERE held.candidate = t.name
+                              AND held.kind = ANY($5::text[])
+                              AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                          WHERE anchor_tag.name = held.anchor)
+                            ORDER BY held.candidate, held.kind, held.created_at DESC
+                        ) held
+                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                           OR held.kind = 'base_form' AND held.verdict = 'stand')
             ELSE false END AS identity_hold,
             CASE WHEN $4::boolean THEN
                 EXISTS (SELECT 1 FROM (
                             SELECT DISTINCT ON (ce.candidate) ce.reason, ce.reading
                             FROM tag_composition_event ce
-                            WHERE ce.criteria_version = $7
+                            WHERE ce.criteria_version = $6
                               AND ce.candidate = t.name
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) held
-                        WHERE held.reason = ANY($8::text[])
+                        WHERE held.reason = ANY($7::text[])
                           AND NOT (held.reason = 'relational_keep'
                                    AND coalesce(held.reading ->> 'source', '') = 'proxy'))
             ELSE false END AS split_hold,
@@ -190,25 +194,25 @@ FROM (
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) latest
                         WHERE latest.disposition = 'drop'
-                           OR latest.reason = ANY($8::text[]))
+                           OR latest.reason = ANY($7::text[]))
             ELSE false END AS composition_blocks,
             t.demoted_at IS NOT NULL AS demoted
     ) flag ON true
     WHERE t.promoted_at IS NULL
       AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-      AND ($9::text = '' OR t.name ILIKE $9::text)
+      AND ($8::text = '' OR t.name ILIKE $8::text)
+      AND ($9::text = ''
+           OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $9::text)
       AND ($10::text = ''
-           OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $10::text)
+           OR coalesce(qe.criteria ->> 'dimension', 'absent') = $10::text)
       AND ($11::text = ''
-           OR coalesce(qe.criteria ->> 'dimension', 'absent') = $11::text)
+           OR coalesce(qe.criteria ->> 'person_class', 'absent') = $11::text)
       AND ($12::text = ''
-           OR coalesce(qe.criteria ->> 'person_class', 'absent') = $12::text)
+           OR coalesce(qe.criteria ->> 'atomic', 'absent') = $12::text)
       AND ($13::text = ''
-           OR coalesce(qe.criteria ->> 'atomic', 'absent') = $13::text)
+           OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $13::text)
       AND ($14::text = ''
-           OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $14::text)
-      AND ($15::text = ''
-           OR coalesce(qe.criteria ->> 'defer', 'absent') = $15::text)
+           OR coalesce(qe.criteria ->> 'defer', 'absent') = $14::text)
 ) v
 `
 
@@ -217,7 +221,6 @@ type CountProvisionalTagsParams struct {
 	States                 []string
 	PolicyVersion          string
 	JournalFlags           bool
-	IdentityRuleSetVersion string
 	IdentityHoldKinds      []string
 	SplitCriteriaVersion   string
 	CompositionHoldReasons []string
@@ -256,7 +259,6 @@ func (q *Queries) CountProvisionalTags(ctx context.Context, arg CountProvisional
 		pq.Array(arg.States),
 		arg.PolicyVersion,
 		arg.JournalFlags,
-		arg.IdentityRuleSetVersion,
 		pq.Array(arg.IdentityHoldKinds),
 		arg.SplitCriteriaVersion,
 		pq.Array(arg.CompositionHoldReasons),
@@ -867,8 +869,9 @@ FROM (
     -- journal_flags gate keeps them out of the unfiltered plan and out of all the legacy verdict-only
     -- paths; each EXISTS mirrors the Go helper the matching response pill reads, so a drift in just
     -- one cannot possibly diverge from the other: identity_pending mirrors PendingTagIdentityCountsByNames,
-    -- identity_hold reads the same tag_identity_hold_decision view as ListIdentityHeldNames plus the
-    -- refusal pairing in IdentityHeldNames, and
+    -- identity_hold reads the same tag_identity_hold_decision view as ListIdentityHeldNamesAnyVersion plus
+    -- the refusal pairing in IdentityHeldNamesAnyVersion (latest decision per candidate and kind across
+    -- rule-set versions), and
     -- split_hold mirrors CompositionReview's compositionHolds reasons; the composition_blocks mirrors
     -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests; a relational
     -- keep resting on the promoted-parts proxy is store-maturity pending, not a review obligation, so the
@@ -881,24 +884,28 @@ FROM (
                           AND (ie.candidate = t.name OR ie.partner = t.name))
             ELSE false END AS identity_pending,
             CASE WHEN $2::boolean THEN
-                EXISTS (SELECT 1 FROM tag_identity_hold_decision held
-                        WHERE held.rule_set_version = $3
-                          AND held.candidate = t.name
-                          AND held.kind = ANY($4::text[])
-                          AND EXISTS (SELECT 1 FROM tag anchor_tag
-                                      WHERE anchor_tag.name = held.anchor)
-                          AND (held.kind = 'fold_gate' AND held.verdict = 'rejected'
-                               OR held.kind = 'base_form' AND held.verdict = 'stand'))
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (held.candidate, held.kind)
+                                   held.kind, held.verdict, held.anchor
+                            FROM tag_identity_hold_decision held
+                            WHERE held.candidate = t.name
+                              AND held.kind = ANY($3::text[])
+                              AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                          WHERE anchor_tag.name = held.anchor)
+                            ORDER BY held.candidate, held.kind, held.created_at DESC
+                        ) held
+                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                           OR held.kind = 'base_form' AND held.verdict = 'stand')
             ELSE false END AS identity_hold,
             CASE WHEN $2::boolean THEN
                 EXISTS (SELECT 1 FROM (
                             SELECT DISTINCT ON (ce.candidate) ce.reason, ce.reading
                             FROM tag_composition_event ce
-                            WHERE ce.criteria_version = $5
+                            WHERE ce.criteria_version = $4
                               AND ce.candidate = t.name
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) held
-                        WHERE held.reason = ANY($6::text[])
+                        WHERE held.reason = ANY($5::text[])
                           AND NOT (held.reason = 'relational_keep'
                                    AND coalesce(held.reading ->> 'source', '') = 'proxy'))
             ELSE false END AS split_hold,
@@ -919,70 +926,69 @@ FROM (
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) latest
                         WHERE latest.disposition = 'drop'
-                           OR latest.reason = ANY($6::text[]))
+                           OR latest.reason = ANY($5::text[]))
             ELSE false END AS composition_blocks,
             t.demoted_at IS NOT NULL AS demoted
     ) flag ON true
     WHERE t.promoted_at IS NULL
       AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-      AND ($7::text = '' OR t.name ILIKE $7::text)
+      AND ($6::text = '' OR t.name ILIKE $6::text)
+      AND ($7::text = ''
+           OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $7::text)
       AND ($8::text = ''
-           OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = $8::text)
+           OR coalesce(qe.criteria ->> 'dimension', 'absent') = $8::text)
       AND ($9::text = ''
-           OR coalesce(qe.criteria ->> 'dimension', 'absent') = $9::text)
+           OR coalesce(qe.criteria ->> 'person_class', 'absent') = $9::text)
       AND ($10::text = ''
-           OR coalesce(qe.criteria ->> 'person_class', 'absent') = $10::text)
+           OR coalesce(qe.criteria ->> 'atomic', 'absent') = $10::text)
       AND ($11::text = ''
-           OR coalesce(qe.criteria ->> 'atomic', 'absent') = $11::text)
+           OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $11::text)
       AND ($12::text = ''
-           OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = $12::text)
-      AND ($13::text = ''
-           OR coalesce(qe.criteria ->> 'defer', 'absent') = $13::text)
+           OR coalesce(qe.criteria ->> 'defer', 'absent') = $12::text)
 ) v
   -- legacy rows carry no outcome: derive it the same way the ui's verdict outcome does; the pass guard
   -- keeps unjudged tags in the 'none' class; an operator acceptance is durable, so the tag reads as
   -- admitted while it is stamped
-WHERE ($14::text = ''
-       OR ($14::text = 'none' AND v.no_verdict)
-       OR ($14::text <> 'none'
+WHERE ($13::text = ''
+       OR ($13::text = 'none' AND v.no_verdict)
+       OR ($13::text <> 'none'
            AND NOT v.no_verdict
            AND CASE WHEN v.accepted AND v.outcome_class = 'defer' THEN 'admit'
-                    ELSE v.outcome_class END = $14::text))
+                    ELSE v.outcome_class END = $13::text))
   -- state values are alternatives, so one matching flag is enough; the accepted class is its own state,
   -- so the verdict classes exclude an active acceptance
-  AND (coalesce(cardinality($15::text[]), 0) = 0
-       OR ('no_verdict' = ANY($15::text[]) AND v.no_verdict)
-       OR ('admitted' = ANY($15::text[])
+  AND (coalesce(cardinality($14::text[]), 0) = 0
+       OR ('no_verdict' = ANY($14::text[]) AND v.no_verdict)
+       OR ('admitted' = ANY($14::text[])
            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
-       OR ('deferred' = ANY($15::text[])
+       OR ('deferred' = ANY($14::text[])
            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer')
-       OR ('rejected' = ANY($15::text[])
+       OR ('rejected' = ANY($14::text[])
            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'reject')
-       OR ('accepted' = ANY($15::text[]) AND v.accepted)
-       OR ('identity_pending' = ANY($15::text[]) AND v.identity_pending)
-       OR ('identity_hold' = ANY($15::text[]) AND v.identity_hold)
-       OR ('split_hold' = ANY($15::text[]) AND v.split_hold)
-       OR ('degraded' = ANY($15::text[]) AND v.degraded_unversioned AND NOT v.split_hold)
-       OR ('demoted' = ANY($15::text[]) AND v.demoted)
-       OR ('needs_decision' = ANY($15::text[])
+       OR ('accepted' = ANY($14::text[]) AND v.accepted)
+       OR ('identity_pending' = ANY($14::text[]) AND v.identity_pending)
+       OR ('identity_hold' = ANY($14::text[]) AND v.identity_hold)
+       OR ('split_hold' = ANY($14::text[]) AND v.split_hold)
+       OR ('degraded' = ANY($14::text[]) AND v.degraded_unversioned AND NOT v.split_hold)
+       OR ('demoted' = ANY($14::text[]) AND v.demoted)
+       OR ('needs_decision' = ANY($14::text[])
            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer'
            AND NOT v.demoted AND NOT v.identity_hold AND NOT v.composition_blocks)
-       OR ('unblocked' = ANY($15::text[])
+       OR ('unblocked' = ANY($14::text[])
            AND ((NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
                 OR v.accepted)
            AND NOT v.identity_pending AND NOT v.identity_hold AND NOT v.split_hold
            AND NOT v.degraded_unversioned AND NOT v.demoted))
-ORDER BY CASE WHEN $16::boolean THEN v.created_at END ASC,
-         CASE WHEN $16::boolean THEN v.id END ASC,
-         CASE WHEN NOT $16::boolean THEN v.created_at END DESC,
-         CASE WHEN NOT $16::boolean THEN v.id END DESC
-LIMIT $18 OFFSET $17
+ORDER BY CASE WHEN $15::boolean THEN v.created_at END ASC,
+         CASE WHEN $15::boolean THEN v.id END ASC,
+         CASE WHEN NOT $15::boolean THEN v.created_at END DESC,
+         CASE WHEN NOT $15::boolean THEN v.id END DESC
+LIMIT $17 OFFSET $16
 `
 
 type ListProvisionalTagsWithDocumentCountParams struct {
 	PolicyVersion          string
 	JournalFlags           bool
-	IdentityRuleSetVersion string
 	IdentityHoldKinds      []string
 	SplitCriteriaVersion   string
 	CompositionHoldReasons []string
@@ -1017,7 +1023,6 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 	rows, err := q.db.QueryContext(ctx, listProvisionalTagsWithDocumentCount,
 		arg.PolicyVersion,
 		arg.JournalFlags,
-		arg.IdentityRuleSetVersion,
 		pq.Array(arg.IdentityHoldKinds),
 		arg.SplitCriteriaVersion,
 		pq.Array(arg.CompositionHoldReasons),

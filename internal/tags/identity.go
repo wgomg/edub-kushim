@@ -43,7 +43,9 @@ import (
 // judging body labels the term's fold-relation class; the three boolean answers remain the decision gate, and
 // the held kinds are unchanged. The relation gate that now precedes fold evidence carries its own stamp
 // (RelationRuleSetVersion) because it is an additive precondition: gating a proposal must not retire the
-// fold verdicts recorded under this version.
+// fold verdicts recorded under this version. Guards read identity holds stamp-agnostically, so a bump
+// re-judges and re-stamps evidence but never releases an existing hold; only the re-judge path reads the
+// current stamp.
 const IdentityRuleSetVersion = "v12"
 
 // RelationRuleSetVersion pins the relation gate's prompt and criteria text, the judged precondition a fold
@@ -645,9 +647,11 @@ type IdentityHold struct {
 }
 
 // IdentityHeldNames maps each held candidate name to the live store value its refused fold targeted and the
-// judged fold-relation class beside it. A name is held when, under the current rule set, the latest
-// fold_gate verdict rejected the fold or the latest base_form verdict leaves the name standing, and the
-// proposal's target is a live tag — either refusal blocks the fold. An operator separation outranks a
+// judged fold-relation class beside it. It reads the current rule set only and serves the re-judge path,
+// which asks whether a fresh, current-stamp verdict withheld the name; every destructive and review
+// consumer uses IdentityHeldNamesAnyVersion instead. A name is held when, under the current rule set, the
+// latest fold_gate verdict rejected the fold or the latest base_form verdict leaves the name standing, and
+// the proposal's target is a live tag — either refusal blocks the fold. An operator separation outranks a
 // later refusal of the same (candidate, anchor) pair from any rule-set version, so a criteria-version bump
 // cannot re-impose a hold the operator cleared; a refusal naming a different anchor is a new claim and
 // withholds as usual. Unheld names are absent from the result; empty input returns an empty map.
@@ -667,17 +671,55 @@ func IdentityHeldNames(ctx context.Context, q *database.Queries, names []string)
 	}
 	held := make(map[string]IdentityHold)
 	for _, row := range rows {
-		if row.Anchor == "" {
-			continue
+		if hold, ok := identityHoldForDecision(row.Kind, row.Verdict.String, row.Anchor, row.FoldClass); ok {
+			held[row.Candidate] = hold
 		}
-		refused := row.Kind == IdentityKindFoldGate && row.Verdict.String == IdentityVerdictRejected ||
-			row.Kind == IdentityKindBaseForm && row.Verdict.String == IdentityVerdictStand
-		if !refused {
-			continue
-		}
-		held[row.Candidate] = IdentityHold{Anchor: row.Anchor, FoldClass: row.FoldClass}
 	}
 	return held, nil
+}
+
+// IdentityHeldNamesAnyVersion is the stamp-agnostic hold read every guard uses: a refused fold gate or a
+// standing base form withholds its candidate under any rule-set version, so a version bump cannot release
+// a hold into retention, demotion, twin, compound or promotion paths. The decision of record per candidate
+// and kind is the latest across stamps — a newer same-kind verdict supersedes an older refusal — and an
+// operator separation keeps the pair cleared across all versions through the view's precedence. The detail
+// is the same live anchor and fold-relation class IdentityHeldNames reports; unheld names are absent and
+// empty input returns an empty map.
+func IdentityHeldNamesAnyVersion(ctx context.Context, q *database.Queries, names []string) (map[string]IdentityHold, error) {
+	normalized := distinctNames(names, textnorm.NormalizeTag)
+	if len(normalized) == 0 {
+		return map[string]IdentityHold{}, nil
+	}
+
+	rows, err := q.ListIdentityHeldNamesAnyVersion(ctx, database.ListIdentityHeldNamesAnyVersionParams{
+		Kinds:      IdentityHoldKinds(),
+		Candidates: normalized,
+	})
+	if err != nil {
+		return nil, err
+	}
+	held := make(map[string]IdentityHold)
+	for _, row := range rows {
+		if hold, ok := identityHoldForDecision(row.Kind, row.Verdict.String, row.Anchor, row.FoldClass); ok {
+			held[row.Candidate] = hold
+		}
+	}
+	return held, nil
+}
+
+// identityHoldForDecision resolves one identity decision of record into the review detail a hold carries:
+// only a rejected fold gate or a standing base form beside a live anchor is a hold, and every other
+// verdict leaves the candidate unheld.
+func identityHoldForDecision(kind, verdict, anchor, foldClass string) (IdentityHold, bool) {
+	if anchor == "" {
+		return IdentityHold{}, false
+	}
+	refused := kind == IdentityKindFoldGate && verdict == IdentityVerdictRejected ||
+		kind == IdentityKindBaseForm && verdict == IdentityVerdictStand
+	if !refused {
+		return IdentityHold{}, false
+	}
+	return IdentityHold{Anchor: anchor, FoldClass: foldClass}, true
 }
 
 // proxyRelationalKeep reports whether a relational keep rests only on the promoted-parts proxy instead of

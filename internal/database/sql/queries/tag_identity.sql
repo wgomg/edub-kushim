@@ -50,6 +50,19 @@ WHERE held.rule_set_version = @rule_set_version
   AND EXISTS (SELECT 1 FROM tag t WHERE t.name = held.anchor)
 ORDER BY held.candidate, held.kind, held.created_at DESC;
 
+-- ListIdentityHeldNamesAnyVersion is the stamp-agnostic companion of ListIdentityHeldNames: it carries
+-- no rule-set filter and takes the latest decision of record per candidate and kind across every stamp,
+-- so a version bump cannot release a hold. A newer same-kind verdict supersedes an older refusal, and
+-- the view's operator-separation precedence keeps a separated pair cleared across all versions.
+-- name: ListIdentityHeldNamesAnyVersion :many
+SELECT DISTINCT ON (held.candidate, held.kind)
+       held.candidate, held.kind, held.verdict, held.anchor, held.fold_class
+FROM tag_identity_hold_decision held
+WHERE held.kind = ANY(@kinds::text[])
+  AND held.candidate = ANY(@candidates::text[])
+  AND EXISTS (SELECT 1 FROM tag t WHERE t.name = held.anchor)
+ORDER BY held.candidate, held.kind, held.created_at DESC;
+
 -- name: ListPendingTagIdentityEvents :many
 SELECT * FROM tag_identity_event
 WHERE verdict IS NULL

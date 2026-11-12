@@ -1306,6 +1306,7 @@ func TestSweepPromotedTags_OperatorStandingNotifiesWithoutDemoting(t *testing.T)
 	}}}
 	r := newQualityJudgeReconciler(t, client, judge)
 	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagQuality:   config.TagQualityConfig{Enabled: true},
 		TagReconcile: config.TagReconcileConfig{MaxRejudge: 10, RecurrenceFloor: 0},
 	}}
 	report := &Report{Skips: map[string]int{}}
@@ -1366,6 +1367,7 @@ func TestSweepProvisionalTags_AcceptanceSurvivesFreshReject(t *testing.T) {
 	}}}
 	r := newQualityJudgeReconciler(t, client, judge)
 	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagQuality:   config.TagQualityConfig{Enabled: true},
 		TagReconcile: config.TagReconcileConfig{ProvisionalGraceDays: 30, RecurrenceFloor: 10, MaxRejudge: 10},
 	}}
 	report := &Report{Skips: map[string]int{}}
@@ -1424,6 +1426,7 @@ func TestRejudge_QualityScope_HeldTagStaysProvisional(t *testing.T) {
 	}}}
 	r := newQualityJudgeReconciler(t, client, judge)
 	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagQuality:   config.TagQualityConfig{Enabled: true},
 		TagReconcile: config.TagReconcileConfig{RecurrenceFloor: 1},
 	}}
 	r.getConfig = func() *config.Config { return cfg }
@@ -1511,6 +1514,85 @@ func TestSweepRetentionTags_SparesAcceptedRows(t *testing.T) {
 	}
 	if !acceptedExists {
 		t.Error("the acceptance keeps the row out of retention")
+	}
+}
+
+// TestSweepRetentionTags_SparesOldStampHeldRows pins the stamp-agnostic guard: a decided non-value
+// whose fold was refused under an older rule set is still review's property after a version bump, so the
+// sweep withholds it in apply mode — while an otherwise identical unheld row is removed. Without the
+// any-version read the released hold would let the sweep hard-delete the row and its assignments.
+func TestSweepRetentionTags_SparesOldStampHeldRows(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	const rejectCriteria = `{"subject_matter":false,"dimension":false,"person_class":"not_person","atomic":false,"not_form_genre":false}`
+	seed := func(t *testing.T, name string, held bool) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = NULL, created_at = now() - interval '100 days' WHERE id = $1", id); err != nil {
+			t.Fatalf("backdate provisional tag: %v", err)
+		}
+		docID := database.CreateUniqueDocument(t, client.Queries, name+" doc")
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		database.MustInsertTagQualityEvent(t, client.Queries, docID, name, rejectCriteria, "reject", analyzer.TagQualityVersion)
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag_quality_event SET verdict_at = now() - interval '100 days' WHERE tag_name = $1", name); err != nil {
+			t.Fatalf("age the verdict: %v", err)
+		}
+		if held {
+			anchor := name + " anchor"
+			database.MustCreateTag(t, client.Queries, anchor)
+			if _, err := client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+				Kind:           tags.IdentityKindFoldGate,
+				Candidate:      name,
+				Criteria:       []byte(`{"proposed_fold":"` + anchor + `"}`),
+				Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+				RuleSetVersion: "v9",
+			}); err != nil {
+				t.Fatalf("seed the old-stamp refused fold: %v", err)
+			}
+		}
+		return id
+	}
+
+	removed := seed(t, "expired reject unheld", false)
+	held := seed(t, "expired reject old hold", true)
+
+	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagReconcile: config.TagReconcileConfig{RetentionDays: 90, MaxRejudge: 10},
+	}}
+	r := &Reconciler{
+		client: client,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		logger: logger,
+	}
+	report := &Report{Skips: map[string]int{}}
+	r.sweepRetentionTags(ctx, cfg, report)
+
+	testutil.AssertEqual(t, report.Retention.Worklist, 2, "both decided rows are worklist candidates")
+	testutil.AssertEqual(t, report.Retention.Held, 1, "the old-stamp hold withholds its row from the sweep")
+	testutil.AssertEqual(t, report.Retention.Removed, 1, "the unheld row is still removed")
+
+	var heldExists, removedExists bool
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM tag WHERE id = $1)", held).Scan(&heldExists),
+		"read the held row")
+	testutil.AssertNoError(t,
+		client.DB().QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM tag WHERE id = $1)", removed).Scan(&removedExists),
+		"read the unheld row")
+	if !heldExists {
+		t.Error("a hold minted under an older rule set must survive retention in apply mode")
+	}
+	if removedExists {
+		t.Error("the unheld decided non-value is past its retention window")
 	}
 }
 

@@ -116,7 +116,7 @@ func (r *Reconciler) sweepRetentionTags(ctx context.Context, cfg *config.Config,
 		names[i] = t.Name
 	}
 
-	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, r.client.Queries, names)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: retention identity hold lookup: %v", err)
 		return
@@ -282,7 +282,7 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 		ids[i] = t.ID
 		names[i] = t.Name
 	}
-	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, r.client.Queries, names)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: provisional identity hold lookup: %v", err)
 		return
@@ -539,7 +539,7 @@ func (r *Reconciler) sweepPromotedTags(ctx context.Context, cfg *config.Config, 
 		names[i] = t.Name
 	}
 
-	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, r.client.Queries, names)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: demotion identity hold lookup: %v", err)
 		return
@@ -773,7 +773,7 @@ func (r *Reconciler) sweepTwins(ctx context.Context, cfg *config.Config, report 
 
 	// a failed lookup would silently disable the review gate in apply mode, so the arm aborts for the run
 	// instead of degrading to empty safety state
-	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, r.client.Queries, names)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: twins: identity hold lookup failed, arm skipped: %v", err)
 		return

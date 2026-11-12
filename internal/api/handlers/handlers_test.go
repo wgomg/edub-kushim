@@ -2946,6 +2946,53 @@ func TestListProvisionalIdentityHold(t *testing.T) {
 	}
 }
 
+// TestListProvisionalIdentityHoldOldStamp pins the review badge for a hold minted under an older rule
+// set: the response still names the refused anchor so the operator can arbitrate it — pre-v12 rows
+// carry no fold class, so the field stays empty. Without the stamp-agnostic read the badge goes blank
+// while the guards still withhold the value, hiding the hold from its only reviewer.
+func TestListProvisionalIdentityHoldOldStamp(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
+
+	database.MustCreateTag(t, env.client.Queries, "old-hold-anchor-tag")
+	candidateID := database.MustCreateTag(t, env.client.Queries, "old-hold-candidate-tag")
+	_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", candidateID)
+	testutil.AssertNoError(t, err, "set provisional")
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "old-hold-candidate-doc")
+	database.MustAddDocumentTag(t, env.client.Queries, docID, candidateID)
+
+	_, err = env.client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindFoldGate,
+		Candidate:      "old hold candidate tag",
+		Criteria:       []byte(`{"proposed_fold":"old hold anchor tag"}`),
+		Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+		RuleSetVersion: "v9",
+	})
+	testutil.AssertNoError(t, err, "seed old-stamp refused fold gate")
+
+	w := rec()
+	r := req(t, "GET", "/api/v1/tags/provisional", nil)
+	h.ListProvisional(w, r)
+	testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+	var resp ProvisionalTagListResponse
+	testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+
+	found := false
+	for _, tag := range resp.Results {
+		if tag.ID == candidateID {
+			found = true
+			testutil.AssertEqual(t, tag.IdentityHold, "old hold anchor tag", "identity hold anchor")
+			testutil.AssertEqual(t, tag.IdentityFoldClass, "", "no fold class on a pre-class row")
+		}
+	}
+	if !found {
+		t.Errorf("tag %d not found in provisional list", candidateID)
+	}
+}
+
 // TestListProvisionalComposition pins the review surface's composition contract: a held compound
 // carries the reason that withholds promotion, and a degraded keep carries its latest composition
 // reason and holds too — no promotion without a decision. The held event is written as the emitted

@@ -101,10 +101,15 @@ registration paths ([spec](../specs/tags/canonical-form.md) §3.2):
 `IdentityRuleSetVersion` is stamped on every alias row and identity-evidence row; it pins
 the mechanical fold proposals, the pair judge's criteria text, the variant-class table,
 the birth-time canonical direction, and the split-seam fold source. Bumping it retires
-every cached identity verdict at once. The **relation gate** that screens fold proposals
-before the fold judge carries its own stamp, `RelationRuleSetVersion`. It is an additive
-precondition: a gate change retires gate verdicts without retiring the fold verdicts
-cached under the identity rule set.
+every cached identity verdict at once and re-judges holds under the new stamp, but it never
+releases one: every guard reads holds stamp-agnostically — the latest decision of record
+per candidate and kind across all stamps — so a hold keeps withholding retention,
+demotion, twin, compound and promotion paths until an operator separates the pair or a
+newer same-kind verdict supersedes it. Only the re-judge path reads the current stamp,
+asking whether the fresh verdict withholds the name. The **relation gate** that screens
+fold proposals before the fold judge carries its own stamp, `RelationRuleSetVersion`. It is
+an additive precondition: a gate change retires gate verdicts without retiring the fold
+verdicts cached under the identity rule set.
 
 - **`PlanDeterministic`** — the admin path's deterministic phase: normalization, M1
   rewrites, alias lookup, key equality, and M2 flagging. It never applies a fold, never
@@ -633,7 +638,9 @@ quality band constants are internals; see the
 - **Verdicts are cache-scoped to their version constant** — bumping `policy.Version`,
   `IdentityRuleSetVersion`, `TagQualityVersion`, `TagPartDimensionVersion`, or
   `TagSplitVersion` retires that layer's cached rows at once; until the reconciler runs,
-  every affected pair is re-judged fresh, bounded by the caps.
+  every affected pair is re-judged fresh, bounded by the caps. Identity holds are the
+  exception: they are read stamp-agnostically, so a bump re-judges them and can supersede
+  one with a newer same-kind verdict, but it never releases a hold on its own.
 - **Identity and policy logs live in the kushim (enrichment) log, not `hugot.log`** —
   `hugot.log` only holds the older history the bootstrap parser reads.
 - **Matcher dependency**: with the daemon down, tag CRUD and identity planning return 503

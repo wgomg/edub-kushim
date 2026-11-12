@@ -824,6 +824,99 @@ func TestIdentityHeldNames(t *testing.T) {
 	}
 }
 
+// TestIdentityHeldNamesAnyVersion pins the stamp-agnostic hold read: a refused fold minted under an
+// older rule set still withholds its candidate, a newer same-kind verdict supersedes the older refusal,
+// and an operator separation keeps the pair cleared across stamps — while the current-stamp read stays
+// blind to the older refusal. Explicit created_at values decide "latest" instead of insert timing.
+func TestIdentityHeldNamesAnyVersion(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	ctx := context.Background()
+	q := client.Queries
+
+	database.MustCreateTag(t, q, "zqanyanchor")
+
+	seed := func(kind, candidate, verdict, anchor, version, model string, at time.Time) {
+		t.Helper()
+		criteria := `{"proposed_fold":"` + anchor + `"}`
+		partner := sql.NullString{}
+		modelValue := sql.NullString{}
+		if model != "" {
+			modelValue = sql.NullString{String: model, Valid: true}
+		}
+		if _, err := client.DB().ExecContext(ctx, `
+			INSERT INTO tag_identity_event
+			    (kind, candidate, partner, criteria, verdict, model, rule_set_version, created_at)
+			VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)`,
+			kind, candidate, partner, criteria, verdict, modelValue, version, at); err != nil {
+			t.Fatalf("seed %s row for %q: %v", kind, candidate, err)
+		}
+	}
+
+	old := time.Now().Add(-2 * time.Hour).UTC()
+	fresh := time.Now().Add(-time.Hour).UTC()
+
+	// a fold_gate refusal minted two stamps back still holds: the bump cannot release it
+	seed(IdentityKindFoldGate, "zqoldfold", IdentityVerdictRejected, "zqanyanchor", "v9", "", old)
+	// a base_form stand under the old stamp holds too
+	seed(IdentityKindBaseForm, "zqoldstand", IdentityVerdictStand, "zqanyanchor", "v9", "", old)
+	// a current-stamp refusal is unaffected by the stamp-agnostic rewrite
+	seed(IdentityKindFoldGate, "zqcurrent", IdentityVerdictRejected, "zqanyanchor", IdentityRuleSetVersion, "", fresh)
+	// a produced verdict under the current stamp supersedes the older refusal of the same kind
+	seed(IdentityKindFoldGate, "zqsuperseded", IdentityVerdictRejected, "zqanyanchor", "v9", "", old)
+	seed(IdentityKindFoldGate, "zqsuperseded", IdentityVerdictConfirmed, "zqanyanchor", IdentityRuleSetVersion, "", fresh)
+	// an operator separation clears the older refusal across stamps
+	seed(IdentityKindFoldGate, "zqseparated", IdentityVerdictRejected, "zqanyanchor", "v9", "", old)
+	seed(IdentityKindFoldGate, "zqseparated", IdentityVerdictSeparate, "zqanyanchor", IdentityRuleSetVersion, "operator", fresh)
+	// a refused proposal onto a dead anchor is not a hold under any stamp
+	seed(IdentityKindFoldGate, "zqghost", IdentityVerdictRejected, "zqdeadd", "v9", "", old)
+
+	held, err := IdentityHeldNamesAnyVersion(ctx, q, []string{
+		"zqoldfold", "zqoldstand", "zqcurrent", "zqsuperseded", "zqseparated", "zqghost", "zqunjudged",
+	})
+	if err != nil {
+		t.Fatalf("IdentityHeldNamesAnyVersion: %v", err)
+	}
+	for _, name := range []string{"zqoldfold", "zqoldstand", "zqcurrent"} {
+		hold, ok := held[name]
+		if !ok {
+			t.Errorf("%q missing from the holds, the refusal must withhold under any stamp", name)
+			continue
+		}
+		if hold.Anchor != "zqanyanchor" {
+			t.Errorf("%q anchor = %q, want the live store value", name, hold.Anchor)
+		}
+	}
+	for _, name := range []string{"zqsuperseded", "zqseparated", "zqghost", "zqunjudged"} {
+		if _, ok := held[name]; ok {
+			t.Errorf("%q is held, want it released (superseded, separated or anchorless)", name)
+		}
+	}
+
+	// the current-stamp read keeps its contract: it sees the fresh refusal but not the old-stamp one
+	current, err := IdentityHeldNames(ctx, q, []string{"zqoldfold", "zqcurrent"})
+	if err != nil {
+		t.Fatalf("IdentityHeldNames: %v", err)
+	}
+	if _, ok := current["zqcurrent"]; !ok {
+		t.Error("the current-stamp read must keep the fresh refusal")
+	}
+	if _, ok := current["zqoldfold"]; ok {
+		t.Error("the current-stamp read must stay blind to the old-stamp refusal")
+	}
+
+	empty, err := IdentityHeldNamesAnyVersion(ctx, q, nil)
+	if err != nil {
+		t.Fatalf("IdentityHeldNamesAnyVersion(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("empty input = %v, want no holds", empty)
+	}
+}
+
 func TestCompositionHeldNames(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")

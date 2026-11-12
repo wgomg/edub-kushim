@@ -325,10 +325,11 @@ func (s *Tag) RecordIdentityEvidence(ctx context.Context, rows []tags.EvidenceRo
 // instead of the anchor its refused fold proposed. Operator separation rows are journaled for every hold
 // kind and outrank later judge refusals of the same (candidate, anchor) pair across rule-set versions, so
 // the hold lookup stops withholding the value while every later fold decision keeps refusing the fold — a
-// criteria-version bump can never re-impose the hold the operator cleared. The tag stays untouched: it
-// remains provisional and answers to its verdict, and both promotion paths gate on the hold, so clearing
-// the record is what releases it. A promoted tag has left the review queue, and a tag without an identity
-// hold has nothing to separate; both are refused through the status.
+// criteria-version bump can never re-impose the hold the operator cleared. The hold itself is read
+// stamp-agnostically, so a hold minted under an older rule set is clearable too. The tag stays untouched:
+// it remains provisional and answers to its verdict, and both promotion paths gate on the hold, so clearing
+// the record is what releases it. A promoted tag has left the review queue, and a tag with no identity hold
+// under any rule-set version has nothing to separate; both are refused through the status.
 func (s *Tag) Separate(ctx context.Context, id int64) (types.SeparateStatus, error) {
 	tx, err := s.client.BeginTx(ctx, nil)
 	if err != nil {
@@ -349,7 +350,7 @@ func (s *Tag) Separate(ctx context.Context, id int64) (types.SeparateStatus, err
 	}
 
 	name := textnorm.NormalizeTag(tag.Name)
-	held, err := tags.IdentityHeldNames(ctx, txQ, []string{name})
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, txQ, []string{name})
 	if err != nil {
 		return types.SeparateWithoutHold, errs.FromDB(err, "load separate identity hold")
 	}

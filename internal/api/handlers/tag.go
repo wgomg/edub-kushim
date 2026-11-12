@@ -383,7 +383,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, h.logger, reqID, "provisional tag identity evidence", err)
 			return
 		}
-		held, err := h.tag.IdentityHeldNames(ctx, names)
+		held, err := h.tag.IdentityHeldNamesAnyVersion(ctx, names)
 		if err != nil {
 			writeServiceError(w, h.logger, reqID, "provisional tag identity holds", err)
 			return

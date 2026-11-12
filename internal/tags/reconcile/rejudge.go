@@ -110,6 +110,8 @@ func (r *Reconciler) Rejudge(ctx context.Context, req RejudgeRequest) (RejudgeRe
 		if err != nil {
 			return RejudgeReport{}, fmt.Errorf("count live mass for tag %q: %w", tag.Name, err)
 		}
+		// the re-judge asks whether the fresh, current-stamp verdict withholds the name, so this read keeps
+		// the current rule set; the stamp-agnostic hold already protected the row from the sweeps
 		held, err := tags.IdentityHeldNames(ctx, r.client.Queries, []string{tag.Name})
 		if err != nil {
 			return RejudgeReport{}, fmt.Errorf("check identity holds for tag %q: %w", tag.Name, err)

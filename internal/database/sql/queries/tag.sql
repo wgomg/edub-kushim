@@ -164,8 +164,9 @@ FROM (
     -- journal_flags gate keeps them out of the unfiltered plan and out of all the legacy verdict-only
     -- paths; each EXISTS mirrors the Go helper the matching response pill reads, so a drift in just
     -- one cannot possibly diverge from the other: identity_pending mirrors PendingTagIdentityCountsByNames,
-    -- identity_hold reads the same tag_identity_hold_decision view as ListIdentityHeldNames plus the
-    -- refusal pairing in IdentityHeldNames, and
+    -- identity_hold reads the same tag_identity_hold_decision view as ListIdentityHeldNamesAnyVersion plus
+    -- the refusal pairing in IdentityHeldNamesAnyVersion (latest decision per candidate and kind across
+    -- rule-set versions), and
     -- split_hold mirrors CompositionReview's compositionHolds reasons; the composition_blocks mirrors
     -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests; a relational
     -- keep resting on the promoted-parts proxy is store-maturity pending, not a review obligation, so the
@@ -178,14 +179,18 @@ FROM (
                           AND (ie.candidate = t.name OR ie.partner = t.name))
             ELSE false END AS identity_pending,
             CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM tag_identity_hold_decision held
-                        WHERE held.rule_set_version = @identity_rule_set_version
-                          AND held.candidate = t.name
-                          AND held.kind = ANY(@identity_hold_kinds::text[])
-                          AND EXISTS (SELECT 1 FROM tag anchor_tag
-                                      WHERE anchor_tag.name = held.anchor)
-                          AND (held.kind = 'fold_gate' AND held.verdict = 'rejected'
-                               OR held.kind = 'base_form' AND held.verdict = 'stand'))
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (held.candidate, held.kind)
+                                   held.kind, held.verdict, held.anchor
+                            FROM tag_identity_hold_decision held
+                            WHERE held.candidate = t.name
+                              AND held.kind = ANY(@identity_hold_kinds::text[])
+                              AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                          WHERE anchor_tag.name = held.anchor)
+                            ORDER BY held.candidate, held.kind, held.created_at DESC
+                        ) held
+                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                           OR held.kind = 'base_form' AND held.verdict = 'stand')
             ELSE false END AS identity_hold,
             CASE WHEN @journal_flags::boolean THEN
                 EXISTS (SELECT 1 FROM (
@@ -360,14 +365,18 @@ FROM (
                           AND (ie.candidate = t.name OR ie.partner = t.name))
             ELSE false END AS identity_pending,
             CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM tag_identity_hold_decision held
-                        WHERE held.rule_set_version = @identity_rule_set_version
-                          AND held.candidate = t.name
-                          AND held.kind = ANY(@identity_hold_kinds::text[])
-                          AND EXISTS (SELECT 1 FROM tag anchor_tag
-                                      WHERE anchor_tag.name = held.anchor)
-                          AND (held.kind = 'fold_gate' AND held.verdict = 'rejected'
-                               OR held.kind = 'base_form' AND held.verdict = 'stand'))
+                EXISTS (SELECT 1 FROM (
+                            SELECT DISTINCT ON (held.candidate, held.kind)
+                                   held.kind, held.verdict, held.anchor
+                            FROM tag_identity_hold_decision held
+                            WHERE held.candidate = t.name
+                              AND held.kind = ANY(@identity_hold_kinds::text[])
+                              AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                          WHERE anchor_tag.name = held.anchor)
+                            ORDER BY held.candidate, held.kind, held.created_at DESC
+                        ) held
+                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                           OR held.kind = 'base_form' AND held.verdict = 'stand')
             ELSE false END AS identity_hold,
             CASE WHEN @journal_flags::boolean THEN
                 EXISTS (SELECT 1 FROM (

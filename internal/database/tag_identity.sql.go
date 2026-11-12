@@ -224,12 +224,10 @@ type ListIdentityHeldNamesRow struct {
 	FoldClass string
 }
 
-// ListIdentityHeldNames compares the anchor by direct equality, not the
-// house-form key: both sides are normalized word forms at their write
-// boundaries, and house form only rewrites ordinals and roman numerals,
-// which this class lacks. The effective decision and the operator-separation
-// precedence live in the tag_identity_hold_decision view, which the queue's
-// identity_hold flag reads too.
+// ListIdentityHeldNames compares the anchor by direct equality, not the house-form key: both sides are
+// normalized word forms at their write boundaries, and house form only rewrites ordinals and roman numerals,
+// which this class lacks. The effective decision and the operator-separation precedence live in the
+// tag_identity_hold_decision view, which the queue's identity_hold flag reads too.
 func (q *Queries) ListIdentityHeldNames(ctx context.Context, arg ListIdentityHeldNamesParams) ([]ListIdentityHeldNamesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listIdentityHeldNames, arg.RuleSetVersion, pq.Array(arg.Kinds), pq.Array(arg.Candidates))
 	if err != nil {
@@ -239,6 +237,62 @@ func (q *Queries) ListIdentityHeldNames(ctx context.Context, arg ListIdentityHel
 	var items []ListIdentityHeldNamesRow
 	for rows.Next() {
 		var i ListIdentityHeldNamesRow
+		if err := rows.Scan(
+			&i.Candidate,
+			&i.Kind,
+			&i.Verdict,
+			&i.Anchor,
+			&i.FoldClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIdentityHeldNamesAnyVersion = `-- name: ListIdentityHeldNamesAnyVersion :many
+SELECT DISTINCT ON (held.candidate, held.kind)
+       held.candidate, held.kind, held.verdict, held.anchor, held.fold_class
+FROM tag_identity_hold_decision held
+WHERE held.kind = ANY($1::text[])
+  AND held.candidate = ANY($2::text[])
+  AND EXISTS (SELECT 1 FROM tag t WHERE t.name = held.anchor)
+ORDER BY held.candidate, held.kind, held.created_at DESC
+`
+
+type ListIdentityHeldNamesAnyVersionParams struct {
+	Kinds      []string
+	Candidates []string
+}
+
+type ListIdentityHeldNamesAnyVersionRow struct {
+	Candidate string
+	Kind      string
+	Verdict   sql.NullString
+	Anchor    string
+	FoldClass string
+}
+
+// ListIdentityHeldNamesAnyVersion is the stamp-agnostic companion of ListIdentityHeldNames: it carries
+// no rule-set filter and takes the latest decision of record per candidate and kind across every stamp,
+// so a version bump cannot release a hold. A newer same-kind verdict supersedes an older refusal, and
+// the view's operator-separation precedence keeps a separated pair cleared across all versions.
+func (q *Queries) ListIdentityHeldNamesAnyVersion(ctx context.Context, arg ListIdentityHeldNamesAnyVersionParams) ([]ListIdentityHeldNamesAnyVersionRow, error) {
+	rows, err := q.db.QueryContext(ctx, listIdentityHeldNamesAnyVersion, pq.Array(arg.Kinds), pq.Array(arg.Candidates))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListIdentityHeldNamesAnyVersionRow
+	for rows.Next() {
+		var i ListIdentityHeldNamesAnyVersionRow
 		if err := rows.Scan(
 			&i.Candidate,
 			&i.Kind,

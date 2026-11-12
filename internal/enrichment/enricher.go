@@ -799,7 +799,7 @@ func (e *Enricher) promoteEligible(ctx context.Context, q *database.Queries, res
 		ids[i] = c.id
 		names[i] = c.name
 	}
-	held, err := tags.IdentityHeldNames(ctx, q, names)
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, q, names)
 	if err != nil {
 		e.logger.Error(reqID, "tag quality promotion identity hold lookup failed: %v", err)
 		return nil

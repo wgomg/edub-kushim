@@ -55,7 +55,7 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 		return nil
 	}
 
-	held, err := tags.IdentityHeldNames(ctx, r.client.Queries, names)
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, r.client.Queries, names)
 	if err != nil {
 		r.logger.Error("", "tag reconcile: compound identity hold lookup: %v", err)
 		held = map[string]tags.IdentityHold{}

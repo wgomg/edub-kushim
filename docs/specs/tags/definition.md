@@ -630,10 +630,11 @@ The questions the definition leaves to policy, and their decided answers:
     decided is not a value (a decided drop `no_dimension`/`part_rejected`, or an
     admission reject under the current criteria versions) is removed after its decision
     has stood for the retention window (pinned default 90 days; item 9 owns the number).
-    Neither removal captures the name in the blocklist. Seeded values, identity-held
-    names, alias targets, deferrals, admit-below-floor pending candidates, operator-accepted
-    rows and sub-floor demoted values never remove; promoted rows demote first (item 4);
-    absence of evidence never acts.
+    Neither removal captures the name in the blocklist. Seeded values, identity-held names
+    (a refused fold beside a live anchor, under any rule-set version), alias targets,
+    deferrals, admit-below-floor pending candidates, operator-accepted rows and sub-floor
+    demoted values never remove; promoted rows demote first (item 4); absence of evidence
+    never acts.
 12. **Person facet — classified, not guessed.** The person question is answered as a
     classification of the tag alone — store-global, like the other tag-intrinsic criteria:
     `not_person`, `real_individual`, `mythological_or_legendary`, `fictional` or `uncertain`.

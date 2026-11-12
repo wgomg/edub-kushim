@@ -197,7 +197,6 @@ func (s *Tag) ListProvisional(ctx context.Context, filter ProvisionalFilter, lim
 		PolicyVersion:          analyzer.TagQualityVersion,
 		States:                 filter.States,
 		JournalFlags:           needsJournalFlags(filter.States),
-		IdentityRuleSetVersion: tags.IdentityRuleSetVersion,
 		IdentityHoldKinds:      tags.IdentityHoldKinds(),
 		SplitCriteriaVersion:   analyzer.TagSplitVersion,
 		CompositionHoldReasons: tags.CompositionHoldReasons(),
@@ -228,7 +227,6 @@ func (s *Tag) CountProvisional(ctx context.Context, filter ProvisionalFilter, fa
 		PolicyVersion:          analyzer.TagQualityVersion,
 		States:                 filter.States,
 		JournalFlags:           facets || needsJournalFlags(filter.States),
-		IdentityRuleSetVersion: tags.IdentityRuleSetVersion,
 		IdentityHoldKinds:      tags.IdentityHoldKinds(),
 		SplitCriteriaVersion:   analyzer.TagSplitVersion,
 		CompositionHoldReasons: tags.CompositionHoldReasons(),
@@ -311,10 +309,12 @@ func (s *Tag) CountPendingIdentity(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// IdentityHeldNames returns, per name, the hold detail its refused fold produced — the live store anchor and
-// the judged fold-relation class beside it; names without a hold are absent from the result.
-func (s *Tag) IdentityHeldNames(ctx context.Context, names []string) (map[string]tags.IdentityHold, error) {
-	held, err := tags.IdentityHeldNames(ctx, s.client.Queries, names)
+// IdentityHeldNamesAnyVersion returns, per name, the hold detail its refused fold produced — the live store
+// anchor and the judged fold-relation class beside it. It reads holds stamp-agnostically, matching the
+// guards and the review badge, so a hold minted under an older rule-set version stays visible and
+// clearable; names without a hold are absent from the result.
+func (s *Tag) IdentityHeldNamesAnyVersion(ctx context.Context, names []string) (map[string]tags.IdentityHold, error) {
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, s.client.Queries, names)
 	if err != nil {
 		return nil, errs.FromDB(err, "identity held names")
 	}
@@ -562,7 +562,7 @@ func (s *Tag) Accept(ctx context.Context, id int64) (types.AcceptStatus, error) 
 		return types.AcceptNotDeferred, nil
 	}
 
-	held, err := tags.IdentityHeldNames(ctx, txQ, []string{tag.Name})
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, txQ, []string{tag.Name})
 	if err != nil {
 		return types.AcceptHeld, errs.FromDB(err, "load accept identity hold")
 	}
