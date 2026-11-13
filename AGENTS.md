@@ -65,7 +65,7 @@ kushim queue ── forks: kushim consume --batch <id> (per-batch processing)
 
 ## Config
 
-- File: `~/.config/edub-kushim/config.yaml` · Example: `config.example.yaml`
+- Example: `config.example.yaml`
 - PG defaults: `edub`/`edub` on `localhost:5432/edub`, sslmode=disable (CI + test containers use these)
 - `kushim setup` → web wizard at `http://0.0.0.0:8420`; `kushim setup --cli --languages eng,spa,...` → terminal mode
 - Setup only runs when no config exists. Delete the config file to re-run.
