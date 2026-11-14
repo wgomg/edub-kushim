@@ -50,6 +50,15 @@ conflict with the current state, `503` an unavailable dependency (the tag matche
 Listing endpoints take `limit` and `offset`; each endpoint's parameter table states its defaults.
 The `q` parameter, where present, matches anywhere in the name it filters.
 
+### Array query parameters
+
+Array-typed query parameters accept both encodings: repeated keys
+(`?criteria=atomic:fail&criteria=defer:pass`, the OpenAPI form default) and one comma-separated
+value (`?criteria=atomic:fail,defer:pass`); both yield the same entries, in order. The provisional
+queue's `criteria` entries are `key:state` pairs — `pass`, `fail` or `absent` for the boolean keys
+and a `person_class` value or `absent` for `person_class` — and its `state` parameter takes the
+review states listed in the response's `state_values`. Unknown entries answer `400`.
+
 ## Endpoints
 
 ### Documents

@@ -261,14 +261,14 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
      `atomic`, `not_form_genre` and `defer` take `pass`, `fail` or `absent`; the
      `person_class` key takes `not_person`, `real_individual`,
      `mythological_or_legendary`, `fictional`, `uncertain` or `absent`. Pairs combine with
-     AND. **Send one comma-separated value**: the server reads a single value per key and
-     splits on commas, so repeated `criteria=` keys silently keep only the first. Unknown keys
-     or states answer `400 Invalid criteria filter`.
+     AND. Send the entries as one comma-separated value or as repeated `criteria=` keys —
+     both encodings are equivalent, and the latter is the form the published OpenAPI spec
+     declares. Unknown keys or states answer `400 Invalid criteria filter`.
    - `state=value[,value…]` — review states `no_verdict`, `admitted`, `deferred`, `rejected`,
      `accepted`, `identity_pending`, `identity_hold`, `split_hold`, `degraded`, `demoted`,
      `needs_decision`, `unblocked`. Values combine with OR, and the dimension combines with
-     `q` and `criteria` by AND. **Send one comma-separated value** (same single-value rule as
-     `criteria`); unknown values answer `400 Invalid state filter`.
+     `q` and `criteria` by AND. Both encodings are accepted, like `criteria`; unknown values
+     answer `400 Invalid state filter`.
    - `verdict=none|admit|defer|reject` (unknown values → `400`) — selects a single verdict
      class; an active acceptance folds into `admit`, where the `state` dimension reports it
      as `accepted`.

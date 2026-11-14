@@ -61,13 +61,35 @@ func TestParamBag_GetBoolParsesAndRejectsMalformed(t *testing.T) {
 	}
 }
 
-func TestParamBag_GetStringsSplitsCommaSeparatedValues(t *testing.T) {
-	pb := NewParamBag(httptest.NewRequest("GET", "/x?size=big,small", nil))
-
-	if got := pb.GetStrings("size"); !reflect.DeepEqual(got, []string{"big", "small"}) {
-		t.Errorf("expected comma-separated values in order, got %v", got)
+// TestParamBag_GetStringsJoinsRepeatedKeys pins the array encoding the generated API spec declares for its
+// GetStrings parameters: repeated keys split on commas in arrival order, so ?size=big&size=small returns the
+// same entries as ?size=big,small, empty entries included; an absent key or a single empty value returns nil,
+// and scalars keep reading the first value of the key.
+func TestParamBag_GetStringsJoinsRepeatedKeys(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{name: "csv value", query: "/x?size=big,small", want: []string{"big", "small"}},
+		{name: "repeated key", query: "/x?size=big&size=small", want: []string{"big", "small"}},
+		{name: "mixed encodings", query: "/x?size=big,small&size=tiny", want: []string{"big", "small", "tiny"}},
+		{name: "absent key", query: "/x?other=1", want: nil},
+		{name: "single empty value", query: "/x?size=", want: nil},
+		{name: "multiple empty values", query: "/x?size=&size=", want: []string{"", ""}},
 	}
-	if got := pb.GetStrings("absent"); got != nil {
-		t.Errorf("expected nil for absent key, got %v", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pb := NewParamBag(httptest.NewRequest("GET", tc.query, nil))
+
+			if got := pb.GetStrings("size"); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("GetStrings(size) = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	pb := NewParamBag(httptest.NewRequest("GET", "/x?limit=1&limit=2", nil))
+	if got := pb.GetInt("limit", 50, 1, 100); got != 1 {
+		t.Errorf("GetInt(limit) = %d, want the first value 1", got)
 	}
 }

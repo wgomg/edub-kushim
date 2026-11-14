@@ -71,7 +71,8 @@ func writeHeader(b *strings.Builder, doc *specDoc) {
 }
 
 // writeOverview emits the hand-authored front matter: what the API is, how to authenticate, the error
-// contract and the pagination convention. None of this is expressible in the OpenAPI document itself.
+// contract, the pagination convention and the array query-parameter encodings. None of this front matter is
+// expressible in the generated OpenAPI document itself.
 func writeOverview(b *strings.Builder, doc *specDoc) {
 	b.WriteString("## Overview\n\n")
 
@@ -111,6 +112,14 @@ func writeOverview(b *strings.Builder, doc *specDoc) {
 	b.WriteString("### Pagination\n\n")
 	b.WriteString("Listing endpoints take `limit` and `offset`; each endpoint's parameter table states its defaults.\n")
 	b.WriteString("The `q` parameter, where present, matches anywhere in the name it filters.\n\n")
+
+	b.WriteString("### Array query parameters\n\n")
+	b.WriteString("Array-typed query parameters accept both encodings: repeated keys\n")
+	b.WriteString("(`?criteria=atomic:fail&criteria=defer:pass`, the OpenAPI form default) and one comma-separated\n")
+	b.WriteString("value (`?criteria=atomic:fail,defer:pass`); both yield the same entries, in order. The provisional\n")
+	b.WriteString("queue's `criteria` entries are `key:state` pairs — `pass`, `fail` or `absent` for the boolean keys\n")
+	b.WriteString("and a `person_class` value or `absent` for `person_class` — and its `state` parameter takes the\n")
+	b.WriteString("review states listed in the response's `state_values`. Unknown entries answer `400`.\n\n")
 }
 
 // writeEndpoints emits every operation, grouped by resource. Groups follow groupOrder; endpoints inside

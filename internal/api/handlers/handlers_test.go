@@ -3282,6 +3282,35 @@ func TestListProvisionalFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("repeated criteria keys filter every entry", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?criteria=person_class:real_individual&criteria=atomic:pass", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
+		if !contains(resp.Results, personID) {
+			t.Errorf("repeated criteria must include tag %d", personID)
+		}
+		if contains(resp.Results, failID) || contains(resp.Results, unjudgedID) {
+			t.Errorf("repeated criteria must exclude the other fixture tags")
+		}
+	})
+
+	t.Run("repeated state keys filter every value", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?state=no_verdict&state=deferred", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "filtered total")
+		if !contains(resp.Results, unjudgedID) {
+			t.Errorf("repeated states must include the unjudged tag %d", unjudgedID)
+		}
+	})
+
 	t.Run("response reports the queue-level pending identity total", func(t *testing.T) {
 		w := rec()
 		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional", nil))
@@ -4590,6 +4619,25 @@ func TestListProvisionalStateFilter(t *testing.T) {
 		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
 		if !strings.Contains(w.Body.String(), "Invalid state filter") {
 			t.Errorf("body = %q, want the state error", w.Body.String())
+		}
+	})
+
+	t.Run("repeated state keys combine as alternatives", func(t *testing.T) {
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", "/api/v1/tags/provisional?state=identity_hold&state=split_hold", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		if resp.Total != int64(2) {
+			t.Errorf("total = %d, want 2", resp.Total)
+		}
+		for _, id := range fixtures {
+			got := inList(resp.Results, id)
+			want := id == heldID || id == splitID
+			if got != want {
+				t.Errorf("fixture %d: present = %t, want %t", id, got, want)
+			}
 		}
 	})
 
