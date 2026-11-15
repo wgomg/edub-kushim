@@ -143,7 +143,7 @@ describe('affectedDocuments', () => {
 	});
 });
 
-	describe('notActedGroups', () => {
+describe('notActedGroups', () => {
 	it('merges skip reasons and no_documents', () => {
 		const groups = notActedGroups({ below_floor: 3, ambiguous: 2 }, 0, 5);
 		expect(groups).toHaveLength(3);

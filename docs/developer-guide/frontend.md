@@ -874,7 +874,8 @@ ESLint 10 **flat config** (`eslint.config.js`): `@eslint/js` recommended +
 conflicting rules), `.gitignore` honored via `includeIgnoreFile`, browser+node
 globals, and the Svelte parser gets the project config. Prettier: tabs, single
 quotes, no trailing commas, 100 cols, with the svelte and tailwind plugins
-(`.prettierrc`).
+(`.prettierrc`). `make check-web` runs `npm run format` then `npm run lint` in
+both SPAs — the frontend counterpart of `make check`.
 
 ### Testing
 
@@ -1017,7 +1018,7 @@ dotted-map pattern (`settingsStore.svelte.js`, `bodyFromConfig`).
   `effectiveUrl()` (not `page.url` after a shallow write) and write it only
   through `writeRouteParams`.
 - **`gofmt`-equivalent: `npm run format`** (Prettier sorts Tailwind classes
-  too) and `npm run lint`.
+  too) and `npm run lint`; `make check-web` runs both for both SPAs.
 - **`nvm use` before any npm command** — `.nvmrc` pins the Node version, and
   the shell's default Node rewrites `package-lock.json`. The Makefile targets
   source nvm themselves.

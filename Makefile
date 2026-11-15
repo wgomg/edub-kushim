@@ -234,6 +234,17 @@ check:
 	go vet -tags "XLA,ORT" ./...
 	revive -config revive.toml -set_exit_status ./...
 
+# check-web runs the static checks for both SPAs (prettier --write via
+# npm run format, then prettier --check + eslint via npm run lint). This is
+# the web equivalent of make check: no tests, no build. nvm use must run
+# before the cd: nvm reads .nvmrc from the cwd it starts in, so running it
+# later from inside web/ or web-wizard/ would miss the root .nvmrc and keep
+# the shell's default node version instead.
+.PHONY: check-web
+check-web:
+	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web && npm run format && npm run lint
+	. "$(NVM_DIR)/nvm.sh" && nvm use && cd web-wizard && npm run format && npm run lint
+
 .PHONY: vuln
 vuln:
 	CGO_ENABLED=0 govulncheck -tags "XLA,ORT" \

@@ -38,6 +38,8 @@ Deeper context lives in `docs/`:
 - Go 1.26, module `github.com/wgomg/edub-kushim`
 - `make check` runs `go fix`, `go vet`, then `revive` over `./...`; revive enforces the
   doc-comment rules in `revive.toml` (revive must be on PATH) and fails on any finding.
+- `make check-web` is the frontend counterpart: it runs `npm run format` then `npm run lint`
+  (prettier + eslint) in both SPAs, and sources nvm itself.
 - Always format with `gofmt` and run `make check` after implementation is done, never inbetween or after small individual changes.
 
 ## Two binaries, different CGo
@@ -138,7 +140,8 @@ make vuln-cgo     # CGo-enabled variant, full call graph (requires make build-de
 - Dev server: `cd web && npm ci && npm run dev` (proxies `/api` to `localhost:3000`)
 - Both use `@sveltejs/adapter-static` with `fallback: 'index.html'`.
 - Svelte 5 with runes everywhere. Tailwind CSS v4 via `@tailwindcss/vite`.
-- Verify order: `npm run lint` (prettier --check + eslint) before `npm run build`;
+- Verify order: `make check-web` (format, then lint, both SPAs) or per package
+  `npm run lint` (prettier --check + eslint) before `npm run build`;
   format-only lint failures → `npm run format` then re-lint, don't hand-edit.
 
 ## Git & releases

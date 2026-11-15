@@ -318,7 +318,8 @@ This regenerates the type-safe query methods under `internal/database/*.sql.go`.
 ### Miscellaneous
 
 ```bash
-make check  # go fix + go vet + revive (doc-comment + correctness rules in revive.toml; revive must be on PATH)
+make check      # go fix + go vet + revive (doc-comment + correctness rules in revive.toml; revive must be on PATH)
+make check-web  # prettier format + prettier --check + eslint for web/ and web-wizard/
 ```
 
 ### Configuration reference

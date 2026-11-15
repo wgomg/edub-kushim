@@ -96,6 +96,7 @@ Tests live beside their sources as `*.test.js`; the web test tiers are documente
 make web-build      # build the SPA and copy it to internal/static/build
 make wizard-build   # build the setup wizard and copy it to internal/api/wizard/static
 make stage-web      # copy existing web/build and web-wizard/build into the embed dirs
+make check-web      # format then lint both SPAs (npm run format && npm run lint)
 ```
 
 Both SPAs build under the Node version pinned in `.nvmrc`, and the make targets source nvm; run
