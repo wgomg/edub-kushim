@@ -125,6 +125,50 @@ func TestSweepTwins_MechanicalVariantAliases(t *testing.T) {
 	}
 }
 
+// TestSweepTwins_TokenizationVariantAliases pins the deterministic leg for the concatenation class: an
+// exact tokenization twin pair aliases onto the spaced canonical with no judge call, exactly like the
+// orthographic leg above.
+func TestSweepTwins_TokenizationVariantAliases(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	resetTwinStore(t, client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+
+	a, b := "twin afro american", "twin afroamerican"
+	aID := database.MustCreateTag(t, client.Queries, a)
+	bID := database.MustCreateTag(t, client.Queries, b)
+	doc := database.CreateUniqueDocument(t, client.Queries, "twin-mechanical-concat-doc")
+	database.MustAddDocumentTag(t, client.Queries, doc, aID)
+	database.MustAddDocumentTag(t, client.Queries, doc, bID)
+	seedTwinRun(ctx, t, client.Queries, [2]string{a, b})
+
+	r := newTwinSweeper(t, client)
+	report := &Report{Skips: map[string]int{}}
+	r.sweepTwins(ctx, twinSweepConfig(10, 1000), report, nil)
+
+	testutil.AssertEqual(t, report.Twins.Worklist, 1, "worklist")
+	testutil.AssertEqual(t, report.Twins.Mechanical, 1, "one mechanical alias")
+	if report.Measurement == nil || report.Measurement.Absent {
+		t.Fatalf("Measurement = %+v, want the consumed run marked present", report.Measurement)
+	}
+	if len(report.Aliases) != 1 {
+		t.Fatalf("Aliases = %v, want exactly one", report.Aliases)
+	}
+	testutil.AssertEqual(t, report.Aliases[0].Query, b, "the concatenated name becomes the alias")
+	testutil.AssertEqual(t, report.Aliases[0].Target, a, "the spaced form is the canonical")
+
+	if _, err := client.Queries.GetTagAliasByName(ctx, b); err != nil {
+		t.Fatalf("the loser must survive as an alias row: %v", err)
+	}
+	if _, err := client.Queries.GetTagByName(ctx, b); err == nil {
+		t.Error("the loser's tag row must be removed once it resolves as an alias")
+	}
+}
+
 // TestSweepTwins_Filters pins the pairs the arm must never touch: an identity-held name stays for review, a
 // settled pair is never re-asked, a conjunction belongs to the compound scan, a pair already in this run's
 // band worklist is not re-questioned, a duplicate worklist entry is deduped, and a dead name is skipped —

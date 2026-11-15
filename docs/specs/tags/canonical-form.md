@@ -73,10 +73,12 @@ fixed.
 **M3 — Key equality.** Identical key → identical label; resolved here without judging.
 This covers everything M1–M2 collapse to the same key.
 
-**M4 — Deterministic tie-break.** Among mechanically resolved pairs only — the M8 classes
-carry no canonical direction by definition — a fixed, versioned lexical order picks the
-canonical label. A judged pair whose canonical direction is a tie never reaches the
-tie-break: it records its relation, keeps both labels live, and defers the fold (J4).
+**M4 — Deterministic tie-break.** Among mechanically resolved pairs that carry no
+canonical rule of their own — the orthographic and permutation classes — a fixed,
+versioned lexical order picks the canonical label; an exact tokenization pair resolves
+onto its spaced form instead (M8). A judged pair whose canonical direction is a tie never
+reaches the tie-break: it records its relation, keeps both labels live, and defers the
+fold (J4).
 
 **M5 — Alias mechanics.** The loser of a same-intent pair becomes an alias: it resolves
 to the canonical label in matching, suggestions, emitted names, and query input; it
@@ -97,16 +99,22 @@ registration.
 
 **M8 — Deterministic variant classes.** Two names are one value without judging when
 they are pinned orthographic spelling variants (`-isation`/`-ization`, `-yse`/`-yze`,
-`-ogue`/`-og`, `-our`/`-or`, applied per token) or literal token permutations (the same
-tokens in a different order). The pair resolves as same-intent with no canonical
-direction, so M4 picks the canonical label. Token permutation is whole-name
-canonicalization and is
+`-ogue`/`-og`, `-our`/`-or`, applied per token), literal token permutations (the same
+tokens in a different order), or exact tokenization variants (the ordered tokens
+concatenate to the same string: `afro american` beside `afroamerican`). Normalization
+turns hyphens into spaces before any write boundary, so the tokenization class compares
+token concatenation only. Orthographic and permutation pairs carry no canonical
+direction, so M4 picks the canonical label; a tokenization pair resolves onto the spaced
+form (the label with more tokens, and M4 among equal token counts). A near-concatenation
+that differs by a letter (`blackamerica` beside `black american`) is not an exact variant
+and stays judged. Token permutation is whole-name canonicalization and is
 explicitly **not** the decomposition fan: it does not split a name into value spans the
 way atomicity §3.1 does. Plural and other inflections, mixed-language spellings, and
 morphological or function-word inversions stay with the judging body (J3), as does any
 pair the pinned table does not reach. The class is consulted at birth for every novel
-name, so a store-anchored orthographic or permutation twin resolves mechanically without
-a judge.
+name, so a store-anchored orthographic, permutation, or tokenization twin resolves
+mechanically without a judge, and the split seam consults the same classes under its
+ambiguity rule.
 
 ### 3.3 Judging body (LLM-adjudicated)
 
@@ -171,7 +179,8 @@ direction naming the label whose standard sense is exactly the dimension:
 (b) **tie** — neither label is more precise; the pair records its verdict but does not
 fold, both labels stay live, and an operator merge is the recovery; lexical order never
 decides a judged pair;
-(c) mechanical resolutions carry no direction: a pinned deterministic variant class
+(c) mechanical resolutions carry no judged direction: an exact tokenization variant
+resolves onto its spaced form, while every other pinned deterministic variant class
 resolves through M8, where the English (house-form) label wins over a non-English one and
 only a pair the language step cannot separate falls to the deterministic tie-break (M4).
 
@@ -269,6 +278,7 @@ Behavior references; the gray rows are where review lands.
 | `c plus plus` | `c++` | J5 |
 | `decolonisation` / `decolonization` | one intent; the label the deterministic tie-break picks wins, the other aliases | M8 + M4 + M5 |
 | `military history` / `history military` | one intent; the label the deterministic tie-break picks wins, the other aliases | M8 + M4 + M5 |
+| `afro american` / `afroamerican` | one intent; the spaced form is canonical, the concatenated label aliases | M8 + M5 |
 | `colonization` / `colonialism` | one intent; `colonialism` canonical, `colonization` aliases | J3 + J4(a) + M5 |
 | `machine learning` / `deep learning` | both stay live; the broader label is not absorbed | J3 `near_synonym` |
 | `anti fascism` / `fascism` | both stay live; opposites never merge | J3 `distinct` |

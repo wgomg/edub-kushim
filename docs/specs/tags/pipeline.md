@@ -123,7 +123,7 @@ is deterministic by design.
 
 One label per retrieval intent. A candidate that denotes the same extension as an existing
 value is an application of that value — variant labels (singular/plural, orthographic,
-inverted, digit/word, mixed-language) collapse onto the canonical one (definition §3.4,
+tokenization, inverted, digit/word, mixed-language) collapse onto the canonical one (definition §3.4,
 §3.5, §4.3 P3). The residue is the invention proposal that goes on to S4. What decides is
 substitutability of extension, not component-hood.
 

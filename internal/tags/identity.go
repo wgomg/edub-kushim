@@ -44,12 +44,14 @@ import (
 // the held kinds are unchanged. v13 replaces the pair-adjudication answer with the typed relation — the
 // judged answer is same_concept, near_synonym, distinct, or uncertain — plus an explicit canonical direction;
 // only a same_concept answer whose direction names a winner folds, and the mechanical rules and the
-// single-name judge's criteria are unchanged. The relation gate that now precedes fold evidence carries
-// its own stamp (RelationRuleSetVersion) because it is an additive precondition: gating a proposal must not
-// retire the fold verdicts recorded under this version. Guards read identity holds stamp-agnostically, so a
-// bump re-judges and re-stamps evidence but never releases an existing hold; only the re-judge path reads
-// the current stamp.
-const IdentityRuleSetVersion = "v13"
+// single-name judge's criteria are unchanged. v14 adds the exact tokenization class to the pinned variant
+// classes — ordered tokens concatenating to one string — and extends the birth-time variant signatures and
+// the split-seam variant anchor to it, with the spaced form canonical; the judging body's criteria are
+// unchanged. The relation gate that now precedes fold evidence carries its own stamp (RelationRuleSetVersion)
+// because it is an additive precondition: gating a proposal must not retire the fold verdicts recorded under
+// this version. Guards read identity holds stamp-agnostically, so a bump re-judges and re-stamps evidence but
+// never releases an existing hold; only the re-judge path reads the current stamp.
+const IdentityRuleSetVersion = "v14"
 
 // RelationRuleSetVersion pins the relation gate's prompt and criteria text, the judged precondition a fold
 // proposal passes before any fold evidence exists. It is a separate stamp because the gate is additive: an
@@ -470,8 +472,11 @@ func StoredName(raw string) string {
 }
 
 // VariantClass reports the deterministic variant class relating two store-normalized names: "orthographic"
-// when the pinned spelling table maps both to one form while the originals differ, and "inverted" when
-// they hold the same token multiset in a different order; an empty result means neither class holds. It
+// when the pinned spelling table maps both to one form while the originals differ, "inverted" when they
+// hold the same token multiset in a different order, and "tokenization" when their ordered tokens concatenate
+// to the same string (afro american beside afroamerican); an empty result means no class holds. Normalization
+// turns hyphens into spaces before any write boundary, so the tokenization class compares concatenation only,
+// and a near-concatenation that differs by a letter (blackamerica beside black american) stays judged. It
 // never consults the store, and callers pass names already normalized at their write boundaries. Plurals,
 // mixed-language spellings, and morphological or function-word inversions (history of anarchism beside
 // anarchist history) stay judged, as does any pair the transform table does not reach (D23).
@@ -485,6 +490,9 @@ func VariantClass(a, b string) string {
 	}
 	if orthographicForm(a) == orthographicForm(b) {
 		return "orthographic"
+	}
+	if sameConcatenation(a, b) {
+		return "tokenization"
 	}
 	return ""
 }
@@ -522,14 +530,40 @@ func sameTokenMultiset(a, b []string) bool {
 	return slices.Equal(as, bs)
 }
 
-// VariantKey returns a normalized name's two pinned variant signatures: its orthographic canonical form and
-// its sorted token multiset. Two distinct names are a pinned variant pair (VariantClass != "") exactly when
-// they share one of these keys, so a caller comparing one name against a large name set can index the set's
-// keys once and probe in O(1) instead of running the per-pair transform for every comparison.
-func VariantKey(name string) (orthographic, multiset string) {
+// sameConcatenation reports whether two names' space-stripped byte streams match exactly: the tokenization
+// class, where removing the spaces leaves an identical sequence. Names arrive normalized, so a space is the
+// only separator the comparison skips, and it never allocates. Callers use it both as the class predicate
+// and as the cheap cross-arity prune before VariantClass.
+func sameConcatenation(a, b string) bool {
+	i, j := 0, 0
+	for {
+		for i < len(a) && a[i] == ' ' {
+			i++
+		}
+		for j < len(b) && b[j] == ' ' {
+			j++
+		}
+		if i == len(a) || j == len(b) {
+			return i == len(a) && j == len(b)
+		}
+		if a[i] != b[j] {
+			return false
+		}
+		i++
+		j++
+	}
+}
+
+// VariantKey returns a normalized name's three pinned variant signatures: its orthographic canonical
+// form, its sorted token multiset, and its token concatenation. Two distinct names are a pinned variant
+// pair (VariantClass != "") exactly when they share one of these keys, so a caller comparing one name against
+// a large name set can index the set's keys once and probe in O(1) instead of running the per-pair transforms
+// for every comparison.
+func VariantKey(name string) (orthographic, multiset, concatenation string) {
 	tokens := strings.Fields(name)
+	concatenation = strings.Join(tokens, "")
 	slices.Sort(tokens)
-	return orthographicForm(name), strings.Join(tokens, "\x00")
+	return orthographicForm(name), strings.Join(tokens, "\x00"), concatenation
 }
 
 // Signature is a name's lemma and stem signatures (docs/specs/tags/canonical-form.md §3.2 M2). They
@@ -1030,18 +1064,17 @@ func RelationGateCriteriaRecord(fold, source string, similarity *float64) json.R
 // sense-ambiguous: it folds mechanically only onto its primary-sense base (the attestation table's first
 // entry, which preserves WordNet sense order) and only when that base is live — a live non-primary sibling
 // sense no longer attracts the fold, and the residue (primary base not live, another base live) is left to
-// the phrase-context judged path (ResidualFoldAnchors). A part the attestation table does not reach
-// still folds when a promoted store label is a pinned deterministic variant of it (M8 orthographic
-// spelling or literal token permutation), resolved by variantAnchor under the same ambiguity-safe rule.
-// The attestation is the point: a pertainym relator links an adjective and a noun that denote the same
-// thing, so the seam folds only attested relations or pinned variant classes and never infers a fold
-// from bare shape (docs/specs/tags/canonical-form.md V2/J1/M8). Shape-based proposals
-// (ProposedDerivationalFold, ProposedMorphologicalFold) still reach the judged identity path's fold
-// gate, which confirms them before use; split-component resolution consults this before per-document
-// filtering, and births never rename through it. promotedNames maps Key(storeName) to the promoted
-// store's name; liveNames is the live store key set the primary-base liveness check reads, which the
-// caller must supply. provisional births are absent from promotedNames and so anchor only through the
-// judged identity path.
+// the phrase-context judged path (ResidualFoldAnchors). A part the attestation table does not reach still
+// folds when a promoted store label is a pinned deterministic variant of it (M8 orthographic spelling,
+// literal token permutation, or exact tokenization variant), resolved by variantAnchor under the same
+// ambiguity-safe rule. The attestation is the point: a pertainym relator links an adjective and a noun
+// that denote the same thing, so the seam folds only attested relations or pinned variant classes and
+// never infers a fold from bare shape (docs/specs/tags/canonical-form.md V2/J1/M8). Shape-based proposals
+// (ProposedDerivationalFold, ProposedMorphologicalFold) still reach the judged identity path's fold gate,
+// which confirms them before use; split-component resolution consults this before per-document filtering,
+// and births never rename through it. promotedNames maps Key(storeName) to the promoted store's name;
+// liveNames is the live store key set the primary-base liveness check reads, which the caller must supply.
+// provisional births are absent from promotedNames and so anchor only through the judged identity path.
 func AnchoredFold(name string, promotedNames map[string]string, liveNames map[string]struct{}) string {
 	bases := attestedBases(name)
 	if len(bases) == 0 {
@@ -1101,12 +1134,18 @@ func PromotedGuardKeys(names map[string]struct{}) map[string]struct{} {
 // variantAnchor resolves a name onto a promoted store label related by a pinned deterministic variant
 // class (M8), or "" when none is or when two distinct labels are in reach — ambiguity is not a fold.
 // Unlike the attested legs it takes the name's pinned variant classes rather than a lexical relation,
-// so an orthographic spelling pair (labour/labor) or a literal token permutation folds store-anchored.
+// so an orthographic spelling pair (labour/labor), a literal token permutation, or an exact tokenization
+// variant (afroamerican beside afro american, across token counts) folds store-anchored.
 func variantAnchor(name string, promotedNames map[string]string) string {
 	want := tokenCount(name)
 	hit := ""
 	for _, storeName := range promotedNames {
-		if storeName == name || tokenCount(storeName) != want {
+		if storeName == name {
+			continue
+		}
+		// same-arity labels can match the orthographic and permutation classes; only a concatenation match
+		// can reach across token counts, so this prune skips exactly the labels no class can pair
+		if tokenCount(storeName) != want && !sameConcatenation(name, storeName) {
 			continue
 		}
 		if VariantClass(name, storeName) == "" {
@@ -1136,16 +1175,27 @@ func tokenCount(s string) int {
 }
 
 // PreferCanonical picks the canonical label of a mechanically resolved same-intent pair the judged direction
-// did not separate (docs/specs/tags/canonical-form.md §3.3 M8): a pinned deterministic variant class
-// resolves through M4, then the English/house form wins over a non-English one, and only a pair the
-// language step cannot separate falls to the deterministic tie-break (M4). It is the deterministic alias
-// resolution step the alias machinery reads; a judged same_concept pair without a separating canonical
-// direction never reaches it. Arrival order and usage never decide.
+// did not separate (docs/specs/tags/canonical-form.md §3.3 M8): an exact tokenization variant resolves onto
+// its spaced form (the label with more tokens), any other pinned deterministic variant class resolves
+// through M4, then the English/house form wins over a non-English one, and only a pair the language step
+// cannot separate falls to the deterministic tie-break (M4). It is the deterministic alias resolution step
+// the alias machinery reads; a judged same_concept pair without a separating canonical direction never
+// reaches it. Arrival order and usage never decide.
 func PreferCanonical(a, b string) string {
 	if a == b {
 		return a
 	}
-	if VariantClass(a, b) != "" {
+	if class := VariantClass(a, b); class != "" {
+		if class != "tokenization" {
+			return TieBreak(a, b)
+		}
+		at, bt := tokenCount(a), tokenCount(b)
+		if at != bt {
+			if at > bt {
+				return a
+			}
+			return b
+		}
 		return TieBreak(a, b)
 	}
 	aEnglish, bEnglish := isEnglishName(a), isEnglishName(b)

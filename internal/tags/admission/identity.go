@@ -114,13 +114,15 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 
 	ix := tags.NewNameIndex(nil)
 	// index the store vocabulary's pinned variant signatures once, so the per-candidate scan probes maps
-	// instead of running the two-token transform for every (candidate, store name) pair
+	// instead of running the three transforms for every (candidate, store name) pair over the whole vocabulary
 	storeOrthographic := make(map[string][]string, len(in.DBNames))
 	storeMultiset := make(map[string][]string, len(in.DBNames))
+	storeConcatenation := make(map[string][]string, len(in.DBNames))
 	for existing := range in.DBNames {
-		orthographic, multiset := tags.VariantKey(existing)
+		orthographic, multiset, concatenation := tags.VariantKey(existing)
 		storeOrthographic[orthographic] = append(storeOrthographic[orthographic], existing)
 		storeMultiset[multiset] = append(storeMultiset[multiset], existing)
+		storeConcatenation[concatenation] = append(storeConcatenation[concatenation], existing)
 	}
 	flagged := make(map[string]bool)
 	for i, cand := range candidates {
@@ -132,22 +134,22 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			cand.source = source
 			flagged[cand.name] = true
 		}
-		// a shape relation or a pinned variant class (orthographic spelling or literal token permutation)
-		// makes the candidate a pair; the variant class resolves mechanically downstream with no judge, so a
-		// store-anchored twin never forks the vocabulary. The variant names are the precomputed signature
-		// hits, never a per-pair transform.
-		candOrthographic, candMultiset := tags.VariantKey(cand.name)
+		// a shape relation or a pinned variant class (orthographic spelling, literal token permutation, or
+		// exact tokenization variant) makes the candidate a pair; the variant class resolves mechanically
+		// downstream with no judge, so a store-anchored twin never forks the vocabulary. The variant names
+		// are the precomputed signature hits, never a per-pair transform.
+		candOrthographic, candMultiset, candConcatenation := tags.VariantKey(cand.name)
 		variantHits := make(map[string]struct{})
-		for _, name := range storeOrthographic[candOrthographic] {
-			if name != cand.name {
-				variantHits[name] = struct{}{}
+		collectVariantHits := func(names []string) {
+			for _, name := range names {
+				if name != cand.name {
+					variantHits[name] = struct{}{}
+				}
 			}
 		}
-		for _, name := range storeMultiset[candMultiset] {
-			if name != cand.name {
-				variantHits[name] = struct{}{}
-			}
-		}
+		collectVariantHits(storeOrthographic[candOrthographic])
+		collectVariantHits(storeMultiset[candMultiset])
+		collectVariantHits(storeConcatenation[candConcatenation])
 		for existing := range in.DBNames {
 			if !ix.ShapeRelated(cand.name, existing) {
 				if _, hit := variantHits[existing]; !hit {
@@ -162,13 +164,13 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			addPair(cand.name, decisions[i].Target, decisions[i].Sim)
 		}
 	}
-	candidateVariantKeys := make(map[string][2]string, len(candidates))
+	candidateVariantKeys := make(map[string][3]string, len(candidates))
 	for _, c := range candidates {
 		if c.resolved != "" {
 			continue
 		}
-		orthographic, multiset := tags.VariantKey(c.name)
-		candidateVariantKeys[c.name] = [2]string{orthographic, multiset}
+		orthographic, multiset, concatenation := tags.VariantKey(c.name)
+		candidateVariantKeys[c.name] = [3]string{orthographic, multiset, concatenation}
 	}
 	for i, a := range candidates {
 		if a.resolved != "" {
@@ -180,7 +182,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 				continue
 			}
 			ka, kb := candidateVariantKeys[a.name], candidateVariantKeys[b.name]
-			if !ix.ShapeRelated(a.name, b.name) && ka[0] != kb[0] && ka[1] != kb[1] {
+			if !ix.ShapeRelated(a.name, b.name) && ka[0] != kb[0] && ka[1] != kb[1] && ka[2] != kb[2] {
 				continue
 			}
 			flagged[a.name] = true

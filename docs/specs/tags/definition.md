@@ -162,7 +162,7 @@ A string is a tag in this system iff it satisfies all five:
    Prospectively, every label is born below the floor and accrues recurrence: recurrence
    gates standing (promotion), not existence (§6.4).
 4. **Canonicality.** One label per retrieval intent. Variant labels for the same intent
-   (singular/plural, orthographic, inverted, digit/word) are the same tag and must
+   (singular/plural, orthographic, tokenization, inverted, digit/word) are the same tag and must
    collapse to one.
 5. **Atomicity.** It is not faithfully replaceable by the intersection of other tags. If
    the intent it represents is reconstructible by combining existing tags, it is a
@@ -370,7 +370,7 @@ The definition yields these dispositions for the observed classes:
 | Thesis compressions | names no dimension; extension ≈ singleton | **drop** |
 | Form/genre values | facet violation (`document_type` owns it) | **drop from tags** (facet machinery) |
 | Places: `newfoundland`, `libya` | ordinary subject dimensions | **judged** by the dimension test; a sub-national place recurs or stays a pending candidate, never a facet reject |
-| Singular/plural, orthographic, inverted twins | same extension, different labels | **canonicalize** (alias/merge) |
+| Singular/plural, orthographic, tokenization, inverted twins | same extension, different labels | **canonicalize** (alias/merge) |
 | Normalization artifacts: `st century`, `argentina s`, `s`, `g` | malformed labels; no dimension | **repair or drop** |
 | Generic containers: `use`, `thought`, `knowledge`, `irony` | no dimension; `|S(t)|` small or semantically empty | **drop** (or leave below mass) |
 | Mixed-language compounds: `marxism anarquismo` | same intent as English form; canonicality | **canonicalize** (canonical-form policy, §8) |
@@ -579,8 +579,9 @@ The questions the definition leaves to policy, and their decided answers:
    conventional written form, and same-intent resolution with the alias disposition. A
    judged `same_concept` answer names the canonical label by sense-fit; a tie records the
    verdict without folding, and lexical order never decides a judged pair. Mechanical
-   resolutions carry no direction and take the house form/language, then the deterministic
-   tie-break. Frequency is not a birth-time criterion; it refines later through
+   resolutions carry no judged direction: they take the house form/language, then the
+   deterministic tie-break, except an exact tokenization variant, which resolves onto its
+   spaced form. Frequency is not a birth-time criterion; it refines later through
    canonicalization. A kindred-form criterion is rejected — there is no axis model to
    consult (item 7).
 4. **Demotion.** Two triggers: supersession (a better label takes over; same-intent losers

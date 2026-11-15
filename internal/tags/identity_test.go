@@ -61,6 +61,11 @@ func TestVariantClass(t *testing.T) {
 		{"morphological and function-word inversion stays judged", "history of anarchism", "anarchist history", ""},
 		{"inflected spelling form stays judged", "organisations", "organizations", ""},
 		{"pinned -our/-or", "labour", "labor", "orthographic"},
+		{"exact tokenization variant folds", "afro american", "afroamerican", "tokenization"},
+		{"two-token emission onto a one-token store name", "black american", "blackamerican", "tokenization"},
+		{"a letter difference is not an exact concatenation", "blackamerica", "black american", ""},
+		{"hyphen input normalizes before the class decides", "afro-american", "afro american", ""},
+		{"an orthographic spelling plus a tokenization difference stays judged", "catalogue american", "catalogamerican", ""},
 		{"spelling plus permutation stays judged", "organisation history", "history organization", ""},
 		{"translation is not a spelling variant", "guerra", "war", ""},
 	}
@@ -467,6 +472,20 @@ func TestAnchoredFold_LiveView(t *testing.T) {
 			want:     "",
 		},
 		{
+			name:     "an exact tokenization pair anchors across token counts",
+			input:    "afroamerican",
+			promoted: map[string]string{"afro american": "afro american"},
+			live:     []string{"afro american"},
+			want:     "afro american",
+		},
+		{
+			name:     "two tokenization anchors are ambiguity, not a fold",
+			input:    "newyorkcity",
+			promoted: map[string]string{"new york city": "new york city", "newyork city": "newyork city"},
+			live:     []string{"new york city", "newyork city"},
+			want:     "",
+		},
+		{
 			name:     "a variant anchor folds regardless of the sibling check",
 			input:    "labour",
 			promoted: map[string]string{"labor": "labor"},
@@ -501,6 +520,9 @@ func TestPreferCanonical(t *testing.T) {
 		{"the house form wins over a foreign label", "filosofia", "philosophy", "philosophy"},
 		{"order does not change the winner", "philosophy", "filosofia", "philosophy"},
 		{"a deterministic variant still resolves through the tie-break", "decolonisation", "decolonization", "decolonisation"},
+		{"the spaced form wins a tokenization pair in either order", "afro american", "afroamerican", "afro american"},
+		{"the spaced form wins reversed", "afroamerican", "afro american", "afro american"},
+		{"an equal-token-count tokenization tie falls to the tie-break", "a bc", "ab c", "a bc"},
 		{"labels the language step cannot separate fall to the tie-break", "20th century", "19th century", "19th century"},
 	}
 	for _, tc := range cases {
@@ -512,7 +534,7 @@ func TestPreferCanonical(t *testing.T) {
 	}
 }
 
-// TestVariantKey pins the two signatures the birth-time scan precomputes: a pinned variant pair always
+// TestVariantKey pins the signatures the birth-time scan precomputes: a pinned variant pair always
 // shares one of them, and two names that share neither are never a pair — so the precomputed probe and the
 // per-pair VariantClass transform cannot disagree.
 func TestVariantKey(t *testing.T) {
@@ -521,16 +543,18 @@ func TestVariantKey(t *testing.T) {
 		{"analyse", "analyze"},
 		{"decolonisation", "decolonization"},
 		{"war civil", "civil war"},
+		{"afro american", "afroamerican"},
+		{"black american", "blackamerican"},
 	}
 	for _, tc := range related {
 		if VariantClass(tc.a, tc.b) == "" {
 			t.Errorf("VariantClass(%q, %q) = \"\", want a pinned class before the key parity holds", tc.a, tc.b)
 		}
-		aOrth, aMulti := VariantKey(tc.a)
-		bOrth, bMulti := VariantKey(tc.b)
-		if aOrth != bOrth && aMulti != bMulti {
-			t.Errorf("VariantKey(%q) = (%q, %q) and VariantKey(%q) = (%q, %q), want a shared signature",
-				tc.a, aOrth, aMulti, tc.b, bOrth, bMulti)
+		aOrth, aMulti, aConcat := VariantKey(tc.a)
+		bOrth, bMulti, bConcat := VariantKey(tc.b)
+		if aOrth != bOrth && aMulti != bMulti && aConcat != bConcat {
+			t.Errorf("VariantKey(%q) = (%q, %q, %q) and VariantKey(%q) = (%q, %q, %q), want a shared signature",
+				tc.a, aOrth, aMulti, aConcat, tc.b, bOrth, bMulti, bConcat)
 		}
 	}
 
@@ -540,16 +564,17 @@ func TestVariantKey(t *testing.T) {
 		{"revolution", "evolution"},
 		{"20th century", "19th century"},
 		{"math", "maths"},
+		{"blackamerica", "black american"},
 	}
 	for _, tc := range unrelated {
 		if VariantClass(tc.a, tc.b) != "" {
 			t.Errorf("VariantClass(%q, %q) = %q, want \"\" for an unrelated pair", tc.a, tc.b, VariantClass(tc.a, tc.b))
 		}
-		aOrth, aMulti := VariantKey(tc.a)
-		bOrth, bMulti := VariantKey(tc.b)
-		if aOrth == bOrth || aMulti == bMulti {
-			t.Errorf("VariantKey(%q) = (%q, %q) and VariantKey(%q) = (%q, %q), unrelated names must share no signature",
-				tc.a, aOrth, aMulti, tc.b, bOrth, bMulti)
+		aOrth, aMulti, aConcat := VariantKey(tc.a)
+		bOrth, bMulti, bConcat := VariantKey(tc.b)
+		if aOrth == bOrth || aMulti == bMulti || aConcat == bConcat {
+			t.Errorf("VariantKey(%q) = (%q, %q, %q) and VariantKey(%q) = (%q, %q, %q), unrelated names must share no signature",
+				tc.a, aOrth, aMulti, aConcat, tc.b, bOrth, bMulti, bConcat)
 		}
 	}
 }

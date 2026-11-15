@@ -2807,6 +2807,46 @@ func TestPlanIdentity_OrthographicVariantResolvesWithoutJudge(t *testing.T) {
 	adjAssertEqual(t, len(plan.Evidence), 0, "a decided pair mints no pending evidence")
 }
 
+// TestPlanIdentity_TokenizationVariantResolvesWithoutJudge pins the same pinned-class consultation for
+// the concatenation class: a concatenated tokenization twin of a live store name becomes a pair with
+// no similarity band and no shape relation, resolves mechanically with no pair-judge call, and aliases
+// the concatenated row onto the spaced store name. The single-name conventional-form judge still runs
+// for the flagged candidate; the mock grants it, so the registration resolves without a pending hold.
+func TestPlanIdentity_TokenizationVariantResolvesWithoutJudge(t *testing.T) {
+	// the candidate name is unique to this test, so no identity row another test leaves can answer its
+	// cached pair and mask the pair generation
+	a, _, adj := newTestAdjudicator(t)
+	adj.identityFn = func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+		results := make([]analyzer.TagIdentityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagIdentityResult{Index: i, FoldToBase: true, FoldPreservesDenotation: true, ConventionalForm: true}
+		}
+		return results, nil
+	}
+
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"afroamerican"},
+		DBNames: map[string]struct{}{"afro american": {}},
+	}, "")
+
+	adjAssertEqual(t, adj.called, 0, "a deterministic variant must not call the pair judge")
+	adjAssertEqual(t, len(plan.Aliases), 1, "the store row aliases onto the spaced form exactly once")
+	adjAssertEqual(t, plan.Aliases[0].AliasName, "afroamerican", "the concatenated store row is the loser")
+	adjAssertEqual(t, plan.Aliases[0].Canonical, "afro american", "the spaced form wins the tokenization pair")
+	adjAssertEqual(t, plan.Aliases[0].RemoveExistingTag, false, "the emission-row loser has no store row to remove")
+	if len(plan.Registrations) != 1 {
+		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+	}
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Disposition, tags.DispositionAlias, "the concatenated name registers as an alias")
+	adjAssertEqual(t, reg.Resolved, "afro american", "the alias resolves onto the pair winner")
+	for _, row := range plan.Evidence {
+		if row.Kind == tags.IdentityKindSameIntent {
+			t.Errorf("evidence = %+v, want no pending same_intent row for a decided pair", row)
+		}
+	}
+}
+
 // TestPlanIdentity_StoreLoserRegistersAsPairAlias pins the loser-first registration order: a candidate
 // that self-resolves against the store but loses a decided same-intent pair must register as an alias onto
 // the winner, never as an apply onto its own row, because the plan's alias action deletes that row in the

@@ -64,12 +64,12 @@ Per enrichment, after the LLM emits its tags:
 | Key equality (M3) — house form matches a store tag | apply the store label | style variants (`nineteenth century` / `19th century`) |
 | Exact identity with a store tag | apply the store label | casing, hyphenation, and symbol-form fixes after normalization |
 | Flagged fold — a mechanically proposed reduction (M2) | judged: relation gate (J0), then base form (J1), fold gate (J2), and conventional form (J5); an unrelated proposal is dropped and the candidate registers as its own value, and the fold applies only when all three fold answers confirm | inflections, relational adjectives (`chilean` → `chile`), bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
-| Pinned variant class — an orthographic spelling variant or a literal token permutation | mechanical `same`, no judge call: the deterministic tie-break (M4) picks the winner, the other name aliases | `decolonisation`/`decolonization`, `military history`/`history military` |
+| Pinned variant class — an orthographic spelling variant, a literal token permutation, or an exact tokenization variant | mechanical `same`, no judge call: a tokenization pair aliases onto its spaced form, the other classes go to the deterministic tie-break (M4) | `decolonisation`/`decolonization`, `military history`/`history military`, `afro american`/`afroamerican` |
 | Any other candidate neighbour — the same-intent gate | judged (J3) by a typed relation with a canonical direction (J4): `same_concept` with a separating direction (`query`/`target`) aliases the loser onto the winner (a store label that loses becomes the alias); `near_synonym`, `distinct`, and a `same_concept` tie register both; `uncertain` leaves the claim pending | the residual band and shape-related pairs |
 | No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
 
 Every identity disposition is logged in the kushim (enrichment) log
-(`identity[v10]: apply|alias|defer|separate <name> …`; the prefix carries the rule-set
+(`identity[v14]: apply|alias|defer|separate <name> …`; the prefix carries the rule-set
 version), so the pipeline's behavior is auditable after the fact and the reconciliation
 task can recover history the database never captured.
 
@@ -92,11 +92,16 @@ registration paths ([spec](../specs/tags/canonical-form.md) §3.2):
 - **M3 — key equality**: the identity key is the house form, so style variants collapse
   without judging.
 - **M4 — tie-break**: fixed lexical order picks the canonical label among mechanically
-  resolved pairs, which carry no canonical direction.
+  resolved pairs that carry no canonical rule of their own — the orthographic and
+  permutation classes; a tokenization pair resolves onto its spaced form instead.
 - **M8 — deterministic variant classes**: pinned orthographic spelling variants
-  (`-isation`/`-ization`, `-yse`/`-yze`, `-ogue`/`-og`, `-our`/`-or`, per token) and
-  literal token permutations resolve `same` with no judge call. Plurals, mixed-language
-  spellings, and morphological or function-word inversions stay with the pair judge.
+  (`-isation`/`-ization`, `-yse`/`-yze`, `-ogue`/`-og`, `-our`/`-or`, per token),
+  literal token permutations, and exact tokenization variants (the ordered tokens
+  concatenate to the same string, e.g. `afro american`/`afroamerican`) resolve `same`
+  with no judge call; orthographic and permutation pairs go to the tie-break, a
+  tokenization pair to its spaced form. A near-concatenation that differs by a letter
+  stays judged, as do plurals, mixed-language spellings, and morphological or
+  function-word inversions.
 
 `IdentityRuleSetVersion` is stamped on every alias row and identity-evidence row; it pins
 the mechanical fold proposals, the pair judge's criteria text, the variant-class table,
@@ -294,8 +299,8 @@ created (`Adjudicator.ApplyTagQuality`):
 - **Failure safety**: same retry taxonomy as adjudication; a reply that omits verdicts
   for some candidates salvages the entries it returned and defers only the missing ones;
   every other non-credit failure keeps every novel tag with a defer decision.
-- **Logging**: rejections and defers are logged as `tagquality[v6]:` lines carrying the
-  outcome and reason, siblings of the `identity[v10]` and `policy[v1]` lines.
+- **Logging**: rejections and defers are logged as `tagquality[v8]:` lines carrying the
+  outcome and reason, siblings of the `identity[v14]` and `policy[v2]` lines.
 
 The decision thresholds are pinned constants, not configuration keys; the judge LLM and
 timeout inherit the content analyzer's unless the `llm` block overrides them, and a
