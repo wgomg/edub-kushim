@@ -83,7 +83,15 @@
 		pendingScrollTo = null;
 		findSeq++;
 		loadingTask?.destroy();
-		const task = getDocument({ url: u });
+		// pdf.js concatenates `${baseUrl}${filename}`, so every asset base url below must keep its trailing
+		// slash while the document url must not
+		const task = getDocument({
+			url: u,
+			wasmUrl: resolve('pdfjs/wasm/'),
+			cMapUrl: resolve('pdfjs/cmaps/'),
+			standardFontDataUrl: resolve('pdfjs/standard_fonts/'),
+			iccUrl: resolve('pdfjs/iccs/')
+		});
 		loadingTask = task;
 		try {
 			const doc = await task.promise;
