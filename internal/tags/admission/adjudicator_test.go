@@ -20,6 +20,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
+	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -80,6 +81,144 @@ func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	}
 	adjAssertEqual(t, pending, 1, "pending evidence rows")
 	adjAssertEqual(t, plan.Registrations[0].Provisional, true, "candidate stays provisional")
+}
+
+func TestPlanIdentity_SameConceptTieRecordsWithoutFold(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	q, db := database.NewTestQueries(t)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec("DELETE FROM tag_identity_event"); err != nil {
+		t.Fatalf("clear tag_identity_event: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := log.NewLoggerWithWriter(&buf)
+	adj := &mockAdjudicator{
+		relationFn: func(_ context.Context, candidates []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+			results := make([]analyzer.TagRelationResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagRelationResult{Index: i, Related: true}
+			}
+			return results, nil
+		},
+		identityFn: func(_ context.Context, candidates []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+			results := make([]analyzer.TagIdentityResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagIdentityResult{
+					Index:                   i,
+					FoldToBase:              true,
+					FoldPreservesDenotation: true,
+					ConventionalForm:        true,
+				}
+			}
+			return results, nil
+		},
+		adjudicateFn: func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+			results := make([]analyzer.TagVerdictResult, len(pairs))
+			for i := range pairs {
+				results[i] = analyzer.TagVerdictResult{
+					Index:     i,
+					Relation:  types.TagRelations.SameConcept,
+					Canonical: types.TagDirectionTie,
+				}
+			}
+			return results, nil
+		},
+	}
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", logger)
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagMatcher:     config.TagMatcherConfig{Timeout: 0},
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+		},
+	})
+	setUnexportedField(t, runner, "tagAdjudicator", adj)
+	setUnexportedField(t, runner, "tagLexicalGate", adj)
+
+	a := &Adjudicator{
+		config: &config.Config{
+			Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true, Llm: config.LlmConfig{Model: "test-model"}},
+			},
+		},
+		queries: q,
+		runner:  runner,
+		logger:  logger,
+	}
+
+	ranked := []matcher.RankResult{mkRanked("social democracy", 0.81)}
+	_, plan, _, _ := a.PlanIdentity(context.Background(), IdentityPlanInput{
+		Names:   []string{"democratic socialism"},
+		Ranked:  ranked,
+		DBNames: map[string]struct{}{"social democracy": {}},
+	}, "")
+
+	adjAssertEqual(t, len(plan.Aliases), 0, "a tie canonical creates no alias")
+	if len(plan.Registrations) != 1 {
+		t.Fatalf("registrations = %d, want 1", len(plan.Registrations))
+	}
+	reg := plan.Registrations[0]
+	adjAssertEqual(t, reg.Name, "democratic socialism", "the tie pair keeps its own name")
+	adjAssertEqual(t, reg.Provisional, false, "a decided-but-unfolded pair registers live")
+	adjAssertEqual(t, len(plan.Aliases), 0, "no alias without a separating canonical")
+
+	sameIntent := 0
+	for _, row := range plan.Evidence {
+		if row.Kind != tags.IdentityKindSameIntent || row.Verdict != "" {
+			continue
+		}
+		sameIntent++
+	}
+	adjAssertEqual(t, sameIntent, 0, "a decided pair mints no pending same-intent row")
+
+	rows, err := q.LatestTagIdentityEventsForCandidates(context.Background(), database.LatestTagIdentityEventsForCandidatesParams{
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+		Candidates:     []string{"democratic socialism"},
+	})
+	testutil.AssertNoError(t, err, "read recorded same-intent rows")
+	recorded := 0
+	for _, row := range rows {
+		if row.Kind != tags.IdentityKindSameIntent || !row.Partner.Valid || row.Partner.String != "social democracy" {
+			continue
+		}
+		recorded++
+		adjAssertEqual(t, row.Verdict.String, "same", "the tie still records a same verdict")
+		var identityCriteria struct {
+			Relation  string `json:"relation"`
+			Canonical string `json:"canonical"`
+		}
+		if err := json.Unmarshal(row.Criteria, &identityCriteria); err != nil {
+			t.Fatalf("unmarshal same-intent criteria: %v", err)
+		}
+		adjAssertEqual(t, identityCriteria.Relation, "same_concept", "criteria record the relation")
+		adjAssertEqual(t, identityCriteria.Canonical, "tie", "criteria record the tie canonical")
+	}
+	adjAssertEqual(t, recorded, 1, "the decided pair lands one row in the cache")
+
+	if out := buf.String(); !strings.Contains(out, "fold deferred") {
+		t.Errorf("expected fold-deferral log line, got:\n%s", out)
+	}
+}
+
+func countPlanIdentityVerdicts(t *testing.T, q *database.Queries, candidate, partner string) int {
+	t.Helper()
+	rows, err := q.LatestTagIdentityEventsForCandidates(context.Background(), database.LatestTagIdentityEventsForCandidatesParams{
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+		Candidates:     []string{candidate},
+	})
+	if err != nil {
+		t.Fatalf("count identity verdicts: %v", err)
+	}
+	n := 0
+	for _, row := range rows {
+		if row.Kind == tags.IdentityKindSameIntent && row.Partner.Valid && row.Partner.String == partner && row.Verdict.Valid {
+			n++
+		}
+	}
+	return n
 }
 
 func TestPlanIdentity_FoldStaysPendingWithoutJudge(t *testing.T) {
@@ -826,11 +965,11 @@ func adjAssertEqual(t *testing.T, got, want any, msg string) {
 }
 
 func TestAdjudicateIdentityPairs(t *testing.T) {
-	insertIdentityVerdict := func(t *testing.T, q *database.Queries, candidate, partner, verdict, direction string) {
+	insertIdentityVerdict := func(t *testing.T, q *database.Queries, candidate, partner, verdict, canonical string) {
 		t.Helper()
 		criteria := []byte("{}")
-		if direction != "" {
-			criteria = []byte(`{"direction":"` + direction + `"}`)
+		if canonical != "" {
+			criteria = []byte(`{"relation":"same_concept","canonical":"` + canonical + `"}`)
 		}
 		if _, err := q.InsertTagIdentityEvent(context.Background(), database.InsertTagIdentityEventParams{
 			Kind:           tags.IdentityKindSameIntent,
@@ -860,7 +999,6 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		}
 		return n
 	}
-
 	t.Run("cached verdict applies without LLM call", func(t *testing.T) {
 		a, q, adj := newTestAdjudicator(t)
 		insertIdentityVerdict(t, q, "democratic socialism", "social democracy", "same", "target")
@@ -871,7 +1009,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
 		adjAssertEqual(t, string(p.verdict), "same", "cached verdict")
-		adjAssertEqual(t, p.direction, "target", "cached direction")
+		adjAssertEqual(t, p.canonical, "target", "cached canonical")
 	})
 
 	t.Run("fresh same verdict is recorded", func(t *testing.T) {
@@ -879,7 +1017,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
-				results[i] = analyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Same, Direction: types.TagDirectionQuery}
+				results[i] = analyzer.TagVerdictResult{Index: i, Relation: types.TagRelations.SameConcept, Canonical: types.TagDirectionQuery}
 			}
 			return results, nil
 		}
@@ -889,7 +1027,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 
 		adjAssertEqual(t, adj.called, 1, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
-		adjAssertEqual(t, p.direction, types.TagDirectionQuery, "direction recorded")
+		adjAssertEqual(t, p.canonical, types.TagDirectionQuery, "canonical recorded")
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 1, "cached verdict rows")
 	})
 
@@ -898,7 +1036,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range pairs {
-				results[i] = analyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Variant}
+				results[i] = analyzer.TagVerdictResult{Index: i, Relation: types.TagRelations.NearSynonym}
 			}
 			return results, nil
 		}
@@ -924,11 +1062,29 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 0, "no cached verdict rows")
 	})
 
+	t.Run("uncertain abstention leaves the pair pending", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+			results := make([]analyzer.TagVerdictResult, len(pairs))
+			for i := range pairs {
+				results[i] = analyzer.TagVerdictResult{Index: i, Relation: types.TagRelations.Uncertain}
+			}
+			return results, nil
+		}
+
+		p := &identityPair{query: "democratic socialism", target: "social democracy"}
+		a.adjudicateIdentityPairs(context.Background(), 0, []*identityPair{p}, "")
+
+		adjAssertEqual(t, p.decided, false, "an abstention decides nothing")
+		adjAssertEqual(t, adj.called, 1, "one adjudicator call")
+		adjAssertEqual(t, countIdentityVerdicts(t, q, "democratic socialism", "social democracy"), 0, "no verdict recorded for an abstention")
+	})
+
 	t.Run("partial reply salvages the decided pair", func(t *testing.T) {
 		a, q, adj := newTestAdjudicator(t)
 		adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
-			results[0] = analyzer.TagVerdictResult{Index: 0, Verdict: types.TagVerdicts.Same, Direction: types.TagDirectionQuery}
+			results[0] = analyzer.TagVerdictResult{Index: 0, Relation: types.TagRelations.SameConcept, Canonical: types.TagDirectionQuery}
 			return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
 		}
 
@@ -954,7 +1110,7 @@ func TestAdjudicateIdentityPairs(t *testing.T) {
 		adjAssertEqual(t, adj.called, 0, "adjudicator call count")
 		adjAssertEqual(t, p.decided, true, "pair decided")
 		adjAssertEqual(t, string(p.verdict), "same", "mechanical verdict")
-		adjAssertEqual(t, p.direction, "", "empty direction hands the pair to the M4 tie-break")
+		adjAssertEqual(t, p.canonical, "", "empty canonical hands the pair to the M4 tie-break")
 		adjAssertEqual(t, p.variantClass, "orthographic", "class recorded on the pair")
 		adjAssertEqual(t, p.model, "", "no judge model")
 
@@ -995,7 +1151,7 @@ func TestWriteVerdictEvent_ConflictReReadsStoredVerdict(t *testing.T) {
 		Sim:           0.81,
 		Verdict:       types.TagVerdicts.Variant,
 		VerdictModel:  sql.NullString{String: "other-model", Valid: true},
-		PolicyVersion: "v1",
+		PolicyVersion: policy.Version,
 	})
 	if err != nil {
 		t.Fatalf("seed fresh verdict: %v", err)
@@ -2661,8 +2817,8 @@ func TestPlanIdentity_StoreLoserRegistersAsPairAlias(t *testing.T) {
 	adj.adjudicateFn = func(_ context.Context, _ []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 		return []analyzer.TagVerdictResult{{
 			Index:     0,
-			Verdict:   types.TagVerdicts.Same,
-			Direction: types.TagDirectionQuery,
+			Relation:  types.TagRelations.SameConcept,
+			Canonical: types.TagDirectionQuery,
 		}}, nil
 	}
 

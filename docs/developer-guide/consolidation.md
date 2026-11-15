@@ -65,7 +65,7 @@ Per enrichment, after the LLM emits its tags:
 | Exact identity with a store tag | apply the store label | casing, hyphenation, and symbol-form fixes after normalization |
 | Flagged fold — a mechanically proposed reduction (M2) | judged: relation gate (J0), then base form (J1), fold gate (J2), and conventional form (J5); an unrelated proposal is dropped and the candidate registers as its own value, and the fold applies only when all three fold answers confirm | inflections, relational adjectives (`chilean` → `chile`), bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
 | Pinned variant class — an orthographic spelling variant or a literal token permutation | mechanical `same`, no judge call: the deterministic tie-break (M4) picks the winner, the other name aliases | `decolonisation`/`decolonization`, `military history`/`history military` |
-| Any other candidate neighbour — the same-intent gate | judged (J3) with a direction (J4): `same` aliases the loser onto the winner (a store label that loses becomes the alias), `variant`/`related` register both | the residual band and shape-related pairs |
+| Any other candidate neighbour — the same-intent gate | judged (J3) by a typed relation with a canonical direction (J4): `same_concept` with a separating direction (`query`/`target`) aliases the loser onto the winner (a store label that loses becomes the alias); `near_synonym`, `distinct`, and a `same_concept` tie register both; `uncertain` leaves the claim pending | the residual band and shape-related pairs |
 | No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
 
 Every identity disposition is logged in the kushim (enrichment) log
@@ -91,8 +91,8 @@ registration paths ([spec](../specs/tags/canonical-form.md) §3.2):
   unconfirmed.
 - **M3 — key equality**: the identity key is the house form, so style variants collapse
   without judging.
-- **M4 — tie-break**: fixed lexical order decides when the direction criteria do not
-  separate two labels.
+- **M4 — tie-break**: fixed lexical order picks the canonical label among mechanically
+  resolved pairs, which carry no canonical direction.
 - **M8 — deterministic variant classes**: pinned orthographic spelling variants
   (`-isation`/`-ization`, `-yse`/`-yze`, `-ogue`/`-og`, `-our`/`-or`, per token) and
   literal token permutations resolve `same` with no judge call. Plurals, mixed-language
@@ -147,9 +147,13 @@ adjudication stays outside it:
   blocks inline and sweep promotion until an operator resolves it. An operator separation
   clears the hold and is terminal for its (candidate, anchor) pair: a later rule-set version
   re-judges the fold but cannot re-impose the hold.
-- **Same-intent pairs (J3/J4)** — pinned variant classes resolve `same` mechanically;
-  the rest go to the pair adjudicator (`same` / `variant` / `related`, plus a direction
-  for `same`). `same` yields the alias disposition.
+- **Same-intent pairs (J3/J4)** — pinned variant classes resolve one intent mechanically;
+  the rest go to the pair adjudicator, which answers a typed relation (`same_concept` /
+  `near_synonym` / `distinct`) plus a canonical direction (`query` / `target` / `tie`) for
+  `same_concept`, or `uncertain` when it cannot decide. Only `same_concept` with a
+  separating direction yields the alias disposition; `near_synonym` and `distinct`
+  register both labels, a `same_concept` tie records the verdict without folding, and
+  `uncertain` records nothing and leaves the pair pending.
 - **Dispositions** — `apply` (alias or key equality), `register` (new value), `alias`
   (the losing name becomes a `tag_alias` row; when the loser already exists as a tag its
   assignments are re-pointed, its row is removed, and its own aliases are retargeted — no
@@ -229,13 +233,16 @@ model changes keep propagating.
 - **Folds**: a related relation-gate verdict releases a candidate to one identity call
   answering the three binary canonical-form criteria; the fold applies only when all
   three confirm.
-- **Verdicts**: `same` (one value → the losing name becomes an alias), `variant`
-  (broader/narrower → keep), `related` (different concepts → keep); for `same` the call
-  also names the precise term (`query`, `target`, or `tie`, with M4 breaking ties).
+- **Verdicts**: the judge answers a typed relation — `same_concept` (one value → the
+  losing name becomes an alias when the canonical direction separates the pair),
+  `near_synonym` (broader/narrower → keep), `distinct` (different concepts → keep),
+  `uncertain` (nothing recorded; re-asked on the next pass). A `same_concept` answer also
+  names the precise term (`query`, `target`, or `tie`); a tie records the verdict without
+  folding and never reaches M4.
 - **Resolution order per document**: relation-gate cache (`tag_identity_event` at
   `RelationRuleSetVersion`) → identity criteria cache → pair cache → deterministic variant
   class → one batched evidence rank → batched verdict calls. A pair with no parseable
-  verdict — a missing entry, an unknown verdict string, an out-of-range index — is treated
+  relation — a missing entry, an unknown relation string, an out-of-range index — is treated
   as missing, never as a rejection; a truncated reply returns the verdicts it did read, and
   only the omitted pairs stay pending.
 - **Cache**: every verdict is stored keyed by `(query, target, policy_version)` in
@@ -425,7 +432,8 @@ lock-drain-heartbeat discipline for the pass.
   pairs whose latest verdict is not `same` are re-adjudicated.
 - **Stale/unjudged** — no fresh row at the current policy version.
 - **Aged** — fresh rows older than 90 days.
-- **Drifted** — fresh `variant`/`related` pairs whose document-population overlap grew.
+- **Drifted** — fresh `variant`/`related` rows (the stored form of `near_synonym` and
+  `distinct`) whose document-population overlap grew.
 - **Log bootstrap** — pairs absent from the table entirely, parsed from rotated
   `hugot.log*`/`kushim.log*` archives (historical formats only; table rows supersede
   log-derived entries).

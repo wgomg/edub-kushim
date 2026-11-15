@@ -237,8 +237,8 @@ func TestResolvePending_SameIntentPair(t *testing.T) {
 		for i := range pairs {
 			results[i] = analyzer.TagVerdictResult{
 				Index:     i,
-				Verdict:   types.TagVerdicts.Same,
-				Direction: types.TagDirectionQuery,
+				Relation:  types.TagRelations.SameConcept,
+				Canonical: types.TagDirectionQuery,
 			}
 		}
 		return results, nil
@@ -258,6 +258,84 @@ func TestResolvePending_SameIntentPair(t *testing.T) {
 	testutil.AssertNoError(t, err, "loser name becomes an alias")
 	testutil.AssertEqual(t, alias.CanonicalTagID, candidateID, "alias points at the winner")
 	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
+}
+
+func TestResolvePending_SameConceptTieResolvesWithoutAlias(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+	ctx := context.Background()
+
+	database.MustCreateTag(t, client.Queries, "colonization")
+	database.MustCreateTag(t, client.Queries, "settler colonialism")
+	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "colonization", "settler colonialism")
+
+	adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+		results := make([]analyzer.TagVerdictResult, len(pairs))
+		for i := range pairs {
+			results[i] = analyzer.TagVerdictResult{
+				Index:     i,
+				Relation:  types.TagRelations.SameConcept,
+				Canonical: types.TagDirectionTie,
+			}
+		}
+		return results, nil
+	}
+
+	report, err := resolver.ResolvePending(ctx, 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 1, "pending pair read")
+	testutil.AssertEqual(t, report.Resolved, 1, "tie pair verdict recorded")
+	testutil.AssertEqual(t, report.Aliased, 0, "a tie canonical creates no alias")
+	testutil.AssertEqual(t, adj.called, 1, "one adjudicator call")
+
+	for _, name := range []string{"colonization", "settler colonialism"} {
+		if _, err := client.Queries.GetTagByName(ctx, name); err != nil {
+			t.Errorf("tag row %q must stay live: %v", name, err)
+		}
+	}
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
+
+	rows, err := client.Queries.LatestTagIdentityEventsForCandidates(ctx, database.LatestTagIdentityEventsForCandidatesParams{
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+		Candidates:     []string{"colonization"},
+	})
+	testutil.AssertNoError(t, err, "read resolved identity rows")
+	if len(rows) != 1 {
+		t.Fatalf("resolved rows = %d, want 1", len(rows))
+	}
+	var criteria struct {
+		Relation  string `json:"relation"`
+		Canonical string `json:"canonical"`
+	}
+	if err := json.Unmarshal(rows[0].Criteria, &criteria); err != nil {
+		t.Fatalf("unmarshal criteria: %v", err)
+	}
+	testutil.AssertEqual(t, criteria.Relation, string(types.TagRelations.SameConcept), "criteria record the relation")
+	testutil.AssertEqual(t, criteria.Canonical, types.TagDirectionTie, "criteria record the tie canonical")
+}
+
+func TestResolvePending_UncertainStaysPending(t *testing.T) {
+	resolver, client, adj := newIdentityResolver(t, true)
+	ctx := context.Background()
+
+	seedPendingIdentityEvent(t, client, tags.IdentityKindSameIntent, "colonization", "settler colonialism")
+
+	adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+		results := make([]analyzer.TagVerdictResult, len(pairs))
+		for i := range pairs {
+			results[i] = analyzer.TagVerdictResult{Index: i, Relation: types.TagRelations.Uncertain}
+		}
+		return results, nil
+	}
+
+	report, err := resolver.ResolvePending(ctx, 100)
+	testutil.AssertNoError(t, err, "resolve pending")
+	testutil.AssertEqual(t, report.Pending, 1, "pending pair read")
+	testutil.AssertEqual(t, report.Resolved, 0, "an abstention records no verdict")
+	testutil.AssertEqual(t, report.Deferred, 1, "the abstention is deferred")
+	testutil.AssertEqual(t, report.Aliased, 0, "no alias without a verdict")
+	testutil.AssertEqual(t, report.Failed, 0, "an abstention is not a failure")
+	testutil.AssertEqual(t, adj.called, 1, "one adjudicator call")
+	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(1), "the row stays pending for the next pass")
 }
 
 func TestResolvePending_DeterministicVariantPair(t *testing.T) {
@@ -357,7 +435,7 @@ func TestResolvePending_PartialPairReply(t *testing.T) {
 
 	adj.adjudicateFn = func(_ context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 		results := make([]analyzer.TagVerdictResult, len(pairs))
-		results[0] = analyzer.TagVerdictResult{Index: 0, Verdict: types.TagVerdicts.Variant}
+		results[0] = analyzer.TagVerdictResult{Index: 0, Relation: types.TagRelations.NearSynonym}
 		return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
 	}
 

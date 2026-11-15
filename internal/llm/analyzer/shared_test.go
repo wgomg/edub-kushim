@@ -778,8 +778,8 @@ func TestSleepAfterRequest_CancelledContextAbortsEarly(t *testing.T) {
 }
 
 func TestParseAdjudicationResponse(t *testing.T) {
-	same := types.TagVerdicts.Same
-	variant := types.TagVerdicts.Variant
+	same := types.TagRelations.SameConcept
+	nearSynonym := types.TagRelations.NearSynonym
 
 	tests := []struct {
 		name    string
@@ -789,84 +789,84 @@ func TestParseAdjudicationResponse(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "clean JSON with all valid verdicts",
-			content: `{"pairs":[{"index":0,"verdict":"same"},{"index":1,"verdict":"variant"}]}`,
+			name:    "clean JSON with all valid relations",
+			content: `{"pairs":[{"index":0,"relation":"same_concept"},{"index":1,"relation":"near_synonym"}]}`,
 			n:       2,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: same},
-				{Index: 1, Verdict: variant},
+				{Index: 0, Relation: same},
+				{Index: 1, Relation: nearSynonym},
 			},
 		},
 		{
 			name:    "code-fenced JSON",
-			content: "```json\n{\"pairs\":[{\"index\":0,\"verdict\":\"same\"}]}\n```",
+			content: "```json\n{\"pairs\":[{\"index\":0,\"relation\":\"same_concept\"}]}\n```",
 			n:       1,
-			want:    []TagVerdictResult{{Index: 0, Verdict: same}},
+			want:    []TagVerdictResult{{Index: 0, Relation: same}},
 		},
 		{
-			name:    "unknown verdict string counts as missing",
-			content: `{"pairs":[{"index":0,"verdict":"foobar"}]}`,
+			name:    "unknown relation string counts as missing",
+			content: `{"pairs":[{"index":0,"relation":"foobar"}]}`,
 			n:       1,
-			want:    []TagVerdictResult{{Index: 0, Verdict: ""}},
+			want:    []TagVerdictResult{{Index: 0, Relation: ""}},
 			wantErr: true,
 		},
 		{
 			name:    "out-of-range index leaves its slot missing",
-			content: `{"pairs":[{"index":5,"verdict":"same"}]}`,
+			content: `{"pairs":[{"index":5,"relation":"same_concept"}]}`,
 			n:       2,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: ""},
-				{Index: 1, Verdict: ""},
+				{Index: 0, Relation: ""},
+				{Index: 1, Relation: ""},
 			},
 			wantErr: true,
 		},
 		{
 			name:    "short slice leaves trailing entries missing",
-			content: `{"pairs":[{"index":0,"verdict":"same"}]}`,
+			content: `{"pairs":[{"index":0,"relation":"same_concept"}]}`,
 			n:       3,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: same},
-				{Index: 1, Verdict: ""},
-				{Index: 2, Verdict: ""},
+				{Index: 0, Relation: same},
+				{Index: 1, Relation: ""},
+				{Index: 2, Relation: ""},
 			},
 			wantErr: true,
 		},
 		{
 			name:    "bare top-level array accepted as the envelope",
-			content: `[{"index":0,"verdict":"same"},{"index":1,"verdict":"variant"}]`,
+			content: `[{"index":0,"relation":"same_concept"},{"index":1,"relation":"near_synonym"}]`,
 			n:       2,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: same},
-				{Index: 1, Verdict: variant},
+				{Index: 0, Relation: same},
+				{Index: 1, Relation: nearSynonym},
 			},
 		},
 		{
 			name:    "entries without index placed by position",
-			content: `{"pairs":[{"verdict":"same","direction":"query"},{"verdict":"variant"}]}`,
+			content: `{"pairs":[{"relation":"same_concept","canonical":"query"},{"relation":"near_synonym"}]}`,
 			n:       2,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: same, Direction: types.TagDirectionQuery},
-				{Index: 1, Verdict: variant},
+				{Index: 0, Relation: same, Canonical: types.TagDirectionQuery},
+				{Index: 1, Relation: nearSynonym},
 			},
 		},
 		{
 			name:    "mixed indexed and unindexed entries, the gap missing",
-			content: `{"pairs":[{"verdict":"same"},{"index":2,"verdict":"variant"}]}`,
+			content: `{"pairs":[{"relation":"same_concept"},{"index":2,"relation":"near_synonym"}]}`,
 			n:       3,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: same},
-				{Index: 1, Verdict: ""},
-				{Index: 2, Verdict: variant},
+				{Index: 0, Relation: same},
+				{Index: 1, Relation: ""},
+				{Index: 2, Relation: nearSynonym},
 			},
 			wantErr: true,
 		},
 		{
 			name:    "unindexed entries beyond n dropped",
-			content: `{"pairs":[{"verdict":"same"},{"verdict":"variant"},{"verdict":"same"}]}`,
+			content: `{"pairs":[{"relation":"same_concept"},{"relation":"near_synonym"},{"relation":"same_concept"}]}`,
 			n:       2,
 			want: []TagVerdictResult{
-				{Index: 0, Verdict: same},
-				{Index: 1, Verdict: variant},
+				{Index: 0, Relation: same},
+				{Index: 1, Relation: nearSynonym},
 			},
 		},
 	}
@@ -1701,9 +1701,9 @@ func TestBuildAdjudicationPrompt_SameReachableForMeaningMatches(t *testing.T) {
 	prompt := BuildAdjudicationPrompt([]TagPairEvidence{{Query: "labour", Target: "labor"}})
 
 	for _, want := range []string{
-		`Use "same" exactly when faithful replacement holds`,
+		`Use "same_concept" exactly when faithful replacement holds`,
 		`spelling and morphographic variants of one term (labour/labor, modelling/modeling)`,
-		`Reserve "variant" and "related" for genuinely distinct concepts`,
+		`answer "near_synonym" or "distinct", never "same_concept"`,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("adjudication prompt missing %q", want)
@@ -2273,35 +2273,35 @@ func TestTagIdentityCriteria_String(t *testing.T) {
 	}
 }
 
-func TestParseAdjudicationResponse_Direction(t *testing.T) {
+func TestParseAdjudicationResponse_Canonical(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
 		want    string
 	}{
 		{
-			name:    "query direction",
-			content: `{"pairs":[{"index":0,"verdict":"same","direction":"query"}]}`,
+			name:    "query canonical",
+			content: `{"pairs":[{"index":0,"relation":"same_concept","canonical":"query"}]}`,
 			want:    types.TagDirectionQuery,
 		},
 		{
-			name:    "target direction",
-			content: `{"pairs":[{"index":0,"verdict":"same","direction":"target"}]}`,
+			name:    "target canonical",
+			content: `{"pairs":[{"index":0,"relation":"same_concept","canonical":"target"}]}`,
 			want:    types.TagDirectionTarget,
 		},
 		{
-			name:    "tie direction",
-			content: `{"pairs":[{"index":0,"verdict":"same","direction":"tie"}]}`,
+			name:    "tie canonical",
+			content: `{"pairs":[{"index":0,"relation":"same_concept","canonical":"tie"}]}`,
 			want:    types.TagDirectionTie,
 		},
 		{
-			name:    "unknown direction is dropped",
-			content: `{"pairs":[{"index":0,"verdict":"same","direction":"sideways"}]}`,
+			name:    "unknown canonical is dropped",
+			content: `{"pairs":[{"index":0,"relation":"same_concept","canonical":"sideways"}]}`,
 			want:    "",
 		},
 		{
-			name:    "absent direction stays empty",
-			content: `{"pairs":[{"index":0,"verdict":"same"}]}`,
+			name:    "absent canonical stays empty",
+			content: `{"pairs":[{"index":0,"relation":"same_concept"}]}`,
 			want:    "",
 		},
 	}
@@ -2312,11 +2312,11 @@ func TestParseAdjudicationResponse_Direction(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseAdjudicationResponse: %v", err)
 			}
-			if results[0].Verdict != types.TagVerdicts.Same {
-				t.Errorf("verdict = %q, want same", results[0].Verdict)
+			if results[0].Relation != types.TagRelations.SameConcept {
+				t.Errorf("relation = %q, want same_concept", results[0].Relation)
 			}
-			if results[0].Direction != tt.want {
-				t.Errorf("direction = %q, want %q", results[0].Direction, tt.want)
+			if results[0].Canonical != tt.want {
+				t.Errorf("canonical = %q, want %q", results[0].Canonical, tt.want)
 			}
 		})
 	}

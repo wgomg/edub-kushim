@@ -258,7 +258,7 @@ type entry struct {
 	freshSim     float64
 	freshVerdict types.TagVerdict
 	freshModel   string
-	direction    string
+	canonical    string
 	confirmed    bool
 	skipReason   string
 }

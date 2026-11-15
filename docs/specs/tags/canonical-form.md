@@ -15,8 +15,8 @@ store's established shape (§2).
 - The **definition** is the authority: P3 ("one label per intent," §4.3) is the predicate
   being operationalized; §8 item 3 records the policy decided here.
 - The **pipeline** places this mechanism in S3 (canonicality and registration); it
-  supplies D1's birth-time half, and the direction decisions also apply when a candidate
-  meets an existing store label.
+  supplies D1's birth-time half, and the canonical-direction decisions also apply when a
+  candidate meets an existing store label.
 - **[atomicity](atomicity.md)** is the sibling: it produces the atomic parts; this spec
   decides the form those parts take and when two of them are one value. It assumes the
   adjective folding specified here runs before its part lookup (§3.1 there).
@@ -73,8 +73,10 @@ fixed.
 **M3 — Key equality.** Identical key → identical label; resolved here without judging.
 This covers everything M1–M2 collapse to the same key.
 
-**M4 — Deterministic tie-break.** When the judging body's direction criteria do not
-separate two labels, a fixed, versioned lexical order decides.
+**M4 — Deterministic tie-break.** Among mechanically resolved pairs only — the M8 classes
+carry no canonical direction by definition — a fixed, versioned lexical order picks the
+canonical label. A judged pair whose canonical direction is a tie never reaches the
+tie-break: it records its relation, keeps both labels live, and defers the fold (J4).
 
 **M5 — Alias mechanics.** The loser of a same-intent pair becomes an alias: it resolves
 to the canonical label in matching, suggestions, emitted names, and query input; it
@@ -96,8 +98,9 @@ registration.
 **M8 — Deterministic variant classes.** Two names are one value without judging when
 they are pinned orthographic spelling variants (`-isation`/`-ization`, `-yse`/`-yze`,
 `-ogue`/`-og`, `-our`/`-or`, applied per token) or literal token permutations (the same
-tokens in a different order). The pair resolves as same-intent with no direction, so M4
-picks the canonical label. Token permutation is whole-name canonicalization and is
+tokens in a different order). The pair resolves as same-intent with no canonical
+direction, so M4 picks the canonical label. Token permutation is whole-name
+canonicalization and is
 explicitly **not** the decomposition fan: it does not split a name into value spans the
 way atomicity §3.1 does. Plural and other inflections, mixed-language spellings, and
 morphological or function-word inversions stay with the judging body (J3), as does any
@@ -144,18 +147,33 @@ When the gate fails, the proposal is rejected and the unreduced form stands.
 **J3 — Same-intent test.** Two labels denote one value when faithful replacement holds.
 Runs on shape-related pairs flagged by the mechanical body, on candidates within one
 emission, and against store labels (§3.4, scenario 4.2). Subject: morphographic variants
-and intent-equivalent derivations (`colonialism` / `colonization`).
+and intent-equivalent derivations (`colonialism` / `colonization`). The answer is a typed
+relation, cached per pair:
 
-**J4 — Canonical direction.** When J3 finds one intent, the canonical label is chosen
-by, in order:
+- `same_concept` — faithful replacement holds; spelling and morphographic variants and
+  intent-equivalent derivations are one value;
+- `near_synonym` — closely related but not substitutable (one side broader or narrower, or
+  near-synonyms with different usage); both labels stay live;
+- `distinct` — different concepts, including opposites and same-category siblings; both
+  labels stay live;
+- `uncertain` — the judge cannot decide; nothing is recorded and the pair is re-judged in a
+  later pass.
 
-(a) **sense-fit** — the label whose standard sense is exactly the dimension wins; a
-polysemous label loses to the precise one (`colonialism` over `colonization`, which also
-denotes space and biological colonization);
-(b) **house form / language** — where sense-fit does not separate the pair, an English
-(house-form) label wins over a non-English one; a pinned deterministic variant class
-carries no direction and keeps resolving through M8/M4;
-(c) the deterministic tie-break (M4) where the steps above do not separate the pair.
+Only `same_concept` can fold, and only when the answer also names a canonical direction
+(J4). Every other relation leaves both labels live, so no canonical choice exists and
+arrival order cannot decide anything.
+
+**J4 — Canonical direction.** A `same_concept` answer carries an explicit canonical
+direction naming the label whose standard sense is exactly the dimension:
+
+(a) **query / target** — the named label wins; a polysemous label loses to the precise one
+(`colonialism` over `colonization`, which also denotes space and biological colonization);
+(b) **tie** — neither label is more precise; the pair records its verdict but does not
+fold, both labels stay live, and an operator merge is the recovery; lexical order never
+decides a judged pair;
+(c) mechanical resolutions carry no direction: a pinned deterministic variant class
+resolves through M8, where the English (house-form) label wins over a non-English one and
+only a pair the language step cannot separate falls to the deterministic tie-break (M4).
 
 Neither arrival order nor observed usage decides at birth; usage informs later
 canonicalization only. A kindred-form criterion is rejected: with no axis model
@@ -201,8 +219,11 @@ map exists in the mechanism (an operator override, if any, is configuration).
 ### 3.5 Dispositions
 
 **apply** (key equality → the existing value) · **register** (new value) · **alias**
-(the loser of a same-intent pair) · **defer** (gray band). Two labels for which J3 finds
-no same-intent register separately; a pair may be re-split or merged later through
+(the loser of a `same_concept` pair with a separating canonical direction) · **defer**
+(gray band, and a `same_concept` pair whose canonical direction is a tie — the verdict is
+recorded and both labels stay live for review). Two labels whose J3 answer is
+`near_synonym` or `distinct` register separately; an `uncertain` answer records nothing and
+the pair is re-judged in a later pass. A pair may be re-split or merged later through
 measurement (M6) and canonicalization. A same-intent label is never deleted or
 blocklisted.
 
@@ -210,12 +231,13 @@ blocklisted.
 
 Per candidate or pair: the key; the proposed fold, its relation-gate verdict under
 `RelationRuleSetVersion`, and its J1/J2/J5 result with the judged fold-relation class; the
-J3 verdict with criteria and model versions (the M8 class, with no model, for a
-mechanically resolved pair); the J4 direction
-and reason; any alias made; the identity rule-set version; the review outcome when deferred;
-and the operator's separation row over a refused fold, which clears the hold without
-applying the fold and is terminal for its (candidate, anchor) pair — a later rule-set
-version re-judges the fold but cannot re-impose the hold. Consumers are D1's canonicalization work, the review
+J3 relation with criteria and model versions — the relation and canonical direction for a
+judged pair, the M8 class with no model for a mechanically resolved one; an `uncertain`
+answer records no row and leaves the pair pending; any alias made; the identity rule-set
+version; the review outcome when deferred; and the operator's separation row over a
+refused fold, which clears the hold without applying the fold and is terminal for its
+(candidate, anchor) pair — a later rule-set version re-judges the fold but cannot
+re-impose the hold. Consumers are D1's canonicalization work, the review
 surfaces, and later calibration — it is evidence, not a verdict machine.
 
 ## 4. Scenarios and worked examples
@@ -248,4 +270,8 @@ Behavior references; the gray rows are where review lands.
 | `decolonisation` / `decolonization` | one intent; the label the deterministic tie-break picks wins, the other aliases | M8 + M4 + M5 |
 | `military history` / `history military` | one intent; the label the deterministic tie-break picks wins, the other aliases | M8 + M4 + M5 |
 | `colonization` / `colonialism` | one intent; `colonialism` canonical, `colonization` aliases | J3 + J4(a) + M5 |
+| `machine learning` / `deep learning` | both stay live; the broader label is not absorbed | J3 `near_synonym` |
+| `anti fascism` / `fascism` | both stay live; opposites never merge | J3 `distinct` |
+| a `same_concept` pair whose canonical direction is a tie | both stay live; an operator merge is the recovery | J3 + J4(b) |
+| a pair the judge cannot decide | both stay live; judged again in a later pass | J3 `uncertain` |
 | any pair with split criterion answers | keep as written; review | §3.5 defer |

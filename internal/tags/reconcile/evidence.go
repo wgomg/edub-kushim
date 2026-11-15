@@ -150,21 +150,17 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 					deferred++
 					continue
 				}
-				e.freshVerdict = results[j].Verdict
-				e.freshModel = adjudicatorModel
-				e.direction = results[j].Direction
-				e.reason = "adjudicated"
+				if !applyAdjudication(e, adjudicatorModel, results[j]) {
+					deferred++
+					continue
+				}
 				salvaged++
 			}
 			r.logger.Warn("", "tag reconcile: partial adjudication reply, salvaged %d of %d pairs and deferred %d", salvaged, len(batch), deferred)
 			continue
 		}
 		for j, res := range results {
-			e := judgedEntries[i:end][j]
-			e.freshVerdict = res.Verdict
-			e.freshModel = adjudicatorModel
-			e.direction = res.Direction
-			e.reason = "adjudicated"
+			applyAdjudication(judgedEntries[i:end][j], adjudicatorModel, res)
 		}
 	}
 
@@ -221,7 +217,13 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 					deferred++
 					continue
 				}
-				if results[j].Verdict == e.freshVerdict {
+				verdict, decisive := results[j].Relation.Verdict()
+				if !decisive {
+					e.skipReason = "confirmation_ambiguous"
+					deferred++
+					continue
+				}
+				if verdict == e.freshVerdict {
 					e.confirmed = true
 				} else {
 					e.skipReason = "confirmation_disagreement"
@@ -233,11 +235,33 @@ func (r *Reconciler) adjudicateBand(ctx context.Context, cfg *config.Config, ban
 		}
 		for j, res := range results {
 			e := toConfirm[i:end][j]
-			if res.Verdict == e.freshVerdict {
+			verdict, decisive := res.Relation.Verdict()
+			if !decisive {
+				e.skipReason = "confirmation_ambiguous"
+				continue
+			}
+			if verdict == e.freshVerdict {
 				e.confirmed = true
 			} else {
 				e.skipReason = "confirmation_disagreement"
 			}
 		}
 	}
+}
+
+// applyAdjudication records one pair-judge answer on the entry: the coarse verdict mapped from the typed
+// relation, the canonical direction, and the model. An uncertain answer is an abstention — it leaves no
+// fresh verdict behind (so the pair re-enters the next worklist) and marks the entry so the run tallies it
+// as deferred. It reports whether the answer was decisive.
+func applyAdjudication(e *entry, model string, result analyzer.TagVerdictResult) bool {
+	verdict, decisive := result.Relation.Verdict()
+	if !decisive {
+		e.skipReason = "uncertain"
+		return false
+	}
+	e.freshVerdict = verdict
+	e.freshModel = model
+	e.canonical = result.Canonical
+	e.reason = "adjudicated"
+	return true
 }

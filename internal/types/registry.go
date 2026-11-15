@@ -213,8 +213,8 @@ var Task = struct {
 	},
 }
 
-// TagVerdicts groups the verdict wire values with their canonical
-// spelling.
+// TagVerdicts groups the coarse stored verdict values with their canonical spelling: the vocabulary the
+// verdict-event store and the identity pair cache persist. The judge's own typed answer is TagRelation.
 var TagVerdicts = struct {
 	Same    TagVerdict
 	Variant TagVerdict
@@ -242,14 +242,72 @@ func (v TagVerdict) Valid() bool {
 // AllTagVerdicts returns every declared verdict, cloned.
 func AllTagVerdicts() []TagVerdict { return slices.Clone(allTagVerdicts) }
 
-// The directions that a same verdict can carry: which term's standard sense is exactly the dimension;
-// a tie leaves the choice to the deterministic tie-break. They ride TagVerdicts.Same and are shared by
-// the judge's wire shape and the identity rules that resolve a same-intent pair's canonical label.
+// TagRelation is the pair judge's typed answer about two tag terms: whether they denote one value (the
+// same_concept relation), sit close but not substitutable (near_synonym), name different concepts (distinct),
+// or could not be decided confidently (uncertain). Only same_concept can fold, and only when the answer also
+// names a canonical winner.
+type TagRelation string
+
+// TagRelations groups the relation wire values with their canonical spelling.
+var TagRelations = struct {
+	SameConcept TagRelation
+	NearSynonym TagRelation
+	Distinct    TagRelation
+	Uncertain   TagRelation
+}{
+	SameConcept: "same_concept",
+	NearSynonym: "near_synonym",
+	Distinct:    "distinct",
+	Uncertain:   "uncertain",
+}
+
+// ParseTagRelation accepts one of the declared relation values.
+func ParseTagRelation(s string) (TagRelation, error) {
+	r := TagRelation(s)
+	if !r.Valid() {
+		return "", fmt.Errorf("invalid tag relation %q", s)
+	}
+	return r, nil
+}
+
+// Valid reports whether the relation is one of the declared values.
+func (r TagRelation) Valid() bool {
+	return slices.Contains(allTagRelations, r)
+}
+
+// AllTagRelations returns every declared relation, cloned.
+func AllTagRelations() []TagRelation { return slices.Clone(allTagRelations) }
+
+// Verdict maps the relation onto the coarse stored verdict vocabulary; uncertain is an abstention and
+// reports false, so no verdict is stored for it. This method is the only place the two vocabularies
+// meet, so the coarse stores and the judged answer cannot drift apart name by name.
+func (r TagRelation) Verdict() (TagVerdict, bool) {
+	switch r {
+	case TagRelations.SameConcept:
+		return TagVerdicts.Same, true
+	case TagRelations.NearSynonym:
+		return TagVerdicts.Variant, true
+	case TagRelations.Distinct:
+		return TagVerdicts.Related, true
+	}
+	return "", false
+}
+
+// The canonical directions a same_concept answer can carry: which term's standard sense is exactly the
+// dimension, shared by the judge's wire shape and the identity rules that resolve a same-intent pair's
+// canonical label. A tie records the same-concept verdict without naming a winner, so it cannot fold.
 const (
 	TagDirectionQuery  = "query"
 	TagDirectionTarget = "target"
 	TagDirectionTie    = "tie"
 )
+
+// CanonicalSeparates reports whether a canonical direction names one label as the winner, the precondition
+// for a judged same_concept pair to fold. A tie, an empty value, or any other answer cannot separate the
+// pair, so both values stay live.
+func CanonicalSeparates(canonical string) bool {
+	return canonical == TagDirectionQuery || canonical == TagDirectionTarget
+}
 
 // The person-class answers of the tag quality rubric: a tag naming no person continues to the admission
 // ladder, a documented individual rejects, and the mythological, legendary, fictional, and undecided
@@ -434,4 +492,11 @@ var allTagVerdicts = []TagVerdict{
 	TagVerdicts.Same,
 	TagVerdicts.Variant,
 	TagVerdicts.Related,
+}
+
+var allTagRelations = []TagRelation{
+	TagRelations.SameConcept,
+	TagRelations.NearSynonym,
+	TagRelations.Distinct,
+	TagRelations.Uncertain,
 }

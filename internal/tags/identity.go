@@ -41,12 +41,15 @@ import (
 // the judged criteria are pinned under the new stamp. v11 embeds the shared tag definition in the identity
 // and pair-adjudication prompts. v12 adds the informational fold_class question after the three booleans: the
 // judging body labels the term's fold-relation class; the three boolean answers remain the decision gate, and
-// the held kinds are unchanged. The relation gate that now precedes fold evidence carries its own stamp
-// (RelationRuleSetVersion) because it is an additive precondition: gating a proposal must not retire the
-// fold verdicts recorded under this version. Guards read identity holds stamp-agnostically, so a bump
-// re-judges and re-stamps evidence but never releases an existing hold; only the re-judge path reads the
-// current stamp.
-const IdentityRuleSetVersion = "v12"
+// the held kinds are unchanged. v13 replaces the pair-adjudication answer with the typed relation — the
+// judged answer is same_concept, near_synonym, distinct, or uncertain — plus an explicit canonical direction;
+// only a same_concept answer whose direction names a winner folds, and the mechanical rules and the
+// single-name judge's criteria are unchanged. The relation gate that now precedes fold evidence carries
+// its own stamp (RelationRuleSetVersion) because it is an additive precondition: gating a proposal must not
+// retire the fold verdicts recorded under this version. Guards read identity holds stamp-agnostically, so a
+// bump re-judges and re-stamps evidence but never releases an existing hold; only the re-judge path reads
+// the current stamp.
+const IdentityRuleSetVersion = "v13"
 
 // RelationRuleSetVersion pins the relation gate's prompt and criteria text, the judged precondition a fold
 // proposal passes before any fold evidence exists. It is a separate stamp because the gate is additive: an
@@ -1132,12 +1135,12 @@ func tokenCount(s string) int {
 	return n
 }
 
-// PreferCanonical picks the canonical label of a same-intent pair the judged direction did not separate
-// (docs/specs/tags/canonical-form.md §3.3 J4): a pinned deterministic variant class still resolves
-// through M4, as M8 specifies (the class carries no direction), then the English/house form wins over a
-// non-English one, and only a pair the language step cannot separate falls to the deterministic
-// tie-break (M4). It is the birth-time direction step the alias machinery reads; arrival order and
-// usage never decide.
+// PreferCanonical picks the canonical label of a mechanically resolved same-intent pair the judged direction
+// did not separate (docs/specs/tags/canonical-form.md §3.3 M8): a pinned deterministic variant class
+// resolves through M4, then the English/house form wins over a non-English one, and only a pair the
+// language step cannot separate falls to the deterministic tie-break (M4). It is the deterministic alias
+// resolution step the alias machinery reads; a judged same_concept pair without a separating canonical
+// direction never reaches it. Arrival order and usage never decide.
 func PreferCanonical(a, b string) string {
 	if a == b {
 		return a
@@ -1155,12 +1158,13 @@ func PreferCanonical(a, b string) string {
 	return TieBreak(a, b)
 }
 
-// CanonicalLoser resolves a same-intent pair's canonical label (winner) and its alias (loser) under J4: the
-// judged direction names the winner directly, and a tie — including every deterministic resolution, which
-// carries no direction — falls to PreferCanonical. Every alias-application site reads this one rule, so a
-// change to J4 is made once.
-func CanonicalLoser(direction, query, target string) (winner, loser string) {
-	switch direction {
+// CanonicalLoser resolves a same-intent pair's canonical label (winner) and its alias (loser) under J4: a
+// judged canonical direction names the winner directly, and a tie or empty direction — every deterministic
+// resolution carries none by design — falls to PreferCanonical. Judged callers pass only a direction that
+// separated the pair (types.CanonicalSeparates), so a tie never picks a winner lexicographically; every
+// alias-application site reads this one rule, so a change to J4 is made once.
+func CanonicalLoser(canonical, query, target string) (winner, loser string) {
+	switch canonical {
 	case types.TagDirectionTarget:
 		return target, query
 	case types.TagDirectionQuery:

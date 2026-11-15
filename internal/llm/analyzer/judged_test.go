@@ -107,7 +107,7 @@ func testPairs() []TagPairEvidence {
 	return []TagPairEvidence{{Query: "urban planning", Target: "city planning"}}
 }
 
-const fencedVerdictResponse = "```json\n{\"pairs\":[{\"index\":0,\"verdict\":\"same\",\"direction\":\"query\"}]}\n```"
+const fencedVerdictResponse = "```json\n{\"pairs\":[{\"index\":0,\"relation\":\"same_concept\",\"canonical\":\"query\"}]}\n```"
 
 func TestJudgedOpenAI_EnvelopeAndFencedParse(t *testing.T) {
 	gotReq := make(chan []byte, 1)
@@ -130,11 +130,11 @@ func TestJudgedOpenAI_EnvelopeAndFencedParse(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
-	if results[0].Verdict != types.TagVerdicts.Same {
-		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
+	if results[0].Relation != types.TagRelations.SameConcept {
+		t.Errorf("Relation = %q, want %q", results[0].Relation, types.TagRelations.SameConcept)
 	}
-	if results[0].Direction != types.TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
+	if results[0].Canonical != types.TagDirectionQuery {
+		t.Errorf("Canonical = %q, want %q", results[0].Canonical, types.TagDirectionQuery)
 	}
 
 	var body map[string]any
@@ -310,11 +310,11 @@ func TestJudgedAnthropic_EnvelopeAndFencedParse(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
-	if results[0].Verdict != types.TagVerdicts.Same {
-		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
+	if results[0].Relation != types.TagRelations.SameConcept {
+		t.Errorf("Relation = %q, want %q", results[0].Relation, types.TagRelations.SameConcept)
 	}
-	if results[0].Direction != types.TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
+	if results[0].Canonical != types.TagDirectionQuery {
+		t.Errorf("Canonical = %q, want %q", results[0].Canonical, types.TagDirectionQuery)
 	}
 
 	var req anthropicRequest
@@ -415,7 +415,7 @@ func TestJudgedAnthropic_ContentGateBeforeRequest(t *testing.T) {
 func TestJudgedOpenAI_BareArrayReply(t *testing.T) {
 	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
 		writeTestJSON(w, http.StatusOK, map[string]any{
-			"choices": []any{map[string]any{"message": map[string]any{"content": `[{"index":0,"verdict":"same","direction":"query"}]`}}},
+			"choices": []any{map[string]any{"message": map[string]any{"content": `[{"index":0,"relation":"same_concept","canonical":"query"}]`}}},
 		})
 	})
 
@@ -426,11 +426,11 @@ func TestJudgedOpenAI_BareArrayReply(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
-	if results[0].Verdict != types.TagVerdicts.Same {
-		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
+	if results[0].Relation != types.TagRelations.SameConcept {
+		t.Errorf("Relation = %q, want %q", results[0].Relation, types.TagRelations.SameConcept)
 	}
-	if results[0].Direction != types.TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
+	if results[0].Canonical != types.TagDirectionQuery {
+		t.Errorf("Canonical = %q, want %q", results[0].Canonical, types.TagDirectionQuery)
 	}
 }
 
@@ -455,7 +455,7 @@ func TestJudgedOpenAI_ParseErrorCarriesModelAndRaw(t *testing.T) {
 func TestJudgedAnthropic_BareArrayReply(t *testing.T) {
 	f := newJudgedFixture(t, func(w http.ResponseWriter, _ *http.Request) {
 		writeTestJSON(w, http.StatusOK, map[string]any{
-			"content": []any{map[string]any{"type": "text", "text": `[{"index":0,"verdict":"same","direction":"query"}]`}},
+			"content": []any{map[string]any{"type": "text", "text": `[{"index":0,"relation":"same_concept","canonical":"query"}]`}},
 		})
 	})
 
@@ -466,11 +466,11 @@ func TestJudgedAnthropic_BareArrayReply(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
-	if results[0].Verdict != types.TagVerdicts.Same {
-		t.Errorf("Verdict = %q, want %q", results[0].Verdict, types.TagVerdicts.Same)
+	if results[0].Relation != types.TagRelations.SameConcept {
+		t.Errorf("Relation = %q, want %q", results[0].Relation, types.TagRelations.SameConcept)
 	}
-	if results[0].Direction != types.TagDirectionQuery {
-		t.Errorf("Direction = %q, want %q", results[0].Direction, types.TagDirectionQuery)
+	if results[0].Canonical != types.TagDirectionQuery {
+		t.Errorf("Canonical = %q, want %q", results[0].Canonical, types.TagDirectionQuery)
 	}
 }
 

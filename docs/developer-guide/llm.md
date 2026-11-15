@@ -115,9 +115,10 @@ below describe the methods and result fields individually.
 - `AnalyzeDocType` — a **second, cheaper call** that re-evaluates only the
   document type using the head/tail of the full text (§10). It receives the
   previous result so it can replay the conversation (§4).
-- `Adjudicate` — classifies gate subjects against the same-intent test as
-  `same` / `variant` / `related` (plus a direction for `same`) with a
-  temperature-0 request built from `BuildAdjudicationPrompt`
+- `Adjudicate` — classifies gate subjects against the same-intent test by a
+  typed relation (`same_concept` / `near_synonym` / `distinct` / `uncertain`)
+  plus a `canonical` direction (`query` / `target` / `tie`) for `same_concept`,
+  with a temperature-0 request built from `BuildAdjudicationPrompt`
   and parsed by `ParseAdjudicationResponse` (structured output where the
   provider supports it). Used by the tag adjudicator when
   `enricher.tag_adjudicator.enabled` is true; see the
@@ -831,8 +832,10 @@ for i := range 2 {
     **identity judge** and every remaining candidate neighbour is resolved by **tag
     adjudication** when `enricher.tag_adjudicator.enabled` is true
     (`Runner.JudgeTagIdentity` / `Runner.AdjudicateTags`: caches → evidence →
-    batched LLM calls; `same` aliases the losing name, `variant`/`related`
-    register both). A partial reply decides the claims it returned and leaves
+    batched LLM calls; `same_concept` with a separating canonical direction
+    aliases the losing name, while `near_synonym`, `distinct`, and a
+    `same_concept` tie register both, and an `uncertain` answer records nothing
+    and leaves the claim pending). A partial reply decides the claims it returned and leaves
     only the missing ones pending; a disabled, failing, or ambiguous
     adjudication leaves the claim pending — the candidate registers
     provisionally; a credit-exhaustion failure pauses the batch instead.

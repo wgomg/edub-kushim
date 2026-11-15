@@ -352,12 +352,16 @@ The enrichment pipeline:
    relation gate, which drops a pair it finds unrelated so the candidate
    registers as its own value, and the identity judge then confirms base form,
    fold preservation, and conventional written form for the related ones; the
-   pair adjudicator answers `same`/`variant`/`related` with a direction for
-   `same` (`same` aliases the losing name onto the winner, `variant`/`related`
-   keep; a partial reply decides the claims it returned and leaves only the
+   pair adjudicator answers a typed relation — `same_concept` / `near_synonym` /
+   `distinct`, or `uncertain` when it cannot decide — and a `same_concept`
+   answer also names the canonical direction (`query` / `target` / `tie`).
+   Only `same_concept` with a separating direction aliases the losing name onto
+   the winner; `near_synonym`, `distinct`, and a `same_concept` tie keep both
+   labels live, and an `uncertain` answer leaves the claim pending; a partial
+   reply decides the claims it returned and leaves only the
    missing ones pending as identity evidence, with the candidate born
    provisional; other failures and a disabled adjudicator leave the claim
-   pending the same way; a credit-exhaustion failure pauses the batch). Verdicts
+   pending the same way; a credit-exhaustion failure pauses the batch; verdicts
    are cached in `tag_identity_event` at the identity rule-set version, gate
    verdicts under their own `RelationRuleSetVersion`; the identity pass
    (`kushim tagidentity`, enqueued by

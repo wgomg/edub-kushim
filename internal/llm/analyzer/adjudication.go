@@ -15,31 +15,34 @@ type TagPairEvidence struct {
 	Target string
 }
 
-// TagVerdictResult is the adjudicator's answer for one pair: the verdict
-// and, when it is same, the direction (types.TagDirection* values).
+// TagVerdictResult is the adjudicator's answer for one pair: the typed relation between the terms and,
+// when it is same_concept, the canonical direction (types.TagDirection* values) naming the label whose
+// standard sense is exactly the dimension.
 type TagVerdictResult struct {
 	Index     int
-	Verdict   types.TagVerdict
-	Direction string
+	Relation  types.TagRelation
+	Canonical string
 }
 
 // AdjudicationSystemMessage is the system prompt of the pair
 // adjudication call.
-const AdjudicationSystemMessage = "You are a tag-pair judge. Decide whether pairs of tag terms are one tag under the definition in the user message."
+const AdjudicationSystemMessage = "You are a tag-pair judge. Decide how pairs of tag terms relate under the definition in the user message."
 
 // BuildAdjudicationPrompt renders the same-intent pairs for the judging body: the definition's same-extension
-// rule and the two terms, with no similarity context.
+// rule and the two terms, with no similarity context. The answer is the typed relation between the terms;
+// only same_concept carries a canonical direction, and only that direction lets the pair fold.
 func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	var sb strings.Builder
 	sb.WriteString(TagDefinition + "\n")
-	sb.WriteString("For each pair below, decide whether the two terms are one tag: under that definition, labels with the same retrieval meaning are one value with one canonical label, and faithful replacement holds when either term can stand for the other without loss or change of meaning.\n")
-	sb.WriteString("Answer with ONLY a JSON object: {\"pairs\":[{\"index\":0,\"verdict\":\"same\",\"direction\":\"query\"},...]}, one entry per pair, no explanations.\n")
-	sb.WriteString("Verdict must be exactly one of:\n")
-	sb.WriteString("- \"same\": the terms denote one value (morphographic variants, spelling variants, or intent-equivalent derivations)\n")
-	sb.WriteString("- \"variant\": closely related but distinct concepts (one is a narrower or broader form of the other)\n")
-	sb.WriteString("- \"related\": related but different concepts\n")
-	sb.WriteString("Use \"same\" exactly when faithful replacement holds: spelling and morphographic variants of one term (labour/labor, modelling/modeling) and intent-equivalent derivations are \"same\", not \"variant\". Reserve \"variant\" and \"related\" for genuinely distinct concepts — when the two meanings truly differ, answer \"variant\" (narrower or broader) or \"related\".\n")
-	sb.WriteString("When the verdict is \"same\", also answer which term is the precise one: \"direction\":\"query\" when the query term's standard sense is exactly the dimension, \"direction\":\"target\" when the target term's is, \"direction\":\"tie\" when neither is more precise. A polysemous term loses to the precise one.\n\n")
+	sb.WriteString("For each pair below, decide how the two terms relate: under that definition, labels with the same retrieval meaning are one value with one canonical label, and faithful replacement holds when either term can stand for the other without loss or change of meaning.\n")
+	sb.WriteString("Answer with ONLY a JSON object: {\"pairs\":[{\"index\":0,\"relation\":\"same_concept\",\"canonical\":\"query\"},...]}, one entry per pair, no explanations.\n")
+	sb.WriteString("Relation must be exactly one of:\n")
+	sb.WriteString("- \"same_concept\": faithful replacement holds — spelling and morphographic variants of one term (labour/labor, modelling/modeling) and intent-equivalent derivations\n")
+	sb.WriteString("- \"near_synonym\": closely related but not substitutable — one is narrower or broader than the other, or the terms are near-synonyms with different usage\n")
+	sb.WriteString("- \"distinct\": different concepts — including opposites and same-category siblings\n")
+	sb.WriteString("- \"uncertain\": you cannot decide confidently from the two terms alone\n")
+	sb.WriteString("Use \"same_concept\" exactly when faithful replacement holds; when the two meanings truly differ, answer \"near_synonym\" or \"distinct\", never \"same_concept\".\n")
+	sb.WriteString("When the relation is \"same_concept\", also answer which term is the precise one: \"canonical\":\"query\" when the query term's standard sense is exactly the dimension, \"canonical\":\"target\" when the target term's is, \"canonical\":\"tie\" when neither is more precise. A polysemous term loses to the precise one. Omit \"canonical\" for every other relation.\n\n")
 	for i, p := range pairs {
 		fmt.Fprintf(&sb, "Pair %d:\n", i)
 		fmt.Fprintf(&sb, "  query: %q\n", p.Query)
@@ -49,19 +52,20 @@ func BuildAdjudicationPrompt(pairs []TagPairEvidence) string {
 	return sb.String()
 }
 
-// ParseAdjudicationResponse parses n pair verdicts. A pair with no parseable verdict — a missing entry,
-// an unrecognized verdict string, or an out-of-range index — counts as missing, so an unanswered pair
-// is never invented. An entry with a valid verdict but an unrecognized direction stays present with an
-// empty direction rather than counting as missing. A bare top-level array is accepted as the envelope's
-// value, and an entry without an index is placed by its position in the array. A truncated reply returns
-// *IncompleteReplyError alongside the populated results.
+// ParseAdjudicationResponse parses n pair answers. A pair with no parseable relation — a missing entry,
+// an unrecognized relation string, or an out-of-range index — counts as missing, so an unanswered pair is
+// never invented. An entry with a valid relation but an unrecognized canonical stays present with an empty
+// canonical rather than counting as missing, and a well-formed canonical arriving on a non-same_concept
+// relation is kept but inert: the fold guards read it only beside same_concept. A bare top-level array is
+// accepted as the envelope's value, and an entry without an index is placed by its position in the array.
+// A truncated reply returns *IncompleteReplyError alongside the populated results.
 func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error) {
 	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "pairs")
 	var parsed struct {
 		Pairs []struct {
 			Index     *int   `json:"index"`
-			Verdict   string `json:"verdict"`
-			Direction string `json:"direction"`
+			Relation  string `json:"relation"`
+			Canonical string `json:"canonical"`
 		} `json:"pairs"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
@@ -80,15 +84,15 @@ func ParseAdjudicationResponse(content string, n int) ([]TagVerdictResult, error
 		if idx < 0 || idx >= n {
 			continue
 		}
-		v, err := types.ParseTagVerdict(p.Verdict)
+		relation, err := types.ParseTagRelation(p.Relation)
 		if err != nil {
 			continue
 		}
-		results[idx].Verdict = v
+		results[idx].Relation = relation
 		present[idx] = true
-		switch p.Direction {
+		switch p.Canonical {
 		case types.TagDirectionQuery, types.TagDirectionTarget, types.TagDirectionTie:
-			results[idx].Direction = p.Direction
+			results[idx].Canonical = p.Canonical
 		}
 	}
 	var missing []int

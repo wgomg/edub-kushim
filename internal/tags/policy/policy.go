@@ -11,8 +11,9 @@ import (
 )
 
 // Version is bumped whenever the policy's gates, guards, thresholds, or band
-// semantics change.
-const Version = "v1"
+// semantics change. v2 re-judges the cached pair verdicts: the judge's answer became a typed relation
+// with an explicit canonical direction, so a verdict stamped under v1 is never reused.
+const Version = "v2"
 
 // Action is what the policy says about a candidate tag's name.
 type Action int

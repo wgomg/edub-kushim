@@ -16,6 +16,65 @@ func TestAllCounts(t *testing.T) {
 	}
 }
 
+func TestValidTagRelation(t *testing.T) {
+	cases := map[string]bool{
+		string(TagRelations.SameConcept): true,
+		string(TagRelations.NearSynonym): true,
+		string(TagRelations.Distinct):    true,
+		string(TagRelations.Uncertain):   true,
+		"same":                           false,
+		"variant":                        false,
+		"tie":                            false,
+		"":                               false,
+	}
+	for s, want := range cases {
+		if got := TagRelation(s).Valid(); got != want {
+			t.Errorf("TagRelation(%q).Valid() = %v, want %v", s, got, want)
+		}
+		if want {
+			if got, err := ParseTagRelation(s); err != nil || got != TagRelation(s) {
+				t.Errorf("ParseTagRelation(%q) = %q, %v; want %q, nil", s, got, err, s)
+			}
+		}
+	}
+	if _, err := ParseTagRelation("same"); err == nil {
+		t.Error("ParseTagRelation(\"same\") expected error")
+	}
+}
+
+func TestTagRelationVerdictMapping(t *testing.T) {
+	for _, tt := range []struct {
+		relation TagRelation
+		want     TagVerdict
+		decisive bool
+	}{
+		{TagRelations.SameConcept, TagVerdicts.Same, true},
+		{TagRelations.NearSynonym, TagVerdicts.Variant, true},
+		{TagRelations.Distinct, TagVerdicts.Related, true},
+		{TagRelations.Uncertain, "", false},
+	} {
+		got, decisive := tt.relation.Verdict()
+		if decisive != tt.decisive || got != tt.want {
+			t.Errorf("TagRelation(%q).Verdict() = %q, %v; want %q, %v", tt.relation, got, decisive, tt.want, tt.decisive)
+		}
+	}
+}
+
+func TestCanonicalSeparates(t *testing.T) {
+	cases := map[string]bool{
+		TagDirectionQuery:  true,
+		TagDirectionTarget: true,
+		TagDirectionTie:    false,
+		"":                 false,
+		"sideways":         false,
+	}
+	for canonical, want := range cases {
+		if got := CanonicalSeparates(canonical); got != want {
+			t.Errorf("CanonicalSeparates(%q) = %v, want %v", canonical, got, want)
+		}
+	}
+}
+
 func TestValid(t *testing.T) {
 	originCases := map[string]bool{
 		string(Batch.Origin.CLI):      true,

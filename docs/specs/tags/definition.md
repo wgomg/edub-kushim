@@ -576,10 +576,13 @@ The questions the definition leaves to policy, and their decided answers:
    candidate whose parts apply alongside, the measured overlap with the parts'
    intersection is accepted, and the recurrence threshold alone decides standing.
 3. **Canonical form.** Labels are shaped and identified at birth: the lemma form, the
-   conventional written form, same-intent resolution with the alias disposition, and
-   direction by sense-fit, then the house form/language, then a deterministic tie-break.
-   Frequency is not a birth-time criterion; it refines later through canonicalization. A
-   kindred-form criterion is rejected — there is no axis model to consult (item 7).
+   conventional written form, and same-intent resolution with the alias disposition. A
+   judged `same_concept` answer names the canonical label by sense-fit; a tie records the
+   verdict without folding, and lexical order never decides a judged pair. Mechanical
+   resolutions carry no direction and take the house form/language, then the deterministic
+   tie-break. Frequency is not a birth-time criterion; it refines later through
+   canonicalization. A kindred-form criterion is rejected — there is no axis model to
+   consult (item 7).
 4. **Demotion.** Two triggers: supersession (a better label takes over; same-intent losers
    alias to the canonical label) and the scheduled sweep that re-applies the current rules
    to stored tags (legacy non-compliance, older judge standards, mass decay). Demotion

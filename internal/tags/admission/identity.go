@@ -35,8 +35,9 @@ type identityPair struct {
 	query        string
 	target       string
 	sim          float64
+	relation     types.TagRelation
 	verdict      types.TagVerdict
-	direction    string
+	canonical    string
 	variantClass string
 	model        string
 	cached       bool
@@ -278,7 +279,10 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		if !p.decided || p.verdict != types.TagVerdicts.Same {
 			continue
 		}
-		winner, loser := tags.CanonicalLoser(p.direction, p.query, p.target)
+		if p.variantClass == "" && !types.CanonicalSeparates(p.canonical) {
+			continue
+		}
+		winner, loser := tags.CanonicalLoser(p.canonical, p.query, p.target)
 		winnerByLoser[loser] = winner
 	}
 	finalWinner := func(name string) string {
@@ -298,8 +302,13 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			continue
 		}
 		if p.verdict != types.TagVerdicts.Same {
-			a.logger.Info(reqID, "identity[%s]: separate %q and %q (verdict=%s cached=%t)",
-				tags.IdentityRuleSetVersion, p.query, p.target, p.verdict, p.cached)
+			a.logger.Info(reqID, "identity[%s]: separate %q and %q (verdict=%s relation=%s cached=%t)",
+				tags.IdentityRuleSetVersion, p.query, p.target, p.verdict, p.relation, p.cached)
+			continue
+		}
+		if p.variantClass == "" && !types.CanonicalSeparates(p.canonical) {
+			a.logger.Info(reqID, "identity[%s]: fold deferred for %q vs %q (relation=%s canonical=%s)",
+				tags.IdentityRuleSetVersion, p.query, p.target, p.relation, p.canonical)
 			continue
 		}
 		loser := p.query
@@ -312,8 +321,8 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		} else {
 			plan.Aliases = append(plan.Aliases, tags.AliasAction{AliasName: loser, Canonical: winner})
 		}
-		a.logger.Info(reqID, "identity[%s]: alias %q -> %q (verdict=%s direction=%s cached=%t)",
-			tags.IdentityRuleSetVersion, loser, winner, p.verdict, p.direction, p.cached)
+		a.logger.Info(reqID, "identity[%s]: alias %q -> %q (verdict=%s canonical=%s relation=%s cached=%t)",
+			tags.IdentityRuleSetVersion, loser, winner, p.verdict, p.canonical, p.relation, p.cached)
 	}
 
 	pendingPartner := make(map[string]string)
@@ -329,7 +338,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 		if _, isStore := in.DBNames[p.target]; !isStore {
 			pendingCandidates[p.target] = true
 		}
-		a.logger.Info(reqID, "identity[%s]: defer %q vs %q to review (adjudication unavailable)",
+		a.logger.Info(reqID, "identity[%s]: defer %q vs %q to review (no pair verdict)",
 			tags.IdentityRuleSetVersion, p.query, p.target)
 	}
 
@@ -753,7 +762,7 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 			continue
 		}
 		p.verdict, _ = types.ParseTagVerdict(row.Verdict.String)
-		p.direction = identityDirection(row.Criteria)
+		applySameIntentCriteria(row.Criteria, p)
 		p.cached = true
 		p.decided = true
 		p.model = row.Model.String
@@ -794,8 +803,17 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 	}
 	model := a.config.ResolvedAdjudicatorLlm().Model
 	applyVerdict := func(p *identityPair, r analyzer.TagVerdictResult) {
-		p.verdict = r.Verdict
-		p.direction = r.Direction
+		p.relation = r.Relation
+		p.canonical = r.Canonical
+		verdict, decisive := r.Relation.Verdict()
+		if !decisive {
+			// an abstention is deferred exactly like a missing answer: the pair stays undecided, so the pending
+			// same_intent evidence row minted downstream re-asks the resolver
+			a.logger.Info(reqID, "identity[%s]: judge uncertain on %q vs %q, deferred to review",
+				tags.IdentityRuleSetVersion, p.query, p.target)
+			return
+		}
+		p.verdict = verdict
 		p.model = model
 		p.decided = true
 	}
@@ -851,34 +869,42 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 	return nil
 }
 
-func identityDirection(criteria []byte) string {
+// applySameIntentCriteria reads one same-intent criteria record back onto the pair: the judged relation
+// and canonical direction, or the deterministic variant class of a mechanically resolved pair. It is the
+// only reader of the stored shape, so the writer and every cache read cannot drift apart.
+func applySameIntentCriteria(criteria []byte, p *identityPair) {
 	var parsed struct {
-		Direction string `json:"direction"`
+		Relation      string `json:"relation"`
+		Canonical     string `json:"canonical"`
+		Deterministic string `json:"deterministic"`
 	}
 	if err := json.Unmarshal(criteria, &parsed); err != nil {
-		return ""
+		return
 	}
-	switch parsed.Direction {
+	if relation, err := types.ParseTagRelation(parsed.Relation); err == nil {
+		p.relation = relation
+	}
+	switch parsed.Canonical {
 	case types.TagDirectionQuery, types.TagDirectionTarget, types.TagDirectionTie:
-		return parsed.Direction
+		p.canonical = parsed.Canonical
 	}
-	return ""
+	p.variantClass = parsed.Deterministic
 }
 
 // sameIntentCriteria builds the criteria JSON one same-intent identity event carries: the variant class
-// for a mechanically resolved pair, the judged direction otherwise. Every writer of the kind shares it so
-// the stored evidence shape cannot drift.
-func sameIntentCriteria(direction, variantClass string) []byte {
-	key, value := "direction", direction
+// for a mechanically resolved pair, the typed relation plus the judged canonical direction otherwise.
+// Every writer of the kind shares it so the stored evidence shape cannot drift.
+func sameIntentCriteria(canonical, variantClass string, relation types.TagRelation) []byte {
 	if variantClass != "" {
-		key, value = "deterministic", variantClass
+		criteria, _ := json.Marshal(map[string]string{"deterministic": variantClass})
+		return criteria
 	}
-	criteria, _ := json.Marshal(map[string]string{key: value})
+	criteria, _ := json.Marshal(map[string]string{"relation": string(relation), "canonical": canonical})
 	return criteria
 }
 
 func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *identityPair, reqID string) {
-	criteria := sameIntentCriteria(p.direction, p.variantClass)
+	criteria := sameIntentCriteria(p.canonical, p.variantClass, p.relation)
 	var model sql.NullString
 	if p.model != "" {
 		model = sql.NullString{String: p.model, Valid: true}
@@ -911,7 +937,7 @@ func (a *Adjudicator) recordIdentityPair(ctx context.Context, docID int64, p *id
 				continue
 			}
 			p.verdict, _ = types.ParseTagVerdict(row.Verdict.String)
-			p.direction = identityDirection(row.Criteria)
+			applySameIntentCriteria(row.Criteria, p)
 			p.cached = true
 			if row.Model.Valid {
 				p.model = row.Model.String

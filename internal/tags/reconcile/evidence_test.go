@@ -65,7 +65,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 		r, fake, buf, cfg := newAdjudicateBandHarness(t)
 		fake.adjudicate = func(pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 			results := make([]analyzer.TagVerdictResult, len(pairs))
-			results[0] = analyzer.TagVerdictResult{Index: 0, Verdict: types.TagVerdicts.Variant}
+			results[0] = analyzer.TagVerdictResult{Index: 0, Relation: types.TagRelations.NearSynonym}
 			return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
 		}
 		salvaged := bandEntry("supply", "supply chain", types.TagVerdicts.Variant)
@@ -125,7 +125,7 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 			call++
 			results := make([]analyzer.TagVerdictResult, len(pairs))
 			for i := range results {
-				results[i] = analyzer.TagVerdictResult{Index: i, Verdict: types.TagVerdicts.Variant}
+				results[i] = analyzer.TagVerdictResult{Index: i, Relation: types.TagRelations.NearSynonym}
 			}
 			if call == 1 {
 				return results, nil
@@ -149,6 +149,69 @@ func TestAdjudicateBand_PartialReply(t *testing.T) {
 		out := buf.String()
 		if !strings.Contains(out, "partial confirmation reply") || !strings.Contains(out, "salvaged 1 of 2") {
 			t.Errorf("expected a WARN naming the partial confirmation salvage, got:\n%s", out)
+		}
+	})
+}
+
+func TestAdjudicateBand_UncertainIsDeferred(t *testing.T) {
+	t.Run("an uncertain answer marks the entry deferred and records nothing", func(t *testing.T) {
+		r, fake, _, cfg := newAdjudicateBandHarness(t)
+		fake.adjudicate = func(pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+			results := make([]analyzer.TagVerdictResult, len(pairs))
+			results[0] = analyzer.TagVerdictResult{Index: 0, Relation: types.TagRelations.Uncertain}
+			return results, &analyzer.IncompleteReplyError{Missing: []int{1}}
+		}
+		abstained := bandEntry("supply", "supply chain", types.TagVerdicts.Variant)
+		missing := bandEntry("urban planning", "city planning", types.TagVerdicts.Variant)
+
+		r.adjudicateBand(context.Background(), cfg, []*entry{abstained, missing})
+
+		if abstained.skipReason != "uncertain" {
+			t.Errorf("skipReason = %q, want the abstention deferred as uncertain", abstained.skipReason)
+		}
+		if abstained.freshVerdict != "" {
+			t.Errorf("freshVerdict = %q, want nothing recorded for an abstention", abstained.freshVerdict)
+		}
+		if abstained.freshModel != "" {
+			t.Errorf("freshModel = %q, want no model recorded for an abstention", abstained.freshModel)
+		}
+		if abstained.reason == "adjudicated" {
+			t.Errorf("reason = adjudicated, want the abstention to stay unadjudicated")
+		}
+		if missing.skipReason != "ambiguous" {
+			t.Errorf("skipReason = %q, want the missing entry skipped as ambiguous", missing.skipReason)
+		}
+		if fake.calls != 1 {
+			t.Errorf("adjudicator calls = %d, want 1", fake.calls)
+		}
+	})
+
+	t.Run("an uncertain confirmation abstains instead of confirming", func(t *testing.T) {
+		r, fake, _, cfg := newAdjudicateBandHarness(t)
+		call := 0
+		fake.adjudicate = func(pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+			call++
+			results := make([]analyzer.TagVerdictResult, len(pairs))
+			for i := range results {
+				results[i] = analyzer.TagVerdictResult{Index: i, Relation: types.TagRelations.NearSynonym}
+			}
+			if call > 1 {
+				results[0].Relation = types.TagRelations.Uncertain
+			}
+			return results, nil
+		}
+		unconfirmed := bandEntry("urban planning", "city planning", types.TagVerdicts.Same)
+
+		r.adjudicateBand(context.Background(), cfg, []*entry{unconfirmed})
+
+		if unconfirmed.skipReason != "confirmation_ambiguous" {
+			t.Errorf("skipReason = %q, want the uncertain confirmation abstained", unconfirmed.skipReason)
+		}
+		if unconfirmed.confirmed {
+			t.Errorf("an uncertain confirmation must not confirm the verdict")
+		}
+		if unconfirmed.freshVerdict != types.TagVerdicts.Variant {
+			t.Errorf("freshVerdict = %q, want the first pass verdict kept behind the abstention", unconfirmed.freshVerdict)
 		}
 	})
 }

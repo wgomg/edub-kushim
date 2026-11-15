@@ -522,7 +522,8 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 			continue
 		}
 		p.verdict = types.TagVerdicts.Same
-		p.direction = ""
+		p.variantClass = class
+		p.canonical = ""
 		p.model = ""
 		p.decided = true
 		r.resolveDeterministicPair(ctx, rows[i], class, report)
@@ -536,15 +537,23 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 
 	model := cfg.ResolvedAdjudicatorLlm().Model
 	resolvePair := func(p *identityPair, row database.TagIdentityEvent, result analyzer.TagVerdictResult) {
-		p.verdict = result.Verdict
-		p.direction = result.Direction
+		p.relation = result.Relation
+		p.canonical = result.Canonical
+		verdict, decisive := result.Relation.Verdict()
+		if !decisive {
+			// an abstention leaves the row pending so the next pass re-judges it; nothing is recorded
+			r.logger.Info("", "tag identity: judge uncertain on %q vs %q, left pending", p.query, p.target)
+			report.Deferred++
+			return
+		}
+		p.verdict = verdict
 		p.model = model
 		p.decided = true
 		if _, err := r.client.Queries.ResolveTagIdentityEvent(ctx, database.ResolveTagIdentityEventParams{
 			ID:       row.ID,
 			Verdict:  sql.NullString{String: string(p.verdict), Valid: true},
 			Model:    sql.NullString{String: model, Valid: model != ""},
-			Criteria: sameIntentCriteria(p.direction, ""),
+			Criteria: sameIntentCriteria(p.canonical, "", p.relation),
 		}); err != nil {
 			r.logger.Error("", "tag identity: resolve pair %q -> %q failed: %v", p.query, p.target, err)
 			report.Failed++
@@ -590,7 +599,10 @@ func (r *IdentityResolver) resolvePairs(ctx context.Context, cfg *config.Config,
 		if !p.decided || p.verdict != types.TagVerdicts.Same {
 			continue
 		}
-		winner, loser := tags.CanonicalLoser(p.direction, p.query, p.target)
+		if p.variantClass == "" && !types.CanonicalSeparates(p.canonical) {
+			continue
+		}
+		winner, loser := tags.CanonicalLoser(p.canonical, p.query, p.target)
 		winnerByLoser[loser] = winner
 	}
 	finalWinner := func(name string) string {
@@ -640,7 +652,7 @@ func (r *IdentityResolver) resolveDeterministicPair(ctx context.Context, row dat
 		ID:       row.ID,
 		Verdict:  sql.NullString{String: string(types.TagVerdicts.Same), Valid: true},
 		Model:    sql.NullString{},
-		Criteria: sameIntentCriteria("", class),
+		Criteria: sameIntentCriteria("", class, ""),
 	}); err != nil {
 		r.logger.Error("", "tag identity: resolve deterministic pair %q -> %q failed: %v", row.Candidate, row.Partner.String, err)
 		report.Failed++

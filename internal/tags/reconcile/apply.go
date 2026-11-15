@@ -34,10 +34,16 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		}
 		report.Confirmed++
 
-		flipToAlias := e.freshVerdict == types.TagVerdicts.Same && e.verdict != types.TagVerdicts.Same
+		flipToAlias := e.freshVerdict == types.TagVerdicts.Same && e.verdict != types.TagVerdicts.Same &&
+			(e.reason == "deterministic" || types.CanonicalSeparates(e.canonical))
 		flipToKeep := e.freshVerdict != types.TagVerdicts.Same && e.verdict == types.TagVerdicts.Same
 
 		if !flipToAlias && !flipToKeep {
+			if e.freshVerdict == types.TagVerdicts.Same && e.verdict != types.TagVerdicts.Same &&
+				e.reason != "deterministic" && !types.CanonicalSeparates(e.canonical) {
+				r.logger.Info("", "tag reconcile: fold deferred for %q → %q (same concept, canonical %q does not separate)",
+					e.query, e.target, e.canonical)
+			}
 			if err := r.upsertVerdict(ctx, e); err != nil {
 				r.logger.Error("", "tag reconcile: upsert verdict for %q → %q: %v", e.query, e.target, err)
 			}
@@ -47,7 +53,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 		if report.ReportOnly {
 			if flipToAlias {
 				report.Flips.ToAlias++
-				winner, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
+				winner, loser := tags.CanonicalLoser(e.canonical, e.query, e.target)
 				report.PlannedAliases = append(report.PlannedAliases, PairEntry{
 					Query:      loser,
 					Target:     winner,
@@ -76,7 +82,7 @@ func (r *Reconciler) applyPass(ctx context.Context, cfg *config.Config, worklist
 			appliedFlip = true
 			aliasFlips = append(aliasFlips, e)
 			// the loser's full count is an upper bound on the batch's re-pointing
-			_, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
+			_, loser := tags.CanonicalLoser(e.canonical, e.query, e.target)
 			budget -= int(tagCounts[loser])
 			continue
 		}
@@ -215,7 +221,7 @@ func (r *Reconciler) pairDocumentCounts(ctx context.Context, entries []*entry) (
 func (r *Reconciler) applyAliasFlips(ctx context.Context, entries []*entry, report *Report) {
 	actions := make([]tags.AliasAction, 0, len(entries))
 	for _, e := range entries {
-		winner, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
+		winner, loser := tags.CanonicalLoser(e.canonical, e.query, e.target)
 		actions = append(actions, tags.AliasAction{
 			AliasName:         loser,
 			Canonical:         winner,
@@ -235,7 +241,7 @@ func (r *Reconciler) applyAliasFlips(ctx context.Context, entries []*entry, repo
 			report.Skips["alias_skip"]++
 			continue
 		}
-		winner, loser := tags.CanonicalLoser(e.direction, e.query, e.target)
+		winner, loser := tags.CanonicalLoser(e.canonical, e.query, e.target)
 		report.Flips.ToAlias++
 		report.Aliases = append(report.Aliases, PairEntry{
 			Query:      loser,

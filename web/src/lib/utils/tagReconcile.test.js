@@ -143,7 +143,7 @@ describe('affectedDocuments', () => {
 	});
 });
 
-describe('notActedGroups', () => {
+	describe('notActedGroups', () => {
 	it('merges skip reasons and no_documents', () => {
 		const groups = notActedGroups({ below_floor: 3, ambiguous: 2 }, 0, 5);
 		expect(groups).toHaveLength(3);
@@ -153,6 +153,11 @@ describe('notActedGroups', () => {
 			"the checker couldn't decide confidently — kept as-is, retried next run"
 		);
 		expect(labels).toContain('the tag was restored, but no documents carried these tags');
+	});
+
+	it('labels the uncertain skip reason', () => {
+		const groups = notActedGroups({ uncertain: 1 }, 0, 0);
+		expect(groups.map((g) => g.label)).toContain('the judge could not decide — retried next run');
 	});
 
 	it('includes capped label', () => {

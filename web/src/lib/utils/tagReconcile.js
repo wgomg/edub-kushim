@@ -17,6 +17,7 @@ const skipReasonLabels = {
 	confirmation_ambiguous: "the checker couldn't decide confidently — kept as-is, retried next run",
 	confirmation_disagreement:
 		"the checker couldn't decide confidently — kept as-is, retried next run",
+	uncertain: 'the judge could not decide — retried next run',
 	below_floor: 'the tags are no longer similar enough to confuse',
 	query_reborn: 'the tag already exists — nothing left to do',
 	no_documents: 'the tag was restored, but no documents carried these tags',
