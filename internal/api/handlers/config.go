@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/mime"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -229,7 +230,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		missing := config.MissingExternalToolErrors(cfg)
 
-		downloading := h.startAssetDownloads(cfg)
+		downloading := h.startAssetDownloads(r.Context(), cfg)
 
 		writeConfigSaveResponse(w, downloading, missing, svcPath)
 		return
@@ -287,7 +288,7 @@ func (h *ConfigHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 	if immediateCfg, loadErr := config.Load(configDir); loadErr != nil {
 		h.logger.Error("", "reload config for asset downloads: %v", loadErr)
 	} else {
-		pending += h.startAssetDownloads(immediateCfg)
+		pending += h.startAssetDownloads(r.Context(), immediateCfg)
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
@@ -403,21 +404,37 @@ func (h *ConfigHandler) freshSetup(ctx context.Context, w http.ResponseWriter, c
 
 	missing := config.MissingExternalToolErrors(reloaded)
 
-	downloading := h.startAssetDownloads(reloaded)
+	downloading := h.startAssetDownloads(ctx, reloaded)
 	writeConfigSaveResponse(w, downloading, missing, svcPath)
 }
 
 // hugotAssetKey names the hugot model in the direct-download bookkeeping; tessdata entries use the language
-// code as their key.
+// code as their key, and knowledge base entries use kbAssetKeyPrefix plus the source name.
 const hugotAssetKey = "hugot"
 
-// missingAssets lists the required assets absent from disk: one tessdata key per configured language plus
-// the hugot model. It is the single source of the required-asset set for the download trigger, the status
-// pending count and the failure listing.
-func missingAssets(cfg *config.Config) []string {
+// kbAssetKeyPrefix prefixes the direct-download key of a knowledge base source.
+const kbAssetKeyPrefix = "kb:"
+
+// missingAssets lists the required assets absent from disk and the configured knowledge base sources not
+// installed at their pinned version: one tessdata key per configured language plus the hugot model plus one
+// knowledge base key per outdated source. It is the single source of the required-asset set for the download
+// trigger, the status pending count and the failure listing.
+func (h *ConfigHandler) missingAssets(ctx context.Context, cfg *config.Config) []string {
 	missing := config.MissingTessdataLanguages(cfg)
 	if config.MissingHugotModel(cfg) {
 		missing = append(missing, hugotAssetKey)
+	}
+	if h.client == nil {
+		return missing
+	}
+
+	missingSources, err := kb.NewStore(h.client, cfg.App.ConfigDir).Missing(ctx, cfg.KnowledgeBase.Sources)
+	if err != nil {
+		h.logger.Error("", "read kb sources for asset status: %v", err)
+		return missing
+	}
+	for _, name := range missingSources {
+		missing = append(missing, kbAssetKeyPrefix+name)
 	}
 	return missing
 }
@@ -428,23 +445,36 @@ func missingAssets(cfg *config.Config) []string {
 // or queue progress. The request context is detached because a model download outlives the HTTP request; a
 // process exit aborts one, and the live missing-asset check keeps the status honest afterwards. Both
 // helpers skip when the asset is present, so re-triggering is idempotent.
-func (h *ConfigHandler) startAssetDownloads(cfg *config.Config) int {
+func (h *ConfigHandler) startAssetDownloads(ctx context.Context, cfg *config.Config) int {
 	count := 0
-	for _, key := range missingAssets(cfg) {
+	for _, key := range h.missingAssets(ctx, cfg) {
 		if !h.beginDownload(key) {
 			continue
 		}
 		h.clearAssetFailure(key)
 		assetKey := key
 		go h.downloadAsset(assetKey, func() error {
-			if assetKey == hugotAssetKey {
+			switch {
+			case assetKey == hugotAssetKey:
 				return h.downloadHugot(context.Background(), cfg)
+			case strings.HasPrefix(assetKey, kbAssetKeyPrefix):
+				return h.downloadKnowledgeBase(context.Background(), cfg, strings.TrimPrefix(assetKey, kbAssetKeyPrefix))
+			default:
+				return h.downloadTessdata(context.Background(), cfg, assetKey)
 			}
-			return h.downloadTessdata(context.Background(), cfg, assetKey)
 		})
 		count++
 	}
 	return count
+}
+
+// downloadKnowledgeBase ensures one configured source: it downloads the pinned artifact when the store does
+// not already hold the pinned version and installs it.
+func (h *ConfigHandler) downloadKnowledgeBase(ctx context.Context, cfg *config.Config, source string) error {
+	if h.client == nil {
+		return fmt.Errorf("database not ready — retry after setup completes")
+	}
+	return kb.NewStore(h.client, cfg.App.ConfigDir).Ensure(ctx, source)
 }
 
 // beginDownload marks an asset as downloading; it reports false when a download for that asset is already
@@ -511,9 +541,13 @@ func (h *ConfigHandler) failedAssetTasks(missingKeys []string) []FailedTaskSumma
 			continue
 		}
 		summary := FailedTaskSummary{Op: "tessdata", Error: message}
-		if key == hugotAssetKey {
+		switch {
+		case key == hugotAssetKey:
 			summary.Op = hugotAssetKey
-		} else {
+		case strings.HasPrefix(key, kbAssetKeyPrefix):
+			summary.Op = "kb"
+			summary.Lang = strings.TrimPrefix(key, kbAssetKeyPrefix)
+		default:
 			summary.Lang = key
 		}
 		failed = append(failed, summary)
@@ -824,7 +858,7 @@ func (h *ConfigHandler) ConfigStatus(w http.ResponseWriter, r *http.Request) {
 		// asset downloads have no task rows: pending counts the live missing assets, and the failures come from
 		// the update path's in-memory record
 		if ready {
-			missing := missingAssets(cfg)
+			missing := h.missingAssets(ctx, cfg)
 			resp.PendingTasks += len(missing)
 			resp.FailedTasks = append(resp.FailedTasks, h.failedAssetTasks(missing)...)
 		}
@@ -880,7 +914,7 @@ func (h *ConfigHandler) RetryFailedConfig(w http.ResponseWriter, r *http.Request
 		retried += result.FailedRetried
 	}
 
-	downloads := h.startAssetDownloads(cfg)
+	downloads := h.startAssetDownloads(ctx, cfg)
 
 	writeJSON(w, http.StatusOK, map[string]int64{"retried": retried, "downloads_started": int64(downloads)})
 }
@@ -1021,12 +1055,18 @@ type ConfigResponse struct {
 	Server             ServerConfigResponse            `json:"server"`
 	Storage            StorageConfigResponse           `json:"storage"`
 	Database           DatabaseConfigResponse          `json:"database"`
+	KnowledgeBase      KnowledgeBaseConfigResponse     `json:"knowledgebase"`
 	Consumer           ConsumerConfigResponse          `json:"consumer"`
 	Enricher           EnricherConfigResponse          `json:"enricher"`
 	Backup             BackupConfigResponse            `json:"backup"`
 	Mirror             MirrorConfigResponse            `json:"mirror"`
 	AvailableEngines   map[string][]config.EngineEntry `json:"available_engines"`
 	AvailableFileTypes []AvailableFileType             `json:"available_file_types"`
+}
+
+// KnowledgeBaseConfigResponse is the knowledge base section's API view.
+type KnowledgeBaseConfigResponse struct {
+	Sources []string `json:"sources"`
 }
 
 // AvailableFileType is one ingest format the UI can offer.
@@ -1436,6 +1476,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Storage.StorageDir = cfg.Storage.StorageDir
 	resp.Storage.MigrationMode = cfg.Storage.MigrationMode
 	resp.Storage.Trash.RetentionDays = cfg.Storage.Trash.RetentionDays
+	resp.KnowledgeBase.Sources = cfg.KnowledgeBase.Sources
 	resp.Database.Host = cfg.Db.Host
 	resp.Database.Port = cfg.Db.Port
 	resp.Database.User = cfg.Db.User

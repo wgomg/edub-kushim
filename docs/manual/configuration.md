@@ -79,6 +79,28 @@ applies.
 Changing either directory from the settings UI is deferred through a `migrate-storage` task;
 the CLI equivalents are `kushim migrate storage` ([cli.md](cli.md#kushim-migrate-storage)).
 
+## `knowledgebase`
+
+Offline lexical sources installed into the database at setup. They supply
+corpus-independent typed evidence for tags; the installed data is exposed through the
+knowledge base read interface, but tag candidate generation does not consume it yet.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sources` | `['oewn']` | Sources to ensure at setup: `oewn` (Open English WordNet, included) and `conceptnet` (ConceptNet 5.7 English subset, opt-in) |
+
+`kushim setup` — terminal or wizard — installs every configured source into the `kb_*`
+tables and caches the verified artifact under `<config-dir>/kb/`. The first setup
+downloads about 5 MB for OEWN and 7 MB for ConceptNet from the project's Git LFS store.
+Each source replaces only its own rows; removing a source from the list stops future
+ensuring but does not uninstall its existing rows, and after setup changing the list does
+not install anything by itself.
+
+The data is licensed separately from the code: OEWN under CC BY 4.0 (with the chained
+Princeton WordNet notice) and ConceptNet under CC BY-SA 4.0. The manifest inside each
+artifact and `assets/kb/README.md` carry the attribution and license text; the install
+refuses an artifact whose manifest lacks a license or notice.
+
 ## `consumer`
 
 The ingestion pipeline: which files are accepted and which tools process them.

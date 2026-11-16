@@ -323,6 +323,42 @@ type DocumentType struct {
 	CreatedAt   sql.NullTime
 }
 
+type KbConcept struct {
+	Source     string
+	ConceptKey string
+	Pos        sql.NullString
+	Gloss      sql.NullString
+}
+
+type KbEdge struct {
+	Source         string
+	FromConceptKey string
+	ToConceptKey   string
+	Family         string
+	SourceReltype  string
+	Weight         sql.NullFloat64
+}
+
+type KbLemma struct {
+	Source     string
+	ConceptKey string
+	LemmaNorm  string
+}
+
+type KbSource struct {
+	Source           string
+	SourceVersion    string
+	License          string
+	Notice           string
+	UpstreamUrl      string
+	UpstreamSha256   string
+	ConverterVersion string
+	ConceptCount     int64
+	LemmaCount       int64
+	EdgeCount        int64
+	InstalledAt      time.Time
+}
+
 type MatcherTextEmbedding struct {
 	Fingerprint string
 	InputHash   []byte

@@ -198,7 +198,11 @@ func TestPutConfig_FreshSetup_InitializesClaimedTargetAndBindsServices(t *testin
 		t.Fatalf("load seeded config: %v", err)
 	}
 
-	// present assets keep the save response free of download work
+	// present assets keep the save response free of download work; the knowledge
+	// base is satisfied by a pinned-version fixture row so this flow exercises
+	// the current default config without depending on the network
+	fullResetDB(t, env.client.DB())
+	satisfyPinnedOEWN(t, env.client.DB())
 	dataDir := cfg.Consumer.OCR.DataDir
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)

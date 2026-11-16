@@ -121,7 +121,7 @@ Pure Go binary (`CGO_ENABLED=0`) that handles HTTP requests. It:
 
 - Enqueues consume/enrich/thumbnail tasks when `POST /api/v1/consume` is called, creating batches with `status='queued'` (plus tag-identity/tag-audit runs from the review surfaces and `migrate-db`/`migrate-storage` batches from the config handler)
 - The `kushim queue` daemon picks up queued batches and forks the batch's owning task CLI (`kushim --executor consume --from-batch <id>` for ingest batches, `kushim --executor migrate --from-batch` for migrations) for processing; `edub` never claims a batch
-- Watches `config.yaml` (5s poll): when the database connection settings changed on disk — after a `migrate-db` task persists them — it reconnects the whole server (services, task catalog/enqueuer, route handlers) to the new database; on connect failure it keeps the previous configuration. Storage directory changes (persisted by a `migrate-storage` task) are picked up the same way — the inbox scan and storage layout then use the new paths. Asset downloads (tessdata, Hugot model) are direct config updates started on the config save, not tasks.
+- Watches `config.yaml` (5s poll): when the database connection settings changed on disk — after a `migrate-db` task persists them — it reconnects the whole server (services, task catalog/enqueuer, route handlers) to the new database; on connect failure it keeps the previous configuration. Storage directory changes (persisted by a `migrate-storage` task) are picked up the same way — the inbox scan and storage layout then use the new paths. Asset downloads (tessdata, Hugot model, knowledge base artifacts) are direct config updates started on the config save, not tasks.
 - Probes the matcher socket on startup (logs a warning if unreachable); tag CRUD is not blocked — embedding-store sync errors are logged and swallowed
 - Does not manage inbox polling — the queue daemon (`kushim queue`) scans through its scheduler's polling entry
 
@@ -504,7 +504,7 @@ six-step guided flow:
    language-pack guidance.
 3. **Enricher settings** — tag matcher engine/timeout, reduce-target-words, chunk size, Hugot model/backend;
    text reducer engine/timeout/target-words; enricher workers
-4. **Progress** — tessdata language files and the Hugot model download as direct config updates started by the config save (no task rows); the UI polls `GET /wizard/config/status` every 3 seconds, whose pending count covers the missing assets live
+4. **Progress** — tessdata language files, the Hugot model and the configured knowledge base artifacts download as direct config updates started by the config save (no task rows); the UI polls `GET /wizard/config/status` every 3 seconds, whose pending count covers the missing assets live
 5. **Admin user** — optionally create an admin user account (username + password)
 6. **Completion** — all downloads are finished; the server is ready to run.
    If any required external tools are missing, a notice lists what to install
@@ -600,14 +600,23 @@ The `PUT` handler has two phases:
 
 ### Asset downloads
 
-Tessdata language files and the Hugot model are **not tasks**: saving a config calls the
-`config` package's download helpers directly (the same helpers the setup CLI and
-enrichment auto-detection use). Each download is atomic — it lands in a temp file and is
-renamed into place — and repeats are idempotent: an asset already on disk is skipped, and
+Tessdata language files, the Hugot model and the configured knowledge base sources are
+**not tasks**: saving a config calls the `config` package's download helpers directly (the
+same helpers the setup CLI and enrichment auto-detection use) or, for knowledge base
+sources, `kb.Store.Ensure`. Each asset download is atomic — it lands in a temp file and is
+renamed into place — and repeats are idempotent: an asset already present is skipped, and
 one already downloading is not started twice. There is no batch, task row, dedup key,
 lease or queue progress for them; a failed download is recorded in the config handler's
 in-memory failure list, surfaced by `GET /wizard/config/status`, and re-triggered by
 `POST /wizard/config/retry`.
+
+Knowledge base sources carry their own currency rule. `kb.Store.Ensure` compares the
+installed `kb_source` row's source version and converter version with the compiled-in pin,
+reuses a sha256-matching artifact cached under `<config>/kb`, and otherwise downloads the
+artifact through its Git LFS pointer and the Batch API (no `git-lfs` client) before
+verifying the pinned hash and installing it in one transaction. An unknown configured
+source, a pointer or download that does not match the pin, or a malformed artifact fails
+loudly and installs nothing.
 
 ### Engine Identifiers
 
@@ -673,6 +682,54 @@ its files (original, processed, and thumbnail when present) to `trash/<document_
 restorable via the trash API); an hourly purge permanently removes trashed documents older than
 `storage.trash.retention_days` (default 30) and sweeps orphaned thumbnails in `storage/thumbnails/`
 whose document row no longer exists.
+
+---
+
+## Offline lexical knowledge base
+
+The `internal/kb` package installs offline lexical sources into Postgres and exposes their
+relations as corpus-independent evidence for tags. Data is **source-scoped**: every row
+carries the source it came from, concept keys are the source's own stable identifiers, and
+no cross-source concept identity exists. A missing source, or a label that does not
+resolve, is a miss — never negative evidence that a relation does not hold.
+
+| Source | Content | Families |
+|---|---|---|
+| Open English WordNet 2025 | synsets with part of speech and gloss, lemmas, WordNet relations | broader/narrower, instance, part, similar, antonym |
+| ConceptNet 5.7 (English subset) | word nodes (POS and sense suffixes dropped), weighted assertions | exact, similar, antonym, distinct, instance, part |
+
+Both sources map onto one small family vocabulary: `exact`, `similar`, `broader`,
+`narrower`, `instance`, `part`, `antonym`, `distinct`. The original relation name and the
+source's weight (ConceptNet only) stay on the edge. OEWN synonymy is not stored as edges:
+the read interface derives `exact` from lemmas sharing a concept, so a WordNet synset and
+the ConceptNet synonym graph answer the same question.
+
+Storage is four tables: `kb_source` (one row per installed source with its version,
+license, notice, upstream hash, converter version and row counts), `kb_concept`,
+`kb_lemma` (indexed by normalized lemma), and `kb_edge` (indexed from and to by family).
+Installing a source deletes and re-inserts exactly its rows inside one transaction, after
+verifying the loaded counts against the artifact's manifest; a truncated or malformed
+artifact rolls back whole. The `knowledgebase.sources` configuration chooses what setup
+ensures (default `oewn`; `conceptnet` is opt-in).
+
+Artifacts are produced by `scripts/gen_kb_artifacts.py` from the pinned upstream releases
+and committed under `assets/kb/` as Git-LFS-tracked tarballs containing the manifest and
+three TSVs. `internal/kb` pins each artifact by source version, converter version and
+sha256; at setup it reuses a hash-matching cached file under `<config>/kb` or downloads it
+through the LFS pointer and Batch API without a `git-lfs` client, then verifies the hash
+before installing. A pointer or download that does not match the pin fails loudly.
+
+The read side is `kb.Store`, which implements the `kb.Reader` interface: `Resolve`
+(label → concepts), `Neighbours` (typed edges of a family set, projected to lemma
+strings) and `PairProbe` (edges connecting two labels, in either direction). The
+interface is not yet consumed by tag candidate generation, so installing sources does not
+change tag decisions yet.
+
+The data carries its own licenses: OEWN is CC BY 4.0 with the chained Princeton WordNet
+notice, and ConceptNet is CC BY-SA 4.0. Each artifact's manifest and `assets/kb/README.md`
+document the boundary with the AGPL-3.0 code. The
+[knowledge base developer guide](developer-guide/kb.md) covers the artifact contract,
+mappings, and the regenerate/publish procedure.
 
 ---
 
@@ -758,6 +815,7 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 
 - [Testing Reference](tests.md) — Test infrastructure, patterns, and how to run
 - [Project Tree](project-tree.md) — Generated directory map
+- [Offline knowledge base guide](developer-guide/kb.md) — artifact contract, install/ensure, read interface
 
 ## Key Design Decisions
 
@@ -777,13 +835,15 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 | `CGO_ENABLED=0` for `edub`        | `edub` is compiled without CGo, making it a lightweight, statically linked binary. No runtime dependency on C libraries. `kushim` retains all CGo for Tesseract/Leptonica/MuPDF/Hugot.                                                                                                                                             |
 | Queue-driven batch processing     | Both API consume endpoints create batches with `status='queued'` and return immediately. The `kushim queue` daemon consumes queued batches (via Postgres LISTEN/NOTIFY with a 30s safety timer), enforces its own concurrency limit (`server.max_concurrent_batches`, default 4), and forks workers. No in-process semaphore needed in `edub`.                                                     |
 | CGo-heavy adapters run in subprocesses | Heartbeat goroutines were observed not firing during long-running Tesseract/MuPDF calls (the root cause may be OS thread exhaustion rather than scheduler preemption — Go has had asynchronous preemption since 1.14). Regardless of mechanism, crash containment and the `CGO_ENABLED=0` boundary independently justify the subprocess approach. Following the `internal-mupdf-clean` and `kushim hugot` precedents, any adapter wrapping a substantial third-party native library — one that can run for more than a second or two, or that may have its own internal threading or crash surface — gets its own subcommand and is forked as a child process via `exec.CommandContext`. Thin, fast, well-understood CGo calls (page counts, plain text extraction) stay in-process. |
+| Offline lexical KB as installed data | Lexical relations are converted once, licensed in their manifests, and published as committed LFS artifacts instead of being scraped from an upstream service at query time. Rows are source-scoped with per-source replacement and `(source version, converter version, sha256)` pinning; an empty result is a miss, so corpus evidence remains the arbiter. |
 
 ---
 
 ## Known Limitations
 
 - **tsvector `simple` config**: No CJK word segmentation. Upgrade to `'english'` or a custom config for stemming if needed.
-- **External dependencies**: `pdftotext`, `ghostscript`, and `ocrmypdf` required at runtime (only when using external-tool adapters; Go-native adapters have no runtime deps). The ocrmypdf adapter additionally requires `tesseract` and `unpaper` as companions, with `pngquant` recommended for image optimization. `curl` is required for any download (tessdata, Hugot model). Pre-flight checks at the consume entry point surface these requirements with actionable install hints.
+- **External dependencies**: `pdftotext`, `ghostscript`, and `ocrmypdf` required at runtime (only when using external-tool adapters; Go-native adapters have no runtime deps). The ocrmypdf adapter additionally requires `tesseract` and `unpaper` as companions, with `pngquant` recommended for image optimization. `curl` is required for the Hugot model and tessdata downloads; knowledge base artifacts download in-process. Pre-flight checks at the consume entry point surface these requirements with actionable install hints.
+- **Knowledge base not yet consumed**: offline lexical sources are installed and readable through `kb.Reader`, but tag candidate generation does not use them yet, so opting into `conceptnet` adds no tag decisions. First setup downloads the artifacts from GitHub over LFS; an air-gapped install needs a matching artifact pre-placed under `<config-dir>/kb/`, which is reused without network.
 - **Build‑time**: Requires `gcc`, `gcc-c++`, `make`, `autotools` for Leptonica/Tesseract/MuPDF compilation. Additionally `libtokenizers.a` downloaded as a pre-built binary for Hugot (per-arch via `TOKENIZERS_ARCH`, SHA-256 verified). The web UI requires Node.js 26 (see `.nvmrc` — run `nvm use` to activate). Use `docker compose up` to avoid installing any host-side toolchain — the multi-stage Dockerfile handles all build dependencies inside a container. Pre-built Linux binaries (amd64/arm64) are published to GitHub Releases by `.github/workflows/release.yml` on `v*` tag push — see `AGENTS.md` → Releases.
 - **MuPDF / Tesseract CGo isolation**: Long-running CGo operations (OCR via gosseract, PDF cleanup via pdf_clean_file) are isolated into forked subprocesses (`kushim internal-ocr`, `kushim internal-mupdf-clean`) so that crashes or scheduler starvation in the C library affect only the child. The parent receives a normal Go error and can fall back or retry. Thin CGo calls like page counting remain in-process.
 - **Malformed PDFs**: MuPDF's `pdf_clean_file` may fail on PDFs with invalid patterns

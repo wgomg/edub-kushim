@@ -206,6 +206,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 | [cgo.md](docs/developer-guide/cgo.md)                             | cgo and the C wrapper layer (MuPDF, Tesseract)                                    |
 | [ocr-pipeline.md](docs/developer-guide/ocr-pipeline.md)           | OCR engines, searchable-PDF generation                                            |
 | [task-system.md](docs/developer-guide/task-system.md)             | Task lifecycle, batch ownership, queue semantics                                  |
+| [kb.md](docs/developer-guide/kb.md)                               | Offline lexical knowledge base: artifacts, install/ensure, storage, read interface |
 | [llm.md](docs/developer-guide/llm.md)                             | LLM integration, prompts, model catalog, the enricher                             |
 
 ## Key Features

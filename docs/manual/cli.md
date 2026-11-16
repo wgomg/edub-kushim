@@ -52,16 +52,19 @@ The task and batch status vocabulary used throughout is defined in
 
 ### `kushim setup`
 
-Generate the configuration, create the directories, download OCR language data and the Hugot
-embedding model (`BAAI/bge-m3`), and claim the target database — auto-creating it when missing,
-adopting it only when completely empty. A database that already contains tables aborts setup;
-drop it or choose another name. Setup refuses to run over an existing configuration: to start
-over, delete `~/.config/edub-kushim/config.yaml` first.
+Generate the configuration, create the directories, download OCR language data, the Hugot
+embedding model (`BAAI/bge-m3`) and the configured offline lexical sources, and claim the
+target database — auto-creating it when missing, adopting it only when completely empty. A
+database that already contains tables aborts setup; drop it or choose another name. Setup
+refuses to run over an existing configuration: to start over, delete
+`~/.config/edub-kushim/config.yaml` first.
 
 By default it launches the **web wizard** at `http://0.0.0.0:8420` with a six-step flow:
 config directory → consumer settings → enricher settings (this step claims the database and
-applies the schema) → asset downloads (tessdata, model) → admin user → completion. `edub` is
-ready to start at the end.
+applies the schema) → asset downloads (tessdata, Hugot model, knowledge base sources) →
+admin user → completion. The knowledge base step installs `knowledgebase.sources` (default:
+OEWN; see [configuration.md](configuration.md#knowledgebase)). `edub` is ready to start at
+the end.
 
 For headless or CI use:
 
@@ -287,7 +290,7 @@ external tools in `PATH`:
 - **Engine binaries**: `ocrmypdf`, `gs`, `pdftotext`, each checked only when the corresponding
   config engine is selected.
 - **Required companions**: `tesseract` and `unpaper` (needed by the ocrmypdf adapter).
-- **Prerequisite**: `curl` for any model/language download.
+- **Prerequisite**: `curl` for the Hugot model and tessdata downloads.
 
 Missing required tools print a block of per-distro install hints and exit non-zero. Optional
 companions (`pngquant`) and tesseract language packs are advisory notes only. With the

@@ -402,8 +402,8 @@ The settings UI and the setup wizard share the configuration API (admin role):
 2. **Write**: `PUT /wizard/config` with a flat map of dot-notation keys
    (`"server.port": 3000`, `"consumer.ocr.languages": ["eng", "spa"]`):
    - `201` with `{"pending_tasks": N, "missing_tools": […]}` when asset downloads were
-     enqueued (tessdata, model files), or `200` with `{"configured": true}` when everything is
-     already present.
+     started (tessdata, Hugot model, knowledge base sources), or `200` with
+     `{"configured": true}` when everything is already present.
    - **Deferred changes**: when the body touches `database.*` or `storage.storage_dir` /
      `storage.consumption_dir`, the write is queued as a migration instead — `202` with
      `{"pending_tasks": 1, "message": "migration(s) queued — settings apply once the migration

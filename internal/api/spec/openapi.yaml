@@ -6089,6 +6089,8 @@ components:
           $ref: '#/components/schemas/DatabaseConfigResponse'
         enricher:
           $ref: '#/components/schemas/EnricherConfigResponse'
+        knowledgebase:
+          $ref: '#/components/schemas/KnowledgeBaseConfigResponse'
         mirror:
           $ref: '#/components/schemas/MirrorConfigResponse'
         server:
@@ -6100,6 +6102,7 @@ components:
         - server
         - storage
         - database
+        - knowledgebase
         - consumer
         - enricher
         - backup
@@ -7051,6 +7054,18 @@ components:
       required:
         - model
         - backend
+    KnowledgeBaseConfigResponse:
+      type: object
+      description: KnowledgeBaseConfigResponse is the knowledge base section's API view.
+      properties:
+        sources:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: "null"
+      required:
+        - sources
     LangHint:
       type: object
       description: LangHint is one OCR language's install hints per platform.

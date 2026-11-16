@@ -314,6 +314,7 @@ test-verbose:
 test-db:
 	CGO_ENABLED=0 go test -tags "XLA,ORT" -count=1 -timeout 120s \
 		./internal/database/ \
+		./internal/kb/ \
 		./internal/search/ \
 		./internal/task/ \
 		./internal/service/ \

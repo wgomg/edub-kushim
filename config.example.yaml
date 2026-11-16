@@ -41,6 +41,9 @@ storage:
   trash:
     retention_days: 30  # days before soft-deleted documents are permanently purged
 
+knowledgebase:
+  sources: [oewn]  # offline lexical sources to install: oewn (included) and conceptnet (opt-in)
+
 consumer:
   workers: 1
   max_files_per_batch: 10

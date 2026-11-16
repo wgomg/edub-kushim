@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/ops/flags"
 	"github.com/wgomg/edub-kushim/internal/service"
@@ -240,6 +241,15 @@ Flags:
 		return fmt.Errorf("hugot model download: %w", err)
 	}
 
+	client := database.NewClient(db)
+	store := kb.NewStore(client, cfg.App.ConfigDir)
+	for _, source := range cfg.KnowledgeBase.Sources {
+		logger.Info("", "ensuring knowledge base source: %s", source)
+		if err := store.Ensure(context.Background(), source); err != nil {
+			return fmt.Errorf("knowledge base source %s: %w", source, err)
+		}
+	}
+
 	if cfg.Consumer.PdfOptimizer.Engine == config.PdfOptimizer.MuPDF && optimizationFallback != "" {
 		if _, err := exec.LookPath(optimizationFallback); err != nil {
 			logger.Info("", "WARNING: --consumer-pdfoptimizer-fallback %s set but %q not found on PATH. "+
@@ -289,7 +299,6 @@ Flags:
 		}
 	}
 
-	client := database.NewClient(db)
 	userSvc := service.NewUser(client.Queries)
 	if _, err := userSvc.Create(context.Background(), adminUser, adminPassword, "admin"); err != nil {
 		if errs.KindOf(err) == errs.KindConflict {

@@ -8,6 +8,8 @@ are absent from the repository. Regenerate with `make docs-tree`; the one-line d
 edub-kushim/
 ├── .github  # GitHub configuration
 │   └── workflows  # ci.yml (tests, CGo, web, vulncheck) and release.yml
+├── assets  # distributed data assets
+│   └── kb  # offline lexical knowledge base artifacts (Git LFS) with their licenses
 ├── build  # build root for the static C dependencies (contents gitignored)
 ├── cmd  # binary entry points
 │   ├── apidocs  # renders the committed OpenAPI spec into docs/api.md
@@ -18,7 +20,7 @@ edub-kushim/
 ├── docker  # container files: glibc and musl builders, deployment entrypoint
 ├── docs  # project documentation
 │   ├── adr  # architecture decision records
-│   ├── developer-guide  # language and feature onboarding guides (Go, frontend, PostgreSQL, cgo, OCR, tasks, LLM, semantic matching, consolidation, algorithms)
+│   ├── developer-guide  # language and feature onboarding guides (Go, frontend, PostgreSQL, cgo, OCR, tasks, LLM, semantic matching, consolidation, algorithms, knowledge base)
 │   ├── manual  # user documentation: entry point, CLI, API usage, Web UI, tags, configuration
 │   │   └── images  # screenshots for the Web UI guide
 │   ├── research  # design notes and investigation reports
@@ -49,6 +51,7 @@ edub-kushim/
 │   │   └── thumbnail  # page thumbnail rendering
 │   ├── enrichment  # LLM enrichment engine and its task handler
 │   ├── errs  # error classification and database error mapping
+│   ├── kb  # offline lexical knowledge base: artifact installer and read interfaces
 │   ├── llm  # LLM capability registry and provider/model catalogs
 │   │   ├── analyzer  # LLM classification adapters, prompts, gates and judges
 │   │   └── testdata  # analyzer test fixtures

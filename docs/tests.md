@@ -86,8 +86,12 @@ defer db.Close()
 resetDB(t, q)
 ```
 
-The `resetDB` helper deletes all rows from every table, resets identity sequences, and
-re-runs the seed SQL for `document_type`, `people_type`, `tag`, and `tag_alias`.
+The `resetDB` helper deletes the rows of the core document, task and tag tables, resets their
+identity sequences, and re-runs the seed SQL for `document_type`, `people_type`, `tag`, and
+`tag_alias`. It does not touch the knowledge base tables (`kb_source`, `kb_concept`,
+`kb_lemma`, `kb_edge`), so KB rows persist for the lifetime of a package's test database;
+KB tests use distinct source names or replace a source's rows instead of assuming an empty
+store.
 
 Foreign key constraints are enforced by PostgreSQL just as in production.
 The connection pool opens with the neutral default ceiling

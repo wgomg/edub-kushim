@@ -176,6 +176,16 @@ type StorageConfig struct {
 	Trash          TrashConfig `mapstructure:"trash" yaml:"trash" json:"trash"`
 }
 
+// KnowledgeBaseConfig is the offline lexical knowledge base section: the pinned sources the setup flow
+// ensures. Removing a source from the list stops re-ensuring it; it does not uninstall its rows.
+type KnowledgeBaseConfig struct {
+	Sources []string `mapstructure:"sources" yaml:"sources" json:"sources"`
+}
+
+// validKnowledgeBaseSources is the closed set of source names this configuration accepts. It mirrors the
+// artifacts internal/kb pins; a name without a pin fails the setup ensure loudly.
+var validKnowledgeBaseSources = []string{"oewn", "conceptnet"}
+
 // TextExtractorConfig is the text extraction section: engine and call
 // timeout.
 type TextExtractorConfig struct {
@@ -531,14 +541,15 @@ type MirrorConfig struct {
 // Config is the whole application configuration: the YAML tree as loaded,
 // then finalized with defaults and validation.
 type Config struct {
-	App      AppConfig      `mapstructure:"app" yaml:"app" json:"app"`
-	Srv      ServerConfig   `mapstructure:"server" yaml:"server" json:"server"`
-	Db       DatabaseConfig `mapstructure:"database" yaml:"database" json:"database"`
-	Storage  StorageConfig  `mapstructure:"storage" yaml:"storage" json:"storage"`
-	Consumer ConsumerConfig `yaml:"consumer" json:"consumer"`
-	Enricher EnricherConfig `mapstructure:"enricher" yaml:"enricher" json:"enricher"`
-	Backup   BackupConfig   `mapstructure:"backup" yaml:"backup" json:"backup"`
-	Mirror   MirrorConfig   `mapstructure:"mirror" yaml:"mirror" json:"mirror"`
+	App           AppConfig           `mapstructure:"app" yaml:"app" json:"app"`
+	Srv           ServerConfig        `mapstructure:"server" yaml:"server" json:"server"`
+	Db            DatabaseConfig      `mapstructure:"database" yaml:"database" json:"database"`
+	Storage       StorageConfig       `mapstructure:"storage" yaml:"storage" json:"storage"`
+	KnowledgeBase KnowledgeBaseConfig `mapstructure:"knowledgebase" yaml:"knowledgebase" json:"knowledgebase"`
+	Consumer      ConsumerConfig      `yaml:"consumer" json:"consumer"`
+	Enricher      EnricherConfig      `mapstructure:"enricher" yaml:"enricher" json:"enricher"`
+	Backup        BackupConfig        `mapstructure:"backup" yaml:"backup" json:"backup"`
+	Mirror        MirrorConfig        `mapstructure:"mirror" yaml:"mirror" json:"mirror"`
 }
 
 // engine identifiers grouped by tool category.
@@ -669,6 +680,9 @@ func DefaultConfig(configDir string) *Config {
 			Trash: TrashConfig{
 				RetentionDays: 30,
 			},
+		},
+		KnowledgeBase: KnowledgeBaseConfig{
+			Sources: []string{"oewn"},
 		},
 		Consumer: ConsumerConfig{
 			SupportedFiles:   []string{".pdf"},
@@ -847,6 +861,11 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.ContentAnalyzer.MinTags < 1 || cfg.Enricher.ContentAnalyzer.MinTags > 20 {
 		return fmt.Errorf("enricher.contentanalyzer.min_tags must satisfy 1 <= min_tags <= 20")
+	}
+	for _, source := range cfg.KnowledgeBase.Sources {
+		if !slices.Contains(validKnowledgeBaseSources, source) {
+			return fmt.Errorf("knowledgebase.sources: unknown source %q — must be one of %v", source, validKnowledgeBaseSources)
+		}
 	}
 	if len(cfg.Consumer.OCR.Languages) == 0 {
 		return fmt.Errorf("consumer.ocr.languages is required — run 'kushim setup --languages eng,spa,...' first")

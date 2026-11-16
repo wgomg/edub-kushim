@@ -2710,6 +2710,7 @@ func TestConfigUpdateAssetStatus(t *testing.T) {
 
 	t.Run("nothing missing reports no pending work and creates no rows", func(t *testing.T) {
 		fullResetDB(t, env.client.DB())
+		satisfyPinnedOEWN(t, env.client.DB())
 		// Tessdata file + hugot model dir both present: MissingTessdataLanguages
 		// and MissingHugotModel both return nothing-to-do.
 		h, _ := buildHandler(t, true)
@@ -2735,6 +2736,7 @@ func TestConfigUpdateAssetStatus(t *testing.T) {
 
 	t.Run("a missing asset counts as pending with no task or batch row", func(t *testing.T) {
 		fullResetDB(t, env.client.DB())
+		satisfyPinnedOEWN(t, env.client.DB())
 		// No tessdata file and no hugot model: the status must report both as pending work.
 		h, _ := buildHandler(t, false)
 

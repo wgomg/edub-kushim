@@ -28,7 +28,7 @@ point-in-time analysis that is never treated as current truth.
 
 `developer-guide/` — living, per-subsystem and per-language explanation of how the code
 works now: `golang.md`, `frontend.md`, `postgresql.md`, `cgo.md`, `algorithms.md`,
-`ocr-pipeline.md`, `llm.md`, `semantic-matching.md`, `consolidation.md`,
+`ocr-pipeline.md`, `llm.md`, `semantic-matching.md`, `consolidation.md`, `kb.md`,
 `task-system.md`. Read one as you touch that area.
 
 ### Specs

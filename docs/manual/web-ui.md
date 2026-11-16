@@ -334,8 +334,8 @@ Before the main UI exists, `kushim setup` serves a standalone wizard at
 `http://0.0.0.0:8420` (or the terminal with `--cli`). Its six steps: config directory →
 consumer settings (OCR engine, languages, workers, file types, converter) → enricher settings
 (provider/model, matcher, reducer; this step claims the database and applies the schema) →
-asset downloads (tessdata, Hugot model, with progress) → optional admin user → done, ready to
-start `edub`. The same bootstrap API backs it; see
+asset downloads (tessdata, Hugot model, knowledge base sources, with progress) → optional
+admin user → done, ready to start `edub`. The same bootstrap API backs it; see
 [api.md](api.md#settings-apply).
 
 ## Related documents

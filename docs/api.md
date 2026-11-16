@@ -2170,6 +2170,7 @@ ConfigResponse is the full configuration as the API shows it: every section view
 | `consumer` | [ConsumerConfigResponse](#consumerconfigresponse) | yes |
 | `database` | [DatabaseConfigResponse](#databaseconfigresponse) | yes |
 | `enricher` | [EnricherConfigResponse](#enricherconfigresponse) | yes |
+| `knowledgebase` | [KnowledgeBaseConfigResponse](#knowledgebaseconfigresponse) | yes |
 | `mirror` | [MirrorConfigResponse](#mirrorconfigresponse) | yes |
 | `server` | [ServerConfigResponse](#serverconfigresponse) | yes |
 | `storage` | [StorageConfigResponse](#storageconfigresponse) | yes |
@@ -2655,6 +2656,14 @@ HugotResponse is the embedding-model section's API view.
 |---|---|---|
 | `backend` | string | yes |
 | `model` | string | yes |
+
+### KnowledgeBaseConfigResponse
+
+KnowledgeBaseConfigResponse is the knowledge base section's API view.
+
+| Field | Type | Required |
+|---|---|---|
+| `sources` | array of string (nullable) | yes |
 
 ### LangHint
 
