@@ -134,8 +134,8 @@ Rule-driven reasons — `no_dimension`, `part_rejected`, `judge_defer`, `corrobo
 ## Actions
 
 Every action is available from the entry that needs it; the queue only shows the actions its badges
-justify. The manual fold is the exception: it is offered on every queue entry and on every Vocabulary
-row, and the manual split on every compound entry and row, overriding whatever the split judge decided.
+justify. Two actions are exceptions: the manual fold is offered on every queue entry and on every
+Vocabulary row, and the manual split is offered there too, overriding whatever the split judge decided.
 
 | Action | What it does |
 |---|---|
@@ -150,7 +150,7 @@ row, and the manual split on every compound entry and row, overriding whatever t
 | **Make canonical** | the reverse fold: the held value collapses onto this tag, losing its row and standing; this tag stays provisional until approved |
 | **Keep separate** | records that this tag names its own value: the identity hold clears, both values stay, and the tag keeps answering to its verdict and the promotion floor |
 | **Split now** | replaces the compound with the components you confirm: components are created, the compound's documents are attached to them, the compound is deleted; the split is recorded, so future emissions of that name are replaced by its recorded components instead of being judged again |
-| **Split…** | replaces this compound with the components you choose, whatever the split judge decided: components are created, this tag's documents move onto them and it is deleted, and the split is recorded the same way; seeded values cannot be split |
+| **Split…** | replaces this tag with the components you choose, whatever the split judge decided: components are created, this tag's documents move onto them and it is deleted, and the split is recorded the same way; a single-word value splits directly into its components without renaming it first, and seeded values cannot be split |
 | **Keep whole** | records that the compound is a value in its own right; the hold clears and nothing else changes |
 | **Apply the parts alongside** | keeps the compound and attaches its parts to the same documents, so both are searchable; no documents move |
 | **Re-judge** | queues a fresh composition judgment; the queue refreshes when the background task finishes |
@@ -159,9 +159,8 @@ row, and the manual split on every compound entry and row, overriding whatever t
 | **Newest / Oldest** (queue header) | orders the queue by entry age in either direction; the choice is kept in the page URL |
 
 Destructive or document-moving actions ask for confirmation and state the consequence first. Approve
-and reject are the two universal queue decisions; the manual fold is offered on every queue entry and
-Vocabulary row and the manual split on every compound one. Everything else is contextual to the badge
-that motivated it.
+and reject are the two universal queue decisions; the manual fold and the manual split are offered on
+every queue entry and Vocabulary row. Everything else is contextual to the badge that motivated it.
 
 ## Aliases
 
@@ -194,8 +193,8 @@ the canonical tag with the alias that matched as a hint.
   future emissions apply in its place. Editors can revert one: the record is dropped and future
   emissions treat the name normally again — a stored tag applies whole, a name the store no longer
   holds is judged afresh — while the components and the documents already on them stay as they are.
-- **Vocabulary** (`/tags`) — every live tag with counts and standing; rename, fold, demote, delete and
-  the alias chip actions (remove, promote) live there too.
+- **Vocabulary** (`/tags`) — every live tag with counts and standing; rename, fold, split, demote,
+  delete and the alias chip actions (remove, promote) live there too.
 
 Running the passes by hand and their schedules are described in
 [cli.md](cli.md#tag-passes); the configuration keys behind the judges and schedules

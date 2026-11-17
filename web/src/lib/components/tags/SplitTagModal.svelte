@@ -74,7 +74,7 @@
 	}
 </script>
 
-<Modal {open} title="Split compound" {onClose}>
+<Modal {open} title="Split tag" {onClose}>
 	<form onsubmit={submit}>
 		<div class="space-y-4">
 			<p class="text-[0.8125rem] text-parchment-400">

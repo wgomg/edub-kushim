@@ -692,7 +692,7 @@ describe('ProvisionalReview review actions', () => {
 
 		await fireEvent.click(await screen.findByRole('button', { name: /Split now/ }));
 
-		expect(await screen.findByRole('dialog', { name: 'Split compound' })).toBeTruthy();
+		expect(await screen.findByRole('dialog', { name: 'Split tag' })).toBeTruthy();
 		expect(compositionDecision).not.toHaveBeenCalled();
 	});
 
@@ -701,12 +701,12 @@ describe('ProvisionalReview review actions', () => {
 
 		await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
 
-		expect(await screen.findByRole('dialog', { name: 'Split compound' })).toBeTruthy();
+		expect(await screen.findByRole('dialog', { name: 'Split tag' })).toBeTruthy();
 		expect(compositionDecision).not.toHaveBeenCalled();
 		expect(splitTag).not.toHaveBeenCalled();
 	});
 
-	it('hides the manual split for a single-word tag', async () => {
+	it('offers the manual split for a single-word tag', async () => {
 		provisionalList.mockResolvedValue({
 			ok: true,
 			data: { results: [tag({ name: 'history', compound: false })], total: 1 }
@@ -714,7 +714,7 @@ describe('ProvisionalReview review actions', () => {
 		render(ProvisionalReview);
 		await screen.findByText('history');
 
-		expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
+		expect(screen.getByRole('button', { name: 'Split…' })).toBeTruthy();
 	});
 
 	it('posts a split decision for a compound the judge kept whole', async () => {
@@ -726,7 +726,7 @@ describe('ProvisionalReview review actions', () => {
 		});
 
 		await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
-		await screen.findByRole('dialog', { name: 'Split compound' });
+		await screen.findByRole('dialog', { name: 'Split tag' });
 		expect(screen.getByLabelText('Component 1').value).toBe('part a');
 		await fireEvent.click(screen.getByRole('button', { name: /^Split$/ }));
 

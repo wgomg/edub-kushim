@@ -912,18 +912,16 @@
 							<Icon name="fold" size={13} />
 							Fold into…
 						</button>
-						{#if tag.compound}
-							<button
-								type="button"
-								class={btnUtil}
-								title="Split this tag into components you choose; the components are created, the documents move onto them, and this tag is deleted"
-								disabled={acting === tag.id}
-								onclick={() => openSplit(tag)}
-							>
-								<Icon name="split" size={13} />
-								Split…
-							</button>
-						{/if}
+						<button
+							type="button"
+							class={btnUtil}
+							title="Split this tag into components you choose; the components are created, the documents move onto them, and this tag is deleted"
+							disabled={acting === tag.id}
+							onclick={() => openSplit(tag)}
+						>
+							<Icon name="split" size={13} />
+							Split…
+						</button>
 						{#if tag.demoted_at && verdictDemotionReasons.has(tag.demoted_reason)}
 							<button
 								type="button"

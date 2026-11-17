@@ -400,7 +400,7 @@
 								class="{compactButton} hover:text-gold-500"><Icon name="fold" /></button
 							>
 						{/if}
-						{#if row.compound && !row.seeded}
+						{#if !row.seeded}
 							<button
 								onclick={() =>
 									(splitting = { name: row.name, document_count: row.document_count ?? 0 })}

@@ -135,7 +135,7 @@
 		{
 			icon: 'split',
 			name: 'Split…',
-			text: 'Splits a compound tag into components you choose, whatever the split judge decided: the components are created and the tag\u2019s documents are attached to them, then the tag is deleted. Offered on every compound entry in this queue and on every compound Vocabulary row; seeded values cannot be split.'
+			text: 'Splits a tag into components you choose, whatever the split judge decided: the components are created and the tag\u2019s documents are attached to them, then the tag is deleted. Offered on every entry in this queue and on every Vocabulary row; a single-word value splits directly into its components without renaming it first, and seeded values cannot be split.'
 		},
 		{
 			icon: 'keep-whole',

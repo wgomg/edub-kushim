@@ -83,7 +83,7 @@ describe('tags page vocabulary split', () => {
 		render(TagsPage);
 
 		await fireEvent.click(await screen.findByTitle('Split into components'));
-		expect(await screen.findByRole('dialog', { name: 'Split compound' })).toBeTruthy();
+		expect(await screen.findByRole('dialog', { name: 'Split tag' })).toBeTruthy();
 
 		await fireEvent.input(screen.getByLabelText('Component 1'), {
 			target: { value: 'machinery' }
@@ -93,6 +93,62 @@ describe('tags page vocabulary split', () => {
 		await waitFor(() =>
 			expect(apiMocks.split).toHaveBeenCalledWith('sample compound', ['machinery'])
 		);
+	});
+
+	it('splits a single-word vocabulary tag directly without a rename', async () => {
+		apiMocks.list.mockResolvedValue({
+			results: [
+				{
+					id: 11,
+					name: 'ecosocialism',
+					document_count: 2,
+					promoted: true,
+					seeded: false,
+					compound: false,
+					created_at: '2026-01-01T00:00:00Z'
+				}
+			],
+			total: 1
+		});
+		render(TagsPage);
+
+		await fireEvent.click(await screen.findByTitle('Split into components'));
+		expect(await screen.findByRole('dialog', { name: 'Split tag' })).toBeTruthy();
+
+		await fireEvent.input(screen.getByLabelText('Component 1'), {
+			target: { value: 'ecologism' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: '+ Add component' }));
+		await fireEvent.input(screen.getByLabelText('Component 2'), {
+			target: { value: 'socialism' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+
+		await waitFor(() =>
+			expect(apiMocks.split).toHaveBeenCalledWith('ecosocialism', ['ecologism', 'socialism'])
+		);
+	});
+
+	it('hides the split button for a seeded vocabulary tag', async () => {
+		apiMocks.list.mockResolvedValue({
+			results: [
+				{
+					id: 3,
+					name: 'seeded value',
+					document_count: 5,
+					promoted: true,
+					seeded: true,
+					compound: true,
+					created_at: '2026-01-01T00:00:00Z'
+				}
+			],
+			total: 1
+		});
+		render(TagsPage);
+
+		await screen.findByText('seeded value');
+
+		expect(screen.queryByTitle('Split into components')).toBeNull();
 	});
 });
 
