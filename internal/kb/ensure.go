@@ -51,7 +51,7 @@ var pins = []pin{
 		version:          "2025",
 		converterVersion: "1",
 		filename:         "oewn-2025.tar.gz",
-		pointerURL:       "https://raw.githubusercontent.com/wgomg/edub-kushim/dev/assets/kb/oewn-2025.tar.gz",
+		pointerURL:       "https://raw.githubusercontent.com/wgomg/edub-kushim/master/assets/kb/oewn-2025.tar.gz",
 		sha256:           "3d7dab7b04006e8f137e3db4e7ebfa695f563b00f872ed130cb9d6aeaebb60f9",
 	},
 	{
@@ -59,7 +59,7 @@ var pins = []pin{
 		version:          "5.7.0-en",
 		converterVersion: "1",
 		filename:         "conceptnet-5.7.0-en.tar.gz",
-		pointerURL:       "https://raw.githubusercontent.com/wgomg/edub-kushim/dev/assets/kb/conceptnet-5.7.0-en.tar.gz",
+		pointerURL:       "https://raw.githubusercontent.com/wgomg/edub-kushim/master/assets/kb/conceptnet-5.7.0-en.tar.gz",
 		sha256:           "bfc15a537e95418aeb59ac5a1a7d0b5170128414711fb0b4a04902ea0e661358",
 	},
 }

@@ -38,6 +38,7 @@ function ensureAll() {
 	ensureFallbacksArray();
 	ensureThumbnailBlock();
 	ensureMirrorBlock();
+	ensureKnowledgeBase();
 	ensureTagReconcileBlock();
 	ensureTagMeasureBlock();
 	ensureTagAuditBlock();
@@ -94,6 +95,12 @@ function ensureMirrorBlock() {
 			time: cfg.mirror?.time || '02:00'
 		};
 	}
+}
+
+function ensureKnowledgeBase() {
+	if (!cfg) return;
+	if (cfg.knowledgebase?.sources) return;
+	cfg.knowledgebase = { sources: ['oewn'] };
 }
 
 function ensureTagReconcileBlock() {
@@ -199,6 +206,7 @@ function bodyFromConfig() {
 		'consumer.ocr.data_dir': cfg.consumer.ocr.data_dir,
 		'consumer.ocr.timeout': Number(cfg.consumer.ocr.timeout),
 		'consumer.ocr.ocr_workers': Number(cfg.consumer.ocr.ocr_workers),
+		'knowledgebase.sources': cfg.knowledgebase.sources.filter(Boolean),
 		'consumer.workers': Number(cfg.consumer.workers),
 		'consumer.max_files_per_batch': Number(cfg.consumer.max_files_per_batch),
 		'consumer.supported_files':
@@ -354,7 +362,7 @@ const PROCESSING_PREFIXES = [
 
 function groupOfKey(key) {
 	if (key === 'server.auth_enabled') return 'access';
-	if (key.startsWith('enricher.')) return 'enrichment';
+	if (key.startsWith('enricher.') || key.startsWith('knowledgebase.')) return 'enrichment';
 	if (key.startsWith('storage.') || key.startsWith('database.')) return 'storage';
 	if (key.startsWith('backup.') || key.startsWith('mirror.')) return 'safety';
 	if (key.startsWith('app.')) return 'system';

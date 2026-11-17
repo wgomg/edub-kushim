@@ -93,9 +93,11 @@ candidate.
 `kushim setup` — terminal or wizard — installs every configured source into the `kb_*`
 tables and caches the verified artifact under `<config-dir>/kb/`. The first setup
 downloads about 5 MB for OEWN and 7 MB for ConceptNet from the project's Git LFS store.
-Each source replaces only its own rows; removing a source from the list stops future
-ensuring but does not uninstall its existing rows, and after setup changing the list does
-not install anything by itself.
+Adding a source from the settings page downloads and installs it when the change is
+applied (the [Knowledge base card](web-ui.md#settings) in Enrichment exposes the
+ConceptNet opt-in); editing this list in the file only changes what later setup,
+enrichment and maintenance runs ensure. Each source replaces only its own rows, and
+removing a source stops future ensuring but does not uninstall its existing rows.
 
 The data is licensed separately from the code: OEWN under CC BY 4.0 (with the chained
 Princeton WordNet notice) and ConceptNet under CC BY-SA 4.0. The manifest inside each

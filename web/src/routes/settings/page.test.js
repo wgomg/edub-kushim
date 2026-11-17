@@ -300,6 +300,26 @@ describe('Enrichment settings', () => {
 		expect(body['enricher.tag_measure.time']).toBe('03:00');
 	});
 
+	it('toggles the ConceptNet source into the save body', async () => {
+		const cfg = fullCfg();
+		cfg.knowledgebase = { sources: ['oewn'] };
+		apiMocks.configUpdate.mockResolvedValue({ ok: true, status: 200, data: {} });
+		await loadSection(cfg);
+
+		const toggle = await screen.findByRole('checkbox', { name: 'ConceptNet (opt-in)' });
+		expect(toggle.checked).toBe(false);
+		await fireEvent.click(toggle);
+
+		expect(settingsStore.cfg.knowledgebase.sources).toEqual(['oewn', 'conceptnet']);
+		expect(settingsStore.pendingCount).toBe(1);
+
+		await settingsStore.applyAll();
+
+		await waitFor(() => expect(apiMocks.configUpdate).toHaveBeenCalledTimes(1));
+		const body = apiMocks.configUpdate.mock.calls[0][0];
+		expect(body['knowledgebase.sources']).toEqual(['oewn', 'conceptnet']);
+	});
+
 	it('shows the adjudicator dependency hint when enabled without the adjudicator', async () => {
 		const cfg = fullCfg();
 		cfg.enricher.tag_reconcile.enabled = true;

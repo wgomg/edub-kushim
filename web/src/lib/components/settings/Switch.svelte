@@ -5,7 +5,8 @@
 		description = '',
 		ariaLabel = '',
 		disabled = false,
-		id = undefined
+		id = undefined,
+		onchange = undefined
 	} = $props();
 </script>
 
@@ -14,6 +15,7 @@
 		type="checkbox"
 		{id}
 		{disabled}
+		{onchange}
 		class="peer sr-only"
 		bind:checked
 		aria-label={ariaLabel || label}

@@ -709,8 +709,9 @@ license, notice, upstream hash, converter version and row counts), `kb_concept`,
 `kb_lemma` (indexed by normalized lemma), and `kb_edge` (indexed from and to by family).
 Installing a source deletes and re-inserts exactly its rows inside one transaction, after
 verifying the loaded counts against the artifact's manifest; a truncated or malformed
-artifact rolls back whole. The `knowledgebase.sources` configuration chooses what setup
-ensures (default `oewn`; `conceptnet` is opt-in).
+artifact rolls back whole. The `knowledgebase.sources` configuration chooses what is
+ensured — at setup, when settings are applied, and lazily on the first knowledge-base use
+of an enrichment or tag-maintenance run (default `oewn`; `conceptnet` is opt-in).
 
 Artifacts are produced by `scripts/gen_kb_artifacts.py` from the pinned upstream releases
 and committed under `assets/kb/` as Git-LFS-tracked tarballs containing the manifest and

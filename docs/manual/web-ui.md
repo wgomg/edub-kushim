@@ -230,7 +230,7 @@ as a **hub** plus one focused page per area:
 |---|---|---|
 | Intake | `/settings/intake` | uploads & server, watched inbox, accepted file types, office converter |
 | Processing | `/settings/processing` | OCR, text extraction, PDF optimizer, thumbnails, throughput & recovery |
-| Enrichment | `/settings/enrichment` | content analyzer, tag matcher, adjudicator, lexical gate, quality, reconciliation, measurement, workers |
+| Enrichment | `/settings/enrichment` | content analyzer, tag matcher, knowledge base, adjudicator, lexical gate, quality, reconciliation, measurement, workers |
 | AI providers & models | `/settings/models` | the provider/model catalog (master–detail editor) |
 | Storage | `/settings/storage` | directories, trash retention, database connection |
 | Safety | `/settings/safety` | backups (per-mode schedules), mirror |
@@ -290,9 +290,9 @@ on success, or *"Migration failed: … — settings kept their previous values."
 previous values restored. Leaving the site with staged changes triggers the browser's
 unsaved-changes warning.
 
-Applying also starts direct config updates for any missing tessdata or Hugot model files,
-with a spinner and pending-work counter, and (for API clients) the same flow lives at
-[`PUT /wizard/config`](api.md#settings-apply).
+Applying also starts direct config updates for any missing tessdata, Hugot model or
+knowledge base artifact files, with a spinner and pending-work counter, and (for API
+clients) the same flow lives at [`PUT /wizard/config`](api.md#settings-apply).
 
 ### Tool-status warnings
 
@@ -317,8 +317,9 @@ amber banner is the same signal at global scope.
   request delay, prompt template, doc-type refinement, fallback LLMs with reorder), text
   reducer, tag matcher (timeout, reduce target words, chunk size, model, backend), tag
   adjudicator, tag lexical gate (inherits the adjudicator's model, then the analyzer's)
-  and tag quality (each can inherit the analyzer's model), tag reconciliation and
-  measurement schedules, enrichment workers. An at-a-glance strip links to the catalog page.
+  and tag quality (each can inherit the analyzer's model), knowledge base (ConceptNet
+  opt-in toggle with the active-source list), tag reconciliation and measurement
+  schedules, enrichment workers. An at-a-glance strip links to the catalog page.
 - **Models** — master–detail: filterable provider pane (`?provider=` deep-link), model table
   with capability chips and a *Used by* column; add/edit/remove side panels stage catalog
   operations (they apply with **Apply Changes**, not immediately); *Restore Default Catalogs*

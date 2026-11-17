@@ -22,6 +22,7 @@
 		llmModels.providers[cfg.enricher.contentanalyzer.llm.provider] ?? []
 	);
 	let tagSchedulesLocked = $derived(cfg.enricher.tag_maintenance?.enabled ?? false);
+	let conceptnetEnabled = $derived(cfg.knowledgebase.sources.includes('conceptnet'));
 
 	function adapterProviders(llm) {
 		return llmModels.adapters[llm?.adapter] ?? [];
@@ -81,6 +82,11 @@
 		const next = [...fbs];
 		[next[index], next[target]] = [next[target], next[index]];
 		cfg.enricher.contentanalyzer.fallbacks = next;
+	}
+
+	function toggleConceptnet(on) {
+		const sources = cfg.knowledgebase.sources.filter((source) => source !== 'conceptnet');
+		cfg.knowledgebase.sources = on ? [...sources, 'conceptnet'] : sources;
 	}
 </script>
 
@@ -538,6 +544,43 @@
 					wide
 					bind:value={cfg.enricher.tagmatcher.hugot.model}
 				/>
+			</div>
+		</Card>
+
+		<Card
+			title="Knowledge base"
+			name="knowledge base wordnet oewn conceptnet lexical offline"
+			description="Offline lexical sources that nominate related tags during enrichment."
+		>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div class="sm:col-span-2">
+					<Switch
+						id="kb-conceptnet"
+						checked={conceptnetEnabled}
+						onchange={(event) => toggleConceptnet(event.currentTarget.checked)}
+						label="ConceptNet (opt-in)"
+						description="Adds the ConceptNet 5.7 English subset as a nomination source. Applying downloads about 7 MB and installs it."
+					/>
+				</div>
+				<div class="sm:col-span-2">
+					<span class="text-[0.8125rem] font-medium text-parchment-200">Active sources</span>
+					<div class="mt-2 flex flex-wrap items-center gap-2">
+						{#each cfg.knowledgebase.sources as source (source)}
+							<span
+								class="inline-flex items-center rounded-full border border-clay-700 bg-clay-800 px-2.5 py-0.5 font-mono text-[0.8125rem] text-parchment-200"
+							>
+								{source}
+							</span>
+						{/each}
+					</div>
+				</div>
+			</div>
+			<div class="mt-4">
+				<Note variant="info">
+					Applying downloads and installs ConceptNet the first time it is enabled. Its data is CC
+					BY-SA 4.0 with attribution carried by the artifact manifest. Removing it stops future
+					re-ensuring but keeps its installed rows; OEWN is installed by default.
+				</Note>
 			</div>
 		</Card>
 

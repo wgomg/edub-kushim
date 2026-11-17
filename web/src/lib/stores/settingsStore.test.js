@@ -425,3 +425,35 @@ describe('settingsStore tag matcher and audit keys', () => {
 		expect(body).not.toHaveProperty('enricher.contentanalyzer.max_tags');
 	});
 });
+
+describe('settingsStore knowledge base sources', () => {
+	it('heals a missing knowledgebase block to the oewn default without staging a change', async () => {
+		const cfg = fullCfg();
+		delete cfg.knowledgebase;
+		await loadSettings(cfg);
+
+		expect(settingsStore.cfg.knowledgebase.sources).toEqual(['oewn']);
+		expect(settingsStore.pendingCount).toBe(0);
+	});
+
+	it('saves toggled sources and groups the change under enrichment', async () => {
+		const cfg = fullCfg();
+		cfg.knowledgebase = { sources: ['oewn'] };
+		await loadSettings(cfg);
+
+		settingsStore.cfg.knowledgebase.sources = ['oewn', 'conceptnet'];
+
+		expect(settingsStore.pendingCount).toBe(1);
+		expect(settingsStore.groupCounts.enrichment).toBe(1);
+		const change = settingsStore.configChanges.find(
+			(entry) => entry.key === 'knowledgebase.sources'
+		);
+		expect(change).toMatchObject({ group: 'enrichment' });
+
+		await settingsStore.applyAll();
+
+		const body = apiMocks.configUpdate.mock.calls[0][0];
+		expect(body['knowledgebase.sources']).toEqual(['oewn', 'conceptnet']);
+		expect(settingsStore.pendingCount).toBe(0);
+	});
+});

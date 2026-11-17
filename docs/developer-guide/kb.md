@@ -130,9 +130,8 @@ the pin. When they match it does nothing. Otherwise it:
 A pointer or download that does not match the pin fails loudly and installs nothing. The
 pins live in `internal/kb/ensure.go` as unexported values: source, source version,
 converter version, filename, pointer URL and sha256. The pointer URLs name the branch that
-serves the artifacts; the release preparation switches them from `dev` to `master` and
-bumps `internal/version/version.go`. The artifact bytes and sha256 pins do not change
-across that switch.
+serves the artifacts (`master`). The artifact bytes and sha256 pins do not change when that
+branch changes.
 
 `Store.Missing(ctx, configured)` applies the same currency rule to a list of source names
 and returns the ones that need ensuring; the setup wizard uses it for asset status.
