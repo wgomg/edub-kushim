@@ -178,8 +178,14 @@ FROM kb_lemma l
 JOIN kb_concept c ON c.source = l.source AND c.concept_key = l.concept_key
 JOIN kb_source s ON s.source = c.source
 WHERE l.lemma_norm = $1
+  AND l.source = ANY($2::text[])
 ORDER BY c.source, c.concept_key
 `
+
+type KBConceptsForLemmaParams struct {
+	Lemma          string
+	AllowedSources []string
+}
 
 type KBConceptsForLemmaRow struct {
 	Source        string
@@ -189,8 +195,8 @@ type KBConceptsForLemmaRow struct {
 	Gloss         sql.NullString
 }
 
-func (q *Queries) KBConceptsForLemma(ctx context.Context, lemma string) ([]KBConceptsForLemmaRow, error) {
-	rows, err := q.db.QueryContext(ctx, kBConceptsForLemma, lemma)
+func (q *Queries) KBConceptsForLemma(ctx context.Context, arg KBConceptsForLemmaParams) ([]KBConceptsForLemmaRow, error) {
+	rows, err := q.db.QueryContext(ctx, kBConceptsForLemma, arg.Lemma, pq.Array(arg.AllowedSources))
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +234,7 @@ JOIN (SELECT unnest($1::text[]) AS source, unnest($2::text[]) AS concept_key) AS
 JOIN (SELECT unnest($3::text[]) AS source, unnest($4::text[]) AS concept_key) AS b
   ON e.source = b.source AND e.to_concept_key = b.concept_key
 WHERE e.family = ANY($5::text[])
+  AND e.source = ANY($6::text[])
 UNION
 SELECT e.source, s.source_version, e.from_concept_key, e.to_concept_key, e.family, e.source_reltype,
        e.weight
@@ -238,15 +245,17 @@ JOIN (SELECT unnest($3::text[]) AS source, unnest($4::text[]) AS concept_key) AS
 JOIN (SELECT unnest($1::text[]) AS source, unnest($2::text[]) AS concept_key) AS a
   ON e.source = a.source AND e.to_concept_key = a.concept_key
 WHERE e.family = ANY($5::text[])
+  AND e.source = ANY($6::text[])
 ORDER BY source, from_concept_key, family, to_concept_key
 `
 
 type KBEdgesBetweenConceptsParams struct {
-	ASources []string
-	AKeys    []string
-	BSources []string
-	BKeys    []string
-	Families []string
+	ASources       []string
+	AKeys          []string
+	BSources       []string
+	BKeys          []string
+	Families       []string
+	AllowedSources []string
 }
 
 type KBEdgesBetweenConceptsRow struct {
@@ -268,6 +277,7 @@ func (q *Queries) KBEdgesBetweenConcepts(ctx context.Context, arg KBEdgesBetween
 		pq.Array(arg.BSources),
 		pq.Array(arg.BKeys),
 		pq.Array(arg.Families),
+		pq.Array(arg.AllowedSources),
 	)
 	if err != nil {
 		return nil, err
@@ -306,13 +316,15 @@ JOIN kb_source s ON s.source = e.source
 JOIN (SELECT unnest($1::text[]) AS source, unnest($2::text[]) AS concept_key) AS a
   ON e.source = a.source AND e.from_concept_key = a.concept_key
 WHERE e.family = ANY($3::text[])
+  AND e.source = ANY($4::text[])
 ORDER BY e.source, e.from_concept_key, e.family, e.to_concept_key
 `
 
 type KBEdgesFromConceptsParams struct {
-	Sources     []string
-	ConceptKeys []string
-	Families    []string
+	Sources        []string
+	ConceptKeys    []string
+	Families       []string
+	AllowedSources []string
 }
 
 type KBEdgesFromConceptsRow struct {
@@ -326,7 +338,12 @@ type KBEdgesFromConceptsRow struct {
 }
 
 func (q *Queries) KBEdgesFromConcepts(ctx context.Context, arg KBEdgesFromConceptsParams) ([]KBEdgesFromConceptsRow, error) {
-	rows, err := q.db.QueryContext(ctx, kBEdgesFromConcepts, pq.Array(arg.Sources), pq.Array(arg.ConceptKeys), pq.Array(arg.Families))
+	rows, err := q.db.QueryContext(ctx, kBEdgesFromConcepts,
+		pq.Array(arg.Sources),
+		pq.Array(arg.ConceptKeys),
+		pq.Array(arg.Families),
+		pq.Array(arg.AllowedSources),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -361,16 +378,18 @@ SELECT l.source, l.concept_key, l.lemma_norm
 FROM kb_lemma l
 JOIN (SELECT unnest($1::text[]) AS source, unnest($2::text[]) AS concept_key) AS a
   ON l.source = a.source AND l.concept_key = a.concept_key
+WHERE l.source = ANY($3::text[])
 ORDER BY l.source, l.concept_key, l.lemma_norm
 `
 
 type KBLemmasForConceptsParams struct {
-	Sources     []string
-	ConceptKeys []string
+	Sources        []string
+	ConceptKeys    []string
+	AllowedSources []string
 }
 
 func (q *Queries) KBLemmasForConcepts(ctx context.Context, arg KBLemmasForConceptsParams) ([]KbLemma, error) {
-	rows, err := q.db.QueryContext(ctx, kBLemmasForConcepts, pq.Array(arg.Sources), pq.Array(arg.ConceptKeys))
+	rows, err := q.db.QueryContext(ctx, kBLemmasForConcepts, pq.Array(arg.Sources), pq.Array(arg.ConceptKeys), pq.Array(arg.AllowedSources))
 	if err != nil {
 		return nil, err
 	}

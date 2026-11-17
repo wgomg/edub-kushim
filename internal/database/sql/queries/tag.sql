@@ -29,9 +29,9 @@ SELECT name AS key FROM tag
 UNION
 SELECT alias_name AS key FROM tag_alias;
 
--- name: CreateTag :one
-INSERT INTO tag (name)
-VALUES ($1)
+-- name: CreateTagWithOrigin :one
+INSERT INTO tag (name, origin)
+VALUES (@name, @origin)
 ON CONFLICT (name) DO NOTHING
 RETURNING id;
 
@@ -581,3 +581,17 @@ SELECT EXISTS (
           WHERE e.tag_name = t.name AND e.policy_version = @policy_version::text
       )
 );
+
+-- name: ListProvisionalTagsWithoutPairEvidence :many
+SELECT t.name
+FROM tag t
+WHERE t.promoted_at IS NULL
+  AND t.demoted_at IS NULL
+  AND t.accepted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM tag_identity_event e
+      WHERE e.candidate = t.name
+        AND e.kind = 'same_intent'
+  )
+ORDER BY coalesce(t.created_at, now())
+LIMIT @max_names::int;

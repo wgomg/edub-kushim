@@ -22,6 +22,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -58,18 +59,20 @@ type Adjudicator struct {
 	logger  *log.Logger
 	queries *database.Queries
 	runner  *tools.Runner
+	kb      *kb.Store
 }
 
-// NewAdjudicator wires the machinery. When the LLM adjudicator or quality
-// judge is not configured, the corresponding steps degrade: conjunction
-// splits fall back to the plain grammar split and novel tags stay, born
-// provisional.
-func NewAdjudicator(cfg *config.Config, logger *log.Logger, queries *database.Queries, runner *tools.Runner) *Adjudicator {
+// NewAdjudicator wires the machinery. When the LLM adjudicator or the quality judge is not configured,
+// the corresponding steps degrade: conjunction splits fall back to the plain grammar split and novel
+// tags stay, born provisional. A nil knowledge base store disables the KB nomination and containment
+// channels without touching any other step.
+func NewAdjudicator(cfg *config.Config, logger *log.Logger, queries *database.Queries, runner *tools.Runner, store *kb.Store) *Adjudicator {
 	return &Adjudicator{
 		config:  cfg,
 		logger:  logger,
 		queries: queries,
 		runner:  runner,
+		kb:      store,
 	}
 }
 

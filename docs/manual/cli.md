@@ -439,7 +439,8 @@ run), so an unchanged store prints a zero-work report and writes nothing.
 ### `kushim tagreconcile`
 
 Re-adjudicate the stored tag evidence: stale, unjudged, drifted and aged pairs are re-checked,
-stored compounds are split, twins are canonicalized, dead and provisional tags are swept, and
+stored compounds are split, twins are canonicalized, provisional tags without pair evidence are
+nominated from the installed knowledge base, dead and provisional tags are swept, and
 influence is revoked where the decision says so. Runs are bounded by the
 `enricher.tag_reconcile` caps (`max_rejudge`, `max_retag`), and the first run is always
 report-only. The latest completed run's report is served by the tag reconciliation report

@@ -1,13 +1,16 @@
 package admission
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -16,7 +19,13 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-const identityBatchSize = 40
+const (
+	identityBatchSize = 40
+
+	// KBMaxPairsPerCandidate bounds the knowledge base's pair nominations per candidate: exact neighbours
+	// first, then similar ones by weight.
+	KBMaxPairsPerCandidate = 4
+)
 
 type identityCandidate struct {
 	input       string
@@ -190,6 +199,7 @@ func (a *Adjudicator) PlanIdentity(ctx context.Context, in IdentityPlanInput, re
 			addPair(a.name, b.name, 0)
 		}
 	}
+	a.kbPairs(ctx, candidates, byKey, flagged, addPair, reqID)
 
 	gate, gateRows, err := a.relationGateAnswers(ctx, candidates, in.Ranked, reqID)
 	if err != nil {
@@ -1043,4 +1053,93 @@ func (a *Adjudicator) aliasMapFor(ctx context.Context, names []string, reqID str
 		return map[string]string{}
 	}
 	return out
+}
+
+// kbPairs nominates the pairs the matcher cannot see: a candidate's exact and similar knowledge base
+// neighbours that already exist in the store become ordinary pairs from here on. The pinned variant
+// classes still resolve them mechanically, the pair judge decides the rest, and no KB context enters any
+// prompt or criteria row — the knowledge base only nominates.
+func (a *Adjudicator) kbPairs(ctx context.Context, candidates []*identityCandidate, storeNames map[string]string, flagged map[string]bool, addPair func(query, target string, sim float64), reqID string) {
+	if a.kb == nil {
+		return
+	}
+	probed, nominated, failed := 0, 0, 0
+	for _, cand := range candidates {
+		if cand.resolved != "" {
+			continue
+		}
+		probed++
+		edges, err := a.kb.Neighbours(ctx, cand.name, []kb.Family{kb.FamilyExact, kb.FamilySimilar})
+		if err != nil {
+			failed++
+			if failed == 1 {
+				a.logger.Warn(reqID, "kb pair nomination for %q failed: %v", cand.name, err)
+			} else {
+				a.logger.Debug(reqID, "kb pair nomination for %q failed: %v", cand.name, err)
+			}
+			continue
+		}
+		targets := KBPairTargets(edges, storeNames, KBMaxPairsPerCandidate)
+		if len(targets) == 0 {
+			a.logger.Debug(reqID, "kb pair: %q no exact/similar store neighbour (edges=%d)", cand.name, len(edges))
+			continue
+		}
+		a.logger.Debug(reqID, "kb pair: %q -> %v", cand.name, targets)
+		for _, target := range targets {
+			flagged[cand.name] = true
+			addPair(cand.name, target, 0)
+			nominated++
+		}
+	}
+	if probed > 0 {
+		a.logger.Debug(reqID, "kb pairs: probed=%d nominated=%d failed=%d", probed, nominated, failed)
+	}
+}
+
+// KBPairTargets projects the edges' target lemmas onto stored names and returns at most limit of them:
+// exact neighbours before similar ones, then by descending weight, deduplicated by stored name. It is the
+// single definition of the nomination order the birth path and the reconcile mint sweep share.
+func KBPairTargets(edges []kb.TypedEdge, storeNames map[string]string, limit int) []string {
+	type target struct {
+		name   string
+		exact  bool
+		weight float64
+	}
+
+	seen := make(map[string]struct{}, len(edges))
+	targets := make([]target, 0, len(edges))
+	for _, edge := range edges {
+		for _, lemma := range edge.ToLemmas {
+			stored, ok := storeNames[tags.Key(lemma)]
+			if !ok {
+				continue
+			}
+			if _, dup := seen[stored]; dup {
+				continue
+			}
+			seen[stored] = struct{}{}
+			weight := 0.0
+			if edge.Weight != nil {
+				weight = *edge.Weight
+			}
+			targets = append(targets, target{name: stored, exact: edge.Family == kb.FamilyExact, weight: weight})
+		}
+	}
+	slices.SortStableFunc(targets, func(x, y target) int {
+		if x.exact != y.exact {
+			if x.exact {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(y.weight, x.weight)
+	})
+	if len(targets) > limit {
+		targets = targets[:limit]
+	}
+	names := make([]string, 0, len(targets))
+	for _, t := range targets {
+		names = append(names, t.name)
+	}
+	return names
 }

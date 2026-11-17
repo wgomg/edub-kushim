@@ -11,6 +11,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -951,4 +952,87 @@ func twinPairKey(a, b string) string {
 		a, b = b, a
 	}
 	return a + "\x00" + b
+}
+
+// sweepKBMints drains the zero-evidence provisional backlog: for each provisional tag that never got a
+// same-intent judgment, the knowledge base's exact and similar neighbours that already exist in the store
+// become pending pair rows, exactly like the birth-path mint. Identity-held names are skipped like every
+// other destructive pass, so a minted pair never re-judges a hold. It mints only — the existing resolver
+// judges the pairs and applies folds through the curation surface — and a report-only run counts without
+// writing.
+func (r *Reconciler) sweepKBMints(ctx context.Context, cfg *config.Config, report *Report) {
+	if r.kb == nil {
+		return
+	}
+	budget := cfg.Enricher.TagReconcile.MaxRejudge
+	if budget <= 0 {
+		return
+	}
+
+	names, err := r.client.ListProvisionalTagsWithoutPairEvidence(ctx, int32(budget))
+	if err != nil {
+		r.logger.Error("", "tag reconcile: list provisional tags without pair evidence: %v", err)
+		return
+	}
+	if len(names) == 0 {
+		return
+	}
+
+	// a hold withholds its name from the destructive and review paths under any rule-set version, so a
+	// minted pair here would let the resolver alias away a value the other passes leave standing
+	held, err := tags.IdentityHeldNamesAnyVersion(ctx, r.client.Queries, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: kb mint: identity hold lookup failed, sweep skipped: %v", err)
+		return
+	}
+
+	storeTags, err := r.client.ListAllTags(ctx)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: list store tags for kb mint sweep: %v", err)
+		return
+	}
+	storeNames := make([]string, 0, len(storeTags))
+	for _, t := range storeTags {
+		storeNames = append(storeNames, t.Name)
+	}
+	byKey := tags.StoreNames(storeNames)
+
+	heldCount := 0
+	for _, name := range names {
+		if _, isHeld := held[name]; isHeld {
+			heldCount++
+			r.logger.Debug("", "tag reconcile: kb mint skip %q (identity held)", name)
+			continue
+		}
+		edges, err := r.kb.Neighbours(ctx, name, []kb.Family{kb.FamilyExact, kb.FamilySimilar})
+		if err != nil {
+			r.logger.Warn("", "tag reconcile: kb mint probe for %q failed: %v", name, err)
+			continue
+		}
+		targets := admission.KBPairTargets(edges, byKey, admission.KBMaxPairsPerCandidate)
+		if len(targets) == 0 {
+			r.logger.Debug("", "tag reconcile: kb mint %q no store neighbour (edges=%d)", name, len(edges))
+			continue
+		}
+		r.logger.Debug("", "tag reconcile: kb mint %q -> %v", name, targets)
+		for _, target := range targets {
+			if report.ReportOnly {
+				report.KBMinted++
+				continue
+			}
+			if _, err := r.client.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+				Kind:           tags.IdentityKindSameIntent,
+				Candidate:      name,
+				Partner:        sql.NullString{String: target, Valid: true},
+				Criteria:       json.RawMessage("{}"),
+				RuleSetVersion: tags.IdentityRuleSetVersion,
+			}); err != nil {
+				r.logger.Error("", "tag reconcile: kb mint row for %q/%q failed: %v", name, target, err)
+				continue
+			}
+			report.KBMinted++
+		}
+	}
+	r.logger.Info("", "tag reconcile: kb mint sweep: worklist=%d held=%d minted=%d report_only=%t",
+		len(names), heldCount, report.KBMinted, report.ReportOnly)
 }

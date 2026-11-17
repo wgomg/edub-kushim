@@ -191,7 +191,7 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 	if len(candidates) == 0 {
 		return
 	}
-	adjudicator := admission.NewAdjudicator(cfg, r.logger, r.client.Queries, r.runner)
+	adjudicator := admission.NewAdjudicator(cfg, r.logger, r.client.Queries, r.runner, r.kb)
 	rows, err := adjudicator.JudgeCompounds(ctx, candidates, liveNames, promotedNames, analyzer.NewTagFilter(nil, nil, nil), 0, "")
 	if err != nil {
 		r.logger.Error("", "tag reconcile: compound judgment failed: %v", err)

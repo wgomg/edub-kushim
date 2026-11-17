@@ -428,7 +428,7 @@ func (h *ConfigHandler) missingAssets(ctx context.Context, cfg *config.Config) [
 		return missing
 	}
 
-	missingSources, err := kb.NewStore(h.client, cfg.App.ConfigDir).Missing(ctx, cfg.KnowledgeBase.Sources)
+	missingSources, err := kb.NewStore(h.client, cfg.App.ConfigDir, cfg.KnowledgeBase.Sources).Missing(ctx, cfg.KnowledgeBase.Sources)
 	if err != nil {
 		h.logger.Error("", "read kb sources for asset status: %v", err)
 		return missing
@@ -474,7 +474,7 @@ func (h *ConfigHandler) downloadKnowledgeBase(ctx context.Context, cfg *config.C
 	if h.client == nil {
 		return fmt.Errorf("database not ready — retry after setup completes")
 	}
-	return kb.NewStore(h.client, cfg.App.ConfigDir).Ensure(ctx, source)
+	return kb.NewStore(h.client, cfg.App.ConfigDir, cfg.KnowledgeBase.Sources).Ensure(ctx, source)
 }
 
 // beginDownload marks an asset as downloading; it reports false when a download for that asset is already

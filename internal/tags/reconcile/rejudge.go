@@ -176,7 +176,7 @@ func (r *Reconciler) rejudgeComposition(ctx context.Context, cfg *config.Config,
 		liveNames[tags.Key(key)] = struct{}{}
 	}
 
-	adjudicator := admission.NewAdjudicator(cfg, r.logger, r.client.Queries, r.runner)
+	adjudicator := admission.NewAdjudicator(cfg, r.logger, r.client.Queries, r.runner, r.kb)
 	rows, err := adjudicator.JudgeCompounds(ctx, []string{tag.Name}, liveNames, promotedView,
 		analyzer.NewTagFilter(nil, nil, nil), 0, "")
 	if err != nil {

@@ -99,19 +99,27 @@ func lemmaForm(label string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// The published source names. They are the artifact keys the pins and the config list share.
+const (
+	SourceOEWN       = "oewn"
+	SourceConceptNet = "conceptnet"
+)
+
 // Store is the offline knowledge base over one database client and one artifact cache, and it owns the
 // published artifact pins: callers name a configured source, and the store resolves the pin, compares
 // the installed version, downloads and verifies the artifact when needed, installs it, and answers reads
-// from the installed rows.
+// from the installed rows. Reads are scoped to the configured source set the store was built with: a
+// source that is installed but not configured contributes nothing, and an empty set answers nothing.
 type Store struct {
-	client *database.Client
-	dir    string
+	client  *database.Client
+	dir     string
+	sources []string
 }
 
-// NewStore prepares the store for a database client and the application's config directory; the downloaded
-// artifacts live under <configDir>/kb.
-func NewStore(client *database.Client, configDir string) *Store {
-	return &Store{client: client, dir: filepath.Join(configDir, "kb")}
+// NewStore prepares the store for a database client, the application's config directory and the configured
+// source set; the downloaded artifacts live under <configDir>/kb.
+func NewStore(client *database.Client, configDir string, sources []string) *Store {
+	return &Store{client: client, dir: filepath.Join(configDir, "kb"), sources: sources}
 }
 
 // Sources reports the installed sources with their versions, licenses and row counts. A source that is not

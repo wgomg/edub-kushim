@@ -47,7 +47,7 @@ type pin struct {
 // and ships the new artifact in the same commit; the pointer URL never changes across regenerations.
 var pins = []pin{
 	{
-		source:           "oewn",
+		source:           SourceOEWN,
 		version:          "2025",
 		converterVersion: "1",
 		filename:         "oewn-2025.tar.gz",
@@ -55,7 +55,7 @@ var pins = []pin{
 		sha256:           "3d7dab7b04006e8f137e3db4e7ebfa695f563b00f872ed130cb9d6aeaebb60f9",
 	},
 	{
-		source:           "conceptnet",
+		source:           SourceConceptNet,
 		version:          "5.7.0-en",
 		converterVersion: "1",
 		filename:         "conceptnet-5.7.0-en.tar.gz",

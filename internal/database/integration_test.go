@@ -69,7 +69,7 @@ func TestListDocuments(t *testing.T) {
 func TestTagCRUD(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
-	_, err := q.CreateTag(ctx, "my-tag")
+	_, err := q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "my-tag", Origin: testTagOrigin})
 	assertNoError(t, err, "create")
 	tag, _ := q.GetTagByName(ctx, "my-tag")
 	assertNoError(t, q.UpdateTag(ctx, UpdateTagParams{Name: "renamed", ID: tag.ID}), "rename")
@@ -80,7 +80,7 @@ func TestTagSearch(t *testing.T) {
 	q, _ := NewTestQueries(t)
 	ctx := context.Background()
 	for _, n := range []string{"zzz-finance", "zzz-financial", "fishing"} {
-		q.CreateTag(ctx, n)
+		q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: n, Origin: testTagOrigin})
 	}
 	r, _ := q.SearchTagsByName(ctx, SearchTagsByNameParams{Name: "zzz-%", Limit: 10, Offset: 0})
 	assertEqual(t, len(r), 2, "matches")
@@ -514,11 +514,11 @@ func TestAnalyticsQueries(t *testing.T) {
 		assertNoError(t, d2Row.Scan(&d2DBID), "get d2 db id")
 		assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d2DBID, TagID: financeTag.ID}), "tag d2 finance")
 
-		urgentID, err := q.CreateTag(ctx, "urgent")
+		urgentID, err := q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "urgent", Origin: testTagOrigin})
 		assertNoError(t, err, "create urgent tag")
 		assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: d1, TagID: urgentID}), "tag d1 urgent")
 
-		_, err = q.CreateTag(ctx, "unused")
+		_, err = q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "unused", Origin: testTagOrigin})
 		assertNoError(t, err, "create unused tag")
 
 		langs, err := q.LanguageDistribution(ctx)
@@ -1545,9 +1545,9 @@ func TestReassignDocumentTagsSkipsAndClears(t *testing.T) {
 	doc2ID := CreateUniqueDocument(t, q, "ra-2.pdf")
 	doc3ID := CreateUniqueDocument(t, q, "ra-3.pdf")
 
-	sourceID, err := q.CreateTag(ctx, "reassign-source")
+	sourceID, err := q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "reassign-source", Origin: testTagOrigin})
 	assertNoError(t, err, "create source tag")
-	targetID, err := q.CreateTag(ctx, "reassign-target")
+	targetID, err := q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "reassign-target", Origin: testTagOrigin})
 	assertNoError(t, err, "create target tag")
 
 	assertNoError(t, q.AddDocumentTag(ctx, AddDocumentTagParams{DocumentID: doc1ID, TagID: sourceID}), "doc1 → source")
@@ -1880,15 +1880,15 @@ func TestStructuredSearchMultiTagAnd(t *testing.T) {
 	resetDB(t, q)
 	ctx := context.Background()
 
-	taxID, err := q.CreateTag(ctx, "taxes")
+	taxID, err := q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "taxes", Origin: testTagOrigin})
 	if err != nil {
 		t.Fatalf("create tag taxes: %v", err)
 	}
-	govID, err := q.CreateTag(ctx, "government")
+	govID, err := q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "government", Origin: testTagOrigin})
 	if err != nil {
 		t.Fatalf("create tag government: %v", err)
 	}
-	secID, err := q.CreateTag(ctx, "government secrecy")
+	secID, err := q.CreateTagWithOrigin(ctx, CreateTagWithOriginParams{Name: "government secrecy", Origin: testTagOrigin})
 	if err != nil {
 		t.Fatalf("create tag government secrecy: %v", err)
 	}

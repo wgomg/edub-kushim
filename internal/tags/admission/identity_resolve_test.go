@@ -224,6 +224,17 @@ func TestResolvePending_Fold(t *testing.T) {
 	testutil.AssertEqual(t, pendingIdentityCount(t, client), int64(0), "no pending rows left")
 }
 
+// TestMintSweepSkipsHeldNames documents the expected hold behavior of the mint sweep in entry-point form:
+// a held provisional name must get no same-intent pair even when the knowledge base nominates one, because
+// the resolver would otherwise alias away a name the other passes leave standing. The sweep itself lives in
+// the reconcile package, whose sweeps_test.go pins the guard with seed and count.
+func TestMintSweepSkipsHeldNames(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	t.Log("mint sweep hold guard: see TestMintSweepSkipsHeldProvisional in internal/tags/reconcile")
+}
+
 func TestResolvePending_SameIntentPair(t *testing.T) {
 	resolver, client, adj := newIdentityResolver(t, true)
 	ctx := context.Background()

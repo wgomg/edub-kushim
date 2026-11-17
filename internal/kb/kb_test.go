@@ -157,7 +157,7 @@ func setupTestStore(t *testing.T) (*database.Client, *Store) {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 	client := database.NewTestClient(t)
-	return client, NewStore(client, t.TempDir())
+	return client, NewStore(client, t.TempDir(), []string{"kbtest", "cnet"})
 }
 
 func mustCountSource(t *testing.T, store *Store, source string, version string) Source {

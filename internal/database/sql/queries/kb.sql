@@ -62,6 +62,7 @@ FROM kb_lemma l
 JOIN kb_concept c ON c.source = l.source AND c.concept_key = l.concept_key
 JOIN kb_source s ON s.source = c.source
 WHERE l.lemma_norm = @lemma
+  AND l.source = ANY(@allowed_sources::text[])
 ORDER BY c.source, c.concept_key;
 
 -- name: KBLemmasForConcepts :many
@@ -69,6 +70,7 @@ SELECT l.source, l.concept_key, l.lemma_norm
 FROM kb_lemma l
 JOIN (SELECT unnest(@sources::text[]) AS source, unnest(@concept_keys::text[]) AS concept_key) AS a
   ON l.source = a.source AND l.concept_key = a.concept_key
+WHERE l.source = ANY(@allowed_sources::text[])
 ORDER BY l.source, l.concept_key, l.lemma_norm;
 
 -- name: KBEdgesFromConcepts :many
@@ -79,6 +81,7 @@ JOIN kb_source s ON s.source = e.source
 JOIN (SELECT unnest(@sources::text[]) AS source, unnest(@concept_keys::text[]) AS concept_key) AS a
   ON e.source = a.source AND e.from_concept_key = a.concept_key
 WHERE e.family = ANY(@families::text[])
+  AND e.source = ANY(@allowed_sources::text[])
 ORDER BY e.source, e.from_concept_key, e.family, e.to_concept_key;
 
 -- name: KBEdgesBetweenConcepts :many
@@ -93,6 +96,7 @@ JOIN (SELECT unnest(sqlc.arg(a_sources)::text[]) AS source, unnest(sqlc.arg(a_ke
 JOIN (SELECT unnest(sqlc.arg(b_sources)::text[]) AS source, unnest(sqlc.arg(b_keys)::text[]) AS concept_key) AS b
   ON e.source = b.source AND e.to_concept_key = b.concept_key
 WHERE e.family = ANY(sqlc.arg(families)::text[])
+  AND e.source = ANY(sqlc.arg(allowed_sources)::text[])
 UNION
 SELECT e.source, s.source_version, e.from_concept_key, e.to_concept_key, e.family, e.source_reltype,
        e.weight
@@ -103,4 +107,5 @@ JOIN (SELECT unnest(sqlc.arg(b_sources)::text[]) AS source, unnest(sqlc.arg(b_ke
 JOIN (SELECT unnest(sqlc.arg(a_sources)::text[]) AS source, unnest(sqlc.arg(a_keys)::text[]) AS concept_key) AS a
   ON e.source = a.source AND e.to_concept_key = a.concept_key
 WHERE e.family = ANY(sqlc.arg(families)::text[])
+  AND e.source = ANY(sqlc.arg(allowed_sources)::text[])
 ORDER BY source, from_concept_key, family, to_concept_key;

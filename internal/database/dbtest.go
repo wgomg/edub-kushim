@@ -191,10 +191,17 @@ func SeedTagByName(t TB, queries *Queries, name string) Tag {
 	return tag
 }
 
+// testTagOrigin is the origin a test-born tag records: the value the analyzer birth path stamps and the
+// column default backfills.
+const testTagOrigin = "analyzer"
+
 // MustCreateTag creates a tag or fatals.
 func MustCreateTag(t TB, queries *Queries, name string) int64 {
 	t.Helper()
-	id, err := queries.CreateTag(context.Background(), textnorm.NormalizeTag(name))
+	id, err := queries.CreateTagWithOrigin(context.Background(), CreateTagWithOriginParams{
+		Name:   textnorm.NormalizeTag(name),
+		Origin: testTagOrigin,
+	})
 	if err != nil {
 		t.Fatalf("create tag %q: %v", name, err)
 	}

@@ -423,6 +423,7 @@ type Tag struct {
 	ModifiedAt     time.Time
 	AcceptedAt     sql.NullTime
 	StandingSource string
+	Origin         string
 }
 
 type TagAlias struct {

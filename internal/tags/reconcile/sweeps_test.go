@@ -5,20 +5,276 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
-// twinSweepConfig returns the caps sweepTwins reads; an unset MaxRejudge truncates the whole worklist to
-// zero, so every twin would count as capped.
+// mustListIdentityEvents returns every identity event for the candidate, oldest first, including the
+// rows other verdicts left standing: the sweep's hold assertions read raw history, not the latest view.
+func mustListIdentityEvents(t *testing.T, client *database.Client, candidate string) []database.TagIdentityEvent {
+	t.Helper()
+	idRows, err := client.DB().QueryContext(context.Background(),
+		`SELECT candidate, kind, partner FROM tag_identity_event WHERE candidate = $1 ORDER BY id`, candidate)
+	if err != nil {
+		t.Fatalf("list raw identity events: %v", err)
+	}
+	defer idRows.Close()
+	var out []database.TagIdentityEvent
+	for idRows.Next() {
+		var row database.TagIdentityEvent
+		var cand string
+		if err := idRows.Scan(&cand, &row.Kind, &row.Partner); err != nil {
+			t.Fatalf("scan identity event: %v", err)
+		}
+		row.Candidate = cand
+		out = append(out, row)
+	}
+	if err := idRows.Err(); err != nil {
+		t.Fatalf("iterate identity events: %v", err)
+	}
+	return out
+}
+
+// mintSweepRows is the offline lexical knowledge base rows a mint-sweep fixture installs: one concept per
+// provisional name, the live target concept, and one exact edge from each provisional concept to it. The
+// pairs below stay unjudged: the fixture wants a worklist the sweep would take on its own, so no seeded
+// verdict may knock any name off it and the held name carries only its refusal.
+type mintSweepRows struct {
+	concepts [][3]string
+	lemmas   [][2]string
+	edges    [][5]string
+}
+
+// kbRowsForMintSweep is the offline lexical fixture the mint sweep tests need: each provisional on its own
+// concept, the live target on a shared one, with one exact edge from each provisional concept to it. Each
+// provisional therefore resolves to the live store tag and the hold lookup is the only difference between
+// them.
+func kbRowsForMintSweep() (concepts [][3]string, lemmas [][2]string, edges [][5]string) {
+	return [][3]string{
+			{"ewn-keep-unheld-n", "n", "a kept container"},
+			{"ewn-keep-held-n", "n", "a held container"},
+			{"ewn-keep-n", "n", "the live target"},
+		},
+		[][2]string{
+			{"ewn-keep-unheld-n", "unheld probe"},
+			{"ewn-keep-held-n", "held keep probe"},
+			{"ewn-keep-n", "keep target"},
+		},
+		[][5]string{
+			{"ewn-keep-unheld-n", "ewn-keep-n", "exact", "co-lemma", ""},
+			{"ewn-keep-held-n", "ewn-keep-n", "exact", "co-lemma", ""},
+		}
+}
+
+// seedMintSweepRows installs the offline lexical fixture for the held and unheld provisional names.
+func seedMintSweepRows(t *testing.T, client *database.Client, source string) error {
+	t.Helper()
+	concepts, lemmas, edges := kbRowsForMintSweep()
+	return insertMintSweepRows(context.Background(), t, client, source, mintSweepRows{
+		concepts: concepts,
+		lemmas:   lemmas,
+		edges:    edges,
+	})
+}
+
+// insertMintSweepRows writes the fixture rows through the knowledge base batch path (concept, lemma,
+// edge records shaped exactly as artifact installs), so the sweep queries read them back identically.
+func insertMintSweepRows(ctx context.Context, t *testing.T, client *database.Client, source string, rows mintSweepRows) error {
+	t.Helper()
+	marshal := func(v any) []byte {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal fixture rows: %v", err)
+		}
+		return raw
+	}
+	concepts := make([]kbConceptRecord, 0, len(rows.concepts))
+	for _, c := range rows.concepts {
+		pos, gloss := c[1], c[2]
+		concepts = append(concepts, kbConceptRecord{ConceptKey: c[0], Pos: &pos, Gloss: &gloss})
+	}
+	lemmas := make([]kbLemmaRecord, 0, len(rows.lemmas))
+	for _, l := range rows.lemmas {
+		lemmas = append(lemmas, kbLemmaRecord{ConceptKey: l[0], LemmaNorm: l[1]})
+	}
+	edges := make([]kbEdgeRecord, 0, len(rows.edges))
+	for _, e := range rows.edges {
+		edges = append(edges, kbEdgeRecord{FromConceptKey: e[0], ToConceptKey: e[1], Family: e[2], SourceReltype: e[3]})
+	}
+
+	if err := client.Queries.InsertKBSource(ctx, database.InsertKBSourceParams{
+		Source:           source,
+		SourceVersion:    "test-1",
+		License:          "CC0-1.0",
+		Notice:           "fixture notice",
+		UpstreamUrl:      "https://example.com/" + source,
+		UpstreamSha256:   strings.Repeat("0", 64),
+		ConverterVersion: "9",
+		ConceptCount:     int64(len(rows.concepts)),
+		LemmaCount:       int64(len(rows.lemmas)),
+		EdgeCount:        int64(len(rows.edges)),
+	}); err != nil {
+		return err
+	}
+	if err := client.Queries.InsertKBConcepts(ctx, database.InsertKBConceptsParams{
+		Source:  source,
+		Records: marshal(concepts),
+	}); err != nil {
+		return err
+	}
+	if err := client.Queries.InsertKBLemmas(ctx, database.InsertKBLemmasParams{
+		Source:  source,
+		Records: marshal(lemmas),
+	}); err != nil {
+		return err
+	}
+	return client.Queries.InsertKBEdges(ctx, database.InsertKBEdgesParams{
+		Source:  source,
+		Records: marshal(edges),
+	})
+}
+
+// kbConceptRecord is the concept record shape artifact installs marshal for the batch insert.
+type kbConceptRecord struct {
+	ConceptKey string  `json:"concept_key"`
+	Pos        *string `json:"pos"`
+	Gloss      *string `json:"gloss"`
+}
+
+// kbLemmaRecord is the lemma record shape artifact installs marshal for the batch insert.
+type kbLemmaRecord struct {
+	ConceptKey string `json:"concept_key"`
+	LemmaNorm  string `json:"lemma_norm"`
+}
+
+// kbEdgeRecord is the edge record shape artifact installs marshal for the batch insert; the weight stays
+// unset, exactly as the unweighted fixture edges arrive.
+type kbEdgeRecord struct {
+	FromConceptKey string   `json:"from_concept_key"`
+	ToConceptKey   string   `json:"to_concept_key"`
+	Family         string   `json:"family"`
+	SourceReltype  string   `json:"source_reltype"`
+	Weight         *float64 `json:"weight"`
+}
+
+// seedMintSweepKB installs a knowledge base fixture with two provisional names reaching the live target
+// through their own concepts: "held keep probe" is held by a refused fold, "unheld probe" is left free.
+// The fixture uses the local two-concept rows, not the kb package writers.
+func seedMintSweepKB(t *testing.T, client *database.Client, source string) {
+	t.Helper()
+	if err := seedMintSweepRows(t, client, source); err != nil {
+		t.Fatalf("install kb fixture: %v", err)
+	}
+}
+
+// kbInstallTestRows installs the mint sweep rows in the offline lexical shape: the co-lemma exact edges
+// naming both provisional names' concepts plus their shared store target, so the store resolves them back.
+func kbInstallTestRows(ctx context.Context, t *testing.T, client *database.Client, source string) error {
+	t.Helper()
+	concepts, lemmas, edges := kbRowsForMintSweep()
+	if err := insertMintSweepRows(ctx, t, client, source, mintSweepRows{
+		concepts: concepts,
+		lemmas:   lemmas,
+		edges:    edges,
+	}); err != nil {
+		t.Fatalf("install kb fixture: %v", err)
+	}
+	return nil
+}
+
+// twinConfigFunc fixes the sweep budget for harness-built reconcilers without a live config source.
+func twinConfigFunc(cfg *config.Config) func() *config.Config {
+	return func() *config.Config { return cfg }
+}
+
+// TestMintSweepSkipsHeldProvisional pins the mint sweep's hold guard: the sweep mints the pair the
+// unheld provisional name needs through its shared store target, and skips the held one even though the
+// knowledge base nominates both. ReportOnly counts without writing.
+func TestMintSweepSkipsHeldProvisional(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	tagCfg := twinSweepConfig(10, 1000)
+
+	client := database.NewTestClient(t)
+	t.Cleanup(func() { client.DB().Close() })
+	database.ResetTestDatabase(client.DB())
+	if err := kbInstallTestRows(ctx, t, client, "kbsweep"); err != nil {
+		t.Fatalf("install kb fixture: %v", err)
+	}
+	store := kb.NewStore(client, t.TempDir(), []string{"kbsweep"})
+
+	r, report, heldName := newMintSweepHarness(t, client, store)
+
+	tagCfg.Enricher.TagReconcile.MaxRetag = 0
+	report.ReportOnly = true
+	r.sweepKBMints(ctx, tagCfg, report)
+	testutil.AssertEqual(t, len(mustListIdentityEvents(t, client, heldName)), 1, "report-only leaves the hold refusal")
+	testutil.AssertEqual(t, report.KBMinted, 1, "report-only counts the unheld pair without writing")
+
+	report = &Report{}
+	r.sweepKBMints(ctx, tagCfg, report)
+	testutil.AssertEqual(t, report.KBMinted, 1, "the unheld neighbour mints exactly one pending pair")
+	rows := mustListIdentityEvents(t, client, heldName)
+	testutil.AssertEqual(t, len(rows), 1, "the held name keeps only its refusal")
+	partners := map[string]bool{}
+	for _, row := range mustListIdentityEvents(t, client, "unheld probe") {
+		if row.Kind == tags.IdentityKindSameIntent && row.Partner.Valid {
+			partners[row.Partner.String] = true
+		}
+	}
+	testutil.AssertEqual(t, len(partners), 1, "the unheld name keeps exactly one partner nomination")
+	if got := partners["keep target"]; !got {
+		t.Fatalf("unheld probe partners = %v, want keep target joined", partners)
+	}
+}
+
+// newMintSweepHarness builds the sweeper on the caller's client with the installed knowledge base, then
+// seeds one held and one unheld provisional name sharing a target: the sweep must mint for the unheld
+// name and skip the held one.
+func newMintSweepHarness(t *testing.T, client *database.Client, store *kb.Store) (r *Reconciler, report *Report, heldName string) {
+	t.Helper()
+	logger := testutil.NewTestLogger()
+	r = NewReconciler(twinConfigFunc(twinSweepConfig(10, 1000)), client,
+		curation.NewTag(client, logger, testutil.NewMockEmbedder()), nil, logger, store)
+	ctx := context.Background()
+	heldName = seedMintSweepTags(ctx, t, client)
+	report = &Report{}
+	return r, report, heldName
+}
+
+// seedMintSweepTags plants the store tags "keep target" and "keep side" plus the held and unheld
+// provisional names: the held one carries the refused fold that keeps it out of the sweep's nominations.
+func seedMintSweepTags(ctx context.Context, t *testing.T, client *database.Client) string {
+	t.Helper()
+	database.MustCreateTag(t, client.Queries, "keep target")
+	database.MustCreateTag(t, client.Queries, "keep side")
+	database.MustCreateTag(t, client.Queries, "unheld probe")
+	heldName := "held keep probe"
+	database.MustCreateTag(t, client.Queries, heldName)
+	if _, err := client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindFoldGate,
+		Candidate:      heldName,
+		Criteria:       []byte(`{"proposed_fold":"keep target"}`),
+		Verdict:        sql.NullString{String: tags.IdentityVerdictRejected, Valid: true},
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	}); err != nil {
+		t.Fatalf("seed the refused fold: %v", err)
+	}
+	return heldName
+}
+
 func twinSweepConfig(maxRejudge, maxRetag int) *config.Config {
 	return &config.Config{Enricher: config.EnricherConfig{
 		TagReconcile: config.TagReconcileConfig{MaxRejudge: maxRejudge, MaxRetag: maxRetag},
@@ -360,7 +616,7 @@ func TestBoundTwinAliases_RespectsRetagBudget(t *testing.T) {
 
 // TestMeasurementRunJSON pins the absent-run shape: the twin arm always fills the measurement block, and an
 // absent run must not emit a zero timestamp for the web to render as a date.
-func TestMeasurementRunJSON(t *testing.T) {
+func TestMeasurementRunJSONPinsAbsentShape(t *testing.T) {
 	raw, err := json.Marshal(MeasurementRun{Absent: true})
 	if err != nil {
 		t.Fatal(err)

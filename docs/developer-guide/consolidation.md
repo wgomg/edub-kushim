@@ -451,6 +451,11 @@ lock-drain-heartbeat discipline for the pass.
   carrying an operator split rule instead applies its recorded components without
   judging — whatever the current-version journal says — and the opening gate counts rule
   carriers as due work.
+- **KB mint arm** — provisional tags with no same-intent evidence are probed against the
+  installed knowledge base: exact and similar neighbours that are live store names become
+  pending same-intent evidence for the identity pass, and the resolver judges them like any
+  other pair. Identity-held names are skipped, and a report-only run counts without writing
+  (`kb_minted` in the report).
 - **Twin arm** — the latest `tagmeasure` run's `≈` twin worklist: a pinned variant class
   aliases mechanically onto the `PreferCanonical` winner with no judge call; every other
   pair becomes pending same-intent evidence the identity pass settles.
@@ -464,9 +469,10 @@ aliases the loser onto the canonical; a `keep` flip resolves the pair's affected
 then withdraws the alias, re-creates the query tag, and re-points only those documents.
 
 **Flips and caps**: `max_rejudge` pairs and `max_retag` documents per run; the provisional
-re-judge and the twin arm share `max_rejudge`, the compound scan and the twin aliases
-share `max_retag`, the demotion arm's revocations draw on its re-judgment bound, and
-retention removals are capped by `max_rejudge` too. The
+re-judge and the twin arm share `max_rejudge`, the KB mint arm's worklist bound is
+`max_rejudge` too, the compound scan and the twin aliases share `max_retag`, the demotion
+arm's revocations draw on its re-judgment bound, and retention removals are capped by
+`max_rejudge` too. The
 first run is always **report-only** — it takes no store action regardless of the
 `report_only` flag (the sweep's own judgment evidence still persists, so the compound
 scan can resume from cache). A failed hold, alias, settled, or mass lookup aborts the

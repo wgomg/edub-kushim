@@ -268,12 +268,18 @@ func newReconcileHandler(c *container.Container, client *database.Client) (task.
 	if err != nil {
 		return nil, fmt.Errorf("tag service: %w", err)
 	}
+	store, err := c.GetKBStore()
+	if err != nil {
+		return nil, fmt.Errorf("knowledge base store: %w", err)
+	}
+	c.EnsureKBSources(store)
 	reconciler := reconcile.NewReconciler(
 		func() *config.Config { return c.GetConfig() },
 		client,
 		tagService,
 		c.GetTagToolsRunner(),
 		c.GetLogger(),
+		store,
 	)
 	return reconcile.NewReconcileTaskHandler(reconciler), nil
 }

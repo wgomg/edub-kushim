@@ -721,9 +721,16 @@ before installing. A pointer or download that does not match the pin fails loudl
 
 The read side is `kb.Store`, which implements the `kb.Reader` interface: `Resolve`
 (label → concepts), `Neighbours` (typed edges of a family set, projected to lemma
-strings) and `PairProbe` (edges connecting two labels, in either direction). The
-interface is not yet consumed by tag candidate generation, so installing sources does not
-change tag decisions yet.
+strings) and `PairProbe` (edges connecting two labels, in either direction). Reads are
+scoped to the configured source list. Tag candidate generation consumes it as nomination
+evidence only: identity planning asks for the exact and similar neighbours of unresolved
+candidates, document enrichment injects the emitted labels' uphill hypernym, instance and
+holonym containers as ordinary candidates, and the scheduled reconciliation mints pending
+pair evidence for provisional tags that never got a same-intent judgment. Every channel is
+advisory — the split, matcher, identity and quality stages judge the nominations like any
+other candidate, identity-held names are skipped, and a disabled or empty store changes
+nothing. Tags born from nominations record `tag.origin = 'kb'`; containment attachments
+carry `document_tag.source = 'kb'`.
 
 The data carries its own licenses: OEWN is CC BY 4.0 with the chained Princeton WordNet
 notice, and ConceptNet is CC BY-SA 4.0. Each artifact's manifest and `assets/kb/README.md`
@@ -843,7 +850,7 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 
 - **tsvector `simple` config**: No CJK word segmentation. Upgrade to `'english'` or a custom config for stemming if needed.
 - **External dependencies**: `pdftotext`, `ghostscript`, and `ocrmypdf` required at runtime (only when using external-tool adapters; Go-native adapters have no runtime deps). The ocrmypdf adapter additionally requires `tesseract` and `unpaper` as companions, with `pngquant` recommended for image optimization. `curl` is required for the Hugot model and tessdata downloads; knowledge base artifacts download in-process. Pre-flight checks at the consume entry point surface these requirements with actionable install hints.
-- **Knowledge base not yet consumed**: offline lexical sources are installed and readable through `kb.Reader`, but tag candidate generation does not use them yet, so opting into `conceptnet` adds no tag decisions. First setup downloads the artifacts from GitHub over LFS; an air-gapped install needs a matching artifact pre-placed under `<config-dir>/kb/`, which is reused without network.
+- **Knowledge base artifacts need network on first setup**: the first setup downloads the artifacts from GitHub over LFS. An air-gapped install needs a matching artifact pre-placed under `<config-dir>/kb/`, which is reused without network.
 - **Build‑time**: Requires `gcc`, `gcc-c++`, `make`, `autotools` for Leptonica/Tesseract/MuPDF compilation. Additionally `libtokenizers.a` downloaded as a pre-built binary for Hugot (per-arch via `TOKENIZERS_ARCH`, SHA-256 verified). The web UI requires Node.js 26 (see `.nvmrc` — run `nvm use` to activate). Use `docker compose up` to avoid installing any host-side toolchain — the multi-stage Dockerfile handles all build dependencies inside a container. Pre-built Linux binaries (amd64/arm64) are published to GitHub Releases by `.github/workflows/release.yml` on `v*` tag push — see `AGENTS.md` → Releases.
 - **MuPDF / Tesseract CGo isolation**: Long-running CGo operations (OCR via gosseract, PDF cleanup via pdf_clean_file) are isolated into forked subprocesses (`kushim internal-ocr`, `kushim internal-mupdf-clean`) so that crashes or scheduler starvation in the C library affect only the child. The parent receives a normal Go error and can fall back or retry. Thin CGo calls like page counting remain in-process.
 - **Malformed PDFs**: MuPDF's `pdf_clean_file` may fail on PDFs with invalid patterns

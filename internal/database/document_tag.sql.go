@@ -61,7 +61,7 @@ func (q *Queries) ClearDocumentTags(ctx context.Context, documentID int64) error
 }
 
 const clearEnrichDocumentTags = `-- name: ClearEnrichDocumentTags :exec
-DELETE FROM document_tag WHERE document_id = $1 AND source = 'enrich'
+DELETE FROM document_tag WHERE document_id = $1 AND source IN ('enrich', 'kb')
 `
 
 func (q *Queries) ClearEnrichDocumentTags(ctx context.Context, documentID int64) error {
@@ -192,7 +192,7 @@ func (q *Queries) DeleteDocumentTagsForTag(ctx context.Context, tagID int64) (in
 }
 
 const getDocumentTags = `-- name: GetDocumentTags :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source FROM tag t
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, t.origin FROM tag t
 JOIN document_tag dt ON t.id = dt.tag_id
 WHERE dt.document_id = $1
 `
@@ -218,6 +218,7 @@ func (q *Queries) GetDocumentTags(ctx context.Context, documentID int64) ([]Tag,
 			&i.ModifiedAt,
 			&i.AcceptedAt,
 			&i.StandingSource,
+			&i.Origin,
 		); err != nil {
 			return nil, err
 		}

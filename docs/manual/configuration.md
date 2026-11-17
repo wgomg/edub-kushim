@@ -82,8 +82,9 @@ the CLI equivalents are `kushim migrate storage` ([cli.md](cli.md#kushim-migrate
 ## `knowledgebase`
 
 Offline lexical sources installed into the database at setup. They supply
-corpus-independent typed evidence for tags; the installed data is exposed through the
-knowledge base read interface, but tag candidate generation does not consume it yet.
+corpus-independent typed evidence for tags: candidate generation consults the configured
+sources to nominate related labels, which the normal tag stages then judge like any other
+candidate.
 
 | Key | Default | Meaning |
 |---|---|---|

@@ -51,7 +51,7 @@ func newGateReconciler(t *testing.T, client *database.Client) *Reconciler {
 	cfg := config.DefaultConfig(t.TempDir())
 	cfg.Enricher.TagAdjudicator.Enabled = true
 	logger := log.NewDiscardLogger()
-	return NewReconciler(func() *config.Config { return cfg }, client, curation.NewTag(client, logger, nil), nil, logger)
+	return NewReconciler(func() *config.Config { return cfg }, client, curation.NewTag(client, logger, nil), nil, logger, nil)
 }
 
 // seedCompletedReconcileTask records the completed run the zero-work gate requires behind it.

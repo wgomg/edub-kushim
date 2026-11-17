@@ -11,11 +11,11 @@ import (
 
 // Reader is the read interface over the installed knowledge base: label resolution, typed neighbours and
 // the pairwise probe. Consumers depend on this interface, not on the query implementation. Every call
-// answers from the installed sources only: an empty result is a miss, never evidence that a relation does
-// not hold.
+// answers from the store's configured sources only: an empty result is a miss, never evidence that a
+// relation does not hold.
 type Reader interface {
-	// Resolve returns every concept whose normalized lemma equals the label's house form, across every
-	// installed source.
+	// Resolve returns every concept whose normalized lemma equals the label's house form, across the
+	// configured sources.
 	Resolve(ctx context.Context, label string) ([]Anchor, error)
 
 	// Neighbours returns the edges of the given families leaving the label's anchors, projected onto the
@@ -44,7 +44,7 @@ type conceptRef struct {
 // sources, ordered by source and concept key. It returns an empty result when nothing matches — an absent
 // source and an unknown label are the same answer.
 func (s *Store) Resolve(ctx context.Context, label string) ([]Anchor, error) {
-	anchors, err := resolve(ctx, s.client.Queries, label)
+	anchors, err := resolve(ctx, s.client.Queries, label, s.sources)
 	if err != nil {
 		return nil, err
 	}
@@ -56,13 +56,16 @@ func (s *Store) Resolve(ctx context.Context, label string) ([]Anchor, error) {
 	return out, nil
 }
 
-func resolve(ctx context.Context, q *database.Queries, label string) ([]resolveAnchor, error) {
+func resolve(ctx context.Context, q *database.Queries, label string, allowedSources []string) ([]resolveAnchor, error) {
 	form := lemmaForm(label)
-	if form == "" {
+	if form == "" || len(allowedSources) == 0 {
 		return nil, nil
 	}
 
-	rows, err := q.KBConceptsForLemma(ctx, form)
+	rows, err := q.KBConceptsForLemma(ctx, database.KBConceptsForLemmaParams{
+		Lemma:          form,
+		AllowedSources: allowedSources,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve kb label %q: %w", label, err)
 	}
@@ -92,7 +95,7 @@ func (s *Store) Neighbours(ctx context.Context, label string, families []Family)
 		return nil, err
 	}
 
-	anchors, err := resolve(ctx, s.client.Queries, label)
+	anchors, err := resolve(ctx, s.client.Queries, label, s.sources)
 	if err != nil {
 		return nil, err
 	}
@@ -103,9 +106,10 @@ func (s *Store) Neighbours(ctx context.Context, label string, families []Family)
 	q := s.client.Queries
 	sources, keys := anchorArrays(anchors)
 	rows, err := q.KBEdgesFromConcepts(ctx, database.KBEdgesFromConceptsParams{
-		Sources:     sources,
-		ConceptKeys: keys,
-		Families:    fams,
+		Sources:        sources,
+		ConceptKeys:    keys,
+		Families:       fams,
+		AllowedSources: s.sources,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read kb neighbours of %q: %w", label, err)
@@ -119,7 +123,7 @@ func (s *Store) Neighbours(ctx context.Context, label string, families []Family)
 		refs = append(refs, conceptRef{source: r.Source, key: r.FromConceptKey})
 		refs = append(refs, conceptRef{source: r.Source, key: r.ToConceptKey})
 	}
-	lemmas, err := lemmasFor(ctx, q, refs)
+	lemmas, err := lemmasFor(ctx, q, refs, s.sources)
 	if err != nil {
 		return nil, err
 	}
@@ -153,11 +157,11 @@ func (s *Store) PairProbe(ctx context.Context, labelA, labelB string, families [
 		return nil, err
 	}
 
-	a, err := resolve(ctx, s.client.Queries, labelA)
+	a, err := resolve(ctx, s.client.Queries, labelA, s.sources)
 	if err != nil {
 		return nil, err
 	}
-	b, err := resolve(ctx, s.client.Queries, labelB)
+	b, err := resolve(ctx, s.client.Queries, labelB, s.sources)
 	if err != nil {
 		return nil, err
 	}
@@ -169,11 +173,12 @@ func (s *Store) PairProbe(ctx context.Context, labelA, labelB string, families [
 	aSources, aKeys := anchorArrays(a)
 	bSources, bKeys := anchorArrays(b)
 	rows, err := q.KBEdgesBetweenConcepts(ctx, database.KBEdgesBetweenConceptsParams{
-		ASources: aSources,
-		AKeys:    aKeys,
-		BSources: bSources,
-		BKeys:    bKeys,
-		Families: fams,
+		ASources:       aSources,
+		AKeys:          aKeys,
+		BSources:       bSources,
+		BKeys:          bKeys,
+		Families:       fams,
+		AllowedSources: s.sources,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("probe kb pair %q/%q: %w", labelA, labelB, err)
@@ -190,7 +195,7 @@ func (s *Store) PairProbe(ctx context.Context, labelA, labelB string, families [
 		refs = append(refs, conceptRef{source: r.Source, key: r.FromConceptKey})
 		refs = append(refs, conceptRef{source: r.Source, key: r.ToConceptKey})
 	}
-	lemmas, err := lemmasFor(ctx, q, refs)
+	lemmas, err := lemmasFor(ctx, q, refs, s.sources)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +307,7 @@ func sharedConceptExact(formA, formB string, a, b []resolveAnchor) []TypedEdge {
 
 // lemmasFor loads the lemma strings of every distinct concept reference in refs. Missing refs simply carry
 // no entry; an edge whose endpoint has no lemma row projects to an empty list.
-func lemmasFor(ctx context.Context, q *database.Queries, refs []conceptRef) (map[conceptRef][]string, error) {
+func lemmasFor(ctx context.Context, q *database.Queries, refs []conceptRef, allowedSources []string) (map[conceptRef][]string, error) {
 	seen := make(map[conceptRef]struct{}, len(refs))
 	sources := make([]string, 0, len(refs))
 	keys := make([]string, 0, len(refs))
@@ -322,8 +327,9 @@ func lemmasFor(ctx context.Context, q *database.Queries, refs []conceptRef) (map
 	}
 
 	rows, err := q.KBLemmasForConcepts(ctx, database.KBLemmasForConceptsParams{
-		Sources:     sources,
-		ConceptKeys: keys,
+		Sources:        sources,
+		ConceptKeys:    keys,
+		AllowedSources: allowedSources,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read kb lemmas: %w", err)

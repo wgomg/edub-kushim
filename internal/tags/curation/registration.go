@@ -228,7 +228,10 @@ func (s *Tag) CreatePlannedTx(ctx context.Context, q *database.Queries, plan tag
 			continue
 		}
 
-		id, err := q.CreateTag(ctx, textnorm.NormalizeTag(name))
+		id, err := q.CreateTagWithOrigin(ctx, database.CreateTagWithOriginParams{
+			Name:   textnorm.NormalizeTag(name),
+			Origin: tagOrigin(reg, standingSource),
+		})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				existing, err := q.GetTagByName(ctx, name)
@@ -345,4 +348,16 @@ func (s *Tag) recordCompositionEvidence(ctx context.Context, q *database.Queries
 		}
 	}
 	return nil
+}
+
+// tagOrigin resolves the origin a registration's birth records: the registration's explicit marker when
+// set, the operator marker for an explicit create, and the analyzer marker for the enrichment path.
+func tagOrigin(reg tags.Registration, standingSource string) string {
+	if reg.Origin != "" {
+		return reg.Origin
+	}
+	if standingSource == tags.StandingOperator {
+		return tags.TagOriginOperator
+	}
+	return tags.TagOriginAnalyzer
 }

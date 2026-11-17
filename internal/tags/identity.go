@@ -136,7 +136,18 @@ type Registration struct {
 	Resolved    string
 	Disposition Disposition
 	Provisional bool
+	Source      string
+	Origin      string
 }
+
+// The tag origins recorded on the tag row at birth: the enrichment analyzer, a split part, an operator
+// create, or a knowledge base container nomination.
+const (
+	TagOriginAnalyzer = "analyzer"
+	TagOriginSplit    = "split"
+	TagOriginOperator = "operator"
+	TagOriginKB       = "kb"
+)
 
 // EvidenceRow is one pending identity judgment: its kind, the candidate and partner names, the criteria the
 // judging body receives (JSON), the verdict once judged, the model that judged, and the rule-set stamp the

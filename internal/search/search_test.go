@@ -221,10 +221,9 @@ func TestStructuredSearch(t *testing.T) {
 		taggedID := insertSearchDocRaw(t, q, "ss-utg-2", "tagged.pdf", "eng", 3, "")
 
 		// Tag the tagged doc
-		tagID, err := q.CreateTag(ctx, "ss-test-tag")
-		testutil.AssertNoError(t, err, "create tag")
+		tagID := database.MustCreateTag(t, q, "ss-test-tag")
 
-		err = q.AddDocumentTag(ctx, database.AddDocumentTagParams{DocumentID: taggedID, TagID: tagID})
+		err := q.AddDocumentTag(ctx, database.AddDocumentTagParams{DocumentID: taggedID, TagID: tagID})
 		testutil.AssertNoError(t, err, "tag document")
 
 		results, total, err := engine.SearchStructured(ctx, Filter{

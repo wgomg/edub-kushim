@@ -242,7 +242,7 @@ Flags:
 	}
 
 	client := database.NewClient(db)
-	store := kb.NewStore(client, cfg.App.ConfigDir)
+	store := kb.NewStore(client, cfg.App.ConfigDir, cfg.KnowledgeBase.Sources)
 	for _, source := range cfg.KnowledgeBase.Sources {
 		logger.Info("", "ensuring knowledge base source: %s", source)
 		if err := store.Ensure(context.Background(), source); err != nil {

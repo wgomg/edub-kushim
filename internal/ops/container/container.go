@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/search"
@@ -233,6 +235,36 @@ func (c *Container) GetSearchEngine() (*search.Engine, error) {
 		c.engine = search.NewEngine(c.logger, client)
 	}
 	return c.engine, nil
+}
+
+// GetKBStore returns the knowledge base store scoped to the configured sources. It is built fresh on every
+// call so a config reload's source list takes effect immediately.
+func (c *Container) GetKBStore() (*kb.Store, error) {
+	client, err := c.GetClient()
+	if err != nil {
+		return nil, err
+	}
+	cfg := c.cfg.Load()
+	return kb.NewStore(client, cfg.App.ConfigDir, cfg.KnowledgeBase.Sources), nil
+}
+
+// kbEnsureTimeout bounds one knowledge base ensure at a tag pass entry: the artifact download is bounded
+// only by its caller's context, and a stalled fetch must not hang the pass before it starts.
+const kbEnsureTimeout = 10 * time.Minute
+
+// EnsureKBSources makes the configured knowledge base sources current at their pinned versions, each
+// bounded by kbEnsureTimeout; a source that cannot be fetched is logged and skipped, so the knowledge
+// base never blocks a tag pass.
+func (c *Container) EnsureKBSources(store *kb.Store) {
+	cfg := c.cfg.Load()
+	for _, source := range cfg.KnowledgeBase.Sources {
+		ctx, cancel := context.WithTimeout(context.Background(), kbEnsureTimeout)
+		err := store.Ensure(ctx, source)
+		cancel()
+		if err != nil {
+			c.logger.Error("", "knowledge base source %s not ensured: %v", source, err)
+		}
+	}
 }
 
 // Close releases the embedder and the database handle.

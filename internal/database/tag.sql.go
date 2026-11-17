@@ -328,15 +328,20 @@ func (q *Queries) CountVerdictDemotedTags(ctx context.Context, reasons []string)
 	return count, err
 }
 
-const createTag = `-- name: CreateTag :one
-INSERT INTO tag (name)
-VALUES ($1)
+const createTagWithOrigin = `-- name: CreateTagWithOrigin :one
+INSERT INTO tag (name, origin)
+VALUES ($1, $2)
 ON CONFLICT (name) DO NOTHING
 RETURNING id
 `
 
-func (q *Queries) CreateTag(ctx context.Context, name string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, createTag, name)
+type CreateTagWithOriginParams struct {
+	Name   string
+	Origin string
+}
+
+func (q *Queries) CreateTagWithOrigin(ctx context.Context, arg CreateTagWithOriginParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createTagWithOrigin, arg.Name, arg.Origin)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -500,7 +505,7 @@ func (q *Queries) FirstDocumentIDForTag(ctx context.Context, tagID int64) (int64
 }
 
 const getTag = `-- name: GetTag :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source FROM tag WHERE id = $1
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source, origin FROM tag WHERE id = $1
 `
 
 func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
@@ -518,12 +523,13 @@ func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
 		&i.ModifiedAt,
 		&i.AcceptedAt,
 		&i.StandingSource,
+		&i.Origin,
 	)
 	return i, err
 }
 
 const getTagByName = `-- name: GetTagByName :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source FROM tag WHERE name = $1
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source, origin FROM tag WHERE name = $1
 `
 
 func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
@@ -541,12 +547,13 @@ func (q *Queries) GetTagByName(ctx context.Context, name string) (Tag, error) {
 		&i.ModifiedAt,
 		&i.AcceptedAt,
 		&i.StandingSource,
+		&i.Origin,
 	)
 	return i, err
 }
 
 const getTagForUpdate = `-- name: GetTagForUpdate :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source FROM tag WHERE id = $1 FOR UPDATE
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source, origin FROM tag WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
@@ -564,12 +571,13 @@ func (q *Queries) GetTagForUpdate(ctx context.Context, id int64) (Tag, error) {
 		&i.ModifiedAt,
 		&i.AcceptedAt,
 		&i.StandingSource,
+		&i.Origin,
 	)
 	return i, err
 }
 
 const getTagForUpdateByName = `-- name: GetTagForUpdateByName :one
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source FROM tag WHERE name = $1 FOR UPDATE
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source, origin FROM tag WHERE name = $1 FOR UPDATE
 `
 
 func (q *Queries) GetTagForUpdateByName(ctx context.Context, name string) (Tag, error) {
@@ -587,12 +595,13 @@ func (q *Queries) GetTagForUpdateByName(ctx context.Context, name string) (Tag, 
 		&i.ModifiedAt,
 		&i.AcceptedAt,
 		&i.StandingSource,
+		&i.Origin,
 	)
 	return i, err
 }
 
 const listAllTags = `-- name: ListAllTags :many
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source FROM tag ORDER BY created_at DESC
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source, origin FROM tag ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
@@ -616,6 +625,7 @@ func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
 			&i.ModifiedAt,
 			&i.AcceptedAt,
 			&i.StandingSource,
+			&i.Origin,
 		); err != nil {
 			return nil, err
 		}
@@ -631,7 +641,7 @@ func (q *Queries) ListAllTags(ctx context.Context) ([]Tag, error) {
 }
 
 const listAllTagsWithDocumentCount = `-- name: ListAllTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, t.origin, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -650,6 +660,7 @@ type ListAllTagsWithDocumentCountRow struct {
 	ModifiedAt     time.Time
 	AcceptedAt     sql.NullTime
 	StandingSource string
+	Origin         string
 	DocumentCount  int64
 }
 
@@ -674,6 +685,7 @@ func (q *Queries) ListAllTagsWithDocumentCount(ctx context.Context) ([]ListAllTa
 			&i.ModifiedAt,
 			&i.AcceptedAt,
 			&i.StandingSource,
+			&i.Origin,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -1069,6 +1081,44 @@ func (q *Queries) ListProvisionalTagsWithDocumentCount(ctx context.Context, arg 
 	return items, nil
 }
 
+const listProvisionalTagsWithoutPairEvidence = `-- name: ListProvisionalTagsWithoutPairEvidence :many
+SELECT t.name
+FROM tag t
+WHERE t.promoted_at IS NULL
+  AND t.demoted_at IS NULL
+  AND t.accepted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM tag_identity_event e
+      WHERE e.candidate = t.name
+        AND e.kind = 'same_intent'
+  )
+ORDER BY coalesce(t.created_at, now())
+LIMIT $1::int
+`
+
+func (q *Queries) ListProvisionalTagsWithoutPairEvidence(ctx context.Context, maxNames int32) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listProvisionalTagsWithoutPairEvidence, maxNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRetentionCandidates = `-- name: ListRetentionCandidates :many
 SELECT t.id, t.name, t.created_at
 FROM tag t
@@ -1210,7 +1260,7 @@ func (q *Queries) ListTagIDsByNames(ctx context.Context, names []string) ([]List
 }
 
 const listTags = `-- name: ListTags :many
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source, origin FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
 
 type ListTagsParams struct {
@@ -1239,6 +1289,7 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 			&i.ModifiedAt,
 			&i.AcceptedAt,
 			&i.StandingSource,
+			&i.Origin,
 		); err != nil {
 			return nil, err
 		}
@@ -1254,7 +1305,7 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 }
 
 const listTagsWithDocumentCount = `-- name: ListTagsWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, t.origin, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 GROUP BY t.id
@@ -1278,6 +1329,7 @@ type ListTagsWithDocumentCountRow struct {
 	ModifiedAt     time.Time
 	AcceptedAt     sql.NullTime
 	StandingSource string
+	Origin         string
 	DocumentCount  int64
 }
 
@@ -1302,6 +1354,7 @@ func (q *Queries) ListTagsWithDocumentCount(ctx context.Context, arg ListTagsWit
 			&i.ModifiedAt,
 			&i.AcceptedAt,
 			&i.StandingSource,
+			&i.Origin,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err
@@ -1506,7 +1559,7 @@ func (q *Queries) RetentionTagProbe(ctx context.Context, cutoff time.Time) (bool
 }
 
 const searchTagsByName = `-- name: SearchTagsByName :many
-SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source FROM tag WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
+SELECT id, name, created_at, orphaned_since, promoted_at, demoted_at, demoted_reason, seeded, modified_at, accepted_at, standing_source, origin FROM tag WHERE name ILIKE $1 ORDER BY name ASC LIMIT $2 OFFSET $3
 `
 
 type SearchTagsByNameParams struct {
@@ -1536,6 +1589,7 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 			&i.ModifiedAt,
 			&i.AcceptedAt,
 			&i.StandingSource,
+			&i.Origin,
 		); err != nil {
 			return nil, err
 		}
@@ -1551,7 +1605,7 @@ func (q *Queries) SearchTagsByName(ctx context.Context, arg SearchTagsByNamePara
 }
 
 const searchTagsByNameWithDocumentCount = `-- name: SearchTagsByNameWithDocumentCount :many
-SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, COUNT(dt.document_id) AS document_count
+SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, t.origin, COUNT(dt.document_id) AS document_count
 FROM tag t
 LEFT JOIN document_tag dt ON t.id = dt.tag_id
 WHERE (t.name ILIKE $1
@@ -1578,6 +1632,7 @@ type SearchTagsByNameWithDocumentCountRow struct {
 	ModifiedAt     time.Time
 	AcceptedAt     sql.NullTime
 	StandingSource string
+	Origin         string
 	DocumentCount  int64
 }
 
@@ -1602,6 +1657,7 @@ func (q *Queries) SearchTagsByNameWithDocumentCount(ctx context.Context, arg Sea
 			&i.ModifiedAt,
 			&i.AcceptedAt,
 			&i.StandingSource,
+			&i.Origin,
 			&i.DocumentCount,
 		); err != nil {
 			return nil, err

@@ -15,6 +15,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
@@ -24,6 +25,32 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
+
+// TestKBPairTargetsOrdersExactBeforeSimilar pins the nomination order the birth path and the reconcile mint
+// sweep share: exact store neighbours come before similar ones, ties break by descending weight, absent names
+// drop out, and a name attested twice nominates once.
+func TestKBPairTargetsOrdersExactBeforeSimilar(t *testing.T) {
+	two := 2.0
+	one := 1.0
+	edges := []kb.TypedEdge{
+		{Family: kb.FamilySimilar, Weight: &two, ToLemmas: []string{"Beryllium"}},
+		{Family: kb.FamilySimilar, Weight: &one, ToLemmas: []string{"beryllium"}},
+		{Family: kb.FamilyExact, ToLemmas: []string{"lithium"}},
+		{Family: kb.FamilyExact, ToLemmas: []string{"ghost"}},
+	}
+	storeNames := map[string]string{"beryllium": "beryllium", "lithium": "lithium"}
+
+	got := KBPairTargets(edges, storeNames, 10)
+	want := []string{"lithium", "beryllium"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("KBPairTargets = %v, want %v", got, want)
+	}
+
+	capped := KBPairTargets(edges, storeNames, 1)
+	if !reflect.DeepEqual(capped, []string{"lithium"}) {
+		t.Fatalf("KBPairTargets(limit 1) = %v, want [lithium]", capped)
+	}
+}
 
 func TestPlanIdentity_LogsPendingPairs(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {

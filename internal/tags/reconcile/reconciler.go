@@ -15,6 +15,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/kb"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
@@ -33,18 +34,21 @@ type Reconciler struct {
 	tag       *curation.Tag
 	runner    *tools.Runner
 	logger    *log.Logger
+	kb        *kb.Store
 }
 
 // NewReconciler wires the reconciler: the dynamic config, the database, the curation surface it writes
-// through, the tools runner, and the logger.
+// through, the tools runner, the logger, and the knowledge base store the mint sweep nominates from. A
+// nil store disables the mint sweep without touching any other pass.
 func NewReconciler(getConfig func() *config.Config, client *database.Client,
-	tag *curation.Tag, runner *tools.Runner, logger *log.Logger) *Reconciler {
+	tag *curation.Tag, runner *tools.Runner, logger *log.Logger, store *kb.Store) *Reconciler {
 	return &Reconciler{
 		getConfig: getConfig,
 		client:    client,
 		tag:       tag,
 		runner:    runner,
 		logger:    logger,
+		kb:        store,
 	}
 }
 
@@ -104,6 +108,7 @@ type Report struct {
 	Capped                int                  `json:"capped,omitempty"`
 	NoDocuments           int                  `json:"no_documents,omitempty"`
 	Swept                 int                  `json:"swept,omitempty"`
+	KBMinted              int                  `json:"kb_minted,omitempty"`
 	AdjudicatorDisabled   bool                 `json:"adjudicator_disabled,omitempty"`
 	Twins                 TwinCounts           `json:"twins"`
 	Siblings              SiblingCounts        `json:"siblings"`
@@ -375,6 +380,7 @@ func (r *Reconciler) run(ctx context.Context, progress task.ProgressFunc) (Repor
 		r.decideCompoundSplits(ctx, cfg, compoundWorklist, promotedView, liveNames)
 		r.planCompoundSplits(compoundWorklist, &report)
 		r.sweepTwins(ctx, cfg, &report, pairKeys)
+		r.sweepKBMints(ctx, cfg, &report)
 		r.logger.Info("", "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d stored compounds (would split %d deterministically); %d twin pairs proposed",
 			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.Worklist.Compounds, len(report.PlannedCompoundSplits), report.Worklist.Twins)
 		return report, nil
@@ -403,6 +409,7 @@ func (r *Reconciler) run(ctx context.Context, progress task.ProgressFunc) (Repor
 		r.applyCompoundSplits(ctx, cfg, compoundWorklist, &report, storeTags)
 	}
 	r.sweepTwins(ctx, cfg, &report, pairKeys)
+	r.sweepKBMints(ctx, cfg, &report)
 	r.sweepPromotedTags(ctx, cfg, &report)
 	r.sweepOrphanTags(ctx, cfg, &report)
 	r.sweepRetentionTags(ctx, cfg, &report)
