@@ -425,13 +425,25 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	analysis.Tags = e.admission.ApplyDeletedTagPolicy(decomposed, blocklist, logId)
 
+	// the gate's kb lineage: the injected names plus every part of a split whose candidate the KB nominated,
+	// since those parts exist only because of the injection; provenance stays separate and records the
+	// creation channel (an injected name is kb, a split part is split)
+	kbDescended := make(map[string]bool, len(kbInjected))
+	for key := range kbInjected {
+		kbDescended[key] = true
+	}
 	splitParts := make(map[string]bool)
 	for _, row := range compositionRows {
 		if row.Disposition != tags.CompositionSplit {
 			continue
 		}
+		kbCandidate := kbInjected[textnorm.NormalizeTag(row.Candidate)]
 		for _, part := range row.Parts {
-			splitParts[textnorm.NormalizeTag(part)] = true
+			key := textnorm.NormalizeTag(part)
+			splitParts[key] = true
+			if kbCandidate {
+				kbDescended[key] = true
+			}
 		}
 	}
 
@@ -483,6 +495,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			ReducedText: llmContent.Text,
 			DocID:       document.ID,
 			ForceDefer:  pendingLanguage,
+			KBInjected:  kbGateNames(kbDescended, planOutputs),
 		}, logId)
 		if err != nil {
 			if te := e.creditPause(logId, err); te != nil {
@@ -967,6 +980,20 @@ func planOutputName(part string, outputs map[string]string) string {
 		return output
 	}
 	return part
+}
+
+// kbGateNames translates the KB lineage set into the identity plan's output names, the vocabulary the
+// quality gate judges: a lineage captured before planning must follow the same mapping the rejection test
+// reads, or a renamed candidate would escape the subject-matter drop.
+func kbGateNames(kbDescended map[string]bool, outputs map[string]string) map[string]struct{} {
+	if len(kbDescended) == 0 {
+		return nil
+	}
+	names := make(map[string]struct{}, len(kbDescended))
+	for name := range kbDescended {
+		names[planOutputName(name, outputs)] = struct{}{}
+	}
+	return names
 }
 
 // pruneRejectedParts drops from a row the parts the quality gate rejected and records the survivors under

@@ -97,6 +97,17 @@ export function encodeCriteria(criteria) {
 	return criteria.map((c) => `${c.key}:${c.state}`).join(',');
 }
 
+// searchDocumentsStructured posts a structured documents filter to the search endpoint and returns the
+// raw response envelope, so callers can choose between unwrapped list data and an explicit failure state.
+async function searchDocumentsStructured(body, signal) {
+	return requestRaw('/api/v1/documents/search', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body),
+		signal
+	});
+}
+
 export const api = {
 	filterLanguages: () => request('/api/v1/filter-languages').then((data) => data ?? []),
 	_supportedMimeTypesCache: null,
@@ -126,12 +137,11 @@ export const api = {
 			).then((data) => data ?? []),
 
 		searchStructured: (body, signal) =>
-			request('/api/v1/documents/search', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body),
-				signal
-			}).then((data) => data ?? { results: [], total: 0 }),
+			searchDocumentsStructured(body, signal).then((result) =>
+				result.ok ? (result.data ?? { results: [], total: 0 }) : { results: [], total: 0 }
+			),
+
+		searchStructuredRaw: searchDocumentsStructured,
 
 		update: (id, body) =>
 			request(`/api/v1/documents/${id}`, {

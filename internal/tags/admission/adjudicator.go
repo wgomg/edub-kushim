@@ -49,6 +49,11 @@ const (
 	// reasonLanguageReview marks a non-English value the language guard could not translate: it is held
 	// for review instead of being admitted plain
 	reasonLanguageReview = "language_review"
+
+	// reasonKBNotSubject marks a knowledge-base nomination the judge answered is not a subject matter of
+	// the document: the injection carries no document-emission evidence to contradict that answer, so the
+	// single-signal gray band does not apply and the value is dropped instead of held for review
+	reasonKBNotSubject = "kb_not_subject"
 )
 
 // Adjudicator is the document-level admission machinery: it decomposes compound tags, journals pair
@@ -1065,6 +1070,7 @@ type novelTag struct {
 	haveDetail bool
 	bestSim    float64
 	haveSim    bool
+	kbInjected bool
 }
 
 // features reads the deterministic signals; a missing detail or similarity is absence of evidence, not
@@ -1117,6 +1123,28 @@ func JudgeFeatures(r analyzer.TagQualityResult, f tags.AdmissionFeatures) tags.A
 	return f
 }
 
+// kbSubjectDrop converts a defer into a rejection when a knowledge-base nomination was judged not a subject
+// matter without abstention: the injection carries no document-emission evidence to contradict that answer,
+// so the single-signal gray band does not apply. A ladder rejection keeps its own, more specific reason,
+// and a false subject_matter never admits, so defer-to-reject is the only conversion this can make.
+func kbSubjectDrop(kb bool, r analyzer.TagQualityResult, d tags.AdmissionDecision) tags.AdmissionDecision {
+	if !kb || r.SubjectMatter || r.Defer || d.Outcome != tags.AdmissionDefer {
+		return d
+	}
+	return tags.AdmissionDecision{Outcome: tags.AdmissionReject, Reason: reasonKBNotSubject}
+}
+
+// storedQualityResult reads a cached verdict's rubric answers; the second return is false when the row's
+// criteria are incomplete or unreadable, in which case the legacy pass/reject fallback decides and no
+// subject-matter answer exists to override.
+func storedQualityResult(criteria json.RawMessage) (analyzer.TagQualityResult, bool) {
+	var c analyzer.TagQualityCriteria
+	if err := json.Unmarshal(criteria, &c); err != nil {
+		return analyzer.TagQualityResult{}, false
+	}
+	return c.Result()
+}
+
 func marshalTagQualityCriteria(r analyzer.TagQualityResult) json.RawMessage {
 	data, err := json.Marshal(r.Criteria())
 	if err != nil {
@@ -1148,13 +1176,14 @@ func (a *Adjudicator) logAdmission(reqID, name, source string, d tags.AdmissionD
 		analyzer.TagQualityVersion, d.Outcome, name, d.Reason, source, model, tagQualityCriteriaLog(criteria))
 }
 
-// decideQuality writes one freshly judged candidate's verdict row and logs
-// the resulting decision, returning it so the caller can record a rejection
-// or a kept decision.
+// decideQuality writes one freshly judged candidate's verdict row and logs the resulting decision, so the
+// caller can record a rejection or a kept decision. A KB-injected candidate the judge marks not a subject
+// matter is rejected before the row is written, so the evidence records the drop; the override reads this
+// document's reply, never the conflict-surviving cached row.
 func (a *Adjudicator) decideQuality(ctx context.Context, docId int64, n *novelTag, r analyzer.TagQualityResult, model, reqID string) tags.AdmissionDecision {
-	outcome := tags.DecideAdmission(JudgeFeatures(r, n.features()))
+	outcome := kbSubjectDrop(n.kbInjected, r, tags.DecideAdmission(JudgeFeatures(r, n.features())))
 	pass, criteria, finalModel := a.writeTagQualityEvent(ctx, docId, n.emitted, marshalTagQualityCriteria(r), outcome.Outcome == tags.AdmissionAdmit, outcome.Outcome.String(), model, reqID)
-	decision := DecisionFromStored(criteria, pass, n.features())
+	decision := kbSubjectDrop(n.kbInjected, r, DecisionFromStored(criteria, pass, n.features()))
 	a.logAdmission(reqID, n.emitted, "judge", decision, criteria, finalModel)
 	return decision
 }
@@ -1268,8 +1297,8 @@ func (a *Adjudicator) ResolveLanguages(ctx context.Context, analysis *tools.Cont
 
 // TagQualityInput is the per-document input the quality gate decides over: the analysis whose tags are
 // filtered, the matcher decisions, the store names a candidate is checked against, the document text the
-// subject-matter criterion reads, the document id, and the names the language guard holds for review
-// (ForceDefer).
+// subject-matter criterion reads, the document id, the names the language guard's ForceDefer holds for
+// review, and the knowledge-base-nominated names (KBInjected, keyed by the plan's output names).
 type TagQualityInput struct {
 	Analysis    *tools.ContentAnalysisResult
 	Decisions   []policy.Decision
@@ -1277,19 +1306,23 @@ type TagQualityInput struct {
 	ReducedText string
 	DocID       int64
 	ForceDefer  map[string]struct{}
+	KBInjected  map[string]struct{}
 }
 
 // ApplyTagQuality filters the analysis's tags through the admission decision: each novel candidate's
 // features — the parts pass's dimension verdict plus the judge's rubric answers (cached or fresh) and the
-// emission's deterministic signals — resolve through tags.DecideAdmission. The parts pass owns the
-// dimension question, so the gate resolves each uncached candidate's dimension verdict from the shared
-// parts cache and stamps it; an absent or abstained verdict defers rather than counting as a false answer.
-// A name in ForceDefer is held for review and never admitted plain. Rejected tags are dropped from the
-// returned list; deferred and admitted tags are both kept, and every kept novel name's decision is
-// returned so the caller can drive promotion. A missing judge, judge failure, or context cancellation
-// keeps the tags, born provisional with a defer decision; a partial judge reply salvages its returned
-// entries and defers only the missing indices; a credit-exhaustion failure is the only error returned, so
-// the caller can pause the batch.
+// emission's deterministic signals — resolve through tags.DecideAdmission. The parts pass owns that
+// dimension question alone, so the gate resolves each uncached candidate's dimension verdict from the
+// shared parts cache and stamps it; an absent or abstained verdict defers rather than counting as a false
+// answer. A name in ForceDefer is held for review and never admitted plain. A KB-injected candidate the
+// judge answers is not a subject matter of the document is rejected instead of deferred, on either the
+// cached or the fresh path: the injection carries no document-emission evidence for the gray band to weigh,
+// so the judge's answer is the only aboutness evidence there is. Rejected tags are dropped from the
+// returned list; deferred and admitted tags are both kept, and every kept novel name's decision is returned
+// so the caller can drive promotion. A missing judge, judge failure, or context cancellation keeps the tags,
+// born provisional with a defer decision; a partial judge reply salvages its returned entries and defers
+// only the missing indices; a credit-exhaustion failure is the only error returned, so the caller can
+// pause the batch.
 func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, reqID string) ([]string, map[string]tags.AdmissionDecision, error) {
 	analysis := in.Analysis
 	decisions := in.Decisions
@@ -1297,6 +1330,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 	reducedText := in.ReducedText
 	docId := in.DocID
 	forceDefer := in.ForceDefer
+	kbInjected := in.KBInjected
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
 		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
@@ -1330,7 +1364,8 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 			a.logger.Info(reqID, "taglanguage[%s]: defer %q to review (non-English, untranslated)", analyzer.TagTranslationVersion, out)
 			continue
 		}
-		n := &novelTag{emitted: out}
+		_, kbNominated := kbInjected[out]
+		n := &novelTag{emitted: out, kbInjected: kbNominated}
 		if d, ok := typedByTerm[out]; ok {
 			n.category, n.haveDetail = d.Category, true
 		}
@@ -1364,7 +1399,15 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 				continue
 			}
 			decision := DecisionFromStored(row.Criteria, row.Pass, n.features())
-			a.writeTagQualityEvent(ctx, docId, n.emitted, row.Criteria, row.Pass, row.Outcome.String, "", reqID)
+			outcome := row.Outcome.String
+			if r, complete := storedQualityResult(row.Criteria); complete {
+				dropped := kbSubjectDrop(n.kbInjected, r, decision)
+				if dropped != decision {
+					outcome = tags.AdmissionReject.String()
+				}
+				decision = dropped
+			}
+			a.writeTagQualityEvent(ctx, docId, n.emitted, row.Criteria, row.Pass, outcome, "", reqID)
 			a.logAdmission(reqID, n.emitted, "cache", decision, row.Criteria, row.VerdictModel.String)
 			if decision.Outcome == tags.AdmissionReject {
 				rejected[n.emitted] = true

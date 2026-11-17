@@ -73,9 +73,11 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
   filter bar in `ProvisionalFilters.svelte` (search, review-state menu with facet counts, rubric
   menu, chips, quick views), `TagReviewHelp.svelte` (the in-app guide the queue's Help button
   opens), `TagDefinitionPanel.svelte` (the definition panel a queue tag name opens, fed by
-  `termLookup.js`), `FoldTagModal.svelte` and `SplitTagModal.svelte` (the shared fold and split
-  dialogs both the queue and the Vocabulary table open), `CoverageReview.svelte`,
-  `DeletedTags.svelte`, `SiblingReview.svelte` and `TagReconcileStrip.svelte`.
+  `termLookup.js`), `TagDocumentsPanel.svelte` (the paged list of a tag's documents the queue's
+  document-count control opens, backed by the structured search endpoint), `FoldTagModal.svelte`
+  and `SplitTagModal.svelte` (the shared fold and split dialogs both the queue and the
+  Vocabulary table open), `CoverageReview.svelte`, `DeletedTags.svelte`, `SiblingReview.svelte`
+  and `TagReconcileStrip.svelte`.
 - **`src/lib/components/TagReconcileReport.svelte`** — the full reconciliation report rendered on
   `tagreconcile` task pages.
 - **`src/lib/pdf/`** — the pdf.js loader singleton, the worker wrapper with its polyfills, and the

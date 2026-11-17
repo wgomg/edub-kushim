@@ -286,9 +286,16 @@ created (`Adjudicator.ApplyTagQuality`):
   no person reaches the corroborated rules, which reject two or more failing signals when
   at least one is judge-owned, defer on a failure set of deterministic signals alone or on
   exactly one failing signal (the gray band — no single boolean signal decides), and admit
-  when nothing fails. Rejected names are dropped for that document and never stored — their
-  plan registrations and pending identity evidence are removed before persist. A missing
-  detail or similarity is absence of evidence, not a failing signal.
+  when nothing fails. **Knowledge-base nominations narrow the gray band**: a candidate whose
+  candidacy came from the containment channel — the injected container itself and the parts
+  of a split nomination — that the judge answers with `subject_matter=false` and no
+  abstention rejects with reason `kb_not_subject` instead of deferring. The nomination was
+  made without the document in hand, so the judge's answer is the only aboutness evidence
+  and the single-signal hold does not apply. The rule runs on both the fresh and the cached
+  decision path and never alters the cached criteria. Rejected names are dropped for that
+  document and never stored — their plan registrations and pending identity evidence are
+  removed before persist. A missing detail or similarity is absence of evidence, not a
+  failing signal.
 - **Judge call**: uncached candidates are judged in temperature-0 LLM calls over batches
   of up to 40 candidates per document; the reduced document text serves the
   `subject_matter` question alone, the other criteria answering on the candidate.

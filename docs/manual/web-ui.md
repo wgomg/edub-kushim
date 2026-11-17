@@ -186,6 +186,10 @@ Clicking a tag name (magnifier icon) opens a definition panel drawn from Wikiped
 the Free Dictionary, so an unfamiliar compound can be judged without leaving the queue. Lookups run
 only on click; when no source has an entry, the panel says so.
 
+Clicking a queue entry's document count (document icon) opens a panel listing the documents that
+carry the tag — each row shows the document's title and its current tags and links to the document's
+detail page. The list loads in pages of one hundred.
+
 ![The New tags tab: the provisional review queue with rubric verdicts](images/tags-provisional.png)
 
 ### People and Document Types

@@ -1,6 +1,5 @@
 <script>
 	import { onDestroy } from 'svelte';
-	import { resolve } from '$app/paths';
 	import { api } from '#lib/api.js';
 	import { createListQuery, listWindow } from '#lib/list/listQuery.svelte.js';
 	import Icon from '#lib/components/Icon.svelte';
@@ -10,16 +9,11 @@
 	import ProvisionalFilters from '#lib/components/tags/ProvisionalFilters.svelte';
 	import SplitTagModal from '#lib/components/tags/SplitTagModal.svelte';
 	import TagDefinitionPanel from '#lib/components/tags/TagDefinitionPanel.svelte';
+	import TagDocumentsPanel from '#lib/components/tags/TagDocumentsPanel.svelte';
 	import TagReviewHelp from '#lib/components/tags/TagReviewHelp.svelte';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
-	import {
-		documentsForTagHref,
-		documentsLabel,
-		formatDate,
-		formatDateTime,
-		formatNumber
-	} from '#lib/utils/html.js';
+	import { documentsLabel, formatDate, formatDateTime, formatNumber } from '#lib/utils/html.js';
 	import { demotionLabel } from '#lib/utils/tagReconcile.js';
 	import { criteria, provisionalQuery, reviewStates } from './provisionalQuery.js';
 
@@ -72,7 +66,6 @@
 		'inline-flex max-w-full items-center gap-1.5 rounded-md border border-clay-700 px-2.5 py-1 text-xs font-medium text-parchment-300 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
 	const btnUtil =
 		'inline-flex items-center gap-1 rounded px-0 py-0.5 text-[0.6875rem] text-parchment-500 hover:text-parchment-200 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-40';
-	const btnUtilDanger = `${btnUtil} hover:text-terracotta-400`;
 	const btnHelp =
 		'inline-flex items-center gap-1.5 rounded-lg border border-clay-700 px-2.5 py-1 text-xs font-medium text-parchment-300 hover:border-gold-500 hover:text-gold-400 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none';
 	const sortClass =
@@ -103,6 +96,8 @@
 	let helpSection = $state('overview');
 	let defineOpen = $state(false);
 	let defineTerm = $state('');
+	let docsOpen = $state(false);
+	let docsTag = $state('');
 	let renaming = $state(null);
 	let renameName = $state('');
 	let renameError = $state('');
@@ -264,6 +259,11 @@
 	function openDefinition(name) {
 		defineTerm = name;
 		defineOpen = true;
+	}
+
+	function openDocuments(name) {
+		docsTag = name;
+		docsOpen = true;
 	}
 
 	async function approve(tag) {
@@ -774,10 +774,15 @@
 							<Icon name="search" size={13} class="shrink-0 text-lapis-400" />
 							{tag.name}
 						</button>
-						<a href={resolve(documentsForTagHref(tag.name))} class={countLink}>
-							<Icon name="external-link" size={12} class="text-lapis-400" />
+						<button
+							type="button"
+							class={countLink}
+							title="Show the documents carrying this tag"
+							onclick={() => openDocuments(tag.name)}
+						>
+							<Icon name="file-text" size={12} class="text-lapis-400" />
 							{documentsLabel(tag.document_count)}
-						</a>
+						</button>
 						<span class="text-xs text-parchment-500">
 							· created {formatDate(tag.created_at)}
 						</span>
@@ -941,126 +946,124 @@
 							<Icon name="edit" size={13} />
 							Rename
 						</button>
-						<button
-							type="button"
-							class={btnUtilDanger}
-							title="Retire — remove the tag without blocking the name"
-							disabled={acting === tag.id}
-							onclick={() => retire(tag)}
-						>
-							<Icon name="retire" size={13} />
-							Retire
-						</button>
 					</div>
 				</div>
 
-				{#if tag.identity_hold || tag.composition_action === 'undecided' || tag.composition_action === 'keep' || tag.composition_action === 'degraded' || isBareDeferral(tag)}
-					<div class={resolveClass}>
-						<span class={resolveLabelClass}>Resolve</span>
-						{#if isBareDeferral(tag)}
+				<div class={resolveClass}>
+					<span class={resolveLabelClass}>Resolve</span>
+					{#if isBareDeferral(tag)}
+						<button
+							type="button"
+							class={btnAction}
+							title="Clear the deferral: the value waits for the promotion floor like any admitted tag"
+							disabled={acting === tag.id}
+							onclick={() => accept(tag)}
+						>
+							<Icon name="circle-check" size={13} />
+							Accept as provisional
+						</button>
+					{/if}
+					{#if tag.identity_hold}
+						<button
+							type="button"
+							class={btnAction}
+							title="Fold this tag into “{tag.identity_hold}”: its documents move there and this name becomes an alias"
+							disabled={acting === tag.id}
+							onclick={() => foldInto(tag)}
+						>
+							<Icon name="fold" size={13} />
+							Fold into “{tag.identity_hold}”
+						</button>
+						<button
+							type="button"
+							class={btnAction}
+							title="Fold “{tag.identity_hold}” into this tag: this name becomes canonical"
+							disabled={acting === tag.id}
+							onclick={() => makeCanonical(tag)}
+						>
+							<Icon name="make-canonical" size={13} />
+							Make canonical
+						</button>
+						<button
+							type="button"
+							class={btnAction}
+							title="Keep this tag separate from “{tag.identity_hold}”: the hold clears and the value stands on its own"
+							disabled={acting === tag.id}
+							onclick={() => keepSeparate(tag)}
+						>
+							<Icon name="keep-separate" size={13} />
+							Keep separate
+						</button>
+					{/if}
+					{#if tag.composition_action === 'undecided'}
+						<button
+							type="button"
+							class={btnAction}
+							title="Split the compound into its components…"
+							disabled={acting === tag.id}
+							onclick={() => openSplit(tag)}
+						>
+							<Icon name="split" size={13} />
+							Split now…
+						</button>
+						<button
+							type="button"
+							class={btnAction}
+							title="Record that the compound is a value in its own right"
+							disabled={acting === tag.id}
+							onclick={() => keepWhole(tag)}
+						>
+							<Icon name="keep-whole" size={13} />
+							Keep whole
+						</button>
+					{/if}
+					{#if tag.composition_action === 'keep'}
+						{#if (tag.composition_parts ?? []).length > 0}
 							<button
 								type="button"
 								class={btnAction}
-								title="Clear the deferral: the value waits for the promotion floor like any admitted tag"
+								title="Apply the parts alongside the compound"
 								disabled={acting === tag.id}
-								onclick={() => accept(tag)}
+								onclick={() => applyParts(tag)}
 							>
-								<Icon name="circle-check" size={13} />
-								Accept as provisional
+								<Icon name="apply-parts" size={13} />
+								Apply parts alongside
 							</button>
 						{/if}
-						{#if tag.identity_hold}
-							<button
-								type="button"
-								class={btnAction}
-								title="Fold this tag into “{tag.identity_hold}”: its documents move there and this name becomes an alias"
-								disabled={acting === tag.id}
-								onclick={() => foldInto(tag)}
-							>
-								<Icon name="fold" size={13} />
-								Fold into “{tag.identity_hold}”
-							</button>
-							<button
-								type="button"
-								class={btnAction}
-								title="Fold “{tag.identity_hold}” into this tag: this name becomes canonical"
-								disabled={acting === tag.id}
-								onclick={() => makeCanonical(tag)}
-							>
-								<Icon name="make-canonical" size={13} />
-								Make canonical
-							</button>
-							<button
-								type="button"
-								class={btnAction}
-								title="Keep this tag separate from “{tag.identity_hold}”: the hold clears and the value stands on its own"
-								disabled={acting === tag.id}
-								onclick={() => keepSeparate(tag)}
-							>
-								<Icon name="keep-separate" size={13} />
-								Keep separate
-							</button>
-						{/if}
-						{#if tag.composition_action === 'undecided'}
-							<button
-								type="button"
-								class={btnAction}
-								title="Split the compound into its components…"
-								disabled={acting === tag.id}
-								onclick={() => openSplit(tag)}
-							>
-								<Icon name="split" size={13} />
-								Split now…
-							</button>
-							<button
-								type="button"
-								class={btnAction}
-								title="Record that the compound is a value in its own right"
-								disabled={acting === tag.id}
-								onclick={() => keepWhole(tag)}
-							>
-								<Icon name="keep-whole" size={13} />
-								Keep whole
-							</button>
-						{/if}
-						{#if tag.composition_action === 'keep'}
-							{#if (tag.composition_parts ?? []).length > 0}
-								<button
-									type="button"
-									class={btnAction}
-									title="Apply the parts alongside the compound"
-									disabled={acting === tag.id}
-									onclick={() => applyParts(tag)}
-								>
-									<Icon name="apply-parts" size={13} />
-									Apply parts alongside
-								</button>
-							{/if}
-							<button
-								type="button"
-								class={btnAction}
-								title="Record that the compound is a value in its own right"
-								disabled={acting === tag.id}
-								onclick={() => keepWhole(tag)}
-							>
-								<Icon name="keep-whole" size={13} />
-								Keep whole
-							</button>
-						{/if}
-						{#if tag.composition_action === 'degraded'}
-							<button
-								type="button"
-								class={btnAction}
-								title="Queue a fresh composition judgment"
-								disabled={acting === tag.id}
-								onclick={() => rejudgeComposition(tag)}
-							>
-								<Icon name="retry" size={13} />
-								Re-judge
-							</button>
-						{/if}
-					</div>
-				{/if}
+						<button
+							type="button"
+							class={btnAction}
+							title="Record that the compound is a value in its own right"
+							disabled={acting === tag.id}
+							onclick={() => keepWhole(tag)}
+						>
+							<Icon name="keep-whole" size={13} />
+							Keep whole
+						</button>
+					{/if}
+					{#if tag.composition_action === 'degraded'}
+						<button
+							type="button"
+							class={btnAction}
+							title="Queue a fresh composition judgment"
+							disabled={acting === tag.id}
+							onclick={() => rejudgeComposition(tag)}
+						>
+							<Icon name="retry" size={13} />
+							Re-judge
+						</button>
+					{/if}
+					<button
+						type="button"
+						class={btnAction}
+						title="Retire — remove the tag without blocking the name"
+						disabled={acting === tag.id}
+						onclick={() => retire(tag)}
+					>
+						<Icon name="retire" size={13} />
+						Retire
+					</button>
+				</div>
 			</li>
 		{/each}
 	</ul>
@@ -1085,6 +1088,12 @@
 
 <SlideOver open={defineOpen} title="Tag definition" onClose={() => (defineOpen = false)}>
 	<TagDefinitionPanel term={defineTerm} />
+</SlideOver>
+
+<SlideOver open={docsOpen} title="Tag documents" onClose={() => (docsOpen = false)}>
+	{#key docsTag}
+		<TagDocumentsPanel tag={docsTag} />
+	{/key}
 </SlideOver>
 
 <Modal

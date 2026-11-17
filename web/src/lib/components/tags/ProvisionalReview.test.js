@@ -15,6 +15,7 @@ const {
 	separateTag,
 	rejudgeTag,
 	updateTag,
+	searchStructuredRaw,
 	confirmMock,
 	toastMock,
 	lookupTerm,
@@ -32,6 +33,7 @@ const {
 	separateTag: vi.fn(),
 	rejudgeTag: vi.fn(),
 	updateTag: vi.fn(),
+	searchStructuredRaw: vi.fn(),
 	confirmMock: vi.fn(),
 	toastMock: { success: vi.fn(), error: vi.fn() },
 	lookupTerm: vi.fn(),
@@ -95,6 +97,9 @@ vi.mock('#lib/api.js', async (importOriginal) => {
 				separate: separateTag,
 				rejudge: rejudgeTag,
 				update: updateTag
+			},
+			documents: {
+				searchStructuredRaw
 			}
 		},
 		encodeCriteria: actual.encodeCriteria
@@ -173,6 +178,12 @@ beforeEach(() => {
 	separateTag.mockReset();
 	rejudgeTag.mockReset();
 	updateTag.mockReset();
+	searchStructuredRaw.mockReset();
+	searchStructuredRaw.mockResolvedValue({
+		ok: true,
+		status: 200,
+		data: { results: [], total: 0 }
+	});
 	confirmMock.mockReset();
 	confirmMock.mockResolvedValue(true);
 	toastMock.success.mockReset();
@@ -889,5 +900,43 @@ describe('ProvisionalReview definition lookup', () => {
 
 		expect(await screen.findByRole('dialog', { name: 'Tag definition' })).toBeTruthy();
 		expect(lookupTerm).toHaveBeenCalledWith('sample tag');
+	});
+});
+
+describe('ProvisionalReview tag documents', () => {
+	it('opens the documents panel from the count control and loads the tag documents', async () => {
+		provisionalList.mockResolvedValue({ ok: true, data: { results: [tag()], total: 1 } });
+		searchStructuredRaw.mockResolvedValue({
+			ok: true,
+			status: 200,
+			data: {
+				results: [{ id: 'doc-1', title: 'First document', tags: [{ id: 2, name: 'another tag' }] }],
+				total: 1
+			}
+		});
+		render(ProvisionalReview);
+		await screen.findByText('sample tag');
+
+		await fireEvent.click(screen.getByRole('button', { name: '1 document' }));
+
+		expect(await screen.findByRole('dialog', { name: 'Tag documents' })).toBeTruthy();
+		await waitFor(() =>
+			expect(searchStructuredRaw).toHaveBeenCalledWith({
+				tags: ['sample tag'],
+				limit: 100,
+				offset: 0
+			})
+		);
+		expect(await screen.findByText('First document')).toBeTruthy();
+		expect(screen.getByText('another tag')).toBeTruthy();
+	});
+
+	it('keeps retire in the resolve row on cards without holds', async () => {
+		provisionalList.mockResolvedValue({ ok: true, data: { results: [tag()], total: 1 } });
+		render(ProvisionalReview);
+		await screen.findByText('sample tag');
+
+		const row = screen.getByText('Resolve').closest('div');
+		expect(within(row).getByRole('button', { name: 'Retire' })).toBeTruthy();
 	});
 });

@@ -1626,6 +1626,196 @@ func TestApplyTagQuality_PartialSalvage(t *testing.T) {
 	}
 }
 
+func TestApplyTagQuality_KBInjected(t *testing.T) {
+	setKBAdjudicator := func(t *testing.T, a *Adjudicator, adj *mockAdjudicator) {
+		t.Helper()
+		a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+		setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+		adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+			results := make([]analyzer.TagQualityResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagQualityResult{
+					Index:         i,
+					SubjectMatter: false,
+					Dimension:     false,
+					PersonClass:   types.PersonClassNotPerson,
+					Atomic:        true,
+					NotFormGenre:  true,
+				}
+			}
+			return results, nil
+		}
+		adj.partFn = func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+			results := make([]analyzer.TagPartResult, len(values))
+			for i := range values {
+				results[i] = analyzer.TagPartResult{Index: i, Dimensional: true}
+			}
+			return results, nil
+		}
+	}
+
+	readQualityRows := func(t *testing.T, q *database.Queries, ctx context.Context, name string) []database.LatestTagQualityEventsForNamesRow {
+		t.Helper()
+		rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+			PolicyVersion: analyzer.TagQualityVersion,
+			TagNames:      []string{name},
+		})
+		if err != nil {
+			t.Fatalf("read quality rows for %q: %v", name, err)
+		}
+		return rows
+	}
+
+	kbInput := func(analysis *tools.ContentAnalysisResult, docID int64, names ...string) TagQualityInput {
+		in := TagQualityInput{Analysis: analysis, DBNames: map[string]struct{}{}, ReducedText: "text", DocID: docID}
+		if len(names) > 0 {
+			in.KBInjected = make(map[string]struct{}, len(names))
+			for _, name := range names {
+				in.KBInjected[name] = struct{}{}
+			}
+		}
+		return in
+	}
+
+	novelAnalysis := func(name string) *tools.ContentAnalysisResult {
+		return &tools.ContentAnalysisResult{
+			Tags:       []string{name},
+			TagDetails: []analyzer.TagDetail{{Term: name, Category: analyzer.TagCategoryTopic}},
+		}
+	}
+
+	t.Run("a kb nomination marked not a subject matter is dropped without a decision", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		setKBAdjudicator(t, a, adj)
+		ctx := context.Background()
+		docID, _ := database.CreateTestDocument(t, q, "kb-drop-doc")
+
+		kept, decisions, err := a.ApplyTagQuality(ctx, kbInput(novelAnalysis("kb container"), docID, "kb container"), "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality() error = %v", err)
+		}
+		adjAssertEqual(t, len(kept), 0, "the kb candidate is dropped")
+		if _, ok := decisions["kb container"]; ok {
+			t.Errorf("a dropped name must not carry a decision, got %+v", decisions["kb container"])
+		}
+
+		rows := readQualityRows(t, q, ctx, "kb container")
+		adjAssertEqual(t, len(rows), 1, "one verdict row is recorded")
+		adjAssertEqual(t, rows[0].Pass, false, "recorded pass")
+		adjAssertEqual(t, rows[0].Outcome.String, "reject", "recorded outcome")
+		adjAssertEqual(t, rows[0].VerdictModel.String, "judge-model", "recorded model")
+	})
+
+	t.Run("the same verdict without kb lineage defers for review", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		setKBAdjudicator(t, a, adj)
+		ctx := context.Background()
+		docID, _ := database.CreateTestDocument(t, q, "kb-twin-doc")
+
+		kept, decisions, err := a.ApplyTagQuality(ctx, kbInput(novelAnalysis("emission container"), docID), "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality() error = %v", err)
+		}
+		adjAssertEqual(t, len(kept), 1, "the analyzer emission survives the gray band")
+		adjAssertEqual(t, decisions["emission container"].Outcome, tags.AdmissionDefer, "decision outcome")
+		adjAssertEqual(t, decisions["emission container"].Reason, tags.ReasonSingleSignal, "decision reason")
+
+		rows := readQualityRows(t, q, ctx, "emission container")
+		adjAssertEqual(t, len(rows), 1, "one verdict row is recorded")
+		adjAssertEqual(t, rows[0].Outcome.String, "defer", "recorded outcome")
+	})
+
+	t.Run("a kb nomination the judge abstains on stays deferred", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		setKBAdjudicator(t, a, adj)
+		adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+			results := make([]analyzer.TagQualityResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagQualityResult{
+					Index:         i,
+					SubjectMatter: false,
+					Dimension:     false,
+					PersonClass:   types.PersonClassNotPerson,
+					Atomic:        true,
+					NotFormGenre:  true,
+					Defer:         true,
+				}
+			}
+			return results, nil
+		}
+		ctx := context.Background()
+		docID, _ := database.CreateTestDocument(t, q, "kb-abstain-doc")
+
+		kept, decisions, err := a.ApplyTagQuality(ctx, kbInput(novelAnalysis("kb mystery"), docID, "kb mystery"), "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality() error = %v", err)
+		}
+		adjAssertEqual(t, len(kept), 1, "the abstained kb candidate is held for review")
+		adjAssertEqual(t, decisions["kb mystery"].Outcome, tags.AdmissionDefer, "decision outcome")
+		adjAssertEqual(t, decisions["kb mystery"].Reason, tags.ReasonJudgeDefer, "decision reason")
+	})
+
+	t.Run("a cached not-subject verdict drops a kb nomination without a judge call", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+		ctx := context.Background()
+		docID, _ := database.CreateTestDocument(t, q, "kb-cached-doc")
+		if _, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       "kb cached container",
+			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`),
+			Pass:          false,
+			Outcome:       sql.NullString{String: "defer", Valid: true},
+			VerdictModel:  sql.NullString{String: "seed-model", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		}); err != nil {
+			t.Fatalf("seed cached verdict: %v", err)
+		}
+
+		kept, decisions, err := a.ApplyTagQuality(ctx, kbInput(novelAnalysis("kb cached container"), docID, "kb cached container"), "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality() error = %v", err)
+		}
+		adjAssertEqual(t, len(kept), 0, "the cached not-subject verdict drops the kb nomination")
+		if _, ok := decisions["kb cached container"]; ok {
+			t.Errorf("a dropped name must not carry a decision, got %+v", decisions["kb cached container"])
+		}
+		adjAssertEqual(t, adj.qualityCall, 0, "the cache answers without a judge call")
+
+		rows := readQualityRows(t, q, ctx, "kb cached container")
+		adjAssertEqual(t, len(rows), 1, "the evidence row is written")
+		adjAssertEqual(t, rows[0].Pass, false, "recorded pass")
+		adjAssertEqual(t, rows[0].Outcome.String, "reject", "the overridden outcome is recorded")
+		adjAssertEqual(t, rows[0].VerdictModel.Valid, false, "the evidence row carries no model")
+	})
+
+	t.Run("the same cached verdict without kb lineage defers for review", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+		ctx := context.Background()
+		docID, _ := database.CreateTestDocument(t, q, "cached-twin-doc")
+		if _, err := q.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       "cached emission container",
+			Criteria:      json.RawMessage(`{"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`),
+			Pass:          false,
+			Outcome:       sql.NullString{String: "defer", Valid: true},
+			VerdictModel:  sql.NullString{String: "seed-model", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		}); err != nil {
+			t.Fatalf("seed cached verdict: %v", err)
+		}
+
+		kept, decisions, err := a.ApplyTagQuality(ctx, kbInput(novelAnalysis("cached emission container"), docID), "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality() error = %v", err)
+		}
+		adjAssertEqual(t, len(kept), 1, "the ordinary emission survives the gray band")
+		adjAssertEqual(t, decisions["cached emission container"].Outcome, tags.AdmissionDefer, "decision outcome")
+		adjAssertEqual(t, adj.qualityCall, 0, "the cache answers without a judge call")
+	})
+}
+
 func TestApplyTagQuality_BatchesJudgeCalls(t *testing.T) {
 	a, q, adj := newTestAdjudicator(t)
 	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}

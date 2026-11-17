@@ -11,8 +11,7 @@ import {
 	formatDateTime,
 	formatRelative,
 	formatNumber,
-	documentsLabel,
-	documentsForTagHref
+	documentsLabel
 } from './html.js';
 
 describe('formatSize', () => {
@@ -57,18 +56,6 @@ describe('formatDuration', () => {
 		expect(formatDuration(61000)).toBe('1\u00A0m 1\u00A0s');
 		expect(formatDuration(3600000)).toBe('1\u00A0h');
 		expect(formatDuration(3661000)).toBe('1\u00A0h 1\u00A0m 1\u00A0s');
-	});
-});
-
-describe('documentsForTagHref', () => {
-	it('produces a URL-encoded documents filter link for a tag name', () => {
-		expect(documentsForTagHref('software development')).toBe(
-			'/documents?tag=software%20development'
-		);
-	});
-
-	it('encodes special characters in tag names', () => {
-		expect(documentsForTagHref('C++')).toBe('/documents?tag=C%2B%2B');
 	});
 });
 

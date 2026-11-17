@@ -206,11 +206,15 @@ weight, deduplicated by stored name. That ordering is defined once
 their uphill containers: `hypernym`, `instance_hypernym` and `holo_*` edges for OEWN, plus
 `/r/IsA` and `/r/PartOf` for ConceptNet. Containers that are not already candidates enter
 the candidate list as ordinary candidates and pass the existing name-list, time and quality
-gates; about-ness is the quality gate's call. A container absent from the store is nominated
-only when an OEWN edge attests it. The uphill filter keys on each source's native reltype
-spelling (bare for OEWN, `/r/`-prefixed for ConceptNet), because the family vocabulary alone
-cannot carry edge direction. Nominations are capped per document
-(`kbMaxContainersPerDocument`).
+gates; about-ness is the quality gate's call. A nomination the quality judge answers is not
+a subject matter of the document is rejected at birth (reason `kb_not_subject`) instead of
+being deferred to review: the container was nominated without the document in hand, so the
+judge's answer is the only aboutness evidence and the single-signal deferral band does not
+apply. An abstained answer still defers, and the parts of a split nomination inherit the
+rule. A container absent from the store is nominated only when an OEWN edge attests it. The
+uphill filter keys on each source's native reltype spelling (bare for OEWN, `/r/`-prefixed
+for ConceptNet), because the family vocabulary alone cannot carry edge direction.
+Nominations are capped per document (`kbMaxContainersPerDocument`).
 
 **Mint sweep.** The scheduled reconciliation pass drains the zero-evidence provisional
 backlog: for each provisional tag that never received a same-intent judgment, the store's
