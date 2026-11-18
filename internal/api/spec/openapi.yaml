@@ -6198,6 +6198,8 @@ components:
             $ref: '#/components/schemas/FallbackConfigResponse'
         llm:
           $ref: '#/components/schemas/LlmConfigResponse'
+        max_retries:
+          type: integer
         min_tags:
           type: integer
         pause_on_credit_error:
@@ -6209,6 +6211,7 @@ components:
       required:
         - enabled
         - timeout
+        - max_retries
         - min_tags
         - llm
         - doc_type_refinement
@@ -7833,11 +7836,14 @@ components:
           type: boolean
         llm:
           $ref: '#/components/schemas/TagAdjudicatorLlmResponse'
+        max_retries:
+          type: integer
         timeout:
           type: integer
       required:
         - enabled
         - timeout
+        - max_retries
         - llm
     TagAdjudicatorLlmResponse:
       type: object
@@ -7897,10 +7903,13 @@ components:
       properties:
         llm:
           $ref: '#/components/schemas/TagAdjudicatorLlmResponse'
+        max_retries:
+          type: integer
         timeout:
           type: integer
       required:
         - timeout
+        - max_retries
         - llm
     TagListResponse:
       type: object
@@ -7976,11 +7985,14 @@ components:
           type: boolean
         llm:
           $ref: '#/components/schemas/TagAdjudicatorLlmResponse'
+        max_retries:
+          type: integer
         timeout:
           type: integer
       required:
         - enabled
         - timeout
+        - max_retries
         - llm
     TagQualityCriteriaView:
       type: object

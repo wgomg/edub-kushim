@@ -189,14 +189,17 @@ func TestConfigResponseFrom_TagMatcherAndAuditSurfaced(t *testing.T) {
 }
 
 // TestConfigResponseFrom_TagLexicalGateSurfaced pins the gate section the settings UI reads back from
-// GET /config: it has no enabled toggle (the gate rides the adjudicator's) and round-trips timeout plus
-// the whole llm endpoint, so an operator edit survives a UI save.
+// GET /config: it has no enabled toggle (the gate rides the adjudicator's) and round-trips timeout,
+// retries plus the whole llm endpoint, so an operator edit survives a UI save.
 func TestConfigResponseFrom_TagLexicalGateSurfaced(t *testing.T) {
 	cfg := config.DefaultConfig("/tmp/test")
 	resp := ConfigResponseFrom(cfg)
 
-	if resp.Enricher.TagLexicalGate.Timeout != 0 {
-		t.Errorf("default Timeout = %d, want 0 (inherit the adjudicator's)", resp.Enricher.TagLexicalGate.Timeout)
+	if resp.Enricher.TagLexicalGate.Timeout != 5 {
+		t.Errorf("default Timeout = %d, want 5", resp.Enricher.TagLexicalGate.Timeout)
+	}
+	if resp.Enricher.TagLexicalGate.MaxRetries != 3 {
+		t.Errorf("default MaxRetries = %d, want 3", resp.Enricher.TagLexicalGate.MaxRetries)
 	}
 	got := resp.Enricher.TagLexicalGate.Llm
 	if got.Provider != "" || got.Model != "" || got.Adapter != "" || got.Token != "" || got.RequestDelay != 0 {

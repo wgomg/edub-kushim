@@ -1,15 +1,13 @@
-// Package tools is the runner facade over every external capability the
-// pipelines need: text extraction, OCR, document conversion, PDF
-// optimization, thumbnails, text reduction, tag matching, content analysis
-// and the LLM tag judging endpoints. A Runner is constructed naming the
-// capabilities it will use; the runner instantiates their adapters from the
-// configuration, applies each tool's timeout as a context deadline, and for
-// the analyzer calls walks the configured fallback chain on provider-level
-// failures. A capability that was not requested has a nil adapter and its
-// method fails fast. Construction never fails: an adapter whose constructor
-// fails is logged with its cause and left nil, an unknown capability name is
-// logged and skipped, and a model-catalog load failure leaves only the
-// analyzer adapters unconfigured.
+// Package tools is the runner facade over every external capability the pipelines need: text extraction,
+// OCR, document conversion, PDF optimization, thumbnails, text reduction, tag matching, content analysis
+// and the LLM tag judging endpoints. A Runner is constructed naming the capabilities it will use; the
+// runner instantiates their adapters from the configuration, lets each LLM adapter bound its own HTTP
+// round trip with the section's timeout, retries failures within the configured retry budget, and for the
+// analyzer calls walks the configured fallback chain when an endpoint stays without success. A
+// capability that was not requested has a nil adapter and its method fails fast. Construction never
+// fails: an adapter whose constructor fails is logged with its cause and left nil, an unknown
+// capability name is logged and skipped, and a model-catalog load failure leaves only the analyzer
+// adapters unconfigured.
 package tools
 
 import (
@@ -37,12 +35,12 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tools/textreducer"
 )
 
-// Runner fronts the external capabilities a pipeline was built with.
-// Construct it with NewRunner or NewRunnerWithMatcher naming the tools the
-// pipeline needs; every method checks its capability was requested, applies
-// the tool's configured timeout, and keeps the caller's context cancellation
-// intact. A timeout hit abandons the underlying call, which may still be
-// running; the runner logs that fact.
+// Runner fronts the external capabilities a pipeline was built with. Construct it with NewRunner or
+// NewRunnerWithMatcher naming the tools the pipeline needs; every method checks its own capability was
+// requested, applies the tool's configured timeout (the LLM adapters bound their own HTTP round trip
+// instead), keeps the role's retry budget around each call, and keeps the caller's context cancellation
+// intact. A timeout hit abandons the underlying call, which may still be running; the runner logs that
+// fact.
 type Runner struct {
 	logger            *log.Logger
 	config            *config.Config
@@ -57,14 +55,8 @@ type Runner struct {
 	tagLexicalGate    analyzer.TagLexicalGate
 	tagQualityJudge   analyzer.TagQualityJudge
 	fallbackAnalyzers []analyzer.Analyzer
-	fallbackMeta      []fallbackMeta
 	textReducer       textreducer.TextReducer
 	reductionCache    *textreducer.ReductionCache
-}
-
-type fallbackMeta struct {
-	Provider string
-	Model    string
 }
 
 // TextExtractionResult carries the extracted text; nil when nothing could
@@ -256,19 +248,18 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 					continue
 				}
 				r.fallbackAnalyzers = append(r.fallbackAnalyzers, fbCa)
-				r.fallbackMeta = append(r.fallbackMeta, fallbackMeta{Provider: fb.Llm.Provider, Model: fb.Llm.Model})
 			}
 		case "tagjudge":
 			if cfg.Enricher.TagAdjudicator.Enabled {
 				adjLlm := cfg.ResolvedAdjudicatorLlm()
-				adj, adjErr := analyzer.NewTagAdjudicator(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedAdjudicatorTimeout()) * time.Second}, &adjLlm, reg)
+				adj, adjErr := analyzer.NewTagAdjudicator(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.TagAdjudicator.Timeout) * time.Second}, &adjLlm, reg)
 				if adjErr != nil {
 					logger.Error("", "create tag adjudicator: %v", adjErr)
 				} else {
 					r.tagAdjudicator = adj
 				}
 				gateLlm := cfg.ResolvedLexicalGateLlm()
-				gate, gateErr := analyzer.NewTagLexicalGate(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedLexicalGateTimeout()) * time.Second}, &gateLlm, reg)
+				gate, gateErr := analyzer.NewTagLexicalGate(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.TagLexicalGate.Timeout) * time.Second}, &gateLlm, reg)
 				if gateErr != nil {
 					logger.Error("", "create tag lexical gate: %v", gateErr)
 				} else {
@@ -282,7 +273,7 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 					// only the quality gate hard-requires one at load
 					logger.Info("", "tag quality judge not configured — judged tag steps stay deferred")
 				} else {
-					q, qErr := analyzer.NewTagQualityJudge(logger, config.ToolConfig{Timeout: time.Duration(cfg.ResolvedQualityTimeout()) * time.Second}, &qLlm, reg)
+					q, qErr := analyzer.NewTagQualityJudge(logger, config.ToolConfig{Timeout: time.Duration(cfg.Enricher.TagQuality.Timeout) * time.Second}, &qLlm, reg)
 					if qErr != nil {
 						logger.Error("", "create tag quality judge: %v", qErr)
 					} else {
@@ -600,15 +591,24 @@ func (r *Runner) HasTagAdjudicator() bool {
 	return r.tagAdjudicator != nil
 }
 
-// runJudged applies a judge timeout to one judged call and bounds it with runWithTimeout.
-func runJudged[T any](ctx context.Context, timeoutSeconds int, call func(context.Context) ([]T, error)) ([]T, error) {
-	timeout := time.Duration(timeoutSeconds) * time.Second
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+// runJudged runs one judged step under the role's retry budget: the adapter bounds each HTTP round trip
+// with the section's timeout, and only failures the classifier marks retryable consume budget. On
+// failure the last attempt's results and error are returned unchanged: an incomplete reply carries the
+// entries it did answer for the caller's salvage logic.
+func runJudged[T any](ctx context.Context, maxRetries int, call func(context.Context) ([]T, error)) ([]T, error) {
+	var results []T
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		attemptResults, err := call(ctx)
+		if err == nil {
+			return attemptResults, nil
+		}
+		results, lastErr = attemptResults, err
+		if analyzer.ClassifyLlmError(err) != analyzer.LlmRetry {
+			break
+		}
 	}
-	return runWithTimeout(ctx, func() ([]T, error) { return call(ctx) })
+	return results, lastErr
 }
 
 // AdjudicateTags asks the LLM adjudicator to decide a set of tag pairs
@@ -618,7 +618,7 @@ func (r *Runner) AdjudicateTags(ctx context.Context, pairs []analyzer.TagPairEvi
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagVerdictResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagAdjudicator.MaxRetries, func(ctx context.Context) ([]analyzer.TagVerdictResult, error) {
 		return r.tagAdjudicator.Adjudicate(ctx, pairs)
 	})
 }
@@ -629,7 +629,7 @@ func (r *Runner) JudgeTagParts(ctx context.Context, values []string) ([]analyzer
 	if r.tagLexicalGate == nil {
 		return nil, fmt.Errorf("tag lexical gate not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedLexicalGateTimeout(), func(ctx context.Context) ([]analyzer.TagPartResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagLexicalGate.MaxRetries, func(ctx context.Context) ([]analyzer.TagPartResult, error) {
 		return r.tagLexicalGate.JudgeTagParts(ctx, values)
 	})
 }
@@ -640,7 +640,7 @@ func (r *Runner) JudgeTagCompounds(ctx context.Context, candidates []string) ([]
 	if r.tagLexicalGate == nil {
 		return nil, fmt.Errorf("tag lexical gate not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedLexicalGateTimeout(), func(ctx context.Context) ([]analyzer.TagCompoundResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagLexicalGate.MaxRetries, func(ctx context.Context) ([]analyzer.TagCompoundResult, error) {
 		return r.tagLexicalGate.JudgeTagCompounds(ctx, candidates)
 	})
 }
@@ -651,7 +651,7 @@ func (r *Runner) JudgeTagConflicts(ctx context.Context, candidates []analyzer.Ta
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagConflictResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagAdjudicator.MaxRetries, func(ctx context.Context) ([]analyzer.TagConflictResult, error) {
 		return r.tagAdjudicator.JudgeTagConflicts(ctx, candidates)
 	})
 }
@@ -668,7 +668,7 @@ func (r *Runner) JudgeTagQuality(ctx context.Context, text string, candidates []
 	if r.tagQualityJudge == nil {
 		return nil, fmt.Errorf("tag quality judge not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedQualityTimeout(), func(ctx context.Context) ([]analyzer.TagQualityResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagQuality.MaxRetries, func(ctx context.Context) ([]analyzer.TagQualityResult, error) {
 		return r.tagQualityJudge.JudgeTagQuality(ctx, text, candidates)
 	})
 }
@@ -679,7 +679,7 @@ func (r *Runner) JudgeTagTranslations(ctx context.Context, values []string) ([]a
 	if r.tagLexicalGate == nil {
 		return nil, fmt.Errorf("tag lexical gate not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedLexicalGateTimeout(), func(ctx context.Context) ([]analyzer.TagTranslationResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagLexicalGate.MaxRetries, func(ctx context.Context) ([]analyzer.TagTranslationResult, error) {
 		return r.tagLexicalGate.JudgeTagTranslations(ctx, values)
 	})
 }
@@ -690,7 +690,7 @@ func (r *Runner) JudgeTagAudit(ctx context.Context, text string, candidates []an
 	if r.tagQualityJudge == nil {
 		return nil, fmt.Errorf("tag quality judge not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedQualityTimeout(), func(ctx context.Context) ([]analyzer.TagAuditResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagQuality.MaxRetries, func(ctx context.Context) ([]analyzer.TagAuditResult, error) {
 		return r.tagQualityJudge.JudgeTagAudit(ctx, text, candidates)
 	})
 }
@@ -702,7 +702,7 @@ func (r *Runner) JudgeTagPhraseFolds(ctx context.Context, candidates []analyzer.
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagPhraseFoldResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagAdjudicator.MaxRetries, func(ctx context.Context) ([]analyzer.TagPhraseFoldResult, error) {
 		return r.tagAdjudicator.JudgeTagPhraseFolds(ctx, candidates)
 	})
 }
@@ -713,7 +713,7 @@ func (r *Runner) JudgeTagIdentity(ctx context.Context, candidates []analyzer.Tag
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagIdentityResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagAdjudicator.MaxRetries, func(ctx context.Context) ([]analyzer.TagIdentityResult, error) {
 		return r.tagAdjudicator.JudgeTagIdentity(ctx, candidates)
 	})
 }
@@ -725,61 +725,66 @@ func (r *Runner) JudgeTagRelations(ctx context.Context, candidates []analyzer.Ta
 	if r.tagAdjudicator == nil {
 		return nil, fmt.Errorf("tag adjudicator not configured")
 	}
-	return runJudged(ctx, r.config.ResolvedAdjudicatorTimeout(), func(ctx context.Context) ([]analyzer.TagRelationResult, error) {
+	return runJudged(ctx, r.config.Enricher.TagAdjudicator.MaxRetries, func(ctx context.Context) ([]analyzer.TagRelationResult, error) {
 		return r.tagAdjudicator.JudgeTagRelations(ctx, candidates)
 	})
 }
 
-func isProviderError(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	var ctle *analyzer.ContentTooLargeError
-	var tokErr *analyzer.TokenLimitError
-	return !errors.As(err, &ctle) && !errors.As(err, &tokErr)
-}
+// analyzeWithEndpoints runs call against r's primary analyzer and then each fallback. The adapter
+// bounds each HTTP round trip with the section's timeout. A retryable failure consumes that endpoint's
+// retry budget before the walk moves on; a credit error skips the rest of that endpoint's retry budget;
+// a non-retryable failure stops the walk. When every endpoint fails, the last failed endpoint's error is
+// returned.
+func analyzeWithEndpoints[T any](ctx context.Context, r *Runner, call func(context.Context, analyzer.Analyzer) (T, error)) (T, error) {
+	maxRetries := r.config.Enricher.ContentAnalyzer.MaxRetries
+	reqID := log.ReqIDFrom(ctx)
 
-// AnalyzeContent analyzes a document's reduced text with the primary
-// analyzer: title, doc type, tags, people and language. On a provider-level
-// error (auth, quota, availability) it walks the configured fallback
-// analyzers, returning the last failure when none succeeds. Content-too-
-// large, token-limit, cancellation and deadline errors are never retried on
-// a fallback.
-func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*ContentAnalysisResult, error) {
-	if r.contentAnalyzer == nil {
-		return nil, fmt.Errorf("content analyzer not configured")
-	}
-	timeout := time.Duration(r.config.Enricher.ContentAnalyzer.Timeout) * time.Second
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	result, err := runWithTimeout(ctx, func() (*analyzer.AnalysisResult, error) {
-		return r.contentAnalyzer.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
-	})
-	if err != nil && isProviderError(err) {
-		reqID := log.ReqIDFrom(ctx)
-		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed: %v",
-			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
-		for i, fb := range r.fallbackAnalyzers {
-			fbProvider, fbModel := "?", "?"
-			if i < len(r.fallbackMeta) {
-				fbProvider, fbModel = r.fallbackMeta[i].Provider, r.fallbackMeta[i].Model
-			}
-			r.logger.Info(reqID, "trying fallback analyzer (%s/%s)", fbProvider, fbModel)
-			result, err = runWithTimeout(ctx, func() (*analyzer.AnalysisResult, error) {
-				return fb.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
-			})
+	endpoints := make([]analyzer.Analyzer, 0, 1+len(r.fallbackAnalyzers))
+	endpoints = append(endpoints, r.contentAnalyzer)
+	endpoints = append(endpoints, r.fallbackAnalyzers...)
+
+	var zero T
+	var lastErr error
+	for idx, ep := range endpoints {
+		label := "primary analyzer"
+		if idx > 0 {
+			label = "fallback analyzer"
+		}
+		provider, model := ep.Endpoint()
+		if idx > 0 {
+			r.logger.Info(reqID, "trying fallback analyzer (%s/%s)", provider, model)
+		}
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			result, err := call(ctx, ep)
 			if err == nil {
-				break
+				return result, nil
 			}
-			r.logger.Warn(reqID, "fallback analyzer (%s/%s) failed: %v", fbProvider, fbModel, err)
-			if !isProviderError(err) {
+			lastErr = err
+			r.logger.Warn(reqID, "%s (%s/%s) attempt %d/%d failed: %v",
+				label, provider, model, attempt+1, maxRetries+1, err)
+			action := analyzer.ClassifyLlmError(err)
+			if action == analyzer.LlmAbort {
+				return zero, err
+			}
+			if action == analyzer.LlmNextEndpoint {
 				break
 			}
 		}
 	}
+	return zero, lastErr
+}
+
+// AnalyzeContent analyzes a document's reduced text with the primary analyzer: title, doc type, tags,
+// people and language. Provider-level failures are retried up to the section's max_retries per endpoint
+// and then walked through the configured fallback analyzers, returning the last endpoint's failure when
+// none succeeds. Content-too-large, token-limit, cancellation and deadline errors stop the walk immediately.
+func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*ContentAnalysisResult, error) {
+	if r.contentAnalyzer == nil {
+		return nil, fmt.Errorf("content analyzer not configured")
+	}
+	result, err := analyzeWithEndpoints(ctx, r, func(ctx context.Context, a analyzer.Analyzer) (*analyzer.AnalysisResult, error) {
+		return a.Analyze(ctx, text, docTypes, peopleTypes, tagSuggestions)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("content analyzer: %w", err)
 	}
@@ -797,18 +802,11 @@ func (r *Runner) AnalyzeContent(ctx context.Context, text string, docTypes []ana
 	}, nil
 }
 
-// AnalyzeDocType refines the document type from the head and tail of the
-// text, given the previous analysis pass. It follows the same fallback
-// chain rules as AnalyzeContent.
+// AnalyzeDocType refines the document type from the head and tail of the text, given the previous analysis
+// pass. It follows the same retry and fallback chain rules as AnalyzeContent.
 func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
 	if r.contentAnalyzer == nil {
 		return "", fmt.Errorf("content analyzer not configured")
-	}
-	timeout := time.Duration(r.config.Enricher.ContentAnalyzer.Timeout) * time.Second
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
 	}
 	prev := &analyzer.AnalysisResult{
 		PassContext: prevResult.PassContext,
@@ -818,31 +816,9 @@ func (r *Runner) AnalyzeDocType(ctx context.Context, prevResult *ContentAnalysis
 		People:      prevResult.People,
 		Language:    prevResult.Language,
 	}
-	result, err := runWithTimeout(ctx, func() (string, error) {
-		return r.contentAnalyzer.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
+	result, err := analyzeWithEndpoints(ctx, r, func(ctx context.Context, a analyzer.Analyzer) (string, error) {
+		return a.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
 	})
-	if err != nil && isProviderError(err) {
-		reqID := log.ReqIDFrom(ctx)
-		r.logger.Warn(reqID, "primary analyzer (%s/%s) failed doc-type refinement: %v",
-			r.config.Enricher.ContentAnalyzer.Llm.Provider, r.config.Enricher.ContentAnalyzer.Llm.Model, err)
-		for i, fb := range r.fallbackAnalyzers {
-			fbProvider, fbModel := "?", "?"
-			if i < len(r.fallbackMeta) {
-				fbProvider, fbModel = r.fallbackMeta[i].Provider, r.fallbackMeta[i].Model
-			}
-			r.logger.Info(reqID, "trying fallback analyzer (%s/%s)", fbProvider, fbModel)
-			result, err = runWithTimeout(ctx, func() (string, error) {
-				return fb.AnalyzeDocType(ctx, prev, headTailText, docTypes, metadata)
-			})
-			if err == nil {
-				break
-			}
-			r.logger.Warn(reqID, "fallback analyzer (%s/%s) failed: %v", fbProvider, fbModel, err)
-			if !isProviderError(err) {
-				break
-			}
-		}
-	}
 	if err != nil {
 		return "", fmt.Errorf("doc type refinement: %w", err)
 	}

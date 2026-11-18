@@ -205,6 +205,18 @@
 						bind:value={cfg.enricher.contentanalyzer.timeout}
 					/>
 					<UnitField
+						id="content-analyzer-max-retries"
+						label="Max retries"
+						unit="tries"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						max="10"
+						hint="Extra attempts per endpoint; 0 = no retries."
+						advancedOnly
+						bind:value={cfg.enricher.contentanalyzer.max_retries}
+					/>
+					<UnitField
 						id="content-analyzer-min-tags"
 						label="Min tags"
 						unit="tags"
@@ -609,6 +621,17 @@
 						hint="0 = no deadline"
 						bind:value={cfg.enricher.tag_adjudicator.timeout}
 					/>
+					<UnitField
+						id="tag-adjudicator-max-retries"
+						label="Max retries"
+						unit="tries"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						max="10"
+						hint="Extra attempts per call; 0 = no retries."
+						bind:value={cfg.enricher.tag_adjudicator.max_retries}
+					/>
 					<div class="field">
 						<label
 							for="tag-adjudicator-adapter"
@@ -703,6 +726,17 @@
 						min="0"
 						hint="0 = no deadline"
 						bind:value={cfg.enricher.tag_lexical_gate.timeout}
+					/>
+					<UnitField
+						id="tag-lexical-gate-max-retries"
+						label="Max retries"
+						unit="tries"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						max="10"
+						hint="Extra attempts per call; 0 = no retries."
+						bind:value={cfg.enricher.tag_lexical_gate.max_retries}
 					/>
 					<div class="field">
 						<label
@@ -812,6 +846,17 @@
 						min="0"
 						hint="0 = no deadline"
 						bind:value={cfg.enricher.tag_quality.timeout}
+					/>
+					<UnitField
+						id="tag-quality-max-retries"
+						label="Max retries"
+						unit="tries"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						max="10"
+						hint="Extra attempts per call; 0 = no retries."
+						bind:value={cfg.enricher.tag_quality.max_retries}
 					/>
 					<div class="field">
 						<label for="tag-quality-adapter" class="text-[0.8125rem] font-medium text-parchment-200"

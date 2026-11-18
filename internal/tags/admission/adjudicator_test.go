@@ -1995,7 +1995,8 @@ func newSplitAdjudicator(t *testing.T, adj *mockAdjudicator, buf *bytes.Buffer) 
 	}
 	cfg := &config.Config{
 		Enricher: config.EnricherConfig{
-			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0},
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0, MaxRetries: 1},
+			TagLexicalGate: config.TagLexicalGateConfig{Timeout: 0, MaxRetries: 1},
 			ContentAnalyzer: config.ContentAnalyzerConfig{
 				Llm: config.LlmConfig{Model: "test-model"},
 			},
@@ -2737,29 +2738,29 @@ func creditExhausted() error {
 	return &analyzer.InsufficientCreditsError{Provider: "test", HTTPStatus: 402}
 }
 
-func TestRetryableJudgeFailure(t *testing.T) {
+func TestClassifyLlmErrorForJudgedFailures(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want bool
+		want analyzer.LlmErrorAction
 	}{
-		{"generic provider failure", errors.New("API error: status 500"), true},
-		{"label-wrapped transport failure", fmt.Errorf("tag adjudication: %w", errors.New("send request: connection reset by peer")), true},
-		{"empty response", errors.New("empty response from LLM"), true},
-		{"parse failure", &analyzer.ReplyParseError{Step: "tag adjudication", Model: "test-model", RawLen: 8, RawPrefix: "not json"}, false},
-		{"label-wrapped incomplete reply", fmt.Errorf("tag quality judge: %w", &analyzer.IncompleteReplyError{Missing: []int{1}}), false},
-		{"output cap hit", fmt.Errorf("tag quality judge: %w", &analyzer.OutputCapError{Model: "test-model", Cap: 640}), false},
-		{"credit exhaustion", creditExhausted(), false},
-		{"label-wrapped credit exhaustion", fmt.Errorf("tag adjudication: %w", creditExhausted()), false},
-		{"content too large", &analyzer.ContentTooLargeError{EstimatedTokens: 20, MaxInputTokens: 10}, false},
-		{"token limit", &analyzer.TokenLimitError{MaxTokens: 100, RequestedTokens: 200}, false},
-		{"context canceled", context.Canceled, false},
-		{"context deadline exceeded", context.DeadlineExceeded, false},
+		{"generic provider failure", errors.New("API error: status 500"), analyzer.LlmRetry},
+		{"label-wrapped transport failure", fmt.Errorf("tag adjudication: %w", errors.New("send request: connection reset by peer")), analyzer.LlmRetry},
+		{"empty response", errors.New("empty response from LLM"), analyzer.LlmRetry},
+		{"parse failure", &analyzer.ReplyParseError{Step: "tag adjudication", Model: "test-model", RawLen: 8, RawPrefix: "not json"}, analyzer.LlmAbort},
+		{"label-wrapped incomplete reply", fmt.Errorf("tag quality judge: %w", &analyzer.IncompleteReplyError{Missing: []int{1}}), analyzer.LlmAbort},
+		{"output cap hit", fmt.Errorf("tag quality judge: %w", &analyzer.OutputCapError{Model: "test-model", Cap: 640}), analyzer.LlmAbort},
+		{"credit exhaustion", creditExhausted(), analyzer.LlmNextEndpoint},
+		{"label-wrapped credit exhaustion", fmt.Errorf("tag adjudication: %w", creditExhausted()), analyzer.LlmNextEndpoint},
+		{"content too large", &analyzer.ContentTooLargeError{EstimatedTokens: 20, MaxInputTokens: 10}, analyzer.LlmAbort},
+		{"token limit", &analyzer.TokenLimitError{MaxTokens: 100, RequestedTokens: 200}, analyzer.LlmAbort},
+		{"context canceled", context.Canceled, analyzer.LlmAbort},
+		{"context deadline exceeded", context.DeadlineExceeded, analyzer.LlmRetry},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := retryableJudgeFailure(tt.err); got != tt.want {
-				t.Errorf("retryableJudgeFailure(%v) = %t, want %t", tt.err, got, tt.want)
+			if got := analyzer.ClassifyLlmError(tt.err); got != tt.want {
+				t.Errorf("ClassifyLlmError(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
 	}
@@ -2807,6 +2808,31 @@ func TestDecomposeTags_TransientFailureRetriesOnce(t *testing.T) {
 		t.Errorf("DecomposeTags = %v, want the split after the retry", got)
 	}
 	adjAssertEqual(t, adj.partCall, 2, "a transient failure is retried once")
+}
+
+func TestAdjudicateTags_GenericFailureDoesNotDoubleRetry(t *testing.T) {
+	a, _, adj := newTestAdjudicator(t)
+	setUnexportedField(t, a.runner, "tagAdjudicator", adj)
+	setUnexportedField(t, a.runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{
+			TagMatcher:     config.TagMatcherConfig{Timeout: 0},
+			TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0, MaxRetries: 1},
+		},
+	})
+	call := 0
+	adj.adjudicateFn = func(context.Context, []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+		call++
+		return nil, errors.New("API error: status 500")
+	}
+
+	results, err := a.runner.AdjudicateTags(context.Background(), []analyzer.TagPairEvidence{{Query: "a", Target: "b"}})
+	if err == nil {
+		t.Fatal("AdjudicateTags() error = nil, want the persistent failure")
+	}
+	if results != nil {
+		t.Errorf("AdjudicateTags() results = %v, want nil alongside the error", results)
+	}
+	adjAssertEqual(t, call, 2, "one retry at the runner budget means 1 + 1 attempts, never an admission second retry")
 }
 
 func TestApplyTagQuality_CreditErrorEscapes(t *testing.T) {

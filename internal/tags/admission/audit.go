@@ -599,11 +599,6 @@ func (a *AuditRunner) auditDocument(ctx context.Context, docID, sweep int64, vie
 		}
 		results, jerr := a.runner.JudgeTagAudit(ctx, llmText, candidates)
 		stats.calls++
-		if jerr != nil && retryableJudgeFailure(jerr) {
-			a.logger.Warn("", "tag audit: judge attempt failed, retrying once: %v", jerr)
-			results, jerr = a.runner.JudgeTagAudit(ctx, llmText, candidates)
-			stats.calls++
-		}
 		if jerr != nil {
 			if isCreditError(jerr) {
 				return auditOutcome{Stats: stats}, jerr

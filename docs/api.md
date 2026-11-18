@@ -2215,6 +2215,7 @@ ContentAnalyzerResponse is the analyzer section's API view.
 | `enabled` | boolean | yes |
 | `fallbacks` | array of [FallbackConfigResponse](#fallbackconfigresponse) | no |
 | `llm` | [LlmConfigResponse](#llmconfigresponse) | yes |
+| `max_retries` | integer | yes |
 | `min_tags` | integer | yes |
 | `pause_on_credit_error` | boolean | yes |
 | `prompt_template` | string | no |
@@ -3092,6 +3093,7 @@ TagAdjudicatorConfigResponse is the adjudicator section's API view.
 |---|---|---|
 | `enabled` | boolean | yes |
 | `llm` | [TagAdjudicatorLlmResponse](#tagadjudicatorllmresponse) | yes |
+| `max_retries` | integer | yes |
 | `timeout` | integer | yes |
 
 ### TagAdjudicatorLlmResponse
@@ -3133,6 +3135,7 @@ TagLexicalGateConfigResponse is the lexical gate section's API view: active whil
 | Field | Type | Required |
 |---|---|---|
 | `llm` | [TagAdjudicatorLlmResponse](#tagadjudicatorllmresponse) | yes |
+| `max_retries` | integer | yes |
 | `timeout` | integer | yes |
 
 ### TagListResponse
@@ -3185,6 +3188,7 @@ TagQualityConfigResponse is the quality judge's API view.
 |---|---|---|
 | `enabled` | boolean | yes |
 | `llm` | [TagAdjudicatorLlmResponse](#tagadjudicatorllmresponse) | yes |
+| `max_retries` | integer | yes |
 | `timeout` | integer | yes |
 
 ### TagQualityCriteriaView

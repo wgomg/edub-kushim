@@ -46,14 +46,15 @@ function ensureAll() {
 	ensureTagAdjudicatorBlock();
 	ensureTagLexicalGateBlock();
 	ensureTagQualityBlock();
-	ensureContentAnalyzerTags();
+	ensureContentAnalyzerDefaults();
 	ensureTagMatcherTopN();
 }
 
-function ensureContentAnalyzerTags() {
+function ensureContentAnalyzerDefaults() {
 	if (!cfg) return;
 	const ca = cfg.enricher.contentanalyzer;
 	if (!(ca.min_tags > 0)) ca.min_tags = 3;
+	if (!(ca.max_retries >= 0)) ca.max_retries = 3;
 }
 
 function ensureTagMatcherTopN() {
@@ -155,7 +156,8 @@ function ensureTagAdjudicatorBlock() {
 	if (cfg.enricher.tag_adjudicator) return;
 	cfg.enricher.tag_adjudicator = {
 		enabled: false,
-		timeout: 0,
+		timeout: 20,
+		max_retries: 3,
 		llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
 	};
 }
@@ -165,7 +167,8 @@ function ensureTagLexicalGateBlock() {
 	if (!cfg.enricher) cfg.enricher = {};
 	if (cfg.enricher.tag_lexical_gate) return;
 	cfg.enricher.tag_lexical_gate = {
-		timeout: 0,
+		timeout: 20,
+		max_retries: 3,
 		llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
 	};
 }
@@ -176,7 +179,8 @@ function ensureTagQualityBlock() {
 	if (cfg.enricher.tag_quality) return;
 	cfg.enricher.tag_quality = {
 		enabled: false,
-		timeout: 0,
+		timeout: 60,
+		max_retries: 3,
 		llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
 	};
 }
@@ -242,6 +246,7 @@ function bodyFromConfig() {
 		'enricher.textreducer.target_words': Number(cfg.enricher.textreducer.target_words),
 		'enricher.contentanalyzer.enabled': cfg.enricher.contentanalyzer.enabled,
 		'enricher.contentanalyzer.timeout': Number(cfg.enricher.contentanalyzer.timeout),
+		'enricher.contentanalyzer.max_retries': Number(cfg.enricher.contentanalyzer.max_retries),
 		'enricher.contentanalyzer.min_tags': Number(cfg.enricher.contentanalyzer.min_tags),
 		'enricher.contentanalyzer.prompt_template': cfg.enricher.contentanalyzer.prompt_template,
 		'enricher.contentanalyzer.pause_on_credit_error':
@@ -273,6 +278,7 @@ function bodyFromConfig() {
 		'enricher.tagmatcher.hugot.backend': cfg.enricher.tagmatcher.hugot.backend,
 		'enricher.tag_adjudicator.enabled': cfg.enricher.tag_adjudicator.enabled,
 		'enricher.tag_adjudicator.timeout': Number(cfg.enricher.tag_adjudicator.timeout),
+		'enricher.tag_adjudicator.max_retries': Number(cfg.enricher.tag_adjudicator.max_retries),
 		'enricher.tag_adjudicator.llm.adapter': cfg.enricher.tag_adjudicator.llm.adapter,
 		'enricher.tag_adjudicator.llm.provider': cfg.enricher.tag_adjudicator.llm.provider,
 		'enricher.tag_adjudicator.llm.model': cfg.enricher.tag_adjudicator.llm.model,
@@ -281,6 +287,7 @@ function bodyFromConfig() {
 			cfg.enricher.tag_adjudicator.llm.request_delay
 		),
 		'enricher.tag_lexical_gate.timeout': Number(cfg.enricher.tag_lexical_gate.timeout),
+		'enricher.tag_lexical_gate.max_retries': Number(cfg.enricher.tag_lexical_gate.max_retries),
 		'enricher.tag_lexical_gate.llm.adapter': cfg.enricher.tag_lexical_gate.llm.adapter,
 		'enricher.tag_lexical_gate.llm.provider': cfg.enricher.tag_lexical_gate.llm.provider,
 		'enricher.tag_lexical_gate.llm.model': cfg.enricher.tag_lexical_gate.llm.model,
@@ -290,6 +297,7 @@ function bodyFromConfig() {
 		),
 		'enricher.tag_quality.enabled': cfg.enricher.tag_quality.enabled,
 		'enricher.tag_quality.timeout': Number(cfg.enricher.tag_quality.timeout),
+		'enricher.tag_quality.max_retries': Number(cfg.enricher.tag_quality.max_retries),
 		'enricher.tag_quality.llm.adapter': cfg.enricher.tag_quality.llm.adapter,
 		'enricher.tag_quality.llm.provider': cfg.enricher.tag_quality.llm.provider,
 		'enricher.tag_quality.llm.model': cfg.enricher.tag_quality.llm.model,

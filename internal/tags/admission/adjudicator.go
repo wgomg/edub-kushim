@@ -978,25 +978,6 @@ func (a *Adjudicator) ApplyDeletedTagPolicy(tags []string, blocklist map[string]
 	return out
 }
 
-// retryableJudgeFailure classifies a judged call's failure: transport and
-// generic provider errors get one retry, while parse failures, incomplete
-// replies, output-cap hits, credit exhaustion, content-too-large, token-limit
-// and context errors never do. A partial reply's omission is systematic at a
-// fixed output budget, so a retry would re-omit.
-func retryableJudgeFailure(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	var parseErr *analyzer.ReplyParseError
-	var incErr *analyzer.IncompleteReplyError
-	var capErr *analyzer.OutputCapError
-	var credErr *analyzer.InsufficientCreditsError
-	var ctle *analyzer.ContentTooLargeError
-	var tokErr *analyzer.TokenLimitError
-	return !errors.As(err, &parseErr) && !errors.As(err, &incErr) && !errors.As(err, &capErr) &&
-		!errors.As(err, &credErr) && !errors.As(err, &ctle) && !errors.As(err, &tokErr)
-}
-
 // isCreditError reports whether err carries the provider account's
 // credit-exhaustion failure, the one class that pauses the batch.
 func isCreditError(err error) bool {
@@ -1226,10 +1207,6 @@ func (a *Adjudicator) ResolveLanguages(ctx context.Context, analysis *tools.Cont
 		end := min(start+verdictBatchSize, len(flagged))
 		batch := flagged[start:end]
 		results, err := a.runner.JudgeTagTranslations(ctx, batch)
-		if err != nil && retryableJudgeFailure(err) {
-			a.logger.Warn(reqID, "taglanguage[%s]: translation attempt failed, retrying once: %v", analyzer.TagTranslationVersion, err)
-			results, err = a.runner.JudgeTagTranslations(ctx, batch)
-		}
 		missing := make(map[int]bool)
 		if err != nil {
 			if isCreditError(err) {
@@ -1466,10 +1443,6 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 					}
 				}
 				results, err := a.runner.JudgeTagQuality(ctx, reducedText, candidates)
-				if err != nil && retryableJudgeFailure(err) {
-					a.logger.Warn(reqID, "tagquality[%s]: judge attempt failed, retrying once: %v", analyzer.TagQualityVersion, err)
-					results, err = a.runner.JudgeTagQuality(ctx, reducedText, candidates)
-				}
 				if err == nil && len(results) != len(batch) {
 					err = fmt.Errorf("judge returned %d verdicts for %d candidates", len(results), len(batch))
 				}

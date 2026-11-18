@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -11,6 +12,45 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/llm"
 )
+
+// LlmErrorAction is the retry policy's verdict on one failed LLM call attempt.
+type LlmErrorAction int
+
+const (
+	// LlmRetry means the same endpoint deserves another attempt while the caller's retry budget still has room.
+	LlmRetry LlmErrorAction = iota
+	// LlmNextEndpoint means this endpoint is settled without success: the caller moves to its next configured
+	// fallback, or surfaces the error when none remains.
+	LlmNextEndpoint
+	// LlmAbort means another attempt cannot succeed on any endpoint: stop immediately.
+	LlmAbort
+)
+
+// ClassifyLlmError decides how a failed attempt is handled. Cancellation, oversized prompts, provider
+// token-limit rejections, unparseable or truncated replies are aborting: they repeat identically on a
+// retry. A deadline expiry is retried because every attempt carries a fresh deadline, so a slow endpoint
+// deserves another budget. Credit exhaustion never retries but still fails over to the next endpoint, so
+// a dead primary account does not strand the caller. Every other failure is retried against the same
+// endpoint.
+func ClassifyLlmError(err error) LlmErrorAction {
+	if errors.Is(err, context.Canceled) {
+		return LlmAbort
+	}
+	var parseErr *ReplyParseError
+	var incErr *IncompleteReplyError
+	var capErr *OutputCapError
+	var tooLargeErr *ContentTooLargeError
+	var tokenErr *TokenLimitError
+	if errors.As(err, &parseErr) || errors.As(err, &incErr) || errors.As(err, &capErr) ||
+		errors.As(err, &tooLargeErr) || errors.As(err, &tokenErr) {
+		return LlmAbort
+	}
+	var creditErr *InsufficientCreditsError
+	if errors.As(err, &creditErr) {
+		return LlmNextEndpoint
+	}
+	return LlmRetry
+}
 
 // sleepAfterRequest paces requests toward rate-limited providers. Aborts early
 // when the batch context is cancelled.

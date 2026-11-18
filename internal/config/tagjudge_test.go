@@ -177,36 +177,108 @@ func TestResolvedLexicalGateLlm_ChainPrefersOwnAdjudicatorAnalyzer(t *testing.T)
 	})
 }
 
-// TestResolvedLexicalGateTimeout_ChainPrefersOwnAdjudicatorAnalyzer pins the timeout fallback chain:
-// a set gate timeout wins, then the adjudicator's, then the analyzer's.
-func TestResolvedLexicalGateTimeout_ChainPrefersOwnAdjudicatorAnalyzer(t *testing.T) {
-	t.Run("own timeout wins over both links", func(t *testing.T) {
-		cfg := DefaultConfig(t.TempDir())
-		cfg.Enricher.ContentAnalyzer.Timeout = 10
-		cfg.Enricher.TagAdjudicator.Timeout = 20
-		cfg.Enricher.TagLexicalGate.Timeout = 30
+// TestJudgedTimeoutDefaults pins the judged sections' timeout defaults: 5 s for the adjudicator and
+// the lexical gate, 10 s for the quality judge, and the analyzer's 120 s untouched. 0 disables the
+// deadline; there is no inheritance.
+func TestJudgedTimeoutDefaults(t *testing.T) {
+	cfg := DefaultConfig(t.TempDir())
 
-		if got := cfg.ResolvedLexicalGateTimeout(); got != 30 {
-			t.Errorf("resolved timeout = %d, want 30", got)
+	if got := cfg.Enricher.ContentAnalyzer.Timeout; got != 120 {
+		t.Errorf("content analyzer timeout = %d, want 120", got)
+	}
+	if got := cfg.Enricher.TagAdjudicator.Timeout; got != 5 {
+		t.Errorf("tag adjudicator timeout = %d, want 5", got)
+	}
+	if got := cfg.Enricher.TagLexicalGate.Timeout; got != 5 {
+		t.Errorf("tag lexical gate timeout = %d, want 5", got)
+	}
+	if got := cfg.Enricher.TagQuality.Timeout; got != 10 {
+		t.Errorf("tag quality timeout = %d, want 10", got)
+	}
+
+	cfg.Enricher.TagAdjudicator.Timeout = 0
+	if got := cfg.Enricher.TagAdjudicator.Timeout; got != 0 {
+		t.Errorf("explicit timeout = %d, want 0 to stay 0 (no inheritance)", got)
+	}
+}
+
+// TestJudgedRetryDefaultsAndBounds pins max_retries' default of 3 on all four sections and the
+// 0–10 load-time bounds.
+func TestJudgedRetryDefaultsAndBounds(t *testing.T) {
+	cfg := DefaultConfig(t.TempDir())
+	if got := cfg.Enricher.ContentAnalyzer.MaxRetries; got != 3 {
+		t.Errorf("contentanalyzer.max_retries = %d, want 3", got)
+	}
+	for name, got := range map[string]int{
+		"tag_adjudicator":  cfg.Enricher.TagAdjudicator.MaxRetries,
+		"tag_lexical_gate": cfg.Enricher.TagLexicalGate.MaxRetries,
+		"tag_quality":      cfg.Enricher.TagQuality.MaxRetries,
+	} {
+		if got != 3 {
+			t.Errorf("%s.max_retries = %d, want 3", name, got)
 		}
-	})
+	}
 
-	t.Run("adjudicator timeout wins when the gate timeout is unset", func(t *testing.T) {
-		cfg := DefaultConfig(t.TempDir())
-		cfg.Enricher.ContentAnalyzer.Timeout = 10
-		cfg.Enricher.TagAdjudicator.Timeout = 20
+	bad := DefaultConfig(t.TempDir())
+	bad.Enricher.TagAdjudicator.MaxRetries = 11
+	if err := finalizeConfig(bad, t.TempDir()); err == nil {
+		t.Error("finalizeConfig accepted max_retries = 11")
+	}
 
-		if got := cfg.ResolvedLexicalGateTimeout(); got != 20 {
-			t.Errorf("resolved timeout = %d, want 20", got)
+	bad = DefaultConfig(t.TempDir())
+	bad.Enricher.ContentAnalyzer.MaxRetries = -1
+	if err := finalizeConfig(bad, t.TempDir()); err == nil {
+		t.Error("finalizeConfig accepted max_retries = -1")
+	}
+}
+
+// TestJudgedLimitsValidation pins each section's explicit timeout and max_retries bounds at load:
+// a negative timeout and an out-of-range retry count fail, while an explicit 0 stays 0.
+func TestJudgedLimitsValidation(t *testing.T) {
+	mutate := func(section string, timeout, retries int) *Config {
+		bad := DefaultConfig(t.TempDir())
+		apply := map[string]func(int, int){
+			"enricher.tag_adjudicator":  func(to, re int) { bad.Enricher.TagAdjudicator.Timeout, bad.Enricher.TagAdjudicator.MaxRetries = to, re },
+			"enricher.tag_lexical_gate": func(to, re int) { bad.Enricher.TagLexicalGate.Timeout, bad.Enricher.TagLexicalGate.MaxRetries = to, re },
+			"enricher.tag_quality":      func(to, re int) { bad.Enricher.TagQuality.Timeout, bad.Enricher.TagQuality.MaxRetries = to, re },
 		}
-	})
+		apply[section](timeout, retries)
+		return bad
+	}
 
-	t.Run("analyzer timeout wins when gate and adjudicator timeouts are unset", func(t *testing.T) {
+	rejections := []struct {
+		name    string
+		section string
+		timeout int
+		retries int
+		want    string
+	}{
+		{"adjudicator negative timeout", "enricher.tag_adjudicator", -1, 3, "enricher.tag_adjudicator.timeout must be >= 0"},
+		{"lexical gate negative timeout", "enricher.tag_lexical_gate", -1, 3, "enricher.tag_lexical_gate.timeout must be >= 0"},
+		{"quality negative timeout", "enricher.tag_quality", -1, 3, "enricher.tag_quality.timeout must be >= 0"},
+		{"adjudicator retries above cap", "enricher.tag_adjudicator", 5, 11, "enricher.tag_adjudicator.max_retries must be between 0 and 10"},
+		{"lexical gate retries above cap", "enricher.tag_lexical_gate", 5, 11, "enricher.tag_lexical_gate.max_retries must be between 0 and 10"},
+		{"quality retries above cap", "enricher.tag_quality", 10, 11, "enricher.tag_quality.max_retries must be between 0 and 10"},
+	}
+	for _, tt := range rejections {
+		t.Run(tt.name, func(t *testing.T) {
+			err := finalizeConfig(mutate(tt.section, tt.timeout, tt.retries), t.TempDir())
+			if err == nil {
+				t.Fatalf("finalizeConfig accepted %s (timeout=%d, max_retries=%d)", tt.section, tt.timeout, tt.retries)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q, want it to mention %q", err.Error(), tt.want)
+			}
+		})
+	}
+
+	t.Run("explicit zeroes load", func(t *testing.T) {
 		cfg := DefaultConfig(t.TempDir())
-		cfg.Enricher.ContentAnalyzer.Timeout = 10
-
-		if got := cfg.ResolvedLexicalGateTimeout(); got != 10 {
-			t.Errorf("resolved timeout = %d, want 10", got)
+		cfg.Enricher.TagLexicalGate.Timeout = 0
+		cfg.Enricher.TagLexicalGate.MaxRetries = 0
+		cfg.Enricher.TagQuality.MaxRetries = 0
+		if err := finalizeConfig(cfg, t.TempDir()); err != nil {
+			t.Errorf("finalizeConfig rejected explicit zeroes: %v", err)
 		}
 	})
 }

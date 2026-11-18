@@ -80,6 +80,7 @@ const fullCfg = () => ({
 		contentanalyzer: {
 			enabled: false,
 			timeout: 60,
+			max_retries: 3,
 			prompt_template: '',
 			pause_on_credit_error: false,
 			doc_type_refinement: { enabled: false, head_words: 200, tail_words: 100 },
@@ -95,11 +96,13 @@ const fullCfg = () => ({
 		tag_adjudicator: {
 			enabled: false,
 			timeout: 30,
+			max_retries: 3,
 			llm: { adapter: '', provider: '', model: '', token: '', request_delay: 0 }
 		},
 		tag_quality: {
 			enabled: false,
 			timeout: 0,
+			max_retries: 3,
 			llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
 		},
 		tag_reconcile: {
@@ -231,7 +234,8 @@ describe('Enrichment settings', () => {
 		const toggle = screen.getByRole('checkbox', { name: 'Enable tag adjudicator' });
 		expect(toggle.checked).toBe(false);
 		await fireEvent.click(toggle);
-		expect(Number(document.getElementById('tag-adjudicator-timeout').value)).toBe(0);
+		expect(Number(document.getElementById('tag-adjudicator-timeout').value)).toBe(5);
+		expect(Number(document.getElementById('tag-adjudicator-max-retries').value)).toBe(3);
 	});
 
 	it('fills the quality defaults when the block is missing', async () => {
@@ -245,7 +249,8 @@ describe('Enrichment settings', () => {
 		expect(toggle.checked).toBe(false);
 		await fireEvent.click(toggle);
 
-		expect(Number(document.getElementById('tag-quality-timeout').value)).toBe(0);
+		expect(Number(document.getElementById('tag-quality-timeout').value)).toBe(10);
+		expect(Number(document.getElementById('tag-quality-max-retries').value)).toBe(3);
 		expect(document.getElementById('tag-quality-t-low')).toBeNull();
 		expect(document.getElementById('tag-quality-no-anchor-similarity')).toBeNull();
 	});
@@ -275,6 +280,7 @@ describe('Enrichment settings', () => {
 		const body = apiMocks.configUpdate.mock.calls[0][0];
 		expect(body['enricher.tag_adjudicator.enabled']).toBe(false);
 		expect(body['enricher.tag_adjudicator.timeout']).toBe(30);
+		expect(body['enricher.tag_adjudicator.max_retries']).toBe(3);
 		expect(body['enricher.tag_adjudicator.llm.adapter']).toBe('');
 		expect(body['enricher.tag_adjudicator.llm.provider']).toBe('');
 		expect(body['enricher.tag_adjudicator.llm.model']).toBe('');
@@ -290,6 +296,7 @@ describe('Enrichment settings', () => {
 		expect(body['enricher.tag_reconcile.reask_defer_days']).toBe(10);
 		expect(body['enricher.tag_quality.enabled']).toBe(false);
 		expect(body['enricher.tag_quality.timeout']).toBe(0);
+		expect(body['enricher.tag_quality.max_retries']).toBe(3);
 		expect(body['enricher.tag_quality.llm.adapter']).toBe('');
 		expect(body['enricher.tag_quality.llm.provider']).toBe('');
 		expect(body['enricher.tag_quality.llm.model']).toBe('');

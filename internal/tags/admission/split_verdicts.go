@@ -26,9 +26,10 @@ const tagCompoundDeferStatus = "defer"
 // keyed by resolved value, and the compound pass's statuses keyed by candidate. Both are append-only and
 // version-filtered, so a re-run reads a prior verdict instead of re-judging; a fresh verdict persists, and a
 // concurrent writer's stored row wins with the disagreement flag set. One store serves the emission gate and
-// the stored-compound sweep, so both judge and persist the same rows under one failure policy: a transient
-// failure retries once, an incomplete reply salvages the entries it returned and defers only the missing
-// ones, every other non-credit failure leaves the verdicts absent, and credit exhaustion is the only error.
+// the stored-compound sweep, so both judge and persist the same rows under one failure policy: retries belong
+// to the runner's per-role budget, an incomplete reply salvages the entries it returned and defers only the
+// missing ones, every other non-credit failure leaves the verdicts absent, and credit exhaustion is the only
+// error that escapes.
 type VerdictStore struct {
 	queries   *database.Queries
 	runner    *tools.Runner
@@ -80,11 +81,11 @@ func (s *VerdictStore) DimensionFeature(ctx context.Context, value string, docId
 }
 
 // runVerdictBatches drives one verdict family's uncached keys through its judge in bounded batches under
-// the policy every family observes: a transient failure retries once, a credit error aborts the whole run,
-// a truncated reply applies the entries it did return and leaves the missing indices to the caller's
-// abstention path, and a reply of the wrong length is discarded. judge answers one batch; apply persists
-// one answered key. The returned error is non-nil only for credit exhaustion. Parts, Compounds, and
-// PhraseFolds share it so their retry, credit, and salvage behavior cannot drift apart.
+// the policy every family observes: retries belong to the runner's per-role budget, a credit error aborts
+// the whole run, a truncated reply applies the entries it did return and leaves the missing indices to the
+// caller's abstention path, and a reply of the wrong length is discarded. judge answers one batch; apply
+// persists one answered key. The returned error is non-nil only for credit exhaustion. Parts, Compounds,
+// and PhraseFolds share it so their credit and salvage behavior cannot drift apart.
 func runVerdictBatches[K any, R any](
 	ctx context.Context,
 	s *VerdictStore,
@@ -97,10 +98,6 @@ func runVerdictBatches[K any, R any](
 		end := min(i+verdictBatchSize, len(uncached))
 		batch := uncached[i:end]
 		results, err := judge(ctx, batch)
-		if err != nil && retryableJudgeFailure(err) {
-			s.logger.Warn(reqID, "tag split[%s]: judge attempt failed, retrying once: %v", version, err)
-			results, err = judge(ctx, batch)
-		}
 		if err != nil {
 			if isCreditError(err) {
 				return err

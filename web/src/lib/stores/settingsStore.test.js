@@ -75,6 +75,7 @@ const fullCfg = () => ({
 		contentanalyzer: {
 			enabled: false,
 			timeout: 60,
+			max_retries: 3,
 			prompt_template: '',
 			pause_on_credit_error: false,
 			doc_type_refinement: { enabled: false, head_words: 200, tail_words: 100 },
@@ -90,11 +91,13 @@ const fullCfg = () => ({
 		tag_adjudicator: {
 			enabled: false,
 			timeout: 30,
+			max_retries: 3,
 			llm: { adapter: '', provider: '', model: '', token: '', request_delay: 0 }
 		},
 		tag_quality: {
 			enabled: false,
 			timeout: 0,
+			max_retries: 3,
 			llm: { adapter: '', provider: '', model: '', token: '', temperature: 0, request_delay: 0 }
 		},
 		tag_reconcile: {

@@ -12,7 +12,7 @@ heals older damage. The normative rules these mechanics enforce live in the spec
 The principle throughout: **creation is the default; replacement requires positive
 evidence of concept identity.** A wrongly kept tag is a visible duplicate; a wrongly
 replaced tag silently and permanently erases a concept from the vocabulary. Every failure,
-ambiguity, or outage defaults to *keep*.
+ambiguity, or outage defaults to _keep_.
 
 ## 1. Orientation
 
@@ -23,15 +23,15 @@ the pipeline (and everything built on it: adjudication, reconciliation) live in 
 packages that run in both binaries, while the CGo-gated model stays in the daemon (see
 [ADR 0004](../../adr/0004-matcher-is-operator-owned.md)).
 
-| Package | Role |
-| --- | ---- |
-| `internal/tags` | canonical-form identity mechanics: house form (M1), lemma/stem signatures (M2, evidence only), key equality (M3), tie-break (M4), variant classes (M8), alias/evidence types, deterministic planning |
-| `internal/tags/policy` | pure candidate generation: identity + band subjects, no logging, no config |
-| `internal/tags/admission` | admission seams: alias lookup, identity planning, judge/adjudicator orchestration, tag-quality gating, plan application |
-| `internal/enrichment` | coordinator: runs the pipeline and calls the admission seams |
-| `internal/tags/reconcile` | scheduled re-adjudication + log bootstrap parser |
-| `internal/tags/curation` | tag vocabulary services: tag CRUD, alias disposition, identity-run enqueue |
-| `internal/matcher` | the daemon (`Rank`, embedding store) and the RPC client |
+| Package                   | Role                                                                                                                                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal/tags`           | canonical-form identity mechanics: house form (M1), lemma/stem signatures (M2, evidence only), key equality (M3), tie-break (M4), variant classes (M8), alias/evidence types, deterministic planning |
+| `internal/tags/policy`    | pure candidate generation: identity + band subjects, no logging, no config                                                                                                                           |
+| `internal/tags/admission` | admission seams: alias lookup, identity planning, judge/adjudicator orchestration, tag-quality gating, plan application                                                                              |
+| `internal/enrichment`     | coordinator: runs the pipeline and calls the admission seams                                                                                                                                         |
+| `internal/tags/reconcile` | scheduled re-adjudication + log bootstrap parser                                                                                                                                                     |
+| `internal/tags/curation`  | tag vocabulary services: tag CRUD, alias disposition, identity-run enqueue                                                                                                                           |
+| `internal/matcher`        | the daemon (`Rank`, embedding store) and the RPC client                                                                                                                                              |
 
 Two deployments share the `matcher.Matcher` interface: the in-process `*Hugot` (kushim,
 CGo) and `*matcher.MatcherClient` (edub, Unix-socket RPC to `kushim hugot`). Any
@@ -58,15 +58,15 @@ Per enrichment, after the LLM emits its tags:
    its own.
 4. The enricher resolves identity before any judging. The rules, in order:
 
-| Rule | Outcome | Catches |
-| ---- | ------- | ------- |
-| Alias lookup — the name is a `tag_alias` row | apply the canonical value | names that already lost a same-intent decision |
-| Key equality (M3) — house form matches a store tag | apply the store label | style variants (`nineteenth century` / `19th century`) |
-| Exact identity with a store tag | apply the store label | casing, hyphenation, and symbol-form fixes after normalization |
-| Flagged fold — a mechanically proposed reduction (M2) | judged: relation gate (J0), then base form (J1), fold gate (J2), and conventional form (J5); an unrelated proposal is dropped and the candidate registers as its own value, and the fold applies only when all three fold answers confirm | inflections, relational adjectives (`chilean` → `chile`), bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
-| Pinned variant class — an orthographic spelling variant, a literal token permutation, or an exact tokenization variant | mechanical `same`, no judge call: a tokenization pair aliases onto its spaced form, the other classes go to the deterministic tie-break (M4) | `decolonisation`/`decolonization`, `military history`/`history military`, `afro american`/`afroamerican` |
-| Any other candidate neighbour — the same-intent gate | judged (J3) by a typed relation with a canonical direction (J4): `same_concept` with a separating direction (`query`/`target`) aliases the loser onto the winner (a store label that loses becomes the alias); `near_synonym`, `distinct`, and a `same_concept` tie register both; `uncertain` leaves the claim pending | the residual band and shape-related pairs |
-| No judge available | the claim waits: the candidate registers provisionally with a pending identity-evidence row | adjudicator disabled or unreachable |
+| Rule                                                                                                                   | Outcome                                                                                                                                                                                                                                                                                                                 | Catches                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Alias lookup — the name is a `tag_alias` row                                                                           | apply the canonical value                                                                                                                                                                                                                                                                                               | names that already lost a same-intent decision                                                                                                              |
+| Key equality (M3) — house form matches a store tag                                                                     | apply the store label                                                                                                                                                                                                                                                                                                   | style variants (`nineteenth century` / `19th century`)                                                                                                      |
+| Exact identity with a store tag                                                                                        | apply the store label                                                                                                                                                                                                                                                                                                   | casing, hyphenation, and symbol-form fixes after normalization                                                                                              |
+| Flagged fold — a mechanically proposed reduction (M2)                                                                  | judged: relation gate (J0), then base form (J1), fold gate (J2), and conventional form (J5); an unrelated proposal is dropped and the candidate registers as its own value, and the fold applies only when all three fold answers confirm                                                                               | inflections, relational adjectives (`chilean` → `chile`), bounded morphographic variants (`mexican` → `mexico`), conventional forms (`c plus plus` → `c++`) |
+| Pinned variant class — an orthographic spelling variant, a literal token permutation, or an exact tokenization variant | mechanical `same`, no judge call: a tokenization pair aliases onto its spaced form, the other classes go to the deterministic tie-break (M4)                                                                                                                                                                            | `decolonisation`/`decolonization`, `military history`/`history military`, `afro american`/`afroamerican`                                                    |
+| Any other candidate neighbour — the same-intent gate                                                                   | judged (J3) by a typed relation with a canonical direction (J4): `same_concept` with a separating direction (`query`/`target`) aliases the loser onto the winner (a store label that loses becomes the alias); `near_synonym`, `distinct`, and a `same_concept` tie register both; `uncertain` leaves the claim pending | the residual band and shape-related pairs                                                                                                                   |
+| No judge available                                                                                                     | the claim waits: the candidate registers provisionally with a pending identity-evidence row                                                                                                                                                                                                                             | adjudicator disabled or unreachable                                                                                                                         |
 
 Every identity disposition is logged in the kushim (enrichment) log
 (`identity[v14]: apply|alias|defer|separate <name> …`; the prefix carries the rule-set
@@ -208,7 +208,7 @@ things`, `black bloc`) stay whole, and a compound whose key already exists in th
 - **Evidence**: every judged compound appends one `tag_composition_event` verdict row —
   candidate, validated segments, disposition, reason, criteria version, judge model
   (NULL for cached verdicts and the conjunction fallback) — with a matching `tag
-  split[…]` log line per candidate. The stored-compound sweep journals the same rows with
+split[…]` log line per candidate. The stored-compound sweep journals the same rows with
   a NULL document, so a decided hold binds promotion and a decided keep is skipped at
   emission.
 - **Validation**: segments are first fold-resolved onto **promoted** store values through
@@ -231,9 +231,10 @@ specified in [atomicity](../specs/tags/atomicity.md).
 Identity is where similarity alone cannot decide. With
 `enricher.tag_adjudicator.enabled: true` (default `false`), the gate resolves proposed
 folds and candidate neighbours with LLM calls. Inheritance is resolved at use time:
-`Config.ResolvedAdjudicatorLlm()` and `ResolvedAdjudicatorTimeout()` fall back to the
-content analyzer's `llm`/`timeout` when the block's own values are empty, so analyzer
-model changes keep propagating.
+`Config.ResolvedAdjudicatorLlm()` falls back to the content analyzer's `llm` when the
+block's own provider/model are empty, so analyzer model changes keep propagating. The
+section's `timeout` (default `20` seconds per HTTP attempt, `0` disables it) and
+`max_retries` (default `3`) are its own values — they do not inherit from the analyzer.
 
 - **Folds**: a related relation-gate verdict releases a candidate to one identity call
   answering the three binary canonical-form criteria; the fold applies only when all
@@ -257,11 +258,12 @@ model changes keep propagating.
   across concurrent workers with no in-flight coordination.
 - **Terms only**: similarity selects which pairs are judged; it is never an input to the
   verdict.
-- **Failure safety**: a transient failure (transport, generic provider error, empty
-  response) retries once; parse failures, incomplete replies, output-cap hits, credit
-  exhaustion, token-limit, content-too-large and context errors are never retried. Every
-  non-credit failure keeps the emitted tag — enrichment never blocks on adjudication —
-  and a credit-exhaustion failure aborts the document so the batch pauses. With the
+- **Failure safety**: a retryable failure (transport, generic provider error, empty
+  response, deadline expiry) is retried up to the section's `max_retries` (default `3`);
+  parse failures, incomplete replies, output-cap hits, credit exhaustion, token-limit,
+  content-too-large and `context.Canceled` are never retried. Every non-credit failure
+  keeps the emitted tag — enrichment never blocks on adjudication — and a
+  credit-exhaustion failure aborts the document so the batch pauses. With the
   adjudicator disabled, the band behaves as pure keep.
 
 ## 5. Tag quality gate (opt-in)
@@ -309,9 +311,10 @@ created (`Adjudicator.ApplyTagQuality`):
 - **Logging**: rejections and defers are logged as `tagquality[v8]:` lines carrying the
   outcome and reason, siblings of the `identity[v14]` and `policy[v2]` lines.
 
-The decision thresholds are pinned constants, not configuration keys; the judge LLM and
-timeout inherit the content analyzer's unless the `llm` block overrides them, and a
-warning is logged when the resolved judge equals the generator.
+The decision thresholds are pinned constants, not configuration keys; the judge LLM
+inherits the content analyzer's unless its own `llm` block overrides it, its `timeout`
+(default `60` seconds per attempt) and `max_retries` (default `3`) are its own values, and
+a warning is logged when the resolved judge equals the generator.
 
 ## 6. Judge criteria versions
 
@@ -407,7 +410,7 @@ store (log-only failure, the same contract as tag delete).
 Aliasing happens at birth (§2) and in the scheduled reconciliation (§9); a stored pair
 whose fresh verdict flips back to `keep` **withdraws** the alias: the alias row is
 removed, the name is re-created, and the affected documents return to it. An alias onto a
-*different* canonical is left alone — the name still resolves.
+_different_ canonical is left alone — the name still resolves.
 
 Operators curate mappings directly from the vocabulary chips: `Tag.RemoveAlias` deletes a
 non-seeded `tag_alias` row (the name stops resolving, documents stay on the canonical, and a
@@ -472,7 +475,7 @@ lock-drain-heartbeat discipline for the pass.
 flip must be confirmed by a second, **orientation-reversed** adjudication before it
 applies (a deterministic variant pair confirms through its own class). A `same` flip
 aliases the loser onto the canonical; a `keep` flip resolves the pair's affected documents
-*before* touching the store (an unattributed pair cannot add a name to the vocabulary),
+_before_ touching the store (an unattributed pair cannot add a name to the vocabulary),
 then withdraws the alias, re-creates the query tag, and re-points only those documents.
 
 **Flips and caps**: `max_rejudge` pairs and `max_retag` documents per run; the provisional

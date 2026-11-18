@@ -131,6 +131,10 @@ func (m *mockContentAnalyzer) AnalyzeDocType(ctx context.Context, prevResult *an
 	return "document", nil
 }
 
+func (m *mockContentAnalyzer) Endpoint() (string, string) {
+	return "", ""
+}
+
 func (m *mockContentAnalyzer) Adjudicate(ctx context.Context, pairs []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
 	if m.adjudicateFn != nil {
 		return m.adjudicateFn(ctx, pairs)
@@ -183,100 +187,9 @@ func (m *mockContentAnalyzer) JudgeTagPhraseFolds(_ context.Context, _ []analyze
 	return nil, nil
 }
 
-func TestAnalyzeContent_TimeoutAppliesDeadline(t *testing.T) {
-	tests := []struct {
-		name         string
-		timeout      int
-		wantDeadline bool
-	}{
-		{"timeout zero disables deadline", 0, false},
-		{"timeout applies deadline", 120, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var receivedCtx context.Context
-			mock := &mockContentAnalyzer{
-				analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
-					receivedCtx = ctx
-					return &analyzer.AnalysisResult{}, nil
-				},
-			}
-
-			r := &Runner{
-				logger: log.NewDiscardLogger(),
-				config: &config.Config{
-					Enricher: config.EnricherConfig{
-						ContentAnalyzer: config.ContentAnalyzerConfig{Timeout: tt.timeout},
-					},
-				},
-				contentAnalyzer: mock,
-			}
-
-			_, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if _, ok := receivedCtx.Deadline(); ok != tt.wantDeadline {
-				t.Errorf("deadline present = %v, want %v", ok, tt.wantDeadline)
-			}
-		})
-	}
-}
-
-func TestAnalyzeDocType_TimeoutAppliesDeadline(t *testing.T) {
-	var receivedCtx context.Context
-	mock := &mockContentAnalyzer{
-		analyzeDocTypeFn: func(ctx context.Context, prevResult *analyzer.AnalysisResult, headTailText string, docTypes []analyzer.TypeRef, metadata analyzer.DocMetadata) (string, error) {
-			receivedCtx = ctx
-			return "document", nil
-		},
-	}
-
-	r := &Runner{
-		logger: log.NewDiscardLogger(),
-		config: &config.Config{
-			Enricher: config.EnricherConfig{
-				ContentAnalyzer: config.ContentAnalyzerConfig{Timeout: 120},
-			},
-		},
-		contentAnalyzer: mock,
-	}
-
-	_, err := r.AnalyzeDocType(context.Background(), &ContentAnalysisResult{}, "head tail", nil, analyzer.DocMetadata{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := receivedCtx.Deadline(); !ok {
-		t.Error("context should have a deadline when timeout>0")
-	}
-}
-
-// TestJudgeTagParts_TimeoutAndMissingAdapter covers the judged-call path the split gate's parts pass
-// uses: the configured gate timeout must reach the judge's context, and a runner without a gate fails
-// fast instead of returning an empty batch that would read as a judge outage.
-func TestJudgeTagParts_TimeoutAndMissingAdapter(t *testing.T) {
-	t.Run("the gate timeout reaches the judge", func(t *testing.T) {
-		var receivedCtx context.Context
-		mock := &mockContentAnalyzer{
-			judgeTagPartsFn: func(ctx context.Context, values []string) ([]analyzer.TagPartResult, error) {
-				receivedCtx = ctx
-				return []analyzer.TagPartResult{}, nil
-			},
-		}
-		r := &Runner{
-			logger:         log.NewDiscardLogger(),
-			config:         &config.Config{Enricher: config.EnricherConfig{TagLexicalGate: config.TagLexicalGateConfig{Timeout: 90}}},
-			tagLexicalGate: mock,
-		}
-
-		if _, err := r.JudgeTagParts(context.Background(), []string{"russia"}); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if _, ok := receivedCtx.Deadline(); !ok {
-			t.Error("context should have a deadline when timeout>0")
-		}
-	})
-
+// TestJudgeTagParts_MissingAdapter covers the judged-call path the split gate's parts pass uses: a runner
+// without a gate fails fast instead of returning an empty batch that would read as a judge outage.
+func TestJudgeTagParts_MissingAdapter(t *testing.T) {
 	t.Run("no gate is a not-configured failure", func(t *testing.T) {
 		r := &Runner{
 			logger: log.NewDiscardLogger(),
@@ -295,31 +208,25 @@ func TestJudgeTagParts_TimeoutAndMissingAdapter(t *testing.T) {
 }
 
 // TestJudgeTagQuality_AuditSharesTheDocumentJudge pins the audit move's contract: quality and audit call
-// the same instance with the quality timeout, while the adjudicator's pairs and identity calls keep
-// theirs.
+// the same instance, while the adjudicator's pairs and identity calls keep their own.
 func TestJudgeTagQuality_AuditSharesTheDocumentJudge(t *testing.T) {
-	newDocJudge := func(t *testing.T, timeout int, qualityFn func(ctx context.Context, text string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error), auditFn func(ctx context.Context, text string, candidates []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error)) *Runner {
-		t.Helper()
-		mock := &mockContentAnalyzer{judgeTagQualityFn: qualityFn, judgeTagAuditFn: auditFn}
-		return &Runner{
-			logger:          log.NewDiscardLogger(),
-			config:          &config.Config{Enricher: config.EnricherConfig{TagQuality: config.TagQualityConfig{Timeout: timeout}}},
-			tagQualityJudge: mock,
-		}
-	}
-
-	t.Run("quality and audit use the quality timeout", func(t *testing.T) {
-		var qualityCtx, auditCtx context.Context
-		r := newDocJudge(t, 90,
-			func(ctx context.Context, _ string, _ []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
-				qualityCtx = ctx
+	t.Run("quality and audit hit the same document judge", func(t *testing.T) {
+		qualityCalls, auditCalls := 0, 0
+		mock := &mockContentAnalyzer{
+			judgeTagQualityFn: func(context.Context, string, []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+				qualityCalls++
 				return []analyzer.TagQualityResult{}, nil
 			},
-			func(ctx context.Context, _ string, _ []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
-				auditCtx = ctx
+			judgeTagAuditFn: func(context.Context, string, []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+				auditCalls++
 				return []analyzer.TagAuditResult{}, nil
 			},
-		)
+		}
+		r := &Runner{
+			logger:          log.NewDiscardLogger(),
+			config:          &config.Config{},
+			tagQualityJudge: mock,
+		}
 
 		if _, err := r.JudgeTagQuality(context.Background(), "", nil); err != nil {
 			t.Fatalf("unexpected quality error: %v", err)
@@ -327,11 +234,8 @@ func TestJudgeTagQuality_AuditSharesTheDocumentJudge(t *testing.T) {
 		if _, err := r.JudgeTagAudit(context.Background(), "", nil); err != nil {
 			t.Fatalf("unexpected audit error: %v", err)
 		}
-		if _, ok := qualityCtx.Deadline(); !ok {
-			t.Error("quality context should have a deadline when timeout>0")
-		}
-		if _, ok := auditCtx.Deadline(); !ok {
-			t.Error("audit context should have a deadline when timeout>0")
+		if qualityCalls != 1 || auditCalls != 1 {
+			t.Errorf("calls = (quality %d, audit %d), want one each on the shared judge", qualityCalls, auditCalls)
 		}
 	})
 
@@ -532,30 +436,165 @@ func TestConvertToPdf_WithTimeout_ContextHasDeadline(t *testing.T) {
 	}
 }
 
-func TestIsProviderError(t *testing.T) {
+func TestClassifyLlmError(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want bool
+		want analyzer.LlmErrorAction
 	}{
-		{"generic error", errors.New("boom"), true},
-		{"insufficient credits", &analyzer.InsufficientCreditsError{Provider: "p", HTTPStatus: 402}, true},
-		{"wrapped insufficient credits", fmt.Errorf("wrapped: %w", &analyzer.InsufficientCreditsError{Provider: "p", HTTPStatus: 429}), true},
-		{"content too large", &analyzer.ContentTooLargeError{EstimatedTokens: 10, MaxInputTokens: 5}, false},
-		{"wrapped content too large", fmt.Errorf("wrapped: %w", &analyzer.ContentTooLargeError{EstimatedTokens: 10, MaxInputTokens: 5}), false},
-		{"token limit", &analyzer.TokenLimitError{MaxTokens: 100, RequestedTokens: 200}, false},
-		{"wrapped token limit", fmt.Errorf("wrapped: %w", &analyzer.TokenLimitError{MaxTokens: 100, RequestedTokens: 200}), false},
-		{"context canceled", context.Canceled, false},
-		{"wrapped context canceled", fmt.Errorf("wrapped: %w", context.Canceled), false},
-		{"context deadline exceeded", context.DeadlineExceeded, false},
-		{"wrapped context deadline exceeded", fmt.Errorf("wrapped: %w", context.DeadlineExceeded), false},
+		{"generic error", errors.New("boom"), analyzer.LlmRetry},
+		{"insufficient credits", &analyzer.InsufficientCreditsError{Provider: "p", HTTPStatus: 402}, analyzer.LlmNextEndpoint},
+		{"wrapped insufficient credits", fmt.Errorf("wrapped: %w", &analyzer.InsufficientCreditsError{Provider: "p", HTTPStatus: 429}), analyzer.LlmNextEndpoint},
+		{"content too large", &analyzer.ContentTooLargeError{EstimatedTokens: 10, MaxInputTokens: 5}, analyzer.LlmAbort},
+		{"wrapped content too large", fmt.Errorf("wrapped: %w", &analyzer.ContentTooLargeError{EstimatedTokens: 10, MaxInputTokens: 5}), analyzer.LlmAbort},
+		{"token limit", &analyzer.TokenLimitError{MaxTokens: 100, RequestedTokens: 200}, analyzer.LlmAbort},
+		{"wrapped token limit", fmt.Errorf("wrapped: %w", &analyzer.TokenLimitError{MaxTokens: 100, RequestedTokens: 200}), analyzer.LlmAbort},
+		{"context canceled", context.Canceled, analyzer.LlmAbort},
+		{"wrapped context canceled", fmt.Errorf("wrapped: %w", context.Canceled), analyzer.LlmAbort},
+		{"context deadline exceeded", context.DeadlineExceeded, analyzer.LlmRetry},
+		{"wrapped context deadline exceeded", fmt.Errorf("wrapped: %w", context.DeadlineExceeded), analyzer.LlmRetry},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isProviderError(tt.err); got != tt.want {
-				t.Errorf("isProviderError(%v) = %v, want %v", tt.err, got, tt.want)
+			if got := analyzer.ClassifyLlmError(tt.err); got != tt.want {
+				t.Errorf("ClassifyLlmError(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunJudged_RetriesThenSucceeds(t *testing.T) {
+	calls := 0
+	call := func(_ context.Context) ([]analyzer.TagVerdictResult, error) {
+		calls++
+		if calls <= 2 {
+			return nil, errors.New("API error: status 500")
+		}
+		return []analyzer.TagVerdictResult{{Index: 0}}, nil
+	}
+
+	results, err := runJudged(context.Background(), 3, call)
+	if err != nil {
+		t.Fatalf("runJudged() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("runJudged() results = %v, want one verdict", results)
+	}
+	if calls != 3 {
+		t.Errorf("judge calls = %d, want 3 (two transient failures then the successful third attempt)", calls)
+	}
+}
+
+func TestRunJudged_DeadlineIsRetried(t *testing.T) {
+	calls := 0
+	call := func(_ context.Context) ([]analyzer.TagVerdictResult, error) {
+		calls++
+		if calls <= 2 {
+			return nil, context.DeadlineExceeded
+		}
+		return []analyzer.TagVerdictResult{{Index: 0}}, nil
+	}
+
+	results, err := runJudged(context.Background(), 3, call)
+	if err != nil {
+		t.Fatalf("runJudged() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("runJudged() results = %v, want one verdict", results)
+	}
+	if calls != 3 {
+		t.Errorf("judge calls = %d, want 3 (a timed-out attempt is retried under a fresh deadline)", calls)
+	}
+}
+
+func TestRunJudged_NonRetryableStops(t *testing.T) {
+	verdicts := []analyzer.TagVerdictResult{{Index: 0}}
+	tests := []struct {
+		name      string
+		err       error
+		wantCalls int
+	}{
+		{"credit exhaustion", &analyzer.InsufficientCreditsError{Provider: "p", HTTPStatus: 402}, 1},
+		{"incomplete reply", &analyzer.IncompleteReplyError{Missing: []int{1}}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			call := func(_ context.Context) ([]analyzer.TagVerdictResult, error) {
+				calls++
+				return verdicts, tt.err
+			}
+
+			results, err := runJudged(context.Background(), 3, call)
+			if err == nil {
+				t.Fatal("runJudged() error = nil, want the non-retryable failure")
+			}
+			if calls != tt.wantCalls {
+				t.Errorf("judge calls = %d, want %d (no retry)", calls, tt.wantCalls)
+			}
+			if len(results) != len(verdicts) {
+				t.Errorf("runJudged() results = %v, want the last attempt's entries preserved for salvage", results)
+			}
+		})
+	}
+}
+
+func TestAnalyzeContent_RetriesPrimaryThenSucceeds(t *testing.T) {
+	primaryCalls := 0
+	primary := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+			primaryCalls++
+			if primaryCalls <= 2 {
+				return nil, errors.New("provider exploded")
+			}
+			return &analyzer.AnalysisResult{Title: "third try"}, nil
+		},
+	}
+
+	r := runnerWithFallback(primary, nil)
+	r.config.Enricher.ContentAnalyzer.MaxRetries = 2
+	result, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("AnalyzeContent() error = %v", err)
+	}
+	if result.Title != "third try" {
+		t.Errorf("AnalyzeContent() title = %q, want the retried primary's result", result.Title)
+	}
+	if primaryCalls != 3 {
+		t.Errorf("primary calls = %d, want 3 (two transient failures then success, no fallback involved)", primaryCalls)
+	}
+}
+
+func TestAnalyzeContent_CreditSkipsRemainingRetries(t *testing.T) {
+	primaryCalls := 0
+	primary := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+			primaryCalls++
+			return nil, &analyzer.InsufficientCreditsError{Provider: "primary", HTTPStatus: 402}
+		},
+	}
+	fallbackCalls := 0
+	fallback := &mockContentAnalyzer{
+		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+			fallbackCalls++
+			return &analyzer.AnalysisResult{Title: "from fallback"}, nil
+		},
+	}
+
+	r := runnerWithFallback(primary, fallback)
+	r.config.Enricher.ContentAnalyzer.MaxRetries = 3
+	result, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("AnalyzeContent() error = %v", err)
+	}
+	if result.Title != "from fallback" {
+		t.Errorf("AnalyzeContent() title = %q, want the fallback's result", result.Title)
+	}
+	if primaryCalls != 1 {
+		t.Errorf("primary calls = %d, want 1 (a credit error skips the remaining retries)", primaryCalls)
+	}
+	if fallbackCalls != 1 {
+		t.Errorf("fallback calls = %d, want 1 (the walk moves straight to the fallback)", fallbackCalls)
 	}
 }
 
@@ -580,7 +619,6 @@ func runnerWithFallback(primary, fallback analyzer.Analyzer) *Runner {
 	}
 	if fallback != nil {
 		r.fallbackAnalyzers = []analyzer.Analyzer{fallback}
-		r.fallbackMeta = []fallbackMeta{{Provider: "fallback", Model: "f1"}}
 	}
 	return r
 }
@@ -661,31 +699,61 @@ func TestAnalyzeContent_NoFallbackOnCancellation(t *testing.T) {
 	}
 }
 
-func TestAnalyzeContent_NoFallbackOnDeadlineExceeded(t *testing.T) {
-	primary := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
-			return nil, context.DeadlineExceeded
-		},
-	}
-	fallbackCalled := false
-	fallback := &mockContentAnalyzer{
-		analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
-			fallbackCalled = true
-			return &analyzer.AnalysisResult{}, nil
-		},
+func TestAnalyzeContent_DeadlineRetriesThenFailsOver(t *testing.T) {
+	newRunner := func(t *testing.T, maxRetries int) (*Runner, *int, *bool) {
+		t.Helper()
+		primaryCalls := 0
+		primary := &mockContentAnalyzer{
+			analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+				primaryCalls++
+				return nil, context.DeadlineExceeded
+			},
+		}
+		fallbackCalled := false
+		fallback := &mockContentAnalyzer{
+			analyzeFn: func(ctx context.Context, text string, docTypes []analyzer.TypeRef, peopleTypes []analyzer.TypeRef, tagSuggestions []string) (*analyzer.AnalysisResult, error) {
+				fallbackCalled = true
+				return &analyzer.AnalysisResult{Title: "from fallback"}, nil
+			},
+		}
+		r := runnerWithFallback(primary, fallback)
+		r.config.Enricher.ContentAnalyzer.MaxRetries = maxRetries
+		return r, &primaryCalls, &fallbackCalled
 	}
 
-	r := runnerWithFallback(primary, fallback)
-	_, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
-	if err == nil {
-		t.Fatal("expected error from primary")
-	}
-	if fallbackCalled {
-		t.Error("fallback must not be called for context.DeadlineExceeded: the shared context is already expired and the retry is guaranteed to fail")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected context.DeadlineExceeded through wrap, got %v", err)
-	}
+	t.Run("retries then fails over", func(t *testing.T) {
+		r, primaryCalls, fallbackCalled := newRunner(t, 2)
+		result, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AnalyzeContent() error = %v", err)
+		}
+		if result.Title != "from fallback" {
+			t.Errorf("title = %q, want the fallback result after the retry budget", result.Title)
+		}
+		if *primaryCalls != 3 {
+			t.Errorf("primary calls = %d, want 3 (one attempt plus two retries under fresh deadlines)", *primaryCalls)
+		}
+		if !*fallbackCalled {
+			t.Error("fallback must be tried once the retry budget is exhausted")
+		}
+	})
+
+	t.Run("budget zero walks straight to the fallback", func(t *testing.T) {
+		r, primaryCalls, fallbackCalled := newRunner(t, 0)
+		result, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AnalyzeContent() error = %v", err)
+		}
+		if result.Title != "from fallback" {
+			t.Errorf("title = %q, want the fallback result", result.Title)
+		}
+		if *primaryCalls != 1 {
+			t.Errorf("primary calls = %d, want 1 with the retry budget off", *primaryCalls)
+		}
+		if !*fallbackCalled {
+			t.Error("fallback must be tried when a deadline settles the endpoint")
+		}
+	})
 }
 
 func TestAnalyzeContent_NoFallbackAnalyzer(t *testing.T) {
@@ -783,7 +851,6 @@ func TestAnalyzeContent_FallbackChainWalksToSuccess(t *testing.T) {
 		},
 		contentAnalyzer:   primary,
 		fallbackAnalyzers: []analyzer.Analyzer{fb0, fb1},
-		fallbackMeta:      []fallbackMeta{{Provider: "fb0", Model: "f0"}, {Provider: "fb1", Model: "f1"}},
 	}
 
 	result, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)
@@ -828,7 +895,6 @@ func TestAnalyzeContent_FallbackChainPropagatesLastFailure(t *testing.T) {
 		},
 		contentAnalyzer:   primary,
 		fallbackAnalyzers: []analyzer.Analyzer{fb0, fb1},
-		fallbackMeta:      []fallbackMeta{{Provider: "fb0", Model: "f0"}, {Provider: "fb1", Model: "f1"}},
 	}
 
 	_, err := r.AnalyzeContent(context.Background(), "text", nil, nil, nil)

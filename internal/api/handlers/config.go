@@ -1182,23 +1182,26 @@ type EnricherConfigResponse struct {
 
 // TagQualityConfigResponse is the quality judge's API view.
 type TagQualityConfigResponse struct {
-	Enabled bool                      `json:"enabled"`
-	Timeout int                       `json:"timeout"`
-	Llm     TagAdjudicatorLlmResponse `json:"llm"`
+	Enabled    bool                      `json:"enabled"`
+	Timeout    int                       `json:"timeout"`
+	MaxRetries int                       `json:"max_retries"`
+	Llm        TagAdjudicatorLlmResponse `json:"llm"`
 }
 
 // TagAdjudicatorConfigResponse is the adjudicator section's API view.
 type TagAdjudicatorConfigResponse struct {
-	Enabled bool                      `json:"enabled"`
-	Timeout int                       `json:"timeout"`
-	Llm     TagAdjudicatorLlmResponse `json:"llm"`
+	Enabled    bool                      `json:"enabled"`
+	Timeout    int                       `json:"timeout"`
+	MaxRetries int                       `json:"max_retries"`
+	Llm        TagAdjudicatorLlmResponse `json:"llm"`
 }
 
 // TagLexicalGateConfigResponse is the lexical gate section's API view: active while the adjudicator is
 // enabled, with no toggle of its own.
 type TagLexicalGateConfigResponse struct {
-	Timeout int                       `json:"timeout"`
-	Llm     TagAdjudicatorLlmResponse `json:"llm"`
+	Timeout    int                       `json:"timeout"`
+	MaxRetries int                       `json:"max_retries"`
+	Llm        TagAdjudicatorLlmResponse `json:"llm"`
 }
 
 // TagAdjudicatorLlmResponse is one LLM endpoint of the judged steps.
@@ -1267,6 +1270,7 @@ type DocTypeRefinementResponse struct {
 type ContentAnalyzerResponse struct {
 	Enabled            bool                      `json:"enabled"`
 	Timeout            int                       `json:"timeout"`
+	MaxRetries         int                       `json:"max_retries"`
 	MinTags            int                       `json:"min_tags"`
 	Llm                LlmConfigResponse         `json:"llm"`
 	Fallbacks          []FallbackConfigResponse  `json:"fallbacks,omitempty"`
@@ -1393,6 +1397,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TextReducer.TargetWords = cfg.Enricher.TextReducer.TargetWords
 	resp.Enricher.ContentAnalyzer.Enabled = cfg.Enricher.ContentAnalyzer.Enabled
 	resp.Enricher.ContentAnalyzer.Timeout = cfg.Enricher.ContentAnalyzer.Timeout
+	resp.Enricher.ContentAnalyzer.MaxRetries = cfg.Enricher.ContentAnalyzer.MaxRetries
 	resp.Enricher.ContentAnalyzer.MinTags = cfg.Enricher.ContentAnalyzer.MinTags
 	resp.Enricher.ContentAnalyzer.PromptTemplate = cfg.Enricher.ContentAnalyzer.PromptTemplate
 	resp.Enricher.ContentAnalyzer.PauseOnCreditError = cfg.Enricher.ContentAnalyzer.PauseOnCreditError
@@ -1431,12 +1436,14 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagMatcher.Hugot.Backend = cfg.Enricher.TagMatcher.Hugot.Backend
 	resp.Enricher.TagAdjudicator.Enabled = cfg.Enricher.TagAdjudicator.Enabled
 	resp.Enricher.TagAdjudicator.Timeout = cfg.Enricher.TagAdjudicator.Timeout
+	resp.Enricher.TagAdjudicator.MaxRetries = cfg.Enricher.TagAdjudicator.MaxRetries
 	resp.Enricher.TagAdjudicator.Llm.Adapter = cfg.Enricher.TagAdjudicator.Llm.Adapter
 	resp.Enricher.TagAdjudicator.Llm.Provider = cfg.Enricher.TagAdjudicator.Llm.Provider
 	resp.Enricher.TagAdjudicator.Llm.Model = cfg.Enricher.TagAdjudicator.Llm.Model
 	resp.Enricher.TagAdjudicator.Llm.Token = cfg.Enricher.TagAdjudicator.Llm.Token
 	resp.Enricher.TagAdjudicator.Llm.RequestDelay = cfg.Enricher.TagAdjudicator.Llm.RequestDelay
 	resp.Enricher.TagLexicalGate.Timeout = cfg.Enricher.TagLexicalGate.Timeout
+	resp.Enricher.TagLexicalGate.MaxRetries = cfg.Enricher.TagLexicalGate.MaxRetries
 	resp.Enricher.TagLexicalGate.Llm.Adapter = cfg.Enricher.TagLexicalGate.Llm.Adapter
 	resp.Enricher.TagLexicalGate.Llm.Provider = cfg.Enricher.TagLexicalGate.Llm.Provider
 	resp.Enricher.TagLexicalGate.Llm.Model = cfg.Enricher.TagLexicalGate.Llm.Model
@@ -1444,6 +1451,7 @@ func ConfigResponseFrom(cfg *config.Config) ConfigResponse {
 	resp.Enricher.TagLexicalGate.Llm.RequestDelay = cfg.Enricher.TagLexicalGate.Llm.RequestDelay
 	resp.Enricher.TagQuality.Enabled = cfg.Enricher.TagQuality.Enabled
 	resp.Enricher.TagQuality.Timeout = cfg.Enricher.TagQuality.Timeout
+	resp.Enricher.TagQuality.MaxRetries = cfg.Enricher.TagQuality.MaxRetries
 	resp.Enricher.TagQuality.Llm.Adapter = cfg.Enricher.TagQuality.Llm.Adapter
 	resp.Enricher.TagQuality.Llm.Provider = cfg.Enricher.TagQuality.Llm.Provider
 	resp.Enricher.TagQuality.Llm.Model = cfg.Enricher.TagQuality.Llm.Model

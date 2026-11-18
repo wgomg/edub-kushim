@@ -2,10 +2,10 @@ app:
   environment: development
   log_level: info
   logging:
-    max_size: 100      # MB per file before rotation
-    max_backups: 7     # rotated files to keep
-    max_age: 30        # days before deleting old backups
-    compress: true     # gzip rotated files
+    max_size: 100 # MB per file before rotation
+    max_backups: 7 # rotated files to keep
+    max_age: 30 # days before deleting old backups
+    compress: true # gzip rotated files
 
 server:
   host: 0.0.0.0
@@ -37,49 +37,49 @@ database:
 storage:
   consumption_dir: '~/.config/edub-kushim/inbox'
   storage_dir: '~/.config/edub-kushim/storage'
-  migration_mode: 'copy'  # how files relocate when storage/consumption dirs change: 'copy' (safe) or 'move' (fast)
+  migration_mode: 'copy' # how files relocate when storage/consumption dirs change: 'copy' (safe) or 'move' (fast)
   trash:
-    retention_days: 30  # days before soft-deleted documents are permanently purged
+    retention_days: 30 # days before soft-deleted documents are permanently purged
 
 knowledgebase:
-  sources: [oewn]  # offline lexical sources to install: oewn (included) and conceptnet (opt-in)
+  sources: [oewn] # offline lexical sources to install: oewn (included) and conceptnet (opt-in)
 
 consumer:
   workers: 1
   max_files_per_batch: 10
-  supported_files: ['.pdf']  # built-in default; the setup wizard records your selection
+  supported_files: ['.pdf'] # built-in default; the setup wizard records your selection
   # supported_files: ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.docx', '.odt']
   polling:
     enabled: false
-    interval: 5  # minutes
+    interval: 5 # minutes
     # windows:                 # optional: restrict polling to specific time ranges
     #   - start: "02:00"
     #     end: "06:00"
 
   reclaim:
-    enabled: true  # auto-resume batches interrupted by crashes or errors
+    enabled: true # auto-resume batches interrupted by crashes or errors
     max_retries: 3
-    stale_task_after: 600  # seconds
+    stale_task_after: 600 # seconds
 
   converter:
     enabled: false
-    binary: 'libreoffice'  # command name (on PATH) or full path like '/opt/libreoffice/bin/soffice'
+    binary: 'libreoffice' # command name (on PATH) or full path like '/opt/libreoffice/bin/soffice'
     timeout: 300
 
   textextractor:
     engine: 'mupdf' # mupdf | gopdf | pdftotext
-    timeout: 120     # 0 = disabled (no artificial deadline)
+    timeout: 120 # 0 = disabled (no artificial deadline)
 
   pdfoptimizer:
     engine: 'mupdf'
-    timeout: 0      # 0 = disabled (no artificial deadline); >0 sets a per-attempt cap in seconds
+    timeout: 0 # 0 = disabled (no artificial deadline); >0 sets a per-attempt cap in seconds
     # fallback: 'gs'  # optional: fallback optimizer if primary fails
 
   ocr:
     engine: 'gosseract'
     languages: [eng] # required — run 'kushim setup --languages eng,spa,...'
     # data_dir: '~/.config/edub-kushim/ocr/tessdata'
-    timeout: 120    # 0 = disabled (no artificial deadline)
+    timeout: 120 # 0 = disabled (no artificial deadline)
     # ocr_workers: 0  # parallel OCR goroutines per document; 0 = auto (CPU count / (max_concurrent_batches × consumer.workers))
 
   thumbnail:
@@ -88,23 +88,24 @@ consumer:
     dpi: 72
     max_width: 400
     quality: 80
-    timeout: 30     # 0 = disabled (no artificial deadline)
+    timeout: 30 # 0 = disabled (no artificial deadline)
     workers: 1
-    backfill_interval: 0  # days between automatic backfill runs (0 = disabled)
-    backfill_time: "02:00"  # preferred time of day (HH:MM)
+    backfill_interval: 0 # days between automatic backfill runs (0 = disabled)
+    backfill_time: '02:00' # preferred time of day (HH:MM)
 
 enricher:
   workers: 1
 
   textreducer:
     engine: 'textrank'
-    timeout: 120    # 0 = disabled (no artificial deadline)
+    timeout: 120 # 0 = disabled (no artificial deadline)
     target_words: 2000
 
   contentanalyzer:
     enabled: false
     timeout: 120
-    min_tags: 3  # lower bound requested from the analyzer
+    max_retries: 3 # extra attempts per endpoint; 0 = no retries
+    min_tags: 3 # lower bound requested from the analyzer
     pause_on_credit_error: true # pause the batch when the provider reports a credit/balance error
     # prompt_template: ""  # optional custom LLM prompt; see docs for placeholders
     # doc_type_refinement:
@@ -137,7 +138,7 @@ enricher:
     #       request_delay: 1
 
   tagmatcher:
-    timeout: 120    # 0 = disabled (no artificial deadline)
+    timeout: 120 # 0 = disabled (no artificial deadline)
     reduce_target_words: 4000
     # max tokens per inference chunk. 4096 (default) caps peak memory
     # (~2-6 GB with BGE-M3); 0 = model's max_position_embeddings (8180 for
@@ -154,7 +155,8 @@ enricher:
 
   # tag_adjudicator:             # optional LLM verdicts for ambiguous tag pairs
   #   enabled: false             # disabled by default — enable after configuring LLM
-  #   timeout: 120               # defaults to contentanalyzer.timeout when 0
+  #   timeout: 20                 # seconds per attempt; 0 = no deadline
+  #   max_retries: 3             # extra attempts per call; 0 = no retries
   #   llm:                       # defaults to contentanalyzer.llm when provider/model are empty
   #     adapter: 'openai-compatible'
   #     provider: 'openai'
@@ -163,7 +165,8 @@ enricher:
   #     request_delay: 1
 
   # tag_lexical_gate:           # context-free judged passes; active while tag_adjudicator.enabled is set
-  #   timeout: 120               # defaults to tag_adjudicator.timeout, then contentanalyzer.timeout when 0
+  #   timeout: 20                 # seconds per attempt; 0 = no deadline
+  #   max_retries: 3             # extra attempts per call; 0 = no retries
   #   llm:                       # defaults to tag_adjudicator.llm, then contentanalyzer.llm when empty
   #     adapter: 'openai-compatible'
   #     provider: 'openai'
@@ -173,7 +176,8 @@ enricher:
 
   # tag_quality:                 # rubric judge for newly emitted tags (judge LLM should differ from the generator)
   #   enabled: false             # disabled by default
-  #   timeout: 120               # defaults to contentanalyzer.timeout when 0
+  #   timeout: 60                # seconds per attempt; 0 = no deadline
+  #   max_retries: 3             # extra attempts per call; 0 = no retries
   #   llm:                       # defaults to contentanalyzer.llm when provider/model are empty
   #     adapter: 'openai-compatible'
   #     provider: 'openai'

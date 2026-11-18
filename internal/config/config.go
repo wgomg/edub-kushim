@@ -287,12 +287,13 @@ type DocTypeRefinementConfig struct {
 	TailWords int  `mapstructure:"tail_words" yaml:"tail_words" json:"tail_words"`
 }
 
-// ContentAnalyzerConfig is the LLM document analysis section: enablement, timeout, the minimum tag count,
-// the primary model, its fallbacks, the optional prompt template, the type-refinement pass, and the
-// credit-pause policy.
+// ContentAnalyzerConfig is the LLM document analysis section: enablement, timeout, retries, the minimum
+// tag count, the primary model, its fallbacks, the optional prompt template, the type-refinement pass,
+// and the credit-pause policy.
 type ContentAnalyzerConfig struct {
 	Enabled            bool                    `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
 	Timeout            int                     `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	MaxRetries         int                     `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
 	MinTags            int                     `mapstructure:"min_tags" yaml:"min_tags" json:"min_tags"`
 	Llm                LlmConfig               `mapstructure:"llm" yaml:"llm" json:"llm"`
 	Fallbacks          []FallbackConfig        `mapstructure:"fallbacks" yaml:"fallbacks" json:"fallbacks,omitempty"`
@@ -307,28 +308,31 @@ type FallbackConfig struct {
 	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
-// TagAdjudicatorConfig is the LLM tag adjudicator section; an empty model
-// falls back to the analyzer's.
+// TagAdjudicatorConfig is the LLM tag adjudicator section: enablement, timeout, retries, and the model;
+// an empty model falls back to the analyzer's.
 type TagAdjudicatorConfig struct {
-	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	Timeout int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
+	Enabled    bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Timeout    int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	MaxRetries int       `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
+	Llm        LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
 // TagLexicalGateConfig is the LLM tag lexical gate section: the context-free judged passes. It has no
 // enable toggle — the gate is active whenever the tag adjudicator is enabled — and an empty model falls
 // back to the adjudicator's, then to the analyzer's.
 type TagLexicalGateConfig struct {
-	Timeout int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
+	Timeout    int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	MaxRetries int       `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
+	Llm        LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
-// TagQualityConfig is the LLM tag quality judge section; an empty model
-// falls back to the analyzer's.
+// TagQualityConfig is the LLM tag quality judge section: enablement, timeout, retries, and the model; an
+// empty model falls back to the analyzer's.
 type TagQualityConfig struct {
-	Enabled bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	Timeout int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
-	Llm     LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
+	Enabled    bool      `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	Timeout    int       `mapstructure:"timeout" yaml:"timeout" json:"timeout"`
+	MaxRetries int       `mapstructure:"max_retries" yaml:"max_retries" json:"max_retries"`
+	Llm        LlmConfig `mapstructure:"llm" yaml:"llm" json:"llm"`
 }
 
 // TagReconcileConfig is the scheduled reconciliation section: enablement, report-only mode, schedule,
@@ -404,15 +408,6 @@ func (c *Config) ResolvedAdjudicatorLlm() LlmConfig {
 	return c.Enricher.TagAdjudicator.Llm
 }
 
-// ResolvedAdjudicatorTimeout returns the adjudicator's timeout, falling
-// back to the content analyzer's.
-func (c *Config) ResolvedAdjudicatorTimeout() int {
-	if c.Enricher.TagAdjudicator.Timeout == 0 {
-		return c.Enricher.ContentAnalyzer.Timeout
-	}
-	return c.Enricher.TagAdjudicator.Timeout
-}
-
 // ResolvedLexicalGateLlm returns the lexical gate's model: its own stanza when it names one, the
 // adjudicator's otherwise, then the content analyzer's. The gate rides the adjudicator's enablement, so
 // an operator who configured only the adjudicator still gets a usable gate.
@@ -423,15 +418,6 @@ func (c *Config) ResolvedLexicalGateLlm() LlmConfig {
 	return c.Enricher.TagLexicalGate.Llm
 }
 
-// ResolvedLexicalGateTimeout returns the lexical gate's timeout, falling back to the adjudicator's,
-// then to the content analyzer's.
-func (c *Config) ResolvedLexicalGateTimeout() int {
-	if c.Enricher.TagLexicalGate.Timeout == 0 {
-		return c.ResolvedAdjudicatorTimeout()
-	}
-	return c.Enricher.TagLexicalGate.Timeout
-}
-
 // ResolvedQualityLlm returns the quality judge's model, falling back to
 // the content analyzer's when the section does not name one.
 func (c *Config) ResolvedQualityLlm() LlmConfig {
@@ -439,15 +425,6 @@ func (c *Config) ResolvedQualityLlm() LlmConfig {
 		return c.Enricher.ContentAnalyzer.Llm
 	}
 	return c.Enricher.TagQuality.Llm
-}
-
-// ResolvedQualityTimeout returns the quality judge's timeout, falling
-// back to the content analyzer's.
-func (c *Config) ResolvedQualityTimeout() int {
-	if c.Enricher.TagQuality.Timeout == 0 {
-		return c.Enricher.ContentAnalyzer.Timeout
-	}
-	return c.Enricher.TagQuality.Timeout
 }
 
 // LlmConfig is one LLM endpoint: adapter, provider, model, token,
@@ -465,6 +442,10 @@ type LlmConfig struct {
 // maxRequestDelaySeconds caps llm.request_delay so a misconfiguration can't
 // stall an enricher worker well beyond the content-analyzer timeout budget.
 const maxRequestDelaySeconds = 60
+
+// maxLlmRetries caps each LLM section's max_retries so a misconfiguration cannot multiply a single call's
+// worst-case duration without bound.
+const maxLlmRetries = 10
 
 // HugotConfig is the embedding model section: model and backend as
 // configured; the resolved paths and runtime toggles are filled at load
@@ -741,6 +722,7 @@ func DefaultConfig(configDir string) *Config {
 			ContentAnalyzer: ContentAnalyzerConfig{
 				Enabled:            false,
 				Timeout:            120,
+				MaxRetries:         3,
 				MinTags:            3,
 				PromptTemplate:     "",
 				PauseOnCreditError: true,
@@ -771,10 +753,18 @@ func DefaultConfig(configDir string) *Config {
 				},
 			},
 			TagAdjudicator: TagAdjudicatorConfig{
-				Enabled: false,
+				Enabled:    false,
+				Timeout:    20,
+				MaxRetries: 3,
+			},
+			TagLexicalGate: TagLexicalGateConfig{
+				Timeout:    20,
+				MaxRetries: 3,
 			},
 			TagQuality: TagQualityConfig{
-				Enabled: false,
+				Enabled:    false,
+				Timeout:    60,
+				MaxRetries: 3,
 			},
 			TagReconcile: TagReconcileConfig{
 				Enabled:              false,
@@ -946,6 +936,19 @@ func finalizeConfig(cfg *Config, configDir string) error {
 	}
 	if cfg.Enricher.ContentAnalyzer.Llm.RequestDelay < 0 || cfg.Enricher.ContentAnalyzer.Llm.RequestDelay > maxRequestDelaySeconds {
 		return fmt.Errorf("enricher.contentanalyzer.llm.request_delay must be between 0 and %d", maxRequestDelaySeconds)
+	}
+	if cfg.Enricher.ContentAnalyzer.MaxRetries < 0 || cfg.Enricher.ContentAnalyzer.MaxRetries > maxLlmRetries {
+		return fmt.Errorf("enricher.contentanalyzer.max_retries must be between 0 and %d", maxLlmRetries)
+	}
+
+	if err := validateJudgedLimits("enricher.tag_adjudicator", cfg.Enricher.TagAdjudicator.Timeout, cfg.Enricher.TagAdjudicator.MaxRetries); err != nil {
+		return err
+	}
+	if err := validateJudgedLimits("enricher.tag_lexical_gate", cfg.Enricher.TagLexicalGate.Timeout, cfg.Enricher.TagLexicalGate.MaxRetries); err != nil {
+		return err
+	}
+	if err := validateJudgedLimits("enricher.tag_quality", cfg.Enricher.TagQuality.Timeout, cfg.Enricher.TagQuality.MaxRetries); err != nil {
+		return err
 	}
 
 	for i := range cfg.Enricher.ContentAnalyzer.Fallbacks {
@@ -1214,6 +1217,19 @@ func validateJudgeLlmStanza(section string, llm *LlmConfig) error {
 	}
 	if llm.RequestDelay < 0 || llm.RequestDelay > maxRequestDelaySeconds {
 		return fmt.Errorf("%s.llm.request_delay must be between 0 and %d", section, maxRequestDelaySeconds)
+	}
+	return nil
+}
+
+// validateJudgedLimits checks one judged section's timeout and retry bounds: the timeout is a plain
+// per-attempt deadline in seconds (0 disables it) and max_retries is the endpoint's retry budget, both
+// rejected when negative and the retry count also capped.
+func validateJudgedLimits(section string, timeout, maxRetries int) error {
+	if timeout < 0 {
+		return fmt.Errorf("%s.timeout must be >= 0", section)
+	}
+	if maxRetries < 0 || maxRetries > maxLlmRetries {
+		return fmt.Errorf("%s.max_retries must be between 0 and %d", section, maxLlmRetries)
 	}
 	return nil
 }

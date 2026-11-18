@@ -642,11 +642,14 @@ and `Name()` methods use these constants instead of string literals.
 ### Design Note: Context Cancellation in Adapters
 
 Each adapter (CGo and external‑tool) checks for context cancellation at page boundaries.
-Additionally, the `Runner` layer wraps every adapter call in `runWithTimeout`, a generic
-helper that runs the function in a goroutine and returns `ctx.Err()` if the context
-expires first. This ensures timeout detection works for any adapter regardless of
-whether it checks `ctx.Done()` internally — eliminating the need for per-adapter
-cancellation wiring.
+Additionally, the `Runner` layer wraps the non‑LLM adapter calls in `runWithTimeout`, a
+generic helper that runs the function in a goroutine and returns `ctx.Err()` if the
+context expires first. This ensures timeout detection works for any adapter regardless
+of whether it checks `ctx.Done()` internally — eliminating the need for per‑adapter
+cancellation wiring. The LLM adapters bound their own HTTP round trip instead: each
+`doRequest` installs the section's timeout around request build, `client.Do` and the body
+read, leaving prompt building, reply parsing and the `request_delay` pacing sleep outside
+the per‑attempt deadline.
 
 ---
 
@@ -836,7 +839,7 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 | fpdf over MuPDF PDF creation      | fpdf is pure Go; MuPDF's PDF writing API requires additional CGo. (Only relevant for gosseract adapter.)                                                                                                                                                                                                                           |
 | TextRank over LLM summarization   | Extractive summarization via graph-based ranking is deterministic, zero-cost, privacy-preserving. Reduces token count before LLM call — cost saving and faster.                                                                                                                                                                    |
 | Hugot with ORT backend (default)  | ONNX Runtime for GPU-class CPU inference with BGE-M3. Auto-downloads `libonnxruntime.so`. ORT CPU memory arena and memory-pattern pre-allocation are disabled by default (internal `CpuMemArena`/`MemPattern` flags) to keep idle RSS at ~2.2–2.5 GB instead of ~4–5 GB. Go backend available as alternative with no runtime deps. |
-| `runWithTimeout` wrapper          | Ensures timeout detection for every adapter call, regardless of whether the adapter checks `ctx.Done()` internally. Eliminates the need for per-adapter cancellation wiring.                                                                                                                                                       |
+| `runWithTimeout` wrapper          | Ensures timeout detection for every non‑LLM adapter call, regardless of whether the adapter checks `ctx.Done()` internally. Eliminates the need for per‑adapter cancellation wiring. The LLM adapters install their own HTTP‑scoped deadline per attempt instead.                                                                                              |
 | Seeded tag vocabulary              | 402 values: the re-derived subject inventory (broad, atomic, house-form dimensions) plus the country and continent place list, with recognized alternate spellings seeded as `tag_alias` rows. Inserted promoted, so the shipped inventory is in the store on first boot and the split anchors later machinery relies on exist from the first run.                                                                                                                                                                                    |
 | External matcher process          | Hugot embedding model runs as a separate process (`kushim hugot`) over a Unix socket. The API server (`edub`) is pure Go with no CGo dependencies.                                                                                                                                                                                 |
 | Forked processing workers         | The `kushim queue` daemon forks the batches' owning task CLIs (`kushim --executor consume --from-batch`, `kushim --executor enrich --from-batch`, `kushim --executor thumbnails --from-batch`) as child processes. Clean process isolation, no in-process heartbeat/ownership management needed. `edub` only enqueues tasks — it never forks directly. The `--executor` marker is the launcher's only addition to the child's argv: it certifies the child as a schema executor that only opens a connection pool — the launching owner bootstrapped schema, seeds and backfills before claiming — and `RunBatch` sizes that pool to the batch's worker declarations plus the execution's auxiliary users, so per-fork database work is one pool open instead of a full schema bootstrap. Processes a human starts (direct CLI runs, the daemon, `edub`, the wizard) bootstrap on first open; the daemon's own pool derives its ceiling from the effective `max_concurrent_batches` budget plus fixed headroom, re-applied on every applied configuration tree and after a reconnect. |

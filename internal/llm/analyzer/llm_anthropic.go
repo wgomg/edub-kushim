@@ -179,7 +179,15 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 		return nil, "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", l.baseURL()+"/messages", bytes.NewBuffer(jsonBody))
+	// the deadline bounds only the HTTP round trip and body read; the pacing sleep and parsing stay outside it
+	attemptCtx := ctx
+	if timeout := l.config.Timeout; timeout > 0 {
+		var cancel context.CancelFunc
+		attemptCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	httpReq, err := http.NewRequestWithContext(attemptCtx, "POST", l.baseURL()+"/messages", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, "", fmt.Errorf("create request: %w", err)
 	}
@@ -201,7 +209,13 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if ctxErr := attemptCtx.Err(); ctxErr != nil {
+			return nil, "", ctxErr
+		}
+		return nil, "", fmt.Errorf("read response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		if tokErr := parseTokenLimitError(body); tokErr != nil {
 			return nil, "", tokErr
@@ -235,6 +249,11 @@ func (l *LlmAnthropic) doRequest(ctx context.Context, reqBody anthropicRequest, 
 	responseContent := strings.TrimSpace(responseText.String())
 	responseContent = cleanCodeBlock(responseContent)
 	return &anthResp, responseContent, nil
+}
+
+// Endpoint returns the provider and model this adapter was configured with.
+func (l *LlmAnthropic) Endpoint() (string, string) {
+	return l.llmCfg.Provider, l.llmCfg.Model
 }
 
 // Analyze runs the document analysis call against the Anthropic API.

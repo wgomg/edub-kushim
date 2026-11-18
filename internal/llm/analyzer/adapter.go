@@ -45,6 +45,10 @@ type Analyzer interface {
 	// AnalyzeDocType refines the document type from the text's head and
 	// tail, given the previous analysis pass.
 	AnalyzeDocType(ctx context.Context, prevResult *AnalysisResult, headTailText string, docTypes []TypeRef, metadata DocMetadata) (string, error)
+	// Endpoint names the provider and model this analyzer was built for, so the runner can label a failed
+	// attempt without holding a copy of the config, and the adapter stays the one owner of the endpoint
+	// identity.
+	Endpoint() (provider, model string)
 }
 
 // TagAdjudicator is the tag subsystem's semantic judging contract: the passes that compare tag values

@@ -145,7 +145,9 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
 - `textreducer` — `textrank` engine (local, CPU-only), `timeout`, `target_words` (`2000`)
   — text is reduced before it reaches the LLM.
 - `contentanalyzer` — the LLM classification step, **disabled by default**:
-  - `timeout`, `min_tags` (lower bound requested from the analyzer; default `3`,
+  - `timeout` (per HTTP attempt: request build, provider round trip and response read),
+    `max_retries` (extra attempts per endpoint; default `3`, `0` = off, max `10`),
+    `min_tags` (lower bound requested from the analyzer; default `3`,
     validated `1–20`), `pause_on_credit_error` (default `true` — a provider credit error
     pauses the batch), `prompt_template` (custom Go template; empty = built-in),
     `doc_type_refinement` (`enabled`, `head_words` `600`, `tail_words` `400` — a second
@@ -155,7 +157,8 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
     each request; default `1`, `0` = off, max `60` — for rate-limited providers).
   - `fallbacks` — an **ordered list** of `{enabled, llm}` entries tried when the primary
     fails with a provider error (API unreachable, credit/rate-limit, malformed response,
-    provider timeout). Disabled entries are not validated; each enabled one requires
+    provider timeout). Each endpoint is retried `contentanalyzer.max_retries` times before
+    the walk moves on. Disabled entries are not validated; each enabled one requires
     adapter/provider/model.
 - `tagmatcher` — semantic matching through the Hugot model: `timeout`,
   `reduce_target_words` (`4000`), `chunk_size` (**`4096`** — the memory lever: `0` uses the
@@ -165,21 +168,24 @@ The classification pipeline. `workers` (default `1`) runs enrich tasks concurren
   `BAAI/bge-m3`, `backend` `ort` | `GO`). Full tuning: the
   [semantic matching guide](../developer-guide/semantic-matching.md).
 - `tag_adjudicator` — optional LLM verdicts for tag identity and same-intent pairs
-  (`enabled` default `false`; `timeout` falls back to `contentanalyzer.timeout` when `0`;
-  an empty `provider`/`model` inherits the content analyzer's LLM at startup). Setting
-  only one of `provider`/`model`, or enabling the section with no provider/model to
-  inherit, fails configuration load with an error naming the key.
+  (`enabled` default `false`; `timeout` default `20` seconds per attempt, `0` disables it;
+  `max_retries` default `3`, `0` = off, max `10`; an empty `provider`/`model` inherits
+  the content analyzer's LLM at startup). Setting only one of `provider`/`model`, or
+  enabling the section with no provider/model to inherit, fails configuration load with
+  an error naming the key.
 - `tag_lexical_gate` — the context-free judged passes: tag parts, the compound reading,
   and the language guard's translation. It has no `enabled` of its own — it is active
   whenever `tag_adjudicator.enabled` is set. An empty `provider`/`model` inherits
-  `tag_adjudicator`'s LLM, then the content analyzer's; `timeout` follows the same chain.
+  `tag_adjudicator`'s LLM, then the content analyzer's; `timeout` is its own (default
+  `20`, `0` disables it) and `max_retries` defaults to `3` (`0` = off, max `10`).
   A half-written stanza or an out-of-range `request_delay` fails configuration load.
 - `tag_quality` — the admission judge for newly emitted tags and the document reader
-  behind the coverage audit (`enabled` default `false`, same timeout/LLM inheritance as
-  `tag_adjudicator`; the judge model should differ from the generator's). A resolved
-  provider/model is required when this gate is enabled; with only `tag_audit` or
-  `tag_maintenance` enabled the stanza is hygiene-checked but may stay unconfigured —
-  those schedules then run without a judge.
+  behind the coverage audit (`enabled` default `false`, `timeout` default `60` seconds
+  per attempt with `0` disabling it, `max_retries` default `3`; the judge model inherits
+  the content analyzer's LLM when its own stanza is empty and should differ from the
+  generator's). A resolved provider/model is required when this gate is enabled; with
+  only `tag_audit` or `tag_maintenance` enabled the stanza is hygiene-checked but may
+  stay unconfigured — those schedules then run without a judge.
 - `tag_reconcile` — scheduled re-adjudication: `enabled` (`false`), `report_only`
   (`true` — the first run is always report-only), `interval` (days, `7`), `time`
   (`02:00`), `max_rejudge` (`200`), `max_retag` (`1000`), `dead_tag_grace_days` (`7` —
@@ -254,6 +260,12 @@ previous interval already elapsed. Daemon restarts do not reset any schedule.
 Every pipeline timeout is a deadline for one stage and accepts **`0` to disable** it —
 useful while troubleshooting, but a hung subprocess or unresponsive provider can then hold a
 worker indefinitely, so production deployments should keep a positive value everywhere.
+The four LLM sections (`contentanalyzer`, `tag_adjudicator`, `tag_lexical_gate`,
+`tag_quality`) apply it per HTTP attempt instead of per stage: each attempt gets the full
+`timeout` (request build, provider round trip, response read) and is retried up to that
+section's `max_retries`, so one call can run for `(1 + max_retries) × timeout` plus the
+`request_delay` sleeps between attempts. Prompt building, reply parsing and the pacing
+sleep stay outside the per-attempt deadline.
 
 ### HTTP server timeouts
 
@@ -280,6 +292,9 @@ speeds and want tighter slow-loris protection.
 | `consumer.thumbnail.timeout` | 30s | — | — |
 | `enricher.textreducer.timeout` | 120s | 10s | 10s |
 | `enricher.contentanalyzer.timeout` | 120s | 10s | 10s |
+| `enricher.tag_adjudicator.timeout` | 20s | 5s | 5s |
+| `enricher.tag_lexical_gate.timeout` | 20s | 5s | 5s |
+| `enricher.tag_quality.timeout` | 60s | 10s | 10s |
 | `enricher.tagmatcher.timeout` | 120s | 10s | 10s |
 
 What drives each stage's real duration:
@@ -298,11 +313,12 @@ What drives each stage's real duration:
   raise this before any other stage.
 - **Text reducer** — local TextRank: milliseconds for typical documents, 1–5s for 200–300
   pages; 120s is generous.
-- **Content analyzer** — provider latency plus input size; doc-type refinement makes two
-  sequential calls inside the same budget, and `llm.request_delay` sleeps inside it too —
-  keep both well under the timeout. When a fallback LLM runs, it shares the **same**
-  per-pass deadline rather than doubling it, so a slow primary leaves the fallback little
-  room: raise the timeout or lower `request_delay` for fallback-heavy setups.
+- **Content analyzer** — provider latency plus input size per HTTP attempt; doc-type
+  refinement is a second sequential call with its own budget. Every attempt gets the full
+  `timeout`, and each enabled fallback retries with fresh budgets
+  (`contentanalyzer.max_retries`), so worst-case wall time is
+  `(1 + max_retries) × timeout × (1 + enabled fallbacks)` plus the `request_delay`
+  sleeps between attempts. `request_delay` no longer counts against the timeout.
 - **Tag matcher** — scales with the tag store and text length (`reduce_target_words`):
   ~3–10s at 1k tags, ~10–60s at 10k, and 120–300s at 100k+. The matcher server mirrors
   this value into its socket write deadline **at startup** — restart `kushim hugot` after

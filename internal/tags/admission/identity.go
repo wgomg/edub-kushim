@@ -565,10 +565,6 @@ func (a *Adjudicator) relationGateAnswers(ctx context.Context, candidates []*ide
 			}
 		}
 		results, err := a.runner.JudgeTagRelations(ctx, inputs)
-		if err != nil && retryableJudgeFailure(err) {
-			a.logger.Warn(reqID, "relation gate[%s]: judge attempt failed, retrying once: %v", tags.RelationRuleSetVersion, err)
-			results, err = a.runner.JudgeTagRelations(ctx, inputs)
-		}
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("relation gate returned %d verdicts for %d candidates", len(results), len(batch))
 		}
@@ -696,10 +692,6 @@ func (a *Adjudicator) identityAnswers(ctx context.Context, flagged map[string]bo
 			inputs[i] = analyzer.TagIdentityCandidate{Index: i, Term: cand.name, ProposedFold: cand.fold}
 		}
 		results, err := a.runner.JudgeTagIdentity(ctx, inputs)
-		if err != nil && retryableJudgeFailure(err) {
-			a.logger.Warn(reqID, "identity[%s]: judge attempt failed, retrying once: %v", tags.IdentityRuleSetVersion, err)
-			results, err = a.runner.JudgeTagIdentity(ctx, inputs)
-		}
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("identity judge returned %d verdicts for %d candidates", len(results), len(batch))
 		}
@@ -833,10 +825,6 @@ func (a *Adjudicator) adjudicateIdentityPairs(ctx context.Context, docID int64, 
 		end := min(start+identityBatchSize, len(evidence))
 		batch := judged[start:end]
 		results, err := a.runner.AdjudicateTags(ctx, evidence[start:end])
-		if err != nil && retryableJudgeFailure(err) {
-			a.logger.Warn(reqID, "identity[%s]: adjudicator attempt failed, retrying once: %v", tags.IdentityRuleSetVersion, err)
-			results, err = a.runner.AdjudicateTags(ctx, evidence[start:end])
-		}
 		if err == nil && len(results) != len(batch) {
 			err = fmt.Errorf("adjudicator returned %d verdicts for %d pairs", len(results), len(batch))
 		}

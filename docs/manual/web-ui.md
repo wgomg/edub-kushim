@@ -312,14 +312,15 @@ amber banner is the same signal at global scope.
   (enabled, engine, DPI, max width, quality, timeout, workers, backfill interval/time),
   throughput & recovery (consumer workers, max files per batch, auto-resume, max retries,
   stale task).
-- **Enrichment** — content analyzer (enabled, timeout, min/max tags, adapter → provider →
-  model cascading selectors, token with show/hide, temperature, pause-on-credit-error,
-  request delay, prompt template, doc-type refinement, fallback LLMs with reorder), text
-  reducer, tag matcher (timeout, reduce target words, chunk size, model, backend), tag
-  adjudicator, tag lexical gate (inherits the adjudicator's model, then the analyzer's)
-  and tag quality (each can inherit the analyzer's model), knowledge base (ConceptNet
-  opt-in toggle with the active-source list), tag reconciliation and measurement
-  schedules, enrichment workers. An at-a-glance strip links to the catalog page.
+- **Enrichment** — content analyzer (enabled, timeout, max retries, min/max tags,
+  adapter → provider → model cascading selectors, token with show/hide, temperature,
+  pause-on-credit-error, request delay, prompt template, doc-type refinement, fallback
+  LLMs with reorder), text reducer, tag matcher (timeout, reduce target words, chunk size,
+  model, backend), tag adjudicator and tag lexical gate (timeout and max retries each;
+  each inherits the adjudicator's model, then the analyzer's) and tag quality (timeout and
+  max retries; can inherit the analyzer's model), knowledge base (ConceptNet opt-in
+  toggle with the active-source list), tag reconciliation and measurement schedules,
+  enrichment workers. An at-a-glance strip links to the catalog page.
 - **Models** — master–detail: filterable provider pane (`?provider=` deep-link), model table
   with capability chips and a *Used by* column; add/edit/remove side panels stage catalog
   operations (they apply with **Apply Changes**, not immediately); *Restore Default Catalogs*

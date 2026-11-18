@@ -559,42 +559,49 @@ var tokenLimitRE = regexp.MustCompile(
   step, the model, the raw reply's total length and a bounded 2048-byte
   prefix, so a degenerate reply cannot flood the log. Never retried.
 
-Both adapters return these typed errors; **there is no retry/backoff inside
-the adapters** — each call is a single HTTP request. Retry decisions live in
-the callers: the enricher decides for analysis calls (§10), and the admission
-layer for the four judged steps (below). Timeout enforcement comes from
-`runWithTimeout` at the runner level (`internal/tools/runner.go:135-152`); the
-adapters' `http.Client` deliberately has no timeout of its own.
+Both adapters return these typed errors; **there is no retry inside the
+adapters** — each `doRequest` is a single HTTP request. Retry decisions live in
+the Runner: `ClassifyLlmError` (`internal/llm/analyzer/gates.go`) answers
+`Retry` (transport and generic provider failures, empty responses, deadline
+expiry), `NextEndpoint` (credit exhaustion — no retry, move on to the next
+fallback) or `Abort` (cancellation, oversized prompts, provider token limits,
+unparseable, incomplete or truncated replies). Each attempt is bounded by its
+own deadline scoped to the HTTP round trip — request build, `client.Do` and the
+body read (`config.ToolConfig.Timeout`, taken from the section's `timeout` at
+construction); prompt building, reply parsing and the `request_delay` pacing
+sleep run outside it. The adapters' `http.Client` deliberately has no timeout of
+its own.
 
 **Provider fallback** — when `enricher.contentanalyzer.fallbacks` is configured
 (a list of `{enabled, llm}` blocks), the Runner builds one `Analyzer`
 per **enabled** entry (`NewAnalyzer`, same prompt settings) and keeps them in
-list order. `AnalyzeContent` and `AnalyzeDocType` classify each primary error
-with `isProviderError` (`runner.go:718-725`): anything that is *not* a
-request-side or lifecycle failure — i.e. not `ContentTooLargeError`,
-`TokenLimitError`, `context.Canceled`, or `context.DeadlineExceeded` — walks
-the fallback chain in order, retrying the same request through each enabled
-fallback until one succeeds. Each fallback runs under the same
-context/deadline as the primary; its own `request_delay` applies after its
-request. If every fallback fails too, the **last** error (e.g. an
-`InsufficientCreditsError` naming the last failing provider) is what the
+list order. `AnalyzeContent` and `AnalyzeDocType` walk the endpoints with the
+shared classifier: each endpoint — primary and every fallback — is retried up to
+`enricher.contentanalyzer.max_retries` times (default 3, `0`–`10`; `0` = off),
+and every attempt gets its own fresh deadline plus its own `request_delay` sleep
+after the request. A retryable failure consumes the endpoint's budget; a credit
+error skips the rest of that budget and moves straight to the next fallback; an
+aborting failure stops the walk. When every endpoint fails, the **last** error
+(e.g. an `InsufficientCreditsError` naming the last failing provider) is what the
 enricher sees — so the batch pauses on credit errors only when the primary
 **and all** enabled fallbacks end in a credit error.
 
 **Judged-call retry and credit policy** — the judged steps bypass the
-provider fallback chain. The admission layer retries a failed judged call
-**once**, and only when `retryableJudgeFailure` classifies the failure as
-transient (transport, generic provider and empty-response failures).
-`ReplyParseError`, `OutputCapError`, `IncompleteReplyError`, credit exhaustion,
-`TokenLimitError`, `ContentTooLargeError` and context errors are never retried
-(an incomplete reply's omission is systematic, so a retry would re-omit). A
-credit exhaustion propagates out of the step so the enricher's `creditPause`
-turns it into the batch pause (governed by `pause_on_credit_error`), and the
-identity and pair loops abort immediately instead of spending more calls on the
-dead account. Every other non-retryable failure degrades per step — the
-affected tags are kept, born provisional or deferred — with a WARN naming the
-candidates; an `IncompleteReplyError` instead salvages the entries the reply
-did return and defers only the missing ones, with a WARN naming them.
+provider fallback chain and use their section's own `max_retries` (default 3,
+`0`–`10`, `0` = off) against their single endpoint, with a fresh HTTP-scoped
+deadline per attempt. The runner retries only failures the classifier marks
+`Retry`: transport and generic provider failures, empty responses, and deadline
+expiry. `ReplyParseError`, `OutputCapError`, `IncompleteReplyError`,
+`TokenLimitError`, `ContentTooLargeError` and `context.Canceled` are never
+retried (an incomplete reply's omission is systematic, so a retry would
+re-omit). Credit exhaustion never retries: it propagates out of the step so the
+enricher's `creditPause` turns it into the batch pause (governed by
+`pause_on_credit_error`), and the identity and pair loops abort immediately
+instead of spending more calls on the dead account. Every other non-retryable
+failure degrades per step — the affected tags are kept, born provisional or
+deferred — with a WARN naming the candidates; an `IncompleteReplyError` instead
+salvages the entries the reply did return and defers only the missing ones, with
+a WARN naming them.
 
 ---
 
@@ -819,10 +826,10 @@ for i := range 2 {
     drop that keeps the parts it resolved, and one that lost some but not all is a
     `partial_parts` keep that stands whole with its survivors applied alongside)
     with a matching `tag split[...]` log line. Under the shared
-    judged-call policy (§7) a transient split-judge failure is retried once, a
-    credit exhaustion aborts the document so the batch pauses, and every other
-    failure keeps the compound whole. `Adjudicator.ApplyDeletedTagPolicy`
-    applies the deleted-tag blocklist after it.
+    judged-call policy (§7) a retryable split-judge failure is retried up to the
+    section's `max_retries`, a credit exhaustion aborts the document so the batch
+    pauses, and every other failure keeps the compound whole.
+    `Adjudicator.ApplyDeletedTagPolicy` applies the deleted-tag blocklist after it.
 11. **Identity** (`enricher.go`, `identity.go`): `Runner.RankTags` ranks LLM
     tags against canonical existing tags, then the identity pipeline applies
     house form, aliases, and key equality, and `policy.Evaluate` generates
@@ -871,9 +878,10 @@ for i := range 2 {
     Fresh verdicts
     record the judging model and the recorded outcome, cache-applied ones a
     NULL model; cached rows re-run the decision over the stored rubric with the
-    current emission's deterministic signals. A transient judge failure retries
-    once; parse failures, incomplete replies, output-cap hits, credit
-    exhaustion, token-limit, content-too-large and context errors are never
+    current emission's deterministic signals. A retryable judge failure (transport,
+    generic provider, empty response or deadline expiry) is retried up to the
+    section's `max_retries`; parse failures, incomplete replies, output-cap hits, credit
+    exhaustion, token-limit, content-too-large and `context.Canceled` are never
     retried (§7). A reply that omits verdicts for some candidates salvages the
     entries it returned — each is decided and cached — and defers only the
     missing candidates with `judge_unavailable` (no verdict row; re-judged on
@@ -925,7 +933,8 @@ Under `enricher` (`internal/config/config.go:366-377`):
 | `workers` | `1` | enrich pool size |
 | `textreducer.engine` / `timeout` / `target_words` | `textrank` / `120` / `2000` | the reduction step |
 | `contentanalyzer.enabled` | `false` | master switch (setup enables it) |
-| `contentanalyzer.timeout` | `120` (s) | per-call budget |
+| `contentanalyzer.timeout` | `120` (s) | per-attempt HTTP budget (request build, response read) |
+| `contentanalyzer.max_retries` | `3` | extra attempts per endpoint; `0` = off, max `10` |
 | `contentanalyzer.prompt_template` | `""` | custom template (fallback on error) |
 | `contentanalyzer.pause_on_credit_error` | `true` | pause the batch on credit exhaustion |
 | `contentanalyzer.doc_type_refinement.enabled` | `true` | the second head/tail call |
@@ -938,22 +947,28 @@ Under `enricher` (`internal/config/config.go:366-377`):
 | `tagmatcher.reduce_target_words` | `4000` | matcher reduction target |
 | `tagmatcher.min_suggestion_similarity` | model-derived (`0.52` bge-m3) | injection bar: only matched tags at or above it reach the emission prompt; an explicit `0` reverts to the model default |
 | `tagmatcher.hugot.*` | — | model/backend (§9 of the semantic-matching guide) |
-| `tag_adjudicator.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
-| `tag_lexical_gate.timeout` / `llm.*` | adjudicator timeout / adjudicator llm | context-free gate: parts, compound reading, and language-guard translation; resolves its own stanza, then the adjudicator's, then the analyzer's |
-| `tag_quality.enabled` / `timeout` / `llm.*` | `false` / analyzer timeout / analyzer llm | rubric verdicts for novel tags and the coverage audit's applicability call; `no_anchor_similarity = 0.60` is an internal pinned constant, and the promotion floor is `enricher.tag_reconcile.recurrence_floor` (default 10 live documents) |
+| `tag_adjudicator.enabled` / `timeout` / `max_retries` / `llm.*` | `false` / `20` / `3` / analyzer llm | identity gate: fold confirmation and same-intent pair verdicts (semantic-matching guide) |
+| `tag_lexical_gate.timeout` / `max_retries` / `llm.*` | `20` / `3` / adjudicator llm → analyzer llm | context-free gate: parts, compound reading, and language-guard translation; resolves its own stanza, then the adjudicator's, then the analyzer's |
+| `tag_quality.enabled` / `timeout` / `max_retries` / `llm.*` | `false` / `60` / `3` / analyzer llm | rubric verdicts for novel tags and the coverage audit's applicability call; `no_anchor_similarity = 0.60` is an internal pinned constant, and the promotion floor is `enricher.tag_reconcile.recurrence_floor` (default 10 live documents) |
+
+The judged sections' timeouts are their own values — `0` disables the deadline
+on that section; there is no inheritance from `contentanalyzer`. Only the LLM
+stanza (`provider`/`model`/`adapter`/pacing) inherits down the chain described
+in the table.
 
 Validation (`finalizeConfig`, `config.go:804-933`): when content analysis is
 enabled, `adapter`, `provider`, and `model` are all **required** — three
-separate errors, so setup can't silently half-configure. The adjudicator and the
-gate it carries are validated when the adjudicator is enabled, and the quality
-judge when its own gate is enabled: a stanza naming only one of
-`provider`/`model` is rejected (the all-or-nothing resolver would otherwise
-silently fall back to the whole inherited LLM), the resolved provider and model
-are required, and `request_delay` must be 0–60. With only
-`tag_audit`/`tag_maintenance` enabled, the quality stanza gets the same stanza and
-delay checks but may stay unconfigured; those schedules then run without a judge
-and leave the flagged dimensions for review. The judged `adapter`
-stays optional — the factory's default (anything non-`anthropic` →
+separate errors, so setup can't silently half-configure. Every LLM section
+validates `max_retries` in `0`–`10`, and the three judged sections also require
+`timeout >= 0`. The adjudicator and the gate it carries are validated when the
+adjudicator is enabled, and the quality judge when its own gate is enabled: a
+stanza naming only one of `provider`/`model` is rejected (the all-or-nothing
+resolver would otherwise silently fall back to the whole inherited LLM), the
+resolved provider and model are required, and `request_delay` must be 0–60.
+With only `tag_audit`/`tag_maintenance` enabled, the quality stanza gets the
+same stanza and delay checks but may stay unconfigured; those schedules then
+run without a judge and leave the flagged dimensions for review. The judged
+`adapter` stays optional — the factory's default (anything non-`anthropic` →
 OpenAI-compatible) applies, so a section that sets only provider/model keeps
 loading. `Reasoning` is programmatic-only (`yaml:"-"`); the reasoning behavior
 otherwise comes from the catalog's `disable_reasoning` flag and
@@ -975,15 +990,18 @@ otherwise comes from the catalog's `disable_reasoning` flag and
 - **Temperature is catalog-gated** — sending `temperature` to a model whose
   entry says `supports_temperature: false` breaks the request. When adding a
   model, set the flag correctly.
-- **The adapters never retry** — the 2-attempt loop and the shrink-and-retry
-  live in the enricher, the judged steps' single classified retry lives in the
-  admission layer, and the credit pause is the enricher's `creditPause`.
-  Adding retry inside an adapter would fight that design (and the
-  `runWithTimeout` guard).
-- **`http.Client` has no timeout** — enforcement is
-  `runWithTimeout` + the caller's context. The adapter calls are
-  context-cancellable, so a stuck provider eventually surfaces as a timeout
-  error; don't add a client timeout without considering long models.
+- **The adapters never retry** — the retry budgets live in the Runner: the
+  analyzer walk retries each endpoint up to `contentanalyzer.max_retries`
+  before failing over, and every judged step uses its section's `max_retries`.
+  The enricher's 2-attempt shrink loop and its empty-result retry are separate,
+  and the credit pause is the enricher's `creditPause`. Adding retry inside an
+  adapter would fight that design.
+- **`http.Client` has no timeout** — each LLM attempt installs its own deadline
+  inside `doRequest` (`config.ToolConfig.Timeout`, from the section's `timeout`),
+  covering the request build, `client.Do` and the body read; the caller's
+  context still cancels everything. Parsing and the pacing sleep stay outside
+  the per-attempt deadline, and a deadline hit is retryable. Don't add a client
+  timeout without considering long models.
 - **Structured output is catalog-gated** — models without
   `supports_structured_output` rely on prompt discipline alone; chat calls send
   `response_format: json_object` and Responses-dialect entries send

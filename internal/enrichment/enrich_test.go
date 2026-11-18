@@ -169,6 +169,10 @@ func (r *suggestionRecorder) AnalyzeDocType(context.Context, *analyzer.AnalysisR
 	return "", nil
 }
 
+func (r *suggestionRecorder) Endpoint() (string, string) {
+	return "", ""
+}
+
 // TestEnrich_SuggestionInjectionBar drives one enrichment pass to the
 // analysis seam and asserts what the matcher suggestions the injection bar
 // let through, including the designed empty result when nothing clears it.
