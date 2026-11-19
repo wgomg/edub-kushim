@@ -384,6 +384,7 @@ test-cgo:
 		./internal/cgo/ \
 		./internal/documents/ocr/ \
 		./internal/documents/textextractor/ \
+		./internal/documents/thumbnail/ \
 		./internal/llm/analyzer/ \
 		./internal/matcher/ \
 		./internal/tools/ \

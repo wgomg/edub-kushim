@@ -142,12 +142,11 @@ func coverFit(samples []byte, w, h, tw, th int) (*image.RGBA, error) {
 	}
 
 	out := image.NewRGBA(image.Rect(0, 0, tw, th))
-	maxSi := (h*w - 1) * 3
 	for y := range th {
 		srcRow := srcY + y*srcH/th
 		for x := range tw {
 			si := (srcRow*w + srcX + x*srcW/tw) * 3
-			if si+2 > maxSi || si+2 >= len(samples) {
+			if si+2 >= len(samples) {
 				return nil, fmt.Errorf("cover-fit index out of range: %d", si)
 			}
 			di := (y*tw + x) * 4
