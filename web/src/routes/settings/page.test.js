@@ -234,7 +234,7 @@ describe('Enrichment settings', () => {
 		const toggle = screen.getByRole('checkbox', { name: 'Enable tag adjudicator' });
 		expect(toggle.checked).toBe(false);
 		await fireEvent.click(toggle);
-		expect(Number(document.getElementById('tag-adjudicator-timeout').value)).toBe(5);
+		expect(Number(document.getElementById('tag-adjudicator-timeout').value)).toBe(20);
 		expect(Number(document.getElementById('tag-adjudicator-max-retries').value)).toBe(3);
 	});
 
@@ -249,7 +249,7 @@ describe('Enrichment settings', () => {
 		expect(toggle.checked).toBe(false);
 		await fireEvent.click(toggle);
 
-		expect(Number(document.getElementById('tag-quality-timeout').value)).toBe(10);
+		expect(Number(document.getElementById('tag-quality-timeout').value)).toBe(60);
 		expect(Number(document.getElementById('tag-quality-max-retries').value)).toBe(3);
 		expect(document.getElementById('tag-quality-t-low')).toBeNull();
 		expect(document.getElementById('tag-quality-no-anchor-similarity')).toBeNull();
