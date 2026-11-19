@@ -195,8 +195,8 @@ func TestConfigResponseFrom_TagLexicalGateSurfaced(t *testing.T) {
 	cfg := config.DefaultConfig("/tmp/test")
 	resp := ConfigResponseFrom(cfg)
 
-	if resp.Enricher.TagLexicalGate.Timeout != 5 {
-		t.Errorf("default Timeout = %d, want 5", resp.Enricher.TagLexicalGate.Timeout)
+	if resp.Enricher.TagLexicalGate.Timeout != 20 {
+		t.Errorf("default Timeout = %d, want 20", resp.Enricher.TagLexicalGate.Timeout)
 	}
 	if resp.Enricher.TagLexicalGate.MaxRetries != 3 {
 		t.Errorf("default MaxRetries = %d, want 3", resp.Enricher.TagLexicalGate.MaxRetries)
