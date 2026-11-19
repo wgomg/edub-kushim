@@ -494,6 +494,7 @@ keeps memory flat for multi-GB files. `ListFilePaths` additionally sorts by
 | `cleanCodeBlock` | both LLM adapters | strip fences before JSON parse |
 | `CalculateMD5` / SHA-512 | `internal/documents/consumption/scan.go` | content dedup + uniqueness |
 | `stripTags` | textextractor output | remove HTML noise from extracted text |
+| `repairUTF8` | `tools.Runner.ExtractText` (`internal/tools/utf8repair.go`) | recombine CESU-8 surrogate pairs; replace remaining invalid UTF-8 with U+FFFD |
 
 The enricher also has a second reduction path: when the LLM rejects the text
 as too large, it re-reduces with a scaled-down target

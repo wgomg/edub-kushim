@@ -204,6 +204,13 @@ pages, MuPDF renders at 200 DPI before OCR; for standalone image files (PNG,
 JPEG, TIFF), the image is decoded directly with Go's standard library, alpha‑
 composited on white, and sent to the same OCR pipeline.
 
+All extracted text passes through `tools.Runner.ExtractText`, which repairs
+invalid UTF-8 before the text is stored. PDF font maps occasionally emit
+CESU-8/WTF-8 surrogate sequences; a valid surrogate pair is recombined into
+the proper 4-byte character, and any other malformed sequence becomes
+`U+FFFD`. Stored `text_content` is therefore always valid UTF-8, so a single
+malformed glyph cannot fail a document's ingestion.
+
 The external‑tool adapters (`pdftotext` for text extraction, `ocrmypdf` for OCR,
 Ghostscript for PDF optimization) are available as alternatives. Configure via
 `consumer.textextractor`, `consumer.ocr`, and `consumer.pdfoptimizer`.

@@ -302,9 +302,10 @@ func NewRunnerWithMatcher(logger *log.Logger, cfg *config.Config, tools []string
 	return r
 }
 
-// ExtractText extracts a document's text with the configured extractor
-// chain for its MIME type. The path must exist; the returned Text pointer
-// is nil when the document yields no text.
+// ExtractText extracts a document's text with the configured extractor chain for its MIME type and repairs
+// invalid UTF-8: CESU-8 surrogate pairs recombine into proper characters and every remaining invalid
+// sequence becomes U+FFFD. The path must exist; the returned Text pointer is nil when the document yields
+// no text.
 func (r *Runner) ExtractText(ctx context.Context, path string, mimeType string) (*TextExtractionResult, error) {
 	if r.textExtractor == nil {
 		return nil, fmt.Errorf("text extractor not configured")
@@ -325,6 +326,14 @@ func (r *Runner) ExtractText(ctx context.Context, path string, mimeType string) 
 	})
 	if err != nil {
 		return nil, fmt.Errorf("text extractor: %w", err)
+	}
+
+	if text != nil {
+		repaired, pairs, replaced := repairUTF8(*text)
+		if pairs+replaced > 0 {
+			r.logger.Debug("", "text extractor: repaired invalid utf-8 in %s: %d surrogate pairs recombined, %d sequences replaced with U+FFFD", path, pairs, replaced)
+			*text = repaired
+		}
 	}
 
 	result := TextExtractionResult{Text: text}
