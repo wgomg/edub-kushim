@@ -186,13 +186,13 @@ func TestJudgedTimeoutDefaults(t *testing.T) {
 	if got := cfg.Enricher.ContentAnalyzer.Timeout; got != 120 {
 		t.Errorf("content analyzer timeout = %d, want 120", got)
 	}
-	if got := cfg.Enricher.TagAdjudicator.Timeout; got != 5 {
+	if got := cfg.Enricher.TagAdjudicator.Timeout; got != 20 {
 		t.Errorf("tag adjudicator timeout = %d, want 5", got)
 	}
-	if got := cfg.Enricher.TagLexicalGate.Timeout; got != 5 {
+	if got := cfg.Enricher.TagLexicalGate.Timeout; got != 20 {
 		t.Errorf("tag lexical gate timeout = %d, want 5", got)
 	}
-	if got := cfg.Enricher.TagQuality.Timeout; got != 10 {
+	if got := cfg.Enricher.TagQuality.Timeout; got != 60 {
 		t.Errorf("tag quality timeout = %d, want 10", got)
 	}
 
