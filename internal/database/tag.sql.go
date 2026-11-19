@@ -1304,6 +1304,51 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 	return items, nil
 }
 
+const listTagsByOrigin = `-- name: ListTagsByOrigin :many
+SELECT id, name, promoted_at, accepted_at, standing_source, origin FROM tag
+WHERE origin = $1::text
+ORDER BY id
+`
+
+type ListTagsByOriginRow struct {
+	ID             int64
+	Name           string
+	PromotedAt     sql.NullTime
+	AcceptedAt     sql.NullTime
+	StandingSource string
+	Origin         string
+}
+
+func (q *Queries) ListTagsByOrigin(ctx context.Context, origin string) ([]ListTagsByOriginRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTagsByOrigin, origin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTagsByOriginRow
+	for rows.Next() {
+		var i ListTagsByOriginRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.PromotedAt,
+			&i.AcceptedAt,
+			&i.StandingSource,
+			&i.Origin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTagsWithDocumentCount = `-- name: ListTagsWithDocumentCount :many
 SELECT t.id, t.name, t.created_at, t.orphaned_since, t.promoted_at, t.demoted_at, t.demoted_reason, t.seeded, t.modified_at, t.accepted_at, t.standing_source, t.origin, COUNT(dt.document_id) AS document_count
 FROM tag t

@@ -1314,6 +1314,145 @@ func TestTag_Retire(t *testing.T) {
 	})
 }
 
+// kbNotSubjectCriteria is a complete rubric whose only failing answer is the document aboutness of the
+// value, so the stored decision is the gray-band defer the KB retire converts.
+const kbNotSubjectCriteria = `{"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}`
+
+func TestTag_RemoveKBNotSubject(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("skips a missing row", func(t *testing.T) {
+		svc, client := newTestTag(t)
+		_ = client
+
+		outcome, err := svc.RemoveKBNotSubject(ctx, 999999)
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, outcome, KBNotSubjectSkipped, "a missing row is a skip, not a failure")
+	})
+
+	t.Run("removes a stored kb term and its evidence", func(t *testing.T) {
+		svc, client := newTestTag(t)
+		id := seedKBOriginTag(t, client, "kb retired value")
+		seedKBVerdict(ctx, t, client, "kb retired value", kbNotSubjectCriteria, "defer")
+
+		outcome, err := svc.RemoveKBNotSubject(ctx, id)
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, outcome, KBNotSubjectRemoved, "outcome")
+
+		if _, err := client.Queries.GetTag(ctx, id); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("the tag row should be gone, got err %v", err)
+		}
+		rows, err := client.Queries.LatestQualityEventsAnyVersionForNames(ctx, []string{"kb retired value"})
+		testutil.AssertNoError(t, err, "read evidence")
+		testutil.AssertEqual(t, len(rows), 0, "every verdict row for the name is deleted")
+
+		var blocked int
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT count(*) FROM deleted_tag WHERE name = $1", "kb retired value").Scan(&blocked),
+			"count blocklist rows")
+		testutil.AssertEqual(t, blocked, 0, "the name must stay eligible for enrichment")
+	})
+
+	t.Run("leaves an accepted kb term untouched", func(t *testing.T) {
+		svc, client := newTestTag(t)
+		id := seedKBOriginTag(t, client, "kb accepted value")
+		seedKBVerdict(ctx, t, client, "kb accepted value", kbNotSubjectCriteria, "defer")
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET accepted_at = now() WHERE id = $1", id); err != nil {
+			t.Fatalf("stamp the acceptance: %v", err)
+		}
+
+		outcome, err := svc.RemoveKBNotSubject(ctx, id)
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, outcome, KBNotSubjectProtected, "an operator decision protects the row")
+
+		if _, err := client.Queries.GetTag(ctx, id); err != nil {
+			t.Errorf("the accepted row must stay, got err %v", err)
+		}
+		rows, err := client.Queries.LatestQualityEventsAnyVersionForNames(ctx, []string{"kb accepted value"})
+		testutil.AssertNoError(t, err, "read evidence")
+		testutil.AssertEqual(t, len(rows), 1, "protected evidence stays readable")
+	})
+
+	t.Run("leaves an operator-standing kb term untouched", func(t *testing.T) {
+		svc, client := newTestTag(t)
+		id := seedKBOriginTag(t, client, "kb operator standing value")
+		seedKBVerdict(ctx, t, client, "kb operator standing value", kbNotSubjectCriteria, "defer")
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = now(), standing_source = 'operator' WHERE id = $1", id); err != nil {
+			t.Fatalf("set operator standing: %v", err)
+		}
+
+		outcome, err := svc.RemoveKBNotSubject(ctx, id)
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, outcome, KBNotSubjectProtected, "operator standing protects the row")
+
+		if _, err := client.Queries.GetTag(ctx, id); err != nil {
+			t.Errorf("the operator-standing row must stay, got err %v", err)
+		}
+	})
+
+	t.Run("skips a non-kb row without touching it", func(t *testing.T) {
+		svc, client := newTestTag(t)
+		id := database.MustCreateTag(t, client.Queries, "analyzer quiet value")
+		verdictDoc := database.CreateUniqueDocument(t, client.Queries, "analyzer quiet value doc")
+		database.MustInsertTagQualityEvent(t, client.Queries, verdictDoc, "analyzer quiet value",
+			kbNotSubjectCriteria, "defer", analyzer.TagQualityVersion)
+
+		outcome, err := svc.RemoveKBNotSubject(ctx, id)
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, outcome, KBNotSubjectSkipped, "origin mismatch is a skip")
+
+		if _, err := client.Queries.GetTag(ctx, id); err != nil {
+			t.Errorf("the analyzer row must stay, got err %v", err)
+		}
+	})
+}
+
+func seedKBOriginTag(t *testing.T, client *database.Client, name string) int64 {
+	t.Helper()
+	id, err := client.Queries.CreateTagWithOrigin(context.Background(), database.CreateTagWithOriginParams{
+		Name:   name,
+		Origin: tags.TagOriginKB,
+	})
+	if err != nil {
+		t.Fatalf("create kb tag %q: %v", name, err)
+	}
+	return id
+}
+
+// seedKBVerdict records a fresh current-version verdict for the name under its own document and attaches the
+// document to the tag row when it exists, so the value under test keeps a live assignment like a stored value.
+func seedKBVerdict(ctx context.Context, t *testing.T, client *database.Client, name, criteria, outcome string) {
+	t.Helper()
+	docID := database.CreateUniqueDocument(t, client.Queries, name+" doc")
+	tagRow, err := client.Queries.GetTagByName(ctx, name)
+	if err != nil {
+		t.Fatalf("read kb tag %q: %v", name, err)
+	}
+	database.MustAddDocumentTag(t, client.Queries, docID, tagRow.ID)
+	database.MustInsertTagQualityEvent(t, client.Queries, docID, name, criteria, outcome, analyzer.TagQualityVersion)
+}
+
+func TestTag_RemoveKBNotSubject_UnderVersionBump(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an abstained latest verdict keeps the tag", func(t *testing.T) {
+		svc, client := newTestTag(t)
+		id := seedKBOriginTag(t, client, "kb abstained latest")
+		seedKBVerdict(ctx, t, client, "kb abstained latest", `{"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":true}`, "defer")
+
+		outcome, err := svc.RemoveKBNotSubject(ctx, id)
+		testutil.AssertNoError(t, err, "remove")
+		testutil.AssertEqual(t, outcome, KBNotSubjectSkipped, "an abstained verdict never fires the retire")
+
+		if _, err := client.Queries.GetTag(ctx, id); err != nil {
+			t.Errorf("the tag must stay, got err %v", err)
+		}
+	})
+}
+
 // deferCriteria is a complete rubric with exactly one failing answer, so
 // DecisionFromStored re-derives the stored defer outcome it was written with.
 const deferCriteria = `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":false}`

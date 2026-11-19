@@ -12,3 +12,37 @@ FROM tag_quality_event e
 WHERE e.policy_version = @policy_version
   AND e.tag_name = ANY(@tag_names::text[])
 ORDER BY e.tag_name, e.verdict_at DESC;
+
+-- name: LatestQualityEventsAnyVersionForNames :many
+SELECT DISTINCT ON (e.tag_name) e.tag_name, e.criteria
+FROM tag_quality_event e
+WHERE e.tag_name = ANY(@tag_names::text[])
+ORDER BY e.tag_name, e.verdict_at DESC;
+
+-- name: KBNotSubjectRetireProbe :one
+-- mirrors tags.KBNotSubjectRetire with analyzer.TagQualityCriteria.Complete(): the person_class and
+-- atomic/not_form_genre presence checks keep superseded or incomplete rows from making the reconcile run
+-- permanently due
+SELECT EXISTS (
+    SELECT 1
+    FROM tag t
+    JOIN LATERAL (
+        SELECT e.criteria
+        FROM tag_quality_event e
+        WHERE e.tag_name = t.name
+        ORDER BY e.verdict_at DESC
+        LIMIT 1
+    ) latest ON true
+    WHERE t.origin = @origin::text
+      AND t.accepted_at IS NULL
+      AND t.standing_source <> @operator_standing::text
+      AND latest.criteria ->> 'subject_matter' = 'false'
+      AND coalesce(latest.criteria ->> 'defer', 'false') = 'false'
+      AND latest.criteria ->> 'person_class' = ANY(@person_classes::text[])
+      AND latest.criteria ->> 'atomic' IS NOT NULL
+      AND latest.criteria ->> 'not_form_genre' IS NOT NULL
+);
+
+-- name: DeleteQualityEventsByName :execrows
+DELETE FROM tag_quality_event
+WHERE tag_name = ANY(@names::text[]);

@@ -321,15 +321,20 @@ const (
 	PersonClassUncertain               = "uncertain"
 )
 
+// PersonClasses is the closed set of the rubric's person-class answers in declaration order: the one
+// vocabulary a consumer that must mirror the validator — SQL probes included — reads.
+var PersonClasses = []string{
+	PersonClassNotPerson,
+	PersonClassRealIndividual,
+	PersonClassMythologicalOrLegendary,
+	PersonClassFictional,
+	PersonClassUncertain,
+}
+
 // ValidPersonClass reports whether class is one of the five rubric answers; any other value is not one
 // of the declared values.
 func ValidPersonClass(class string) bool {
-	switch class {
-	case PersonClassNotPerson, PersonClassRealIndividual, PersonClassMythologicalOrLegendary,
-		PersonClassFictional, PersonClassUncertain:
-		return true
-	}
-	return false
+	return slices.Contains(PersonClasses, class)
 }
 
 // ParseBatchStatus accepts one of the declared status values.

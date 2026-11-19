@@ -434,6 +434,11 @@ WHERE t.promoted_at IS NULL
   AND t.created_at < @cutoff::timestamptz
 ORDER BY t.created_at;
 
+-- name: ListTagsByOrigin :many
+SELECT id, name, promoted_at, accepted_at, standing_source, origin FROM tag
+WHERE origin = @origin::text
+ORDER BY id;
+
 -- name: FirstDocumentIDForTag :one
 SELECT dt.document_id FROM document_tag dt
 JOIN document d ON d.id = dt.document_id

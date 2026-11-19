@@ -16,6 +16,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/admission"
+	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/types"
 )
@@ -1035,4 +1036,73 @@ func (r *Reconciler) sweepKBMints(ctx context.Context, cfg *config.Config, repor
 	}
 	r.logger.Info("", "tag reconcile: kb mint sweep: worklist=%d held=%d minted=%d report_only=%t",
 		len(names), heldCount, report.KBMinted, report.ReportOnly)
+}
+
+// sweepKBNotSubject retires stored knowledge-base values the judge answered are not a subject matter:
+// origin='kb' and the latest recorded rubric, under any policy version, answering subject_matter=false
+// with no abstention. A value carrying an operator decision — an acceptance or operator standing — is the
+// only exemption and is counted as protected, never removed (operator decisions supersede every other
+// policy and mechanism). The removal takes the tag row, its document assignments and every recorded
+// verdict for the name, with no blocklist entry, so enrichment may propose the value again and a future
+// document judges it fresh; report-only runs list the planned removals without acting.
+func (r *Reconciler) sweepKBNotSubject(ctx context.Context, report *Report) {
+	rows, err := r.client.ListTagsByOrigin(ctx, tags.TagOriginKB)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: list knowledge-base tags: %v", err)
+		return
+	}
+	report.KBNotSubject.Worklist = len(rows)
+	if len(rows) == 0 {
+		return
+	}
+	names := make([]string, len(rows))
+	for i, t := range rows {
+		names[i] = t.Name
+	}
+	events, err := r.client.LatestQualityEventsAnyVersionForNames(ctx, names)
+	if err != nil {
+		r.logger.Error("", "tag reconcile: knowledge-base verdict lookup: %v", err)
+		return
+	}
+	criteria := make(map[string]json.RawMessage, len(events))
+	for _, e := range events {
+		criteria[e.TagName] = e.Criteria
+	}
+	for _, t := range rows {
+		c, ok := criteria[t.Name]
+		if !ok || !admission.RetireKBNotSubject(true, c) {
+			continue
+		}
+		if t.AcceptedAt.Valid || t.StandingSource == tags.StandingOperator {
+			report.KBNotSubject.Protected++
+			r.logger.Info("", "tag reconcile: kb not-subject %q is protected by an operator decision — kept", t.Name)
+			continue
+		}
+		if report.ReportOnly {
+			report.KBNotSubject.Planned++
+			report.PlannedKBRemovals = append(report.PlannedKBRemovals, RetentionEntry{Name: t.Name, Reason: admission.ReasonKBNotSubject})
+			r.logger.Info("", "tag reconcile (report-only): would retire kb not-subject %q", t.Name)
+			continue
+		}
+		outcome, err := r.tag.RemoveKBNotSubject(ctx, t.ID)
+		if err != nil {
+			report.KBNotSubject.Failed++
+			r.logger.Error("", "tag reconcile: retire kb not-subject %q: %v", t.Name, err)
+			continue
+		}
+		switch outcome {
+		case curation.KBNotSubjectRemoved:
+			report.KBNotSubject.Removed++
+			report.KBRemoved = append(report.KBRemoved, RetentionEntry{Name: t.Name, Reason: admission.ReasonKBNotSubject})
+			r.logger.Info("", "tag reconcile: retired kb not-subject %q (evidence removed)", t.Name)
+		case curation.KBNotSubjectProtected:
+			report.KBNotSubject.Protected++
+			r.logger.Info("", "tag reconcile: kb not-subject %q is protected by an operator decision — kept", t.Name)
+		default:
+			report.KBNotSubject.Skipped++
+		}
+	}
+	r.logger.Info("", "tag reconcile: kb not-subject arm: worklist=%d removed=%d planned=%d protected=%d skipped=%d failed=%d report_only=%t",
+		report.KBNotSubject.Worklist, report.KBNotSubject.Removed, report.KBNotSubject.Planned,
+		report.KBNotSubject.Protected, report.KBNotSubject.Skipped, report.KBNotSubject.Failed, report.ReportOnly)
 }

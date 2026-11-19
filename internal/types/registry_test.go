@@ -120,6 +120,36 @@ func TestValidPersonClass(t *testing.T) {
 	}
 }
 
+// TestPersonClassesMirrorsValidPersonClass pins the closed set the reconcile KB gate ships to SQL: every
+// listed class must satisfy the validator and every validator-accepted class must be listed, or the probe
+// and the sweep can disagree about which rows count as complete.
+func TestPersonClassesMirrorsValidPersonClass(t *testing.T) {
+	if len(PersonClasses) == 0 {
+		t.Fatal("the probe needs a non-empty person-class set")
+	}
+	seen := map[string]bool{}
+	for _, class := range PersonClasses {
+		if seen[class] {
+			t.Errorf("PersonClasses lists %q twice", class)
+		}
+		seen[class] = true
+		if !ValidPersonClass(class) {
+			t.Errorf("PersonClasses lists %q, which the validator rejects", class)
+		}
+	}
+	for class, want := range map[string]bool{
+		PersonClassNotPerson: true, PersonClassRealIndividual: true, PersonClassMythologicalOrLegendary: true,
+		PersonClassFictional: true, PersonClassUncertain: true, "": false, "unknown": false,
+	} {
+		if ValidPersonClass(class) != want {
+			t.Fatalf("test baseline moved: ValidPersonClass(%q) = %v, want %v", class, !want, want)
+		}
+		if want && !seen[class] {
+			t.Errorf("validator accepts %q, which PersonClasses omits", class)
+		}
+	}
+}
+
 func TestParseRoundTrip(t *testing.T) {
 	for _, st := range allTaskStatuses {
 		got, err := ParseTaskStatus(string(st))

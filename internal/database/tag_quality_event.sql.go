@@ -14,6 +14,19 @@ import (
 	"github.com/lib/pq"
 )
 
+const deleteQualityEventsByName = `-- name: DeleteQualityEventsByName :execrows
+DELETE FROM tag_quality_event
+WHERE tag_name = ANY($1::text[])
+`
+
+func (q *Queries) DeleteQualityEventsByName(ctx context.Context, names []string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteQualityEventsByName, pq.Array(names))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const insertTagQualityEvent = `-- name: InsertTagQualityEvent :execrows
 INSERT INTO tag_quality_event
     (document_id, tag_name, criteria, pass, outcome, verdict_model, policy_version)
@@ -45,6 +58,79 @@ func (q *Queries) InsertTagQualityEvent(ctx context.Context, arg InsertTagQualit
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const kBNotSubjectRetireProbe = `-- name: KBNotSubjectRetireProbe :one
+SELECT EXISTS (
+    SELECT 1
+    FROM tag t
+    JOIN LATERAL (
+        SELECT e.criteria
+        FROM tag_quality_event e
+        WHERE e.tag_name = t.name
+        ORDER BY e.verdict_at DESC
+        LIMIT 1
+    ) latest ON true
+    WHERE t.origin = $1::text
+      AND t.accepted_at IS NULL
+      AND t.standing_source <> $2::text
+      AND latest.criteria ->> 'subject_matter' = 'false'
+      AND coalesce(latest.criteria ->> 'defer', 'false') = 'false'
+      AND latest.criteria ->> 'person_class' = ANY($3::text[])
+      AND latest.criteria ->> 'atomic' IS NOT NULL
+      AND latest.criteria ->> 'not_form_genre' IS NOT NULL
+)
+`
+
+type KBNotSubjectRetireProbeParams struct {
+	Origin           string
+	OperatorStanding string
+	PersonClasses    []string
+}
+
+// mirrors tags.KBNotSubjectRetire with analyzer.TagQualityCriteria.Complete(): the person_class and
+// atomic/not_form_genre presence checks keep superseded or incomplete rows from making the reconcile run
+// permanently due
+func (q *Queries) KBNotSubjectRetireProbe(ctx context.Context, arg KBNotSubjectRetireProbeParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, kBNotSubjectRetireProbe, arg.Origin, arg.OperatorStanding, pq.Array(arg.PersonClasses))
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const latestQualityEventsAnyVersionForNames = `-- name: LatestQualityEventsAnyVersionForNames :many
+SELECT DISTINCT ON (e.tag_name) e.tag_name, e.criteria
+FROM tag_quality_event e
+WHERE e.tag_name = ANY($1::text[])
+ORDER BY e.tag_name, e.verdict_at DESC
+`
+
+type LatestQualityEventsAnyVersionForNamesRow struct {
+	TagName  string
+	Criteria json.RawMessage
+}
+
+func (q *Queries) LatestQualityEventsAnyVersionForNames(ctx context.Context, tagNames []string) ([]LatestQualityEventsAnyVersionForNamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, latestQualityEventsAnyVersionForNames, pq.Array(tagNames))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestQualityEventsAnyVersionForNamesRow
+	for rows.Next() {
+		var i LatestQualityEventsAnyVersionForNamesRow
+		if err := rows.Scan(&i.TagName, &i.Criteria); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const latestTagQualityEventsForNames = `-- name: LatestTagQualityEventsForNames :many

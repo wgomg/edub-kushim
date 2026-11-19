@@ -9,6 +9,7 @@ package curation
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
@@ -520,6 +521,81 @@ func (s *Tag) Retire(ctx context.Context, id int64) (types.RetireStatus, error) 
 	}
 	s.logger.Info("", "tagquality[%s]: retire %q (reason=human-retire)", analyzer.TagQualityVersion, tag.Name)
 	return types.RetireRetired, nil
+}
+
+// KBNotSubjectOutcome is what one knowledge-base subject-matter removal decided under the tag row lock:
+// the value was removed with its evidence, an operator decision protects it, or the value's existence,
+// origin or verdict no longer satisfies the retire condition.
+type KBNotSubjectOutcome int
+
+// The three removal outcomes; skipped is the zero value, so an outcome that was never set never reads as a
+// removal.
+const (
+	KBNotSubjectSkipped KBNotSubjectOutcome = iota
+	KBNotSubjectRemoved
+	KBNotSubjectProtected
+)
+
+// RemoveKBNotSubject removes one stored knowledge-base value the judge answered is not a subject matter,
+// together with every quality verdict recorded for its name under any policy version: those rows were
+// written by the defective retire and should never have existed. The row is locked and the condition is
+// re-checked, so a value whose origin or verdict changed under the scan is skipped, and a value carrying
+// an operator decision — an acceptance or operator standing — is reported as protected and kept, never
+// removed (docs/adr/0013-operator-adjudications-outrank-versioned-verdicts.md). Removal keeps the retire
+// semantics: the row and its document assignments go and the name leaves the matcher store, with no
+// blocklist entry, so enrichment may propose the value again and a future document judges it fresh.
+func (s *Tag) RemoveKBNotSubject(ctx context.Context, id int64) (KBNotSubjectOutcome, error) {
+	tx, err := s.client.BeginTx(ctx, nil)
+	if err != nil {
+		return KBNotSubjectSkipped, errs.FromDB(err, "begin kb not-subject removal")
+	}
+	defer tx.Rollback()
+	txQ := s.client.WithTx(tx)
+
+	tag, err := txQ.GetTagForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return KBNotSubjectSkipped, nil
+		}
+		return KBNotSubjectSkipped, errs.FromDB(err, "lock kb not-subject tag")
+	}
+	if tag.Origin != tags.TagOriginKB {
+		return KBNotSubjectSkipped, nil
+	}
+	if tag.AcceptedAt.Valid || tag.StandingSource == tags.StandingOperator {
+		return KBNotSubjectProtected, nil
+	}
+	rows, err := txQ.LatestQualityEventsAnyVersionForNames(ctx, []string{tag.Name})
+	if err != nil {
+		return KBNotSubjectSkipped, errs.FromDB(err, "read kb not-subject verdict")
+	}
+	if len(rows) == 0 {
+		return KBNotSubjectSkipped, nil
+	}
+	var criteria analyzer.TagQualityCriteria
+	if err := json.Unmarshal(rows[0].Criteria, &criteria); err != nil {
+		return KBNotSubjectSkipped, nil
+	}
+	answers, ok := criteria.Result()
+	if !ok || !tags.KBNotSubjectRetire(true, answers.SubjectMatter, answers.Defer) {
+		return KBNotSubjectSkipped, nil
+	}
+
+	if err := txQ.DeleteTag(ctx, id); err != nil {
+		return KBNotSubjectSkipped, errs.FromDB(err, "remove kb not-subject tag")
+	}
+	if _, err := txQ.DeleteQualityEventsByName(ctx, []string{tag.Name}); err != nil {
+		return KBNotSubjectSkipped, errs.FromDB(err, "remove kb not-subject evidence")
+	}
+	if err := tx.Commit(); err != nil {
+		return KBNotSubjectSkipped, errs.FromDB(err, "commit kb not-subject removal")
+	}
+
+	if err := s.embedder.RemoveFromStore(ctx, []string{tag.Name}); err != nil {
+		s.logger.Error("", "tag service: remove kb not-subject tag %q from store: %v", tag.Name, err)
+	}
+	s.logger.Info("", "tagquality[%s]: retire %q (reason=kb_not_subject)", analyzer.TagQualityVersion, tag.Name)
+	return KBNotSubjectRemoved, nil
 }
 
 // Accept waives one provisional value's review deferral at an operator's request: when the value's latest

@@ -294,10 +294,13 @@ created (`Adjudicator.ApplyTagQuality`):
   abstention rejects with reason `kb_not_subject` instead of deferring. The nomination was
   made without the document in hand, so the judge's answer is the only aboutness evidence
   and the single-signal hold does not apply. The rule runs on both the fresh and the cached
-  decision path and never alters the cached criteria. Rejected names are dropped for that
-  document and never stored — their plan registrations and pending identity evidence are
-  removed before persist. A missing detail or similarity is absence of evidence, not a
-  failing signal.
+  decision path and never alters the cached criteria. The fresh retire records no verdict
+  row, and a cached retire deletes the name's recorded verdicts, so the name carries no
+  cached answer and a later document judges it on its own text. Retired names are dropped
+  for that document and never stored — their plan registrations and pending identity
+  evidence are removed before persist — and stored knowledge-base values the same answer
+  condemns are removed by the reconciliation arm (§9). A missing detail or similarity is
+  absence of evidence, not a failing signal.
 - **Judge call**: uncached candidates are judged in temperature-0 LLM calls over batches
   of up to 40 candidates per document; the reduced document text serves the
   `subject_matter` question alone, the other criteria answering on the candidate.
@@ -532,6 +535,20 @@ and writes nothing to the deleted-tag blocklist: a re-proposed name stays suppre
 the versioned verdict cache until a criteria-version bump re-judges it. Removals are
 bounded by `max_rejudge` per run.
 
+**KB not-subject removal** — the same run removes stored knowledge-base nominations the
+quality gate's answer condemns: an `origin='kb'` value whose latest recorded verdict, under
+any policy version, answers `subject_matter=false` with no abstention loses its row, its
+document assignments and every recorded verdict for its name, with no blocklist entry, so
+enrichment may propose the value again and a future document judges it fresh. The scan covers
+provisional and promoted values alike; identity and composition holds do not exempt it — the
+only exemption is an explicit operator decision, `accepted_at` set or
+`standing_source = 'operator'`, counted as protected and never removed. Verdict rows with
+`defer` true stay ambiguous between the judge's abstention and the parts pass's, so they
+never fire. Each removal re-checks origin, stamps and the latest verdict under the row lock
+and runs as one transaction. The due-work gate probes for a condemning backlog, so a quiet
+store runs the pass instead of reporting zero work; report-only and adjudicator-disabled
+runs plan without acting.
+
 **Identity evidence** — the reconcile does not resolve identity claims itself: the twin
 arm inserts pending `same_intent` evidence and the separate scheduled `tagidentity` pass
 resolves them through the shared resolver — a confirmed fold renames the tag (or aliases
@@ -543,9 +560,10 @@ each claim once, so the twin arm and the identity pass converge on whichever run
 category, judged/confirmed, flips by direction, aliases with reassignment counts, compound
 splits, twin counts and the consumed measurement run, skip reasons, the provisional-sweep
 counts, the demotion block with per-trigger counts and named entries, the kept-disagreement
-entries (operator decisions a fresh verdict disagrees with), and the retention
-block (removed and planned entries with their evidence reasons, plus held and
-orphan-owned counts). Served by
+entries (operator decisions a fresh verdict disagrees with), the retention block (removed
+and planned entries with their evidence reasons, plus held and orphan-owned counts), and
+the KB not-subject block (removed, planned, protected and skipped counts with named
+entries). Served by
 `GET /api/v1/tags/reconciliation/report` and the task's `result` field; the web UI
 renders it on the task detail page and as a status strip on the tags page. With the
 adjudicator disabled, runs log the worklist snapshot and complete without LLM calls; the

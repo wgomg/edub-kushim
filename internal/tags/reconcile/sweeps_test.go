@@ -13,6 +13,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/kb"
+	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/testutil"
@@ -634,4 +635,162 @@ func TestMeasurementRunJSONPinsAbsentShape(t *testing.T) {
 	if m["absent"] != true {
 		t.Errorf("absent = %v, want true", m["absent"])
 	}
+}
+
+// seedKBNotSubjectName stores one origin tag with a fresh current-version verdict under the given criteria
+// and links the document to the tag, so the removal arm reads it like a value the emission gate judged.
+func seedKBNotSubjectName(ctx context.Context, t *testing.T, client *database.Client, name, origin, criteria, outcome string) int64 {
+	t.Helper()
+	id, err := client.Queries.CreateTagWithOrigin(ctx, database.CreateTagWithOriginParams{Name: name, Origin: origin})
+	if err != nil {
+		t.Fatalf("create %s tag %q: %v", origin, name, err)
+	}
+	docID := database.CreateUniqueDocument(t, client.Queries, name+" doc")
+	database.MustAddDocumentTag(t, client.Queries, docID, id)
+	database.MustInsertTagQualityEvent(t, client.Queries, docID, name, criteria, outcome, analyzer.TagQualityVersion)
+	return id
+}
+
+const kbNotSubjectSweepCriteria = `{"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}`
+
+// TestSweepKBNotSubject pins the removal arm: origin='kb' rows the judge answered are not a subject matter
+// are removed with their evidence and counted, accepted rows are protected, and a report-only run plans
+// instead of removing.
+func TestSweepKBNotSubject(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	testDiscard := func(t *testing.T, reportOnly bool) {
+		t.Helper()
+		ctx := context.Background()
+		client := database.NewTestClient(t)
+		database.ResetTestDatabase(client.DB())
+		t.Cleanup(func() { client.DB().Close() })
+		logger := testutil.NewTestLogger()
+
+		removedID := seedKBNotSubjectName(ctx, t, client, "kb sweep removed", tags.TagOriginKB, kbNotSubjectSweepCriteria, "defer")
+		promotedID := seedKBNotSubjectName(ctx, t, client, "kb sweep promoted", tags.TagOriginKB, kbNotSubjectSweepCriteria, "defer")
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET promoted_at = now() WHERE id = $1", promotedID); err != nil {
+			t.Fatalf("set standing: %v", err)
+		}
+		protectedID := seedKBNotSubjectName(ctx, t, client, "kb sweep protected", tags.TagOriginKB, kbNotSubjectSweepCriteria, "defer")
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE tag SET accepted_at = now() WHERE id = $1", protectedID); err != nil {
+			t.Fatalf("stamp the acceptance: %v", err)
+		}
+		seedKBNotSubjectName(ctx, t, client, "kb sweep abstained", tags.TagOriginKB,
+			`{"subject_matter":false,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":true}`, "defer")
+		seedKBNotSubjectName(ctx, t, client, "kb sweep answered", tags.TagOriginKB,
+			`{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true}`, "admit")
+
+		report := &Report{Skips: map[string]int{}, ReportOnly: reportOnly}
+		r := &Reconciler{
+			client: client,
+			tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+			logger: logger,
+		}
+		r.sweepKBNotSubject(ctx, report)
+
+		testutil.AssertEqual(t, report.KBNotSubject.Worklist, 5, "the scan examines every kb-origin row")
+		testutil.AssertEqual(t, report.KBNotSubject.Protected, 1, "an acceptance is protected")
+		if reportOnly {
+			testutil.AssertEqual(t, report.KBNotSubject.Planned, 2, "the provisional and promoted removals are planned")
+			testutil.AssertEqual(t, len(report.PlannedKBRemovals), 2, "planned removals are listed")
+			testutil.AssertEqual(t, report.KBNotSubject.Removed, 0, "report-only runs remove nothing")
+		} else {
+			testutil.AssertEqual(t, report.KBNotSubject.Removed, 2, "the condemning provisional and promoted rows are removed")
+			testutil.AssertEqual(t, len(report.KBRemoved), 2, "removed names are listed")
+
+			for _, id := range []int64{removedID, promotedID} {
+				var exists bool
+				testutil.AssertNoError(t, client.DB().QueryRowContext(ctx,
+					"SELECT EXISTS (SELECT 1 FROM tag WHERE id = $1)", id).Scan(&exists), "read the row")
+				if exists {
+					t.Errorf("tag id %d should be gone", id)
+				}
+			}
+			for _, name := range []string{"kb sweep removed", "kb sweep promoted"} {
+				rows, err := client.Queries.LatestQualityEventsAnyVersionForNames(ctx, []string{name})
+				testutil.AssertNoError(t, err, "read evidence")
+				testutil.AssertEqual(t, len(rows), 0, "the removal takes the name's evidence with it")
+			}
+			var protectedExists bool
+			testutil.AssertNoError(t, client.DB().QueryRowContext(ctx,
+				"SELECT EXISTS (SELECT 1 FROM tag WHERE id = $1)", protectedID).Scan(&protectedExists), "read the protected row")
+			if !protectedExists {
+				t.Error("the accepted row must stay")
+			}
+		}
+	}
+
+	t.Run("removes condemning rows and exempts the accepted one", func(t *testing.T) {
+		testDiscard(t, false)
+	})
+
+	t.Run("report-only run plans the removals", func(t *testing.T) {
+		testDiscard(t, true)
+	})
+}
+
+// TestKBNotSubjectRetireProbeDueWork pins the due-work leg of the kb retirements probe: a quiet store
+// carrying no condemning kb verdict still reports zero work, while the same store with one such verdict
+// flips the gate off zero work and lets the full pass reach the removal arm, which reports the planned
+// removal in the report-only disabled run the gate test harness uses. The removal itself is pinned in
+// TestSweepKBNotSubject.
+func TestKBNotSubjectRetireProbeDueWork(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	probe := func(ctx context.Context, t *testing.T, client *database.Client) bool {
+		t.Helper()
+		due, err := client.Queries.KBNotSubjectRetireProbe(ctx, database.KBNotSubjectRetireProbeParams{
+			Origin:           tags.TagOriginKB,
+			OperatorStanding: tags.StandingOperator,
+			PersonClasses:    types.PersonClasses,
+		})
+		testutil.AssertNoError(t, err, "probe kb retirements")
+		return due
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+
+	quietGateStore(t, client)
+	seedCompletedReconcileTask(t, client)
+
+	if probe(ctx, t, client) {
+		t.Error("an empty store is not due work")
+	}
+
+	seedKBNotSubjectName(ctx, t, client, "kb probe due", tags.TagOriginKB, kbNotSubjectSweepCriteria, "defer")
+	if !probe(ctx, t, client) {
+		t.Error("a condemning kb verdict makes the reconcile run due")
+	}
+
+	report, err := newDisabledGateReconciler(t, client).Run(context.Background(), nil)
+	testutil.AssertNoError(t, err, "run")
+	if report.ZeroWork {
+		t.Error("the due probe must reach a pass instead of short-circuiting")
+	}
+	if report.KBNotSubject.Removed != 1 && report.KBNotSubject.Planned != 1 {
+		t.Errorf("removed = %d planned = %d, want the full pass to reach the removal arm", report.KBNotSubject.Removed, report.KBNotSubject.Planned)
+	}
+}
+
+// newDisabledGateReconciler wires the gate test reconciler with TagAdjudicator disabled: report-only runs
+// never call the reconcile judge path, so the run exercises every sweep without a working tools runner.
+// The disabled adjudicator is what production uses for scheduled reports, and the KB removal arm is a
+// database-only pass that applies the same gated actions there as in reconcile runs.
+func newDisabledGateReconciler(t *testing.T, client *database.Client) *Reconciler {
+	t.Helper()
+	r := newGateReconciler(t, client)
+	cfg := config.DefaultConfig(t.TempDir())
+	cfg.Enricher.TagAdjudicator.Enabled = false
+	r.getConfig = func() *config.Config { return cfg }
+	return r
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/llm/analyzer"
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/policy"
+	"github.com/wgomg/edub-kushim/internal/types"
 )
 
 // hasDueWork answers whether any reconcile arm has work this pass. The evidence categories carry time-driven
@@ -115,6 +116,18 @@ func (r *Reconciler) hasDueWork(ctx context.Context, cfg *config.Config) (bool, 
 		return false, fmt.Errorf("probe provisional tags: %w", err)
 	}
 	if provisional {
+		return true, nil
+	}
+
+	kbRetire, err := q.KBNotSubjectRetireProbe(ctx, database.KBNotSubjectRetireProbeParams{
+		Origin:           tags.TagOriginKB,
+		OperatorStanding: tags.StandingOperator,
+		PersonClasses:    types.PersonClasses,
+	})
+	if err != nil {
+		return false, fmt.Errorf("probe kb not-subject retirements: %w", err)
+	}
+	if kbRetire {
 		return true, nil
 	}
 

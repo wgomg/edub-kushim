@@ -1654,6 +1654,30 @@ func TestApplyTagQuality_KBInjected(t *testing.T) {
 		}
 	}
 
+	// setKBAdjudicatorJudgeOnly leaves HasTagAdjudicator false so stampDimension
+	// sees no parts verdict: it isolates the judge-only configuration without
+	// rebuilding the runner wiring.
+	setKBAdjudicatorJudgeOnly := func(t *testing.T, a *Adjudicator, adj *mockAdjudicator) {
+		t.Helper()
+		a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+		setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+		setUnexportedField(t, a.runner, "tagAdjudicator", nil)
+		adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+			results := make([]analyzer.TagQualityResult, len(candidates))
+			for i := range candidates {
+				results[i] = analyzer.TagQualityResult{
+					Index:         i,
+					SubjectMatter: false,
+					Dimension:     false,
+					PersonClass:   types.PersonClassNotPerson,
+					Atomic:        true,
+					NotFormGenre:  true,
+				}
+			}
+			return results, nil
+		}
+	}
+
 	readQualityRows := func(t *testing.T, q *database.Queries, ctx context.Context, name string) []database.LatestTagQualityEventsForNamesRow {
 		t.Helper()
 		rows, err := q.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
@@ -1700,10 +1724,7 @@ func TestApplyTagQuality_KBInjected(t *testing.T) {
 		}
 
 		rows := readQualityRows(t, q, ctx, "kb container")
-		adjAssertEqual(t, len(rows), 1, "one verdict row is recorded")
-		adjAssertEqual(t, rows[0].Pass, false, "recorded pass")
-		adjAssertEqual(t, rows[0].Outcome.String, "reject", "recorded outcome")
-		adjAssertEqual(t, rows[0].VerdictModel.String, "judge-model", "recorded model")
+		adjAssertEqual(t, len(rows), 0, "no verdict row is recorded")
 	})
 
 	t.Run("the same verdict without kb lineage defers for review", func(t *testing.T) {
@@ -1755,6 +1776,51 @@ func TestApplyTagQuality_KBInjected(t *testing.T) {
 		adjAssertEqual(t, decisions["kb mystery"].Reason, tags.ReasonJudgeDefer, "decision reason")
 	})
 
+	t.Run("a kb nomination with an abstained parts verdict is retired", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		setKBAdjudicator(t, a, adj)
+		adj.partFn = func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+			results := make([]analyzer.TagPartResult, len(values))
+			for i := range values {
+				results[i] = analyzer.TagPartResult{Index: i, Defer: true}
+			}
+			return results, nil
+		}
+		ctx := context.Background()
+		docID, _ := database.CreateTestDocument(t, q, "kb-parts-abstain-doc")
+
+		kept, decisions, err := a.ApplyTagQuality(ctx, kbInput(novelAnalysis("kb abstained parts"), docID, "kb abstained parts"), "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality() error = %v", err)
+		}
+		adjAssertEqual(t, len(kept), 0, "a parts abstention does not block the kb retire")
+		if _, ok := decisions["kb abstained parts"]; ok {
+			t.Errorf("a retired name must not carry a decision")
+		}
+
+		rows := readQualityRows(t, q, ctx, "kb abstained parts")
+		adjAssertEqual(t, len(rows), 0, "the retire records no verdict row")
+	})
+
+	t.Run("a kb nomination without a tag adjudicator is retired", func(t *testing.T) {
+		a, q, adj := newTestAdjudicator(t)
+		setKBAdjudicatorJudgeOnly(t, a, adj)
+		ctx := context.Background()
+		docID, _ := database.CreateTestDocument(t, q, "kb-no-adjudicator-doc")
+
+		kept, decisions, err := a.ApplyTagQuality(ctx, kbInput(novelAnalysis("kb no adjudicator"), docID, "kb no adjudicator"), "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality() error = %v", err)
+		}
+		adjAssertEqual(t, len(kept), 0, "the absence of parts evidence does not block the kb retire")
+		if _, ok := decisions["kb no adjudicator"]; ok {
+			t.Errorf("a retired name must not carry a decision")
+		}
+
+		rows := readQualityRows(t, q, ctx, "kb no adjudicator")
+		adjAssertEqual(t, len(rows), 0, "the retire records no verdict row")
+	})
+
 	t.Run("a cached not-subject verdict drops a kb nomination without a judge call", func(t *testing.T) {
 		a, q, adj := newTestAdjudicator(t)
 		setUnexportedField(t, a.runner, "tagQualityJudge", adj)
@@ -1783,10 +1849,7 @@ func TestApplyTagQuality_KBInjected(t *testing.T) {
 		adjAssertEqual(t, adj.qualityCall, 0, "the cache answers without a judge call")
 
 		rows := readQualityRows(t, q, ctx, "kb cached container")
-		adjAssertEqual(t, len(rows), 1, "the evidence row is written")
-		adjAssertEqual(t, rows[0].Pass, false, "recorded pass")
-		adjAssertEqual(t, rows[0].Outcome.String, "reject", "the overridden outcome is recorded")
-		adjAssertEqual(t, rows[0].VerdictModel.Valid, false, "the evidence row carries no model")
+		adjAssertEqual(t, len(rows), 0, "the cached evidence is deleted with the retire")
 	})
 
 	t.Run("the same cached verdict without kb lineage defers for review", func(t *testing.T) {

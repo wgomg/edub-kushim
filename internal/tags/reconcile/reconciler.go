@@ -117,6 +117,9 @@ type Report struct {
 	Retention             RetentionCounts      `json:"retention"`
 	Removed               []RetentionEntry     `json:"removed,omitempty"`
 	PlannedRemovals       []RetentionEntry     `json:"planned_removals,omitempty"`
+	KBNotSubject          KBNotSubjectCounts   `json:"kb_not_subject"`
+	KBRemoved             []RetentionEntry     `json:"kb_removed,omitempty"`
+	PlannedKBRemovals     []RetentionEntry     `json:"planned_kb_removals,omitempty"`
 }
 
 // SiblingCounts tallies the containment worklist for the run report: how many pairs want a human's eye and
@@ -179,6 +182,18 @@ type RetentionCounts struct {
 type RetentionEntry struct {
 	Name   string `json:"name"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// KBNotSubjectCounts tallies the knowledge-base subject-matter arm: the stored KB-origin values it examined,
+// the ones it removed with their evidence, the removals a report-only run planned, the values an operator
+// decision protects, and the values whose row or verdict changed under the scan.
+type KBNotSubjectCounts struct {
+	Worklist  int `json:"worklist"`
+	Removed   int `json:"removed"`
+	Planned   int `json:"planned"`
+	Protected int `json:"protected"`
+	Skipped   int `json:"skipped"`
+	Failed    int `json:"failed"`
 }
 
 // WorklistCounts sizes each arm the run fetched before any cap: the four pair re-check categories, the
@@ -381,6 +396,7 @@ func (r *Reconciler) run(ctx context.Context, progress task.ProgressFunc) (Repor
 		r.planCompoundSplits(compoundWorklist, &report)
 		r.sweepTwins(ctx, cfg, &report, pairKeys)
 		r.sweepKBMints(ctx, cfg, &report)
+		r.sweepKBNotSubject(ctx, &report)
 		r.logger.Info("", "tag reconcile: adjudicator is disabled — no decisions were changed (report_only=%t); pairs needing re-check: %d under older rules, %d never judged, %d with usage drift, %d stale over 90 days; %d stored compounds (would split %d deterministically); %d twin pairs proposed",
 			report.ReportOnly, report.Worklist.Stale, report.Worklist.Unjudged, report.Worklist.Drifted, report.Worklist.Aged, report.Worklist.Compounds, len(report.PlannedCompoundSplits), report.Worklist.Twins)
 		return report, nil
@@ -410,6 +426,7 @@ func (r *Reconciler) run(ctx context.Context, progress task.ProgressFunc) (Repor
 	}
 	r.sweepTwins(ctx, cfg, &report, pairKeys)
 	r.sweepKBMints(ctx, cfg, &report)
+	r.sweepKBNotSubject(ctx, &report)
 	r.sweepPromotedTags(ctx, cfg, &report)
 	r.sweepOrphanTags(ctx, cfg, &report)
 	r.sweepRetentionTags(ctx, cfg, &report)

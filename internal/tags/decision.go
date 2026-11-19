@@ -140,6 +140,16 @@ func DecideAdmission(f AdmissionFeatures) AdmissionDecision {
 	}
 }
 
+// KBNotSubjectRetire reports whether a knowledge-base nomination's judge answers condemn it: the value is a
+// KB nomination, the judge answered it is not a subject matter of the document, and the judge did not
+// abstain. The stored defer key merges the judge's abstention with the parts-pass abstention, so a stored
+// false is the judge's own answer — the unambiguous case — and an abstained answer never retires. The rule
+// is one definition shared by the emission gate, the reconciliation removal and the curation removal's
+// locked re-check.
+func KBNotSubjectRetire(kb, subjectMatter, abstained bool) bool {
+	return kb && !subjectMatter && !abstained
+}
+
 // CompositionFeatures is one compound candidate's evidence for the split gate. The fold sets exactly one of
 // PartsDimensional and PartsNotDimensional and exactly one compound status — or the deferred and unavailable
 // flags — and a feature the fold cannot establish stays false, so an unrecognized combination reaches the

@@ -206,11 +206,18 @@ their uphill containers: `hypernym`, `instance_hypernym` and `holo_*` edges for 
 `/r/IsA` and `/r/PartOf` for ConceptNet. Containers that are not already candidates enter
 the candidate list as ordinary candidates and pass the existing name-list, time and quality
 gates; about-ness is the quality gate's call. A nomination the quality judge answers is not
-a subject matter of the document is rejected at birth (reason `kb_not_subject`) instead of
+a subject matter of the document is retired at birth (reason `kb_not_subject`) instead of
 being deferred to review: the container was nominated without the document in hand, so the
 judge's answer is the only aboutness evidence and the single-signal deferral band does not
-apply. An abstained answer still defers, and the parts of a split nomination inherit the
-rule. A container absent from the store is nominated only when an OEWN edge attests it. The
+apply. The retire records no verdict row, and a cached verdict that answers the same way is
+deleted with the retire: the name carries no cached answer, so a later document judges it on
+its own text. An abstained answer still defers, and the parts of a split nomination inherit
+the rule. The scheduled reconciliation pass applies the same answer to stored values
+([consolidation](consolidation.md) §9): an `origin='kb'` tag whose latest recorded verdict,
+under any policy version, answers the subject-matter question with no abstention loses its
+row, its assignments and every recorded verdict for its name, without a blocklist entry,
+while an explicit operator decision — an acceptance or operator standing — keeps the value.
+A container absent from the store is nominated only when an OEWN edge attests it. The
 uphill filter keys on each source's native reltype spelling (bare for OEWN, `/r/`-prefixed
 for ConceptNet), because the family vocabulary alone cannot carry edge direction.
 Nominations are capped per document (`kbMaxContainersPerDocument`).
