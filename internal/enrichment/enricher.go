@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -484,19 +485,26 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	// the rejection test
 	planOutputs := admission.OutputByInput(identityPlan)
 
-	var qualityDecisions map[string]tags.AdmissionDecision
-	rejected := make(map[string]bool)
-	if e.config.Enricher.TagQuality.Enabled {
-		planned := analysis.Tags
-		analysis.Tags, qualityDecisions, err = e.admission.ApplyTagQuality(ctx, admission.TagQualityInput{
-			Analysis:    analysis,
+	// one builder for the quality-gate input keeps every judged pass on identical criteria; only the
+	// tag list and the plan-output map differ between the emission and re-kept passes
+	qualityInput := func(a *tools.ContentAnalysisResult, outputs map[string]string) admission.TagQualityInput {
+		return admission.TagQualityInput{
+			Analysis:    a,
 			Decisions:   decisions,
 			DBNames:     dbNames,
 			ReducedText: llmContent.Text,
 			DocID:       document.ID,
 			ForceDefer:  pendingLanguage,
-			KBInjected:  kbGateNames(kbDescended, planOutputs),
-		}, logId)
+			KBInjected:  kbGateNames(kbDescended, outputs),
+		}
+	}
+
+	var qualityDecisions map[string]tags.AdmissionDecision
+	rejected := make(map[string]bool)
+	if e.config.Enricher.TagQuality.Enabled {
+		planned := analysis.Tags
+		analysis.Tags, qualityDecisions, err = e.admission.ApplyTagQuality(
+			ctx, qualityInput(analysis, planOutputs), logId)
 		if err != nil {
 			if te := e.creditPause(logId, err); te != nil {
 				return nil, DocumentCounts{}, te
@@ -519,7 +527,9 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	// keeps whole and applies the survivors alongside, so a partial rejection never destroys the
 	// phrase's coverage. The compound is re-registered because the split expansion had
 	// already replaced it before identity planning; a kept compound whose part was rejected only drops
-	// that part from what it applies alongside
+	// that part from what it applies alongside; the re-kept names are collected so the quality gate can
+	// judge them before persist
+	var partialKeeps []string
 	for i := range compositionRows {
 		row := &compositionRows[i]
 		row.DocumentID = document.ID
@@ -551,12 +561,46 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			row.Disposition = tags.CompositionKeep
 			row.Reason = tags.CompositionReasonPartialParts
 			row.Parts = pruneRejectedParts(row.Parts, planOutputs, rejected)
-			e.applyPartialKeep(&identityPlan, analysis, row.Candidate)
+			if name := e.applyPartialKeep(&identityPlan, analysis, row.Candidate); name != "" {
+				partialKeeps = append(partialKeeps, name)
+			}
 			e.logger.Info(logId, "tag split[%s]: keep %q (reason=%s survivors=%d)",
 				analyzer.TagSplitVersion, row.Candidate, tags.CompositionReasonPartialParts, survived)
 		}
 	}
 	identityPlan.Composition = compositionRows
+
+	// the re-kept names are judged here
+	if e.config.Enricher.TagQuality.Enabled && len(partialKeeps) > 0 {
+		rekeptOutputs := admission.OutputByInput(identityPlan)
+		gateAnalysis := *analysis
+		gateAnalysis.Tags = partialKeeps
+		keptTags, partialDecisions, gateErr := e.admission.ApplyTagQuality(
+			ctx, qualityInput(&gateAnalysis, rekeptOutputs), logId)
+		if gateErr != nil {
+			if te := e.creditPause(logId, gateErr); te != nil {
+				return nil, DocumentCounts{}, te
+			}
+			return nil, DocumentCounts{}, &task.Error{
+				ReqID: logId,
+				Err:   fmt.Errorf("partial-keep quality gate failed: %w", gateErr),
+			}
+		}
+		kept := make(map[string]bool, len(keptTags))
+		for _, name := range keptTags {
+			kept[name] = true
+		}
+		for _, name := range partialKeeps {
+			if !kept[name] {
+				rejected[name] = true
+			}
+		}
+		identityPlan = identityPlan.DropTagNames(rejected)
+		analysis.Tags = slices.DeleteFunc(analysis.Tags, func(name string) bool {
+			return rejected[name]
+		})
+		maps.Copy(qualityDecisions, partialDecisions)
+	}
 
 	statsStr := "null"
 	if analysis.Stats != nil {
@@ -1019,21 +1063,22 @@ func pruneRejectedParts(parts []string, outputs map[string]string, rejected map[
 // replaced it before identity planning, so without a fresh registration the phrase would not be persisted
 // even though the row now disposes as a keep. It appends a plain registration the persist step
 // resolves against the live store (house form, alias, key equality, blocklist), so no extra store read is
-// needed; the compound is appended to the emitted tags under its stored name. The registration carries no
-// admission decision, so with the quality gate on the compound is born provisional and the reconcile
-// provisional sweep judges it — the sweep, not a second in-run gate call, is the single owner of a
-// provisional tag's rubric. A compound the plan already aliases onto another name is skipped whole: the
-// alias action moves its documents to the winner, and a fresh registration would resolve onto the row that
-// action deletes.
-func (e *Enricher) applyPartialKeep(plan *tags.Plan, analysis *tools.ContentAnalysisResult, candidate string) {
+// needed; the compound is appended to the emitted tags under its stored name, which is returned for the
+// caller to judge. The registration carries no admission decision, so the caller runs the quality gate
+// over the re-kept names before persist, so a clean run never leaves the birth verdict-less, and the
+// reconciliation sweep keeps only the genuinely unjudgeable cases — a judge outage or interruption at
+// birth — and the stored verdict-less re-emissions. A compound the plan already aliases onto another name
+// is skipped whole: the alias action moves its documents to the winner, and a fresh registration would
+// resolve onto the row that action deletes.
+func (e *Enricher) applyPartialKeep(plan *tags.Plan, analysis *tools.ContentAnalysisResult, candidate string) string {
 	if slices.Contains(analysis.Tags, candidate) {
-		return
+		return ""
 	}
 	name := tags.StoredName(candidate)
 	if slices.ContainsFunc(plan.Aliases, func(a tags.AliasAction) bool {
 		return a.AliasName == name
 	}) {
-		return
+		return ""
 	}
 	plan.Registrations = append(plan.Registrations, tags.Registration{
 		Input:       candidate,
@@ -1043,6 +1088,7 @@ func (e *Enricher) applyPartialKeep(plan *tags.Plan, analysis *tools.ContentAnal
 	if name != "" && !slices.Contains(analysis.Tags, name) {
 		analysis.Tags = append(analysis.Tags, name)
 	}
+	return name
 }
 
 func normalizedPeopleKey(p database.People) string {

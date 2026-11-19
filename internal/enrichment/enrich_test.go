@@ -22,6 +22,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/tags"
 	"github.com/wgomg/edub-kushim/internal/tags/curation"
 	"github.com/wgomg/edub-kushim/internal/task"
+	"github.com/wgomg/edub-kushim/internal/testutil"
 	"github.com/wgomg/edub-kushim/internal/textnorm"
 	"github.com/wgomg/edub-kushim/internal/tools"
 	"github.com/wgomg/edub-kushim/internal/types"
@@ -556,7 +557,9 @@ func TestApplyPartialKeep(t *testing.T) {
 		}
 		analysis := &tools.ContentAnalysisResult{}
 
-		e.applyPartialKeep(plan, analysis, "military organization")
+		if got := e.applyPartialKeep(plan, analysis, "military organization"); got != "" {
+			t.Errorf("applyPartialKeep() = %q, want an empty name for the skipped alias", got)
+		}
 
 		if len(plan.Registrations) != 0 {
 			t.Errorf("registrations = %+v, want none for a compound the plan aliases", plan.Registrations)
@@ -572,7 +575,9 @@ func TestApplyPartialKeep(t *testing.T) {
 		}
 		analysis := &tools.ContentAnalysisResult{}
 
-		e.applyPartialKeep(plan, analysis, "civil war")
+		if got := e.applyPartialKeep(plan, analysis, "civil war"); got != "civil war" {
+			t.Errorf("applyPartialKeep() = %q, want the registered stored name", got)
+		}
 
 		if len(plan.Registrations) != 1 {
 			t.Fatalf("registrations = %+v, want the compound registered", plan.Registrations)
@@ -585,4 +590,171 @@ func TestApplyPartialKeep(t *testing.T) {
 			t.Errorf("emitted tags = %v, want %v", analysis.Tags, want)
 		}
 	})
+}
+
+// stubEnrichAnalyzer returns one fixed analysis result so the full enrichment path runs against a
+// controlled tag list instead of an LLM.
+type stubEnrichAnalyzer struct{ result *analyzer.AnalysisResult }
+
+func (s *stubEnrichAnalyzer) Analyze(context.Context, string, []analyzer.TypeRef, []analyzer.TypeRef, []string) (*analyzer.AnalysisResult, error) {
+	return s.result, nil
+}
+
+func (s *stubEnrichAnalyzer) AnalyzeDocType(context.Context, *analyzer.AnalysisResult, string, []analyzer.TypeRef, analyzer.DocMetadata) (string, error) {
+	return "", nil
+}
+
+func (s *stubEnrichAnalyzer) Endpoint() (string, string) { return "test", "judge-model" }
+
+// stubEnrichJudge answers every judged tag pass locally: a composition split whose first part fails the
+// quality rubric, and a configurable rubric answer for the re-kept compound itself.
+type stubEnrichJudge struct{ compoundAdmit bool }
+
+func (s *stubEnrichJudge) Adjudicate(context.Context, []analyzer.TagPairEvidence) ([]analyzer.TagVerdictResult, error) {
+	return nil, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagConflicts(context.Context, []analyzer.TagConflictCandidate) ([]analyzer.TagConflictResult, error) {
+	return nil, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagPhraseFolds(context.Context, []analyzer.TagPhraseFoldCandidate) ([]analyzer.TagPhraseFoldResult, error) {
+	return nil, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagIdentity(context.Context, []analyzer.TagIdentityCandidate) ([]analyzer.TagIdentityResult, error) {
+	return nil, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagRelations(context.Context, []analyzer.TagRelationCandidate) ([]analyzer.TagRelationResult, error) {
+	return nil, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagParts(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	out := make([]analyzer.TagPartResult, len(values))
+	for i, value := range values {
+		out[i] = analyzer.TagPartResult{Index: i, Dimensional: true, Defer: value == ""}
+	}
+	return out, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagCompounds(_ context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
+	out := make([]analyzer.TagCompoundResult, len(candidates))
+	for i := range candidates {
+		out[i] = analyzer.TagCompoundResult{Index: i, Status: analyzer.TagCompoundComposition}
+	}
+	return out, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagTranslations(_ context.Context, values []string) ([]analyzer.TagTranslationResult, error) {
+	out := make([]analyzer.TagTranslationResult, len(values))
+	for i, value := range values {
+		out[i] = analyzer.TagTranslationResult{Index: i, Translation: value}
+	}
+	return out, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagQuality(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+	out := make([]analyzer.TagQualityResult, len(candidates))
+	for i, candidate := range candidates {
+		out[i] = analyzer.TagQualityResult{
+			Index: i, SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassNotPerson,
+			Atomic: true, NotFormGenre: true,
+		}
+		if candidate.Term == "quartz" || (candidate.Term == "quartz widget" && !s.compoundAdmit) {
+			out[i].SubjectMatter, out[i].Dimension, out[i].Atomic, out[i].NotFormGenre = false, false, false, false
+			out[i].PersonClass = types.PersonClassRealIndividual
+		}
+	}
+	return out, nil
+}
+
+func (s *stubEnrichJudge) JudgeTagAudit(context.Context, string, []analyzer.TagAuditCandidate) ([]analyzer.TagAuditResult, error) {
+	return nil, nil
+}
+
+// TestEnrich_ReKeptCompoundIsJudgedInline pins the quality verdict of a compound whose split degrades to
+// a partial-parts keep: whether the in-run gate admits or rejects it, a verdict row must exist before
+// persist, and a rejected compound must leave neither a tag row nor a document assignment.
+func TestEnrich_ReKeptCompoundIsJudgedInline(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	const compound = "quartz widget"
+	tests := []struct {
+		name        string
+		compoundOk  bool
+		wantCreated bool
+		wantOutcome string
+	}{
+		{"reject drops the compound before persist", false, false, "reject"},
+		{"admit creates the compound with a verdict", true, true, "admit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := database.NewTestClient(t)
+			database.ResetTestDatabase(client.DB())
+			ctx := context.Background()
+			logger := log.NewDiscardLogger()
+			cfg := &config.Config{Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{
+					Enabled: true, Llm: config.LlmConfig{Provider: "test", Model: "judge-model"},
+				},
+				TagQuality: config.TagQualityConfig{
+					Enabled: true, Llm: config.LlmConfig{Provider: "test", Model: "judge-model"},
+				},
+				TagReconcile: config.TagReconcileConfig{RecurrenceFloor: 10},
+			}}
+			e := NewEnricher(cfg, logger, client, curation.NewTag(client, logger, testutil.NewMockEmbedder()), &barMatcher{})
+			judge := &stubEnrichJudge{compoundAdmit: tc.compoundOk}
+			setUnexportedField(t, e.runner, "contentAnalyzer", &stubEnrichAnalyzer{result: &analyzer.AnalysisResult{
+				Title: "Language reference", DocType: "book", Language: "eng",
+				Tags:       []string{compound},
+				TagDetails: []analyzer.TagDetail{{Term: compound, Category: analyzer.TagCategoryTopic}},
+			}})
+			setUnexportedField(t, e.runner, "tagAdjudicator", judge)
+			setUnexportedField(t, e.runner, "tagLexicalGate", judge)
+			setUnexportedField(t, e.runner, "tagQualityJudge", judge)
+
+			docID := database.CreateUniqueDocument(t, client.Queries, "rekept-compound")
+			doc := database.Document{
+				ID: docID, DocumentID: fmt.Sprintf("rekept-compound-%d", docID),
+				StoragePath: "rekept-compound.pdf", WordCount: 100,
+				TextContent: sql.NullString{String: "a reference about language", Valid: true},
+			}
+			if _, _, err := e.Enrich(ctx, doc, task.NoopProgress); err != nil {
+				t.Fatalf("Enrich: %v", err)
+			}
+
+			rows, err := client.Queries.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+				PolicyVersion: analyzer.TagQualityVersion, TagNames: []string{compound},
+			})
+			if err != nil {
+				t.Fatalf("read quality events: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("quality rows for %q = %d, want 1 (a clean run must judge the re-kept compound)", compound, len(rows))
+			}
+			if got := rows[0].Outcome.String; got != tc.wantOutcome {
+				t.Errorf("quality outcome = %q, want %q", got, tc.wantOutcome)
+			}
+			var exists bool
+			if err := client.DB().QueryRowContext(ctx,
+				"SELECT EXISTS(SELECT 1 FROM tag WHERE name = $1)", compound).Scan(&exists); err != nil {
+				t.Fatalf("read tag row: %v", err)
+			}
+			if exists != tc.wantCreated {
+				t.Errorf("tag row exists = %t, want %t", exists, tc.wantCreated)
+			}
+			var reason string
+			if err := client.DB().QueryRowContext(ctx,
+				"SELECT reason FROM tag_composition_event WHERE candidate = $1 AND disposition = 'keep' LIMIT 1",
+				compound).Scan(&reason); err != nil {
+				t.Fatalf("read composition keep row: %v", err)
+			}
+			if reason != tags.CompositionReasonPartialParts {
+				t.Errorf("composition reason = %q, want %q", reason, tags.CompositionReasonPartialParts)
+			}
+		})
+	}
 }

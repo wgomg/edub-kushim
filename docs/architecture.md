@@ -433,9 +433,12 @@ The enrichment pipeline:
     decided from their cached verdict row, unless an operator acceptance waives
     the recorded deferral. Influence is revocable: a promoted value
    that stops qualifying is demoted — its standing and store membership are
-   withdrawn while the row, its assignments, and the demotion record stay — and a
-   verdict-less provisional (judge outage) is never re-judged in flight — a
-   name in the tag table is not novel, so the judge does not see it again.
+   withdrawn while the row, its assignments, and the demotion record stay. Every
+   birth is judged before persist — including a compound re-kept after a partial
+   part rejection, which gets its own gate pass — so a verdict-less provisional
+   means a judge outage or interruption at birth, and such a name is never
+   re-judged in flight: a name in the tag table is not novel, so the judge does
+   not see it again.
    Those names are resolved later by the scheduled tag reconciliation, whose
     provisional phase re-derives the decision from stored verdicts and
     re-judges the rest, or by an operator through the provisional review queue

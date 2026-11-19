@@ -824,7 +824,8 @@ for i := range 2 {
     alongside pruned of rejected ones, or the reason it could
     not be judged — a split that lost every admitted part is a `part_rejected`
     drop that keeps the parts it resolved, and one that lost some but not all is a
-    `partial_parts` keep that stands whole with its survivors applied alongside)
+    `partial_parts` keep that stands whole with its survivors applied alongside,
+    with the re-kept compound judged by the quality gate before persist)
     with a matching `tag split[...]` log line. Under the shared
     judged-call policy (§7) a retryable split-judge failure is retried up to the
     section's `max_retries`, a credit exhaustion aborts the document so the batch
@@ -888,7 +889,14 @@ for i := range 2 {
     re-emission). Every other non-credit failure keeps every novel tag with a
     defer decision, logged as a WARN naming the kept candidates — under the gate
     those births are **provisional** (no verdict row); a credit-exhaustion
-    failure aborts the document so the batch pauses.
+    failure aborts the document so the batch pauses. A compound re-kept by the
+    `partial_parts` degradation is judged by a second pass over the kept list
+    after the split reconciliation: it runs under the same rubric, KB narrowing,
+    caches, deterministic signals, and failure semantics, so an admit or defer
+    writes the verdict row like any other birth, and a reject drops the re-kept
+    registration before persist while the composition row keeps its
+    `partial_parts` keep. Only a judge outage or interruption at birth leaves a
+    provisional verdict-less.
 13. **Persist metadata** (`enricher.go:456-463`): title truncated to 127
     (`truncate`), doc type validated against the DB list (fallback
     `"undetermined"`), `UpdateDocumentMetadata`.
@@ -913,8 +921,8 @@ for i := range 2 {
     promotion floor — `enricher.tag_reconcile.recurrence_floor` (default 10 live
     documents) → `PromoteTags`; trashed carriers do not count, and the same rule backs the
     reconciliation sweep), and only the promoted names are added to the store.
-    Verdict-less provisionals are resolved later by the scheduled sweep or the
-    review queue (see the
+    Verdict-less provisionals — a judge outage or interruption at birth — are
+    resolved later by the scheduled sweep or the review queue (see the
     [semantic matching promotion section](semantic-matching.md#promotion-out-of-quarantine)).
 16. **People to DB** (`enricher.go:555-640`): dedupe by normalized name,
     `CreatePeople` with a race fallback (`sql.ErrNoRows` →

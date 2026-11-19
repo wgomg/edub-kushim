@@ -369,10 +369,11 @@ criteria-version re-judgment of an `operator` row records the fresh verdict and 
 disagreement, but revokes nothing: only mass decay still applies, and the standing ends
 through an explicit operator action. An `auto` row answers to the ordinary demotion rules.
 
-Verdict-less provisionals — judge outages and re-emitted legacy rows — are not re-judged
-in flight: a name already present in the tag table is not novel, so the judge never sees
-it again. They are re-judged by the reconciliation sweep once they pass
-`provisional_grace_days` (§8).
+Verdict-less provisionals — judge outages or interruptions at birth, and re-emitted
+legacy rows — are not re-judged in flight: a name already present in the tag table is
+not novel, so the judge never sees it again. They are re-judged by the reconciliation
+sweep once they pass `provisional_grace_days` (§8). A compound re-kept by a partial part
+rejection is judged during emission before persist, so it does not enter this set.
 
 Operators resolve what remains from the tags page's "New tags" tab or the API:
 `GET /api/v1/tags/provisional` lists provisional tags with a live `document_count` and
