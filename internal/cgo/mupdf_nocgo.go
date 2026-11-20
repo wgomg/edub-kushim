@@ -38,6 +38,14 @@ func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width
 	return 0, 0, nil, nil, errors.New("MuPDF not available without CGo")
 }
 
+func (d *MuDocument) PageSizePixels(ctx *MuContext, pageNum int, dpi float64) (width, height int, err error) {
+	return 0, 0, errors.New("MuPDF not available without CGo")
+}
+
+func (d *MuDocument) RenderTile(ctx *MuContext, pageNum int, dpi float64, x0, y0, x1, y1 int) (samples []byte, width, height, ox, oy int, err error) {
+	return nil, 0, 0, 0, 0, errors.New("MuPDF not available without CGo")
+}
+
 func FreePixmap(ctx *MuContext, pixmap *Pixmap) {}
 
 func (d *MuDocument) Close(ctx *MuContext) {}

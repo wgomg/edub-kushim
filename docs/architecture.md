@@ -223,7 +223,11 @@ When active, the gosseract adapter processes each page at 200 DPI — source
 material comes from a MuPDF render (image‑only PDF pages) or from a direct
 Go `image.Decode` (standalone PNG, JPEG, TIFF) — encodes to PNG, OCRs with
 Tesseract, and builds a searchable PDF with `go‑pdf/fpdf` using **text
-rendering mode 3** (`3 Tr`) for invisible‑but‑selectable text.
+rendering mode 3** (`3 Tr`) for invisible‑but‑selectable text. Pages larger
+than a 4 MP tile budget are rendered and OCR'd as a grid of bounded tiles
+(2000 px cores with a 128 px OCR‑only overlap), so the child's per‑page
+working memory does not scale with the page's declared dimensions; pages that
+fit the budget keep the single‑render single‑JPEG path.
 
 ### 4. Database Integration
 
@@ -875,12 +879,14 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
   processed copy if no fallback is set. Configure via `pdfoptimizer.fallback: 'gs'` to
   use Ghostscript as the alternative.
 
-  Additionally, the **page render pipeline** has a hard cap of 100 MP
-  (`MUPDF_MAX_RENDER_PIXELS`) on the pixel area of any single rendered page.
-  This runs before pixmap allocation, preventing a malicious or malformed PDF
-  with an extreme MediaBox from causing an unbounded memory allocation (memory-
-  exhaustion DoS). The ceiling allows large-format posters (~40×60 in at
-  200 DPI) while keeping the RGB buffer under ~300 MB.
+  Additionally, the **page render pipeline** caps the pixel area of any single
+  rendered page at 100 MP (`MUPDF_MAX_RENDER_PIXELS`). The probe that measures
+  a page enforces the cap before any pixmap exists, so a malicious or
+  malformed PDF with an extreme MediaBox cannot cause an unbounded allocation
+  (memory-exhaustion DoS). Pages between the 4 MP tile budget and the cap are
+  rendered and OCR'd as bounded tiles (at most 256 per page, 100,000 per
+  document), keeping the per-page working set independent of the declared page
+  size. The ceiling allows large-format posters (~40×60 in at 200 DPI).
 - **Hugot ORT backend**: ONNX Runtime downloaded at runtime on first use — requires internet access. The Go backend has no runtime deps. ORT's CPU memory arena and memory pattern pre-allocation are disabled by default (`HugotConfig.CpuMemArena=false`, `MemPattern=false`) to cap idle RSS at ~2.2–2.5 GB rather than retaining peak-inference buffers (~4–5 GB). This adds ~10–20% per-inference latency from buffer re-allocation, which is dwarfed by text extraction, OCR, and LLM API latency in the enrichment pipeline. Toggle to `true` in `DefaultConfig` to restore ORT defaults if performance is unacceptable.
 - **Matcher memory safety**: `enricher.tagmatcher.chunk_size` defaults to `4096` tokens (not full context) to bound per-request inference memory (~4–6 GB peak with BGE-M3). `0` opts into the model's full context (8180 tokens for BGE-M3), which scales attention memory roughly quadratically and can exceed 10 GB per request — an OOM risk on small hosts. See the [semantic matching guide](developer-guide/semantic-matching.md).
 - **Role enforcement**: All API routes are gated by `RequireRole` middleware. The auth middleware reads the user's role from the database (for both JWT and API key paths) and injects it into request context. Three roles exist: `admin` (user management, logs), `editor` (all mutations, batch operations, consume), and `viewer` (read-only access). Self-service `/me` endpoints are accessible to any authenticated user. The `auth_enabled: false` config bypasses all middleware, making roles irrelevant.

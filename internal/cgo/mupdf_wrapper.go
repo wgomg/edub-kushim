@@ -116,6 +116,25 @@ static int mupdf_extract_page_text(fz_context *ctx, fz_document *doc,
 // DPI) while keeping a single RGB buffer under ~300 MB.
 #define MUPDF_MAX_RENDER_PIXELS (100000000LL)
 
+// mupdf_device_bbox rounds a page's bounds in device space at the caller's scale. Every render path
+// derives its irect here, so page measurement, full-page renders and tile renders can never disagree
+// on rounding.
+static fz_irect mupdf_device_bbox(fz_context *ctx, fz_page *page, fz_matrix ctm)
+{
+	return fz_round_rect(fz_transform_rect(fz_bound_page(ctx, page), ctm));
+}
+
+// mupdf_check_render_pixels enforces the render cap on a device-space irect, keeping pathological page
+// dimensions from reaching fz_new_pixmap_with_bbox.
+static void mupdf_check_render_pixels(fz_context *ctx, fz_irect bbox)
+{
+	long long rw = (long long)bbox.x1 - (long long)bbox.x0;
+	long long rh = (long long)bbox.y1 - (long long)bbox.y0;
+	if (rw <= 0 || rh <= 0 || rw * rh > MUPDF_MAX_RENDER_PIXELS) {
+		fz_throw(ctx, FZ_ERROR_GENERIC, "page dimensions exceed render limit");
+	}
+}
+
 // mupdf_render_page renders a page to an RGB pixmap at the given DPI.
 // Returns 0 on success, non-zero on error. Caller must fz_drop_pixmap the result.
 static int mupdf_render_page(fz_context *ctx, fz_document *doc,
@@ -133,15 +152,9 @@ static int mupdf_render_page(fz_context *ctx, fz_document *doc,
 
 	fz_try(ctx) {
 		page = fz_load_page(ctx, doc, page_num);
-		fz_rect bounds = fz_bound_page(ctx, page);
 		ctm = fz_scale(dpi / 72.0f, dpi / 72.0f);
-		fz_irect bbox = fz_round_rect(fz_transform_rect(bounds, ctm));
-
-		long long rw = (long long)bbox.x1 - (long long)bbox.x0;
-		long long rh = (long long)bbox.y1 - (long long)bbox.y0;
-		if (rw <= 0 || rh <= 0 || rw * rh > MUPDF_MAX_RENDER_PIXELS) {
-			fz_throw(ctx, FZ_ERROR_GENERIC, "page dimensions exceed render limit");
-		}
+		fz_irect bbox = mupdf_device_bbox(ctx, page, ctm);
+		mupdf_check_render_pixels(ctx, bbox);
 
 		pixmap = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), bbox, NULL, 0);
 		fz_clear_pixmap_with_value(ctx, pixmap, 0xFF);
@@ -161,6 +174,88 @@ static int mupdf_render_page(fz_context *ctx, fz_document *doc,
 	*out_pixmap = pixmap;
 	*out_w = pixmap->w;
 	*out_h = pixmap->h;
+	return 0;
+}
+
+// mupdf_page_size reports a page's pixel dimensions at the given DPI without rasterizing it. The page-level
+// render cap is enforced here, before any buffer exists; tile rendering never trips it per tile.
+static int mupdf_page_size(fz_context *ctx, fz_document *doc,
+                           int page_num, float dpi,
+                           int *out_w, int *out_h)
+{
+	fz_page *page = NULL;
+
+	fz_var(page);
+
+	fz_try(ctx) {
+		page = fz_load_page(ctx, doc, page_num);
+		fz_matrix ctm = fz_scale(dpi / 72.0f, dpi / 72.0f);
+		fz_irect bbox = mupdf_device_bbox(ctx, page, ctm);
+		mupdf_check_render_pixels(ctx, bbox);
+
+		*out_w = bbox.x1 - bbox.x0;
+		*out_h = bbox.y1 - bbox.y0;
+	}
+	fz_always(ctx) {
+		fz_drop_page(ctx, page);
+	}
+	fz_catch(ctx) {
+		return 1;
+	}
+
+	return 0;
+}
+
+// mupdf_render_tile renders one tile of a page at the given DPI. Tile coordinates are offsets into the
+// page-bbox pixel space, with the origin at the top-left of the bounded page; the draw device clips
+// every operation to the pixmap bbox, so only the tile's pixels are rasterized. out_ox/out_oy report
+// the pixmap origin relative to the page bbox.
+static int mupdf_render_tile(fz_context *ctx, fz_document *doc,
+                             int page_num, float dpi,
+                             int x0, int y0, int x1, int y1,
+                             fz_pixmap **out_pixmap, int *out_w, int *out_h,
+                             int *out_ox, int *out_oy)
+{
+	fz_page *page = NULL;
+	fz_pixmap *pixmap = NULL;
+	fz_device *dev = NULL;
+	fz_matrix ctm;
+	fz_irect full;
+
+	fz_var(page);
+	fz_var(pixmap);
+	fz_var(dev);
+	fz_var(full);
+
+	fz_try(ctx) {
+		page = fz_load_page(ctx, doc, page_num);
+		ctm = fz_scale(dpi / 72.0f, dpi / 72.0f);
+		full = mupdf_device_bbox(ctx, page, ctm);
+		fz_irect req = fz_make_irect(full.x0 + x0, full.y0 + y0,
+		                             full.x0 + x1, full.y0 + y1);
+		fz_irect ib = fz_intersect_irect(full, req);
+		mupdf_check_render_pixels(ctx, ib);
+
+		pixmap = fz_new_pixmap_with_bbox(ctx, fz_device_rgb(ctx), ib, NULL, 0);
+		fz_clear_pixmap_with_value(ctx, pixmap, 0xFF);
+		dev = fz_new_draw_device(ctx, ctm, pixmap);
+		fz_run_page(ctx, page, dev, fz_identity, NULL);
+		fz_close_device(ctx, dev);
+	}
+	fz_always(ctx) {
+		fz_drop_device(ctx, dev);
+		fz_drop_page(ctx, page);
+	}
+	fz_catch(ctx) {
+		fz_drop_pixmap(ctx, pixmap);
+		return 1;
+	}
+
+	*out_pixmap = pixmap;
+	*out_w = pixmap->w;
+	*out_h = pixmap->h;
+	*out_ox = pixmap->x - full.x0;
+	*out_oy = pixmap->y - full.y0;
 	return 0;
 }
 
@@ -272,6 +367,37 @@ func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width
 	// Copy samples before dropping pixmap — this was the leak in go-fitz.
 	samples = C.GoBytes(unsafe.Pointer(p.samples), C.int(p.w*p.h*C.int(p.n)))
 	return int(w), int(h), samples, &Pixmap{p: p}, nil
+}
+
+// PageSizePixels reports the page's rendered size in pixels at the given DPI without rasterizing it.
+// Pages whose pixel area exceeds the render cap fail with an error: this is the page-level guard for
+// tiled rendering, since oversized pages never take the full-page render path.
+func (d *MuDocument) PageSizePixels(ctx *MuContext, pageNum int, dpi float64) (width, height int, err error) {
+	var w, h C.int
+
+	if C.mupdf_page_size(ctx.p, d.p, C.int(pageNum), C.float(dpi), &w, &h) != 0 {
+		return 0, 0, fmt.Errorf("mupdf: failed to measure page %d", pageNum)
+	}
+	return int(w), int(h), nil
+}
+
+// RenderTile renders one tile of a page at the given DPI and returns its width and height in pixels
+// plus an independent RGB sample copy. x0, y0, x1, y1 are offsets from the page bbox origin in pixels
+// at the given DPI; the returned ox, oy report the actual pixmap origin relative to that same bbox,
+// clamped to the page. The C pixmap is released before returning, so samples are the only value the
+// caller owns. Tiles over the render cap fail instead of allocating.
+func (d *MuDocument) RenderTile(ctx *MuContext, pageNum int, dpi float64, x0, y0, x1, y1 int) (samples []byte, width, height, ox, oy int, err error) {
+	var p *C.fz_pixmap
+	var w, h, px, py C.int
+
+	if C.mupdf_render_tile(ctx.p, d.p, C.int(pageNum), C.float(dpi),
+		C.int(x0), C.int(y0), C.int(x1), C.int(y1), &p, &w, &h, &px, &py) != 0 {
+		return nil, 0, 0, 0, 0, fmt.Errorf("mupdf: failed to render tile on page %d", pageNum)
+	}
+	defer C.fz_drop_pixmap(ctx.p, p)
+
+	samples = C.GoBytes(unsafe.Pointer(p.samples), C.int(p.w*p.h*C.int(p.n)))
+	return samples, int(w), int(h), int(px), int(py), nil
 }
 
 // FreePixmap releases a pixmap returned by RenderPage. Safe to call with a

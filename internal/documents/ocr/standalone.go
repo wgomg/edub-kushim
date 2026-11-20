@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"math"
 	"os"
 	"runtime"
 	"sync"
@@ -24,21 +25,40 @@ import (
 const (
 	ocrDPI    = 200
 	outputDPI = 150
+
+	tileMaxPixels = 4_000_000
+	tileOverlapPx = 128
+
+	// tileMaxPerPage rejects degenerate strip pages whose tile count would dwarf any useful OCR output;
+	// a square page at the 100 MP render cap needs 25 tiles
+	tileMaxPerPage = 256
+
+	// tileMaxPerDoc bounds the per-document tile count; plan and result preallocation then never exceeds
+	// a proportional size, and even a 4,000-page A4 book is only 4,000 tiles
+	tileMaxPerDoc = 100_000
 )
 
-type ocrPageResult struct {
-	boxes    []gosseract.BoundingBox
+type ocrTileResult struct {
 	jpegData []byte
-	w, h     int
-	pageW    float64
-	pageH    float64
+	core     image.Rectangle
 }
 
-// RunStandalone OCRs one file: images directly, everything else rendered
-// page by page through MuPDF, recognized by a page-worker pool of
-// Tesseract engines, and written back as a searchable PDF with an
-// invisible-text overlay at reduced DPI. It is the body of the internal-ocr
-// verb.
+type ocrPageResult struct {
+	tiles []ocrTileResult
+	boxes []gosseract.BoundingBox
+	w, h  int
+}
+
+type tileSpec struct {
+	core   image.Rectangle
+	render image.Rectangle
+}
+
+// RunStandalone OCRs one file: images directly, everything else rendered page by page through MuPDF,
+// recognized by a worker pool of Tesseract engines, and written back as a searchable PDF that carries
+// an invisible-text overlay at reduced DPI. Pages larger than the tile budget are rendered, recognized
+// and placed as a grid of bounded tiles, so the per-page working set does not grow with the page's declared
+// dimensions. It is the body of the internal-ocr verb.
 func RunStandalone(inputPath, outputPath string, languages []string, dataDir string, ocrWorkers int) error {
 	suppressLeptonicaStderr()
 
@@ -74,43 +94,65 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 
 	_, _ = fmt.Fprintf(os.Stdout, "starting OCR on %d pages\n", numPages)
 
+	pageW := make([]int, numPages)
+	pageH := make([]int, numPages)
+	plans := make([][]tileSpec, numPages)
+	totalTiles := 0
+	for i := range numPages {
+		w, h, err := doc.PageSizePixels(mupdfCtx, i, ocrDPI)
+		if err != nil {
+			return fmt.Errorf("page %d: measure error: %w", i, err)
+		}
+		pageW[i], pageH[i] = w, h
+		specs, err := planTiles(w, h)
+		if err != nil {
+			return fmt.Errorf("page %d: %w", i, err)
+		}
+		plans[i] = specs
+		totalTiles += len(specs)
+		if totalTiles > tileMaxPerDoc {
+			return fmt.Errorf("document needs at least %d tiles, over the %d-tile limit",
+				totalTiles, tileMaxPerDoc)
+		}
+	}
+
 	if numPages <= 1 {
 		client := newOCRClient(languages)
 		defer client.Close()
 
 		for i := range numPages {
-			ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(mupdfCtx, i, ocrDPI)
-			if err != nil {
-				return fmt.Errorf("page %d: render error: %w", i, err)
-			}
-			res, err := computePage(ocrSamples, ocrW, ocrH, client)
-			cgo.FreePixmap(mupdfCtx, ocrPixmap)
+			res, err := processPage(mupdfCtx, doc, i, plans[i], pageW[i], pageH[i], client)
 			if err != nil {
 				return fmt.Errorf("page %d: %w", i, err)
 			}
 			addPDFPage(pdf, res, i)
 		}
 	} else {
-		type pageJob struct {
-			index      int
-			ocrSamples []byte
-			ocrW, ocrH int
+		type tileJob struct {
+			pageIndex int
+			tileIndex int
+			core      image.Rectangle
+			samples   []byte
+			tw, th    int
+			ox, oy    int
 		}
 
-		type pageResult struct {
-			index int
-			res   ocrPageResult
-			err   error
+		type tileResult struct {
+			pageIndex int
+			tileIndex int
+			boxes     []gosseract.BoundingBox
+			jpegData  []byte
+			err       error
 		}
 
 		numWorkers := ocrWorkers
 		if numWorkers <= 0 {
 			numWorkers = runtime.NumCPU()
 		}
-		numWorkers = min(numWorkers, numPages, runtime.NumCPU()*2)
+		numWorkers = min(numWorkers, totalTiles, runtime.NumCPU()*2)
 
-		jobs := make(chan pageJob, numWorkers)
-		results := make(chan pageResult, numPages)
+		jobs := make(chan tileJob, numWorkers)
+		results := make(chan tileResult, totalTiles)
 		var wg sync.WaitGroup
 
 		for range numWorkers {
@@ -119,33 +161,50 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 				defer worker.Close()
 
 				for job := range jobs {
-					res, err := computePage(job.ocrSamples, job.ocrW, job.ocrH, worker)
+					boxes, jpegData, err := computeTile(job.samples, job.tw, job.th, job.core, job.ox, job.oy, worker)
 					if err != nil {
-						results <- pageResult{index: job.index, err: fmt.Errorf("page %d: %w", job.index, err)}
+						results <- tileResult{
+							pageIndex: job.pageIndex,
+							tileIndex: job.tileIndex,
+							err:       fmt.Errorf("page %d: tile %d: %w", job.pageIndex, job.tileIndex, err),
+						}
 						continue
 					}
-					results <- pageResult{index: job.index, res: res}
+					results <- tileResult{
+						pageIndex: job.pageIndex,
+						tileIndex: job.tileIndex,
+						boxes:     boxes,
+						jpegData:  jpegData,
+					}
 				}
 			})
 		}
 
 		var phase1Err error
+	renderLoop:
 		for i := range numPages {
 			if i > 0 && i%10 == 0 {
 				_, _ = fmt.Fprintf(os.Stdout, "OCR page %d/%d\n", i+1, numPages)
 			}
-			ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(mupdfCtx, i, ocrDPI)
-			if err != nil {
-				phase1Err = fmt.Errorf("page %d: render error: %w", i, err)
-				break
+			for t, spec := range plans[i] {
+				r := spec.render
+				samples, tw, th, ox, oy, err := doc.RenderTile(mupdfCtx, i, ocrDPI,
+					r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
+				if err != nil {
+					phase1Err = fmt.Errorf("page %d: tile %d: render error: %w", i, t, err)
+					break renderLoop
+				}
+				jobs <- tileJob{
+					pageIndex: i,
+					tileIndex: t,
+					core:      spec.core,
+					samples:   samples,
+					tw:        tw,
+					th:        th,
+					ox:        ox,
+					oy:        oy,
+				}
 			}
-			jobs <- pageJob{
-				index:      i,
-				ocrSamples: ocrSamples,
-				ocrW:       ocrW,
-				ocrH:       ocrH,
-			}
-			cgo.FreePixmap(mupdfCtx, ocrPixmap)
 		}
 		close(jobs)
 
@@ -154,23 +213,29 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 			close(results)
 		}()
 
-		resultsByIndex := make([]pageResult, numPages)
+		resultsByPage := make([][]tileResult, numPages)
+		for i := range numPages {
+			resultsByPage[i] = make([]tileResult, len(plans[i]))
+		}
 		for r := range results {
-			resultsByIndex[r.index] = r
+			resultsByPage[r.pageIndex][r.tileIndex] = r
 		}
 
 		if phase1Err != nil {
 			return phase1Err
 		}
 
-		for _, r := range resultsByIndex {
-			if r.err != nil {
-				return r.err
-			}
-		}
-
 		for i := range numPages {
-			addPDFPage(pdf, resultsByIndex[i].res, i)
+			res := ocrPageResult{w: pageW[i], h: pageH[i], tiles: make([]ocrTileResult, 0, len(plans[i]))}
+			for t := range resultsByPage[i] {
+				r := resultsByPage[i][t]
+				if r.err != nil {
+					return r.err
+				}
+				res.tiles = append(res.tiles, ocrTileResult{jpegData: r.jpegData, core: plans[i][t].core})
+				res.boxes = append(res.boxes, r.boxes...)
+			}
+			addPDFPage(pdf, res, i)
 		}
 	}
 
@@ -178,6 +243,27 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		return fmt.Errorf("save output PDF: %w", err)
 	}
 	return nil
+}
+
+// processPage renders, OCRs and assembles all of one page's tiles in order, acting as the single-page
+// counterpart of the producer/worker split used for multi-page documents.
+func processPage(ctx *cgo.MuContext, doc *cgo.MuDocument, pageNum int, specs []tileSpec, w, h int, client *gosseract.Client) (ocrPageResult, error) {
+	res := ocrPageResult{w: w, h: h, tiles: make([]ocrTileResult, 0, len(specs))}
+	for _, spec := range specs {
+		r := spec.render
+		samples, tw, th, ox, oy, err := doc.RenderTile(ctx, pageNum, ocrDPI,
+			r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
+		if err != nil {
+			return ocrPageResult{}, fmt.Errorf("tile render error: %w", err)
+		}
+		boxes, jpegData, err := computeTile(samples, tw, th, spec.core, ox, oy, client)
+		if err != nil {
+			return ocrPageResult{}, err
+		}
+		res.tiles = append(res.tiles, ocrTileResult{jpegData: jpegData, core: spec.core})
+		res.boxes = append(res.boxes, boxes...)
+	}
+	return res, nil
 }
 
 func runStandaloneImage(inputPath, outputPath string, languages []string) error {
@@ -209,9 +295,17 @@ func runStandaloneImage(inputPath, outputPath string, languages []string) error 
 	client := newOCRClient(languages)
 	defer client.Close()
 
-	res, err := computePage(samples, w, h, client)
+	core := image.Rect(0, 0, w, h)
+	boxes, jpegData, err := computeTile(samples, w, h, core, 0, 0, client)
 	if err != nil {
 		return fmt.Errorf("image OCR: %w", err)
+	}
+
+	res := ocrPageResult{
+		tiles: []ocrTileResult{{jpegData: jpegData, core: core}},
+		boxes: boxes,
+		w:     w,
+		h:     h,
 	}
 
 	pdf := fpdf.New("P", "pt", "", "")
@@ -236,44 +330,119 @@ func newOCRClient(languages []string) *gosseract.Client {
 	return client
 }
 
-func computePage(samples []byte, w, h int, client *gosseract.Client) (ocrPageResult, error) {
-	outW := w * outputDPI / ocrDPI
-	outH := h * outputDPI / ocrDPI
+// planTiles splits a page of w x h pixels into row-major tiles whose cores partition the page exactly;
+// cores stay within the tile budget. Multi-part axes keep every core at least 4 pixels wide so the 150
+// DPI downscale never collapses. The degenerate single-part case (an axis under 4 pixels) is rejected
+// by computeTile's empty-crop guard. Each render rectangle is its core expanded by tileOverlapPx on
+// every side (overlap included for OCR only) and clamped to the page. A page within the tile budget
+// yields a single tile whose core is the whole page. Pages that would need more than tileMaxPerPage
+// tiles are rejected as degenerate strip input.
+func planTiles(w, h int) ([]tileSpec, error) {
+	page := image.Rect(0, 0, w, h)
+	if w*h <= tileMaxPixels {
+		return []tileSpec{{core: page, render: page}}, nil
+	}
 
-	lowSamples := downscaleRGB(samples, w, h, outW, outH)
-	lowImg := samplesToRGBA(lowSamples, outW, outH)
-	ocrImg := samplesToRGBA(samples, w, h)
+	xs := coreBounds(w)
+	ys := coreBounds(h)
+	cols, rows := len(xs)-1, len(ys)-1
+	if cols*rows > tileMaxPerPage {
+		return nil, fmt.Errorf("%dx%d px page needs %d tiles, over the %d-tile limit",
+			w, h, cols*rows, tileMaxPerPage)
+	}
+
+	specs := make([]tileSpec, 0, cols*rows)
+	for r := range rows {
+		for c := range cols {
+			core := image.Rect(xs[c], ys[r], xs[c+1], ys[r+1])
+			render := image.Rect(core.Min.X-tileOverlapPx, core.Min.Y-tileOverlapPx,
+				core.Max.X+tileOverlapPx, core.Max.Y+tileOverlapPx).Intersect(page)
+			specs = append(specs, tileSpec{core: core, render: render})
+		}
+	}
+	return specs, nil
+}
+
+// coreBounds splits one page axis of total pixels into ascending core boundaries ending at the total.
+// Parts are an even split of the axis, rounded up to a multiple of 4 and capped at maxDim; the last
+// span takes the remainder, borrowing 4 pixels from its neighbour when the raw remainder is under 4
+// so every core survives the 150 DPI downscale.
+func coreBounds(total int) []int {
+	maxDim := max(int(math.Sqrt(float64(tileMaxPixels)))&^3, 4)
+	parts := (total + maxDim - 1) / maxDim
+	base := ((total + parts - 1) / parts) + 3
+	base = min(base&^3, maxDim)
+
+	bounds := make([]int, parts+1)
+	for i := 1; i < parts; i++ {
+		bounds[i] = i * base
+	}
+	bounds[parts] = total
+	if parts > 1 && total-bounds[parts-1] < 4 {
+		bounds[parts-1] -= 4
+	}
+	return bounds
+}
+
+// computeTile OCRs one rendered tile and returns the boxes it owns together with the JPEG for its core
+// region. core is the tile's core rectangle in page pixels; ox, oy are the pixmap origin reported by
+// RenderTile. A box belongs to the tile whose core contains its centre, so words in the overlap are
+// counted once; kept boxes are returned in page-pixel coordinates. The JPEG covers the core only, so
+// placed images partition the page without double-painted overlap.
+func computeTile(samples []byte, tw, th int, core image.Rectangle, ox, oy int, client *gosseract.Client) ([]gosseract.BoundingBox, []byte, error) {
+	ocrImg := samplesToRGBA(samples, tw, th)
 
 	pngData, err := encodePNG(ocrImg)
 	ocrImg = nil
 	if err != nil {
-		return ocrPageResult{}, fmt.Errorf("PNG encode error: %w", err)
+		return nil, nil, fmt.Errorf("PNG encode error: %w", err)
 	}
 
 	client.SetImageFromBytes(pngData)
 	boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
 	pngData = nil
 	if err != nil {
-		return ocrPageResult{}, fmt.Errorf("OCR error: %w", err)
+		return nil, nil, fmt.Errorf("OCR error: %w", err)
 	}
 
-	jpegData, err := encodeJPEG(lowImg, 60)
+	coreLocal := core.Sub(image.Pt(ox, oy))
+	kept := boxes[:0]
+	for _, box := range boxes {
+		centre := image.Pt((box.Box.Min.X+box.Box.Max.X)/2, (box.Box.Min.Y+box.Box.Max.Y)/2)
+		if !centre.In(coreLocal) {
+			continue
+		}
+		box.Box = box.Box.Add(image.Pt(ox, oy))
+		kept = append(kept, box)
+	}
+
+	outW := tw * outputDPI / ocrDPI
+	outH := th * outputDPI / ocrDPI
+
+	lowSamples := downscaleRGB(samples, tw, th, outW, outH)
+	lowImg := samplesToRGBA(lowSamples, outW, outH)
+
+	coreLow := image.Rect(
+		coreLocal.Min.X*outputDPI/ocrDPI,
+		coreLocal.Min.Y*outputDPI/ocrDPI,
+		coreLocal.Max.X*outputDPI/ocrDPI,
+		coreLocal.Max.Y*outputDPI/ocrDPI,
+	).Intersect(image.Rect(0, 0, outW, outH))
+
+	// pdf pages always render at least 3 pixels per axis, so an empty crop can only originate from a tiny
+	// decoded image; fail loudly instead of encoding an invalid zero-dimension JPEG
+	if coreLow.Empty() {
+		return nil, nil, fmt.Errorf("tile core %v maps to an empty crop at %d DPI (%dx%d px tile)",
+			coreLocal, outputDPI, tw, th)
+	}
+
+	jpegData, err := encodeJPEG(lowImg.SubImage(coreLow), 60)
 	lowImg = nil
 	if err != nil {
-		return ocrPageResult{}, fmt.Errorf("JPEG encode error: %w", err)
+		return nil, nil, fmt.Errorf("JPEG encode error: %w", err)
 	}
 
-	pageW := float64(outW) * 72.0 / outputDPI
-	pageH := float64(outH) * 72.0 / outputDPI
-
-	return ocrPageResult{
-		boxes:    boxes,
-		jpegData: jpegData,
-		w:        w,
-		h:        h,
-		pageW:    pageW,
-		pageH:    pageH,
-	}, nil
+	return kept, jpegData, nil
 }
 
 type fontMetrics struct {
@@ -282,26 +451,35 @@ type fontMetrics struct {
 }
 
 func addPDFPage(pdf *fpdf.Fpdf, res ocrPageResult, idx int) {
-	imgName := fmt.Sprintf("kushim-page-%d", idx)
-	pdf.AddPageFormat("P", fpdf.SizeType{Wd: res.pageW, Ht: res.pageH})
-	pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(res.jpegData))
-	pdf.Image(imgName, 0, 0, res.pageW, res.pageH, false, "", 0, "")
+	scale := 72.0 / ocrDPI
+	pageW := float64(res.w) * scale
+	pageH := float64(res.h) * scale
 
-	scaleX := res.pageW / float64(res.w)
-	scaleY := res.pageH / float64(res.h)
+	pdf.AddPageFormat("P", fpdf.SizeType{Wd: pageW, Ht: pageH})
+
+	for t, tile := range res.tiles {
+		imgName := fmt.Sprintf("kushim-page-%d-%d", idx, t)
+		pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(tile.jpegData))
+		pdf.Image(imgName,
+			float64(tile.core.Min.X)*scale,
+			float64(tile.core.Min.Y)*scale,
+			float64(tile.core.Dx())*scale,
+			float64(tile.core.Dy())*scale,
+			false, "", 0, "")
+	}
 
 	desc := pdf.GetFontDesc("KushimText", "")
 	metrics := fontMetrics{ascent: float64(desc.Ascent), descent: float64(desc.Descent)}
 
 	pdf.SetTextRenderingMode(3)
 	for _, box := range res.boxes {
-		width := float64(box.Box.Dx()) * scaleX
-		height := float64(box.Box.Dy()) * scaleY
+		width := float64(box.Box.Dx()) * scale
+		height := float64(box.Box.Dy()) * scale
 		if width < 1 || height < 1 {
 			continue
 		}
-		left := float64(box.Box.Min.X) * scaleX
-		fontSize, baseline := wordPlacement(height, float64(box.Box.Max.Y)*scaleY, metrics)
+		left := float64(box.Box.Min.X) * scale
+		fontSize, baseline := wordPlacement(height, float64(box.Box.Max.Y)*scale, metrics)
 		pdf.SetFont("KushimText", "", fontSize)
 		if natural := pdf.GetStringWidth(box.Word); natural > 0 {
 			if scalePct := stretchScale(width, natural); scalePct > 0 {

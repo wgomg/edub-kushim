@@ -18,8 +18,8 @@ MuPDF/Tesseract wrapper layer underneath).
 2. [Two engines, one interface](#2-two-engines-one-interface)
 3. [The self-reexec architecture](#3-the-self-reexec-architecture)
 4. [Rendering pages with MuPDF](#4-rendering-pages-with-mupdf)
-5. [The parallel page pipeline](#5-the-parallel-page-pipeline)
-6. [Per-page OCR: images and boxes](#6-per-page-ocr-images-and-boxes)
+5. [The parallel tile pipeline](#5-the-parallel-tile-pipeline)
+6. [Per-tile OCR: images and boxes](#6-per-tile-ocr-images-and-boxes)
 7. [Searchable PDF assembly](#7-searchable-pdf-assembly)
 8. [The image path](#8-the-image-path)
 9. [Tessdata management](#9-tessdata-management)
@@ -143,48 +143,57 @@ and the child prints progress lines (`"starting OCR on %d pages"`,
 
 ## 4. Rendering pages with MuPDF
 
-Inside the child (`standalone.go:37-176`), each page is rendered from the
-PDF at **200 DPI** via the cgo wrapper:
+Inside the child, every page is measured first — a bounds-only probe that
+allocates nothing — and then rendered at **200 DPI** through the cgo wrapper:
 
 ```go
-const (
-	ocrDPI    = 200
-	outputDPI = 150
-)
+w, h, err := doc.PageSizePixels(mupdfCtx, i, ocrDPI)
+specs, err := planTiles(w, h)
 ...
-ocrW, ocrH, ocrSamples, ocrPixmap, err := doc.RenderPage(mupdfCtx, i, ocrDPI)
-...
-adapters.FreePixmap(mupdfCtx, ocrPixmap)   // samples are copied; pixmap must be freed
+samples, tw, th, ox, oy, err := doc.RenderTile(mupdfCtx, i, ocrDPI,
+	spec.render.Min.X, spec.render.Min.Y, spec.render.Max.X, spec.render.Max.Y)
 ```
 
+`planTiles` splits the page into a row-major grid of tiles whose **cores**
+partition the page exactly:
+
+- **Tile budget**: a page at or under `tileMaxPixels` (4,000,000 px, about one
+  A4 page at 200 DPI) is a single tile whose core is the whole page — one
+  render, one OCR pass, one JPEG.
+- **Tiling**: larger pages split each axis at an even split rounded up to a
+  multiple of 4 and capped at 2000 px (the square root of the budget), so
+  every tiled core stays within the budget and at least 4 px wide. When the
+  last span alone would be under 4 px, it borrows 4 px from its neighbour.
+- **Overlap**: each tile's *render* rectangle is its core expanded by
+  `tileOverlapPx` (128 px, 16 mm at 200 DPI) on every side, clamped at the
+  page edges. The overlap exists for OCR only; placed images cover the cores
+  (§7).
+- **Caps**: `tileMaxPerPage` (256) rejects degenerate strip pages, and the
+  document total is capped at `tileMaxPerDoc` (100,000) so tile plans and
+  result buffers stay proportional to real work. The page-level
+  `MUPDF_MAX_RENDER_PIXELS` guard (100 MP) runs in the probe, before any
+  buffer exists; a per-tile check backs it in the C helper (`cgo.md` §8).
 - `ocrDPI` (200) is the OCR resolution — Tesseract's quality sweet spot.
 - `outputDPI` (150) is the resolution of the *image embedded in the output
-  PDF* — smaller files, still readable.
-- The render is bounded by `MUPDF_MAX_RENDER_PIXELS` (100 MP) in the C
-  wrapper (`mupdf_wrapper.go:107`) — a malicious page size can't exhaust
-  memory (see `cgo.md` §8).
-- The pixmap is freed **immediately after** the samples are copied — the
-  samples are Go-owned, the pixmap C-owned (`standalone.go:82`).
+  PDF* — smaller files, still readable. It no longer affects page geometry:
+  page points always derive from the 200 DPI pixel grid (§7).
+- `RenderTile` copies the tile's samples to Go and drops the pixmap before
+  returning, so the caller owns only the sample slice.
 
-Single-page files take a simple loop; multi-page files take the parallel
-pipeline (§5).
+Single-page files run the probe → plan → render loop sequentially; multi-page
+files feed the parallel pipeline (§5).
 
 ---
 
-## 5. The parallel page pipeline
+## 5. The parallel tile pipeline
 
-For `numPages > 1`, pages are OCR'd by a worker pool
-(`standalone.go:88-169`):
+For `numPages > 1`, tiles are OCR'd by a worker pool:
 
 ```go
-numWorkers := ocrWorkers
-if numWorkers <= 0 {
-	numWorkers = runtime.NumCPU()
-}
-numWorkers = min(numWorkers, numPages, runtime.NumCPU()*2)
+numWorkers := min(ocrWorkers, totalTiles, runtime.NumCPU()*2)
 
-jobs := make(chan pageJob, numWorkers)
-results := make(chan pageResult, numPages)
+jobs := make(chan tileJob, numWorkers)        // page/tile index, core, samples, dims, origin
+results := make(chan tileResult, totalTiles)  // boxes + JPEG per tile, or an error
 var wg sync.WaitGroup
 
 for range numWorkers {
@@ -192,61 +201,71 @@ for range numWorkers {
 		worker := newOCRClient(languages)     // one Tesseract client per worker
 		defer worker.Close()
 		for job := range jobs {
-			res, err := computePage(job.ocrSamples, job.ocrW, job.ocrH, worker)
+			boxes, jpegData, err := computeTile(job.samples, job.tw, job.th,
+				job.core, job.ox, job.oy, worker)
 			...
-			results <- pageResult{index: job.index, res: res}
 		}
 	})
 }
 ```
 
+- **Probe pass first**: every page is measured and planned before rendering;
+  a guard failure fails the document before any pixmap exists.
 - **One Tesseract client per worker** — gosseract clients are not
   concurrency-safe, so each worker owns its own.
-- The producer renders pages and feeds `jobs` (buffered to `numWorkers`),
-  freeing each pixmap right after enqueue (`standalone.go:132-144`); the
-  producer closes `jobs`, a closer goroutine closes `results` after
-  `wg.Wait()`.
-- **Deterministic output**: results are collected by index
-  (`resultsByIndex[r.index] = r`, `standalone.go:152-155`) and pages are
-  assembled in order — concurrent OCR, sequential PDF.
-- Phase-1 render errors abort before assembly (`phase1Err`), and any per-page
-  OCR error fails the whole run (`standalone.go:157-165`) — an OCR failure
-  on page 12 of a book is a failed task, not a partial PDF.
+- The producer renders tiles and feeds `jobs` (buffered to `numWorkers`);
+  `RenderTile` releases each pixmap internally. The producer closes `jobs`, a
+  closer goroutine closes `results` after `wg.Wait()`.
+- **Deterministic output**: results land in a per-page, per-tile structure
+  indexed by the plans and are assembled page by page with tiles row-major —
+  concurrent OCR, sequential PDF.
+- Render errors abort before assembly (`phase1Err`), and any tile error fails
+  the whole run as `page N: tile M: …` — an OCR failure on page 12 of a book
+  is a failed task, not a partial PDF.
 
 ---
 
-## 6. Per-page OCR: images and boxes
+## 6. Per-tile OCR: images and boxes
 
-`computePage` (`standalone.go:234-272`) produces everything one output page
-needs:
+`computeTile` produces everything one output tile needs:
 
 ```go
-outW := w * outputDPI / ocrDPI
-outH := h * outputDPI / ocrDPI
-
-lowSamples := downscaleRGB(samples, w, h, outW, outH)   // nearest-neighbor
-lowImg := samplesToRGBA(lowSamples, outW, outH)          // for the output JPEG
-ocrImg := samplesToRGBA(samples, w, h)                   // full-res for OCR
-
+ocrImg := samplesToRGBA(samples, tw, th)                // the whole overlapped render
 pngData, err := encodePNG(ocrImg)
-...
 client.SetImageFromBytes(pngData)
-boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)   // word-level boxes
-...
-jpegData, err := encodeJPEG(lowImg, 60)                     // the visible page image
+boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)  // word-level boxes
+
+coreLocal := core.Sub(image.Pt(ox, oy))                 // the core, in tile coordinates
+// keep a box iff its centre lies in coreLocal; offset kept boxes by (ox, oy)
+
+lowSamples := downscaleRGB(samples, tw, th, outW, outH)   // nearest-neighbor
+lowImg := samplesToRGBA(lowSamples, outW, outH)           // for the output JPEG
+coreLow := image.Rect(                                    // the core mapped to 150 DPI
+	coreLocal.Min.X*outputDPI/ocrDPI, coreLocal.Min.Y*outputDPI/ocrDPI,
+	coreLocal.Max.X*outputDPI/ocrDPI, coreLocal.Max.Y*outputDPI/ocrDPI,
+).Intersect(image.Rect(0, 0, outW, outH))
+jpegData, err := encodeJPEG(lowImg.SubImage(coreLow), 60) // core crop only
 ```
 
-- Tesseract gets a **lossless PNG** at 200 DPI (compression artifacts hurt
-  recognition); the visible image in the output is a **JPEG at quality 60**,
-  150 DPI — OCR input and display image are deliberately different.
-- `GetBoundingBoxes(RIL_WORD)` returns each recognized word with its pixel
-  rectangle — the data needed to lay the text layer over the image.
-- `downscaleRGB` is a hand-rolled nearest-neighbor sampler
-  (`standalone.go:301-315`) — fast, allocation-light, good enough for a
-  display image.
+- Tesseract gets a **lossless PNG** at 200 DPI of the whole overlapped tile
+  (compression artifacts hurt recognition); the visible image in the output
+  is a **JPEG at quality 60**, 150 DPI — OCR input and display image are
+  deliberately different.
+- **Ownership rule**: a word box belongs to the tile whose core contains the
+  word's centre (`coreLocal`), so words seen by two overlapping renders are
+  counted exactly once; kept boxes are translated to page pixels. With the
+  128 px overlap, words up to about 32 mm wide are fully visible in the tile
+  that owns them.
+- **Crop-core**: the JPEG is encoded from the core sub-rectangle of the
+  downscaled tile (`SubImage`), so placed images partition the page without
+  double-painted overlap. A core that maps to an empty crop — possible only
+  for decoded images with an axis under 4 px — fails loudly instead of
+  producing an invalid zero-dimension JPEG.
+- `downscaleRGB` is a hand-rolled nearest-neighbor sampler — fast,
+  allocation-light, good enough for a display image.
 
 The Tesseract client is tuned for speed and raw boxes
-(`newOCRClient`, `standalone.go:223-232`):
+(`newOCRClient`):
 
 ```go
 client := gosseract.NewClient()
@@ -266,28 +285,38 @@ the LSTM engine.
 
 ## 7. Searchable PDF assembly
 
-`addPDFPage` (`standalone.go:279-317`) builds the output with go-pdf/fpdf:
+`addPDFPage` builds the output with go-pdf/fpdf:
 
 ```go
-pdf.AddPageFormat("P", fpdf.SizeType{Wd: res.pageW, Ht: res.pageH})  // points
-pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(res.jpegData))
-pdf.Image(imgName, 0, 0, res.pageW, res.pageH, false, "", 0, "")
+scale := 72.0 / ocrDPI
+pdf.AddPageFormat("P", fpdf.SizeType{
+	Wd: float64(res.w) * scale,
+	Ht: float64(res.h) * scale,
+})
 
-scaleX := res.pageW / float64(res.w)
-scaleY := res.pageH / float64(res.h)
+for t, tile := range res.tiles {
+	imgName := fmt.Sprintf("kushim-page-%d-%d", idx, t)
+	pdf.RegisterImageReader(imgName, "jpg", bytes.NewReader(tile.jpegData))
+	pdf.Image(imgName,
+		float64(tile.core.Min.X)*scale,
+		float64(tile.core.Min.Y)*scale,
+		float64(tile.core.Dx())*scale,
+		float64(tile.core.Dy())*scale,
+		false, "", 0, "")
+}
 
 desc := pdf.GetFontDesc("KushimText", "")  // Ascent/Descent in 1/1000 em
 metrics := fontMetrics{ascent: float64(desc.Ascent), descent: float64(desc.Descent)}
 
 pdf.SetTextRenderingMode(3)          // invisible text!
 for _, box := range res.boxes {
-	width := float64(box.Box.Dx()) * scaleX
-	height := float64(box.Box.Dy()) * scaleY
+	width := float64(box.Box.Dx()) * scale
+	height := float64(box.Box.Dy()) * scale
 	if width < 1 || height < 1 {
 		continue
 	}
-	left := float64(box.Box.Min.X) * scaleX
-	fontSize, baseline := wordPlacement(height, float64(box.Box.Max.Y)*scaleY, metrics)
+	left := float64(box.Box.Min.X) * scale
+	fontSize, baseline := wordPlacement(height, float64(box.Box.Max.Y)*scale, metrics)
 	pdf.SetFont("KushimText", "", fontSize)
 	if natural := pdf.GetStringWidth(box.Word); natural > 0 {
 		if scalePct := stretchScale(width, natural); scalePct > 0 {
@@ -304,15 +333,19 @@ for _, box := range res.boxes {
 
 The pieces:
 
-- **Page size in points** derived from the 150-DPI output image
-  (`pageW := float64(outW) * 72.0 / outputDPI`, `standalone.go:261-262`).
+- **Page size in points** derives from the page's 200 DPI pixel grid
+  (`w * 72 / 200`); image placement and the text layer share the same single
+  `72/200` scale, so tile origins, image sizes and box positions stay in one
+  coordinate system.
+- **One image per tile**, named `kushim-page-<page>-<tile>`, placed at the
+  tile's core origin and sized to the core: the images tile the page exactly.
 - **`pdf.SetTextRenderingMode(3)`** — PDF text rendering mode 3 = "neither
   fill nor stroke": the text is **invisible** but present in the content
   stream, which is what makes the PDF searchable/selectable (this is the
   `3 Tr` mode mentioned in `AGENTS.md`).
 - **Metrics-driven placement** (`wordPlacement`): each OCR box's pixel rect is
-  scaled from OCR resolution to page points (`scaleX/scaleY`); the font size
-  is `height * 1000 / (Ascent - Descent)` so the glyph extent fills the box
+  scaled from 200 DPI pixels to page points; the font size is
+  `height * 1000 / (Ascent - Descent)` so the glyph extent fills the box
   height, and the baseline sits one descender depth below the box bottom
   (`Max.Y + (-Descent/1000) * fontSize`) — `pdf.Text` draws from the
   baseline. If the font reports zero metrics, fall back to `height * 0.8`
@@ -324,23 +357,19 @@ The pieces:
   out-of-range words keep their natural width.
 - The font is the **embedded `kushim_font.ttf`** (Liberation Sans, SIL OFL
   1.1, `font_embed.go:9-13`), registered from bytes
-  (`pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)`,
-  `standalone.go:68`) — Unicode coverage for any script the OCR produces,
-  no system font dependency.
+  (`pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)`) — Unicode
+  coverage for any script the OCR produces, no system font dependency.
 
-The whole PDF is written with `pdf.OutputFileAndClose(outputPath)`
-(`standalone.go:172`).
+The whole PDF is written with `pdf.OutputFileAndClose(outputPath)`.
 
 ---
 
 ## 8. The image path
 
-If the input is an image rather than a PDF (`runStandaloneImage`,
-`standalone.go:178-221`), the flow is the same minus rendering: decode the
-image (`image.Decode` with tiff registered via a blank import,
-`standalone.go:19`), enforce a **50 MP pixel cap** (`standalone.go:197-200`)
-against decompression bombs, convert to RGB, OCR, and wrap in a one-page
-searchable PDF:
+If the input is an image rather than a PDF (`runStandaloneImage`), the flow is
+the same minus rendering: decode the image (`image.Decode` with tiff
+registered via a blank import), enforce a **50 MP pixel cap** against
+decompression bombs, convert to RGB, and wrap in a one-page searchable PDF:
 
 ```go
 const maxPixels = 50_000_000
@@ -349,7 +378,11 @@ if int64(w)*int64(h) > maxPixels {
 }
 ```
 
-`imageToRGB` (`standalone.go:350-365`) handles **premultiplied alpha** — the
+The whole image becomes a single tile (its core is the image), so it goes
+through the same `computeTile` path. An image with an axis under 4 px fails
+the empty-crop guard instead of emitting an invalid JPEG.
+
+`imageToRGB` handles **premultiplied alpha** — the
 standard `RGBA()` round trip `(r + 65535 - a) >> 8` un-premultiplies so white
 backgrounds with alpha don't come out dark.
 
@@ -496,7 +529,7 @@ Under `consumer.ocr` (`internal/config/config.go`):
 |---|---|---|
 | `engine` | `gosseract` | `gosseract` (built-in) or `ocrmypdf` |
 | `languages` | `[eng]` | plus-separated tesseract codes (`eng+spa`) |
-| `workers` | — | OCR worker count for multi-page files (clamped to pages × 2×CPU) |
+| `workers` | — | OCR worker count for multi-page files (min of configured, total tiles, 2×CPU) |
 | `data_dir` | `<config-dir>/tessdata` | tessdata download location |
 | `timeout` | — | per-document OCR budget (context-cancelled) |
 | `optimizer` | `gs` or `mupdf` | `pdfoptimizer.engine` — which clean pass runs after OCR |
@@ -508,14 +541,15 @@ and `consumer.ocr.languages` is required before consumption runs.
 
 ## 14. Gotchas
 
-- **Pixmap lifecycle**: `RenderPage` returns a copied `samples` plus a live
-  `pixmap` that must be freed via `adapters.FreePixmap` — free it right
-  after enqueue, or RSS grows per page (`standalone.go:82,143`).
+- **Pixmap lifecycle**: `RenderPage` (the thumbnail path) returns a copied
+  `samples` plus a live `pixmap` that must be freed via
+  `adapters.FreePixmap`; `RenderTile` (the OCR path) copies the tile samples
+  and releases its pixmap internally — the caller owns only the sample slice.
 - **One Tesseract client per worker, never shared** — gosseract clients are
   not safe for concurrent use; the per-worker `newOCRClient` is deliberate.
-- **Worker count clamp** (`min(ocrWorkers, numPages, NumCPU()*2)`) — a config
-  of 64 workers on a 2-page PDF spawns 2; on a 4-core machine never more
-  than 8.
+- **Worker count clamp** (`min(ocrWorkers, totalTiles, NumCPU()*2)`) — a
+  config of 64 workers on a 2-page PDF spawns 2; on a 4-core machine never
+  more than 8.
 - **`sync.Once` poisons tessdata on failure** — a transient download error
   fails every OCR task in the process until restart. The enricher's
   fire-and-forget download mitigates this at setup time.
@@ -523,9 +557,14 @@ and `consumer.ocr.languages` is required before consumption runs.
   Tesseract use in the process; there is only one consumer, so that's fine,
   but beware if you add a second.
 - **Output resolution ≠ OCR resolution** — OCR runs at 200 DPI, the embedded
-  image is 150 DPI. Changing `outputDPI` changes file size and page-point
-  math; changing `ocrDPI` changes recognition quality. Keep the two
+  image is 150 DPI. Changing `outputDPI` changes the embedded image
+  resolution and file size; page-point math always derives from the 200 DPI
+  pixel grid. Changing `ocrDPI` changes recognition quality. Keep the two
   constants apart.
+- **Seam coverage is bounded by the tile overlap** — `tileOverlapPx`
+  (128 px, 16 mm at 200 DPI) keeps words up to about 32 mm wide intact across
+  a tile edge; larger display type crossing a seam can be recognized as two
+  fragments. Normal body text is unaffected.
 - **`pdf.SetTextRenderingMode(3)` once per page, not per word** — fpdf only
   emits `Tr` from `SetTextRenderingMode` itself; `SetFont`, `Text` and the
   `q`/`Q` transform blocks never reset it, so the mode set before the word
@@ -539,9 +578,11 @@ and `consumer.ocr.languages` is required before consumption runs.
   missed `os.Remove` in a new early-return.
 - **`--clean`/`unpaper` failures in ocrmypdf** come with hints, not just
   errors (`ocrmypdf.go:47-66`) — when adding engines, copy this pattern.
-- **The 100 MP render cap and 50 MP image cap are DoS guards** — never raise
-  them without also bounding the allocation somewhere else.
+- **The render caps and tile ceilings are DoS guards** — the 100 MP render
+  cap, the 50 MP image cap, and `tileMaxPerPage`/`tileMaxPerDoc` all bound
+  allocations that untrusted page dimensions would otherwise drive. Never
+  raise them without also bounding the allocation somewhere else.
 
 ---
 
-*Last verified against the tree: 2026-08-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-11-20. If code and doc disagree, code wins.*

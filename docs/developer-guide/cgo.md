@@ -236,8 +236,18 @@ func FreePixmap(ctx *MuContext, pixmap *Pixmap) {
 live `Pixmap` handle owning the C buffer — the caller *must* call
 `FreePixmap` after it's done with the samples. The comment documents that an
 earlier wrapper (go-fitz) dropped the pixmap before copying, leaking the
-samples. The OCR pipeline calls `FreePixmap` right after queueing the render
-job (`ocr/standalone.go:82,143`).
+samples. The thumbnail pipeline uses this path and calls `FreePixmap` once the
+pixmap is no longer needed.
+
+The OCR pipeline instead uses `RenderTile`, which takes the same copy-then-drop
+shape but releases the pixmap **inside** the wrapper:
+
+```go
+samples = C.GoBytes(unsafe.Pointer(p.samples), C.int(p.w*p.h*C.int(p.n)))
+return samples, int(w), int(h), int(px), int(py), nil
+```
+(`defer C.fz_drop_pixmap(ctx.p, p)` runs before the return.) No `Pixmap` handle
+crosses back to Go, so the caller owns only the sample slice.
 
 **C-allocated options with an embedded C string**
 (`mupdf_wrapper.go:338-381`): `NewCleanOptions` returns a `*CleanOptions`
@@ -305,8 +315,9 @@ func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width
   errors, and ingestion is not blocked (`mupdf_nocgo.go:7-8` comment). The
   `edub` binary simply can't render or OCR; it relies on `kushim` for that.
 
-The two files must stay in sync manually — adding a method to the wrapper
-without the stub breaks `CGO_ENABLED=0` builds.
+`PageSizePixels` and `RenderTile` have matching stubs. The two files must stay
+in sync manually — adding a method to the wrapper without the stub breaks
+`CGO_ENABLED=0` builds.
 
 ---
 
@@ -343,20 +354,27 @@ message only if the cgo implementation was never linked in.
 
 The C layer carries safety rails that Go code can't easily enforce:
 
-**The render cap** (`mupdf_wrapper.go:100-107, 132-134`) — page dimensions
-come from untrusted PDF input, so the wrapper refuses to allocate absurd
-pixmaps:
+**The render cap** — page dimensions come from untrusted PDF input, so the
+wrapper refuses to allocate absurd pixmaps. All three render paths
+(`mupdf_render_page`, `mupdf_page_size`, `mupdf_render_tile`) derive their
+device irect through `mupdf_device_bbox` and enforce the cap through
+`mupdf_check_render_pixels`:
 
 ```c
-#define MUPDF_MAX_RENDER_PIXELS (100000000LL)
-...
-if (rw <= 0 || rh <= 0 || rw * rh > MUPDF_MAX_RENDER_PIXELS) {
-	fz_throw(ctx, FZ_ERROR_GENERIC, "page dimensions exceed render limit");
+static void mupdf_check_render_pixels(fz_context *ctx, fz_irect bbox)
+{
+	long long rw = (long long)bbox.x1 - (long long)bbox.x0;
+	long long rh = (long long)bbox.y1 - (long long)bbox.y0;
+	if (rw <= 0 || rh <= 0 || rw * rh > MUPDF_MAX_RENDER_PIXELS) {
+		fz_throw(ctx, FZ_ERROR_GENERIC, "page dimensions exceed render limit");
+	}
 }
 ```
 
 100 MP keeps a single RGB buffer under ~300 MB while allowing ~40×60 in
-posters at 200 DPI.
+posters at 200 DPI. The page-level check runs in `mupdf_page_size`, the
+bounds-only probe that measures a page before any pixmap exists; tile renders
+check their intersected area as a backstop.
 
 **The store cap** (`mupdf_wrapper.go:18-24`) — `fz_new_context_imp` gets a
 256 MB cache store; the comment documents that `FZ_STORE_UNLIMITED` caused
@@ -406,9 +424,14 @@ toolchain installed:
 
 - `internal/cgo/mupdf_wrapper_test.go` — builds a minimal PDF in
   memory **with computed xref byte offsets** (`minimalPDF(t, w, h)`) to
-  exercise the render-limit guard without fixture files.
-- `internal/documents/ocr/gosseract_test.go`, `downscale_test.go` —
-  OCR + image pipeline tests.
+  exercise the render-limit guard without fixture files. It also pins the
+  probe/tile contracts: `PageSizePixels` agrees with `RenderPage`,
+  `RenderTile` matches the corresponding sub-rectangle of a full render,
+  clamps at page edges, and rejects tiles outside the page.
+- `internal/documents/ocr/gosseract_test.go`, `downscale_test.go`,
+  `tiles_test.go` — OCR stderr tolerance, image helpers, and the tiling
+  geometry (`planTiles`/`coreBounds`: exact partition, budget, order,
+  remainder handling, tile ceilings).
 - `internal/matcher/hugot_test.go` — model tests.
 - `internal/ops/cli` — no `//go:build cgo` tag of its own, but the package
   only compiles with CGo because `hugot.go` imports the cgo-gated tagmatcher
@@ -457,4 +480,4 @@ exercise the C logic through the public Go API.
 
 ---
 
-*Last verified against the tree: 2026-08-03. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-11-20. If code and doc disagree, code wins.*
