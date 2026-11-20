@@ -743,8 +743,9 @@ holonym containers as ordinary candidates, and the scheduled reconciliation mint
 pair evidence for provisional tags that never got a same-intent judgment. Every channel is
 advisory — the split, matcher, identity and quality stages judge the nominations like any
 other candidate, identity-held names are skipped, and a disabled or empty store changes
-nothing. Tags born from nominations record `tag.origin = 'kb'`; containment attachments
-carry `document_tag.source = 'kb'`.
+nothing. Tags born from nominations — and from the parts a nominated compound applies —
+record `tag.origin = 'kb'`; their document attachments carry the ordinary enrichment source,
+`document_tag.source = 'enrich'`.
 
 The data carries its own licenses: OEWN is CC BY 4.0 with the chained Princeton WordNet
 notice, and ConceptNet is CC BY-SA 4.0. Each artifact's manifest and `assets/kb/README.md`

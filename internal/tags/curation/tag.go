@@ -41,10 +41,6 @@ const DocumentTagSourceEnrich = "enrich"
 // evidence-recorded, reversible attachment that a re-enrichment does not clear.
 const DocumentTagSourceAudit = "audit"
 
-// DocumentTagSourceKB marks the document tag rows the knowledge base containment channel attached, so
-// review and measurement can tell them apart from analyzer assignments.
-const DocumentTagSourceKB = "kb"
-
 // Tag is the tag store's read, write and administration surface: CRUD,
 // planned registrations, aliases, deleted tags, promotion, and the sync
 // that keeps the matcher's embedding store aligned with the tags table.

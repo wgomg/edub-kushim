@@ -592,6 +592,57 @@ func TestApplyPartialKeep(t *testing.T) {
 	})
 }
 
+func TestKBLineage(t *testing.T) {
+	analyzerNames := map[string]bool{"plug in": true}
+	kbInjected := map[string]bool{
+		"hymenopterous insect": true,
+		"plug in":              true,
+		"stored compound":      true,
+		"database engine":      true,
+	}
+	rows := []tags.CompositionRow{
+		{Candidate: "hymenopterous insect", Disposition: tags.CompositionKeep, Parts: []string{"insect"}},
+		{
+			Candidate:   "database engine",
+			Disposition: tags.CompositionSplit,
+			Parts:       []string{"database", "engine"},
+		},
+		{Candidate: "plug in", Disposition: tags.CompositionKeep, Parts: []string{"plug", "in"}},
+		{Candidate: "review database", Disposition: tags.CompositionKeep, Parts: []string{"review", "database"}},
+	}
+	alongside := map[string][]string{
+		"hymenopterous insect": {"insect"},
+		"stored compound":      {"kept", "part"},
+	}
+
+	descended, splitParts := kbLineage(analyzerNames, kbInjected, rows, alongside)
+	wantDescended := []string{"hymenopterous insect", "insect", "database engine", "engine", "kept", "part"}
+
+	for _, name := range wantDescended {
+		if !descended[name] {
+			t.Errorf("descended[%q] = false, want the KB names and every part they apply", name)
+		}
+	}
+	for _, name := range []string{"plug in", "plug", "in", "review"} {
+		if descended[name] {
+			t.Errorf("descended[%q] = true, want no KB flag on analyzer emissions or parts", name)
+		}
+	}
+	if descended["database"] {
+		t.Errorf("descended[%q] = true, want the exception for a KB part that survives analyzer-side", "database")
+	}
+	for _, name := range []string{"database", "engine"} {
+		if !splitParts[name] {
+			t.Errorf("splitParts[%q] = false, want every split component kept for the split origin", name)
+		}
+	}
+	for _, name := range []string{"insect", "plug", "kept"} {
+		if splitParts[name] {
+			t.Errorf("splitParts[%q] = true, want alongside parts out of the split origin stamp", name)
+		}
+	}
+}
+
 // stubEnrichAnalyzer returns one fixed analysis result so the full enrichment path runs against a
 // controlled tag list instead of an LLM.
 type stubEnrichAnalyzer struct{ result *analyzer.AnalysisResult }
@@ -673,7 +724,6 @@ func (s *stubEnrichJudge) JudgeTagAudit(context.Context, string, []analyzer.TagA
 	return nil, nil
 }
 
-// TestEnrich_ReKeptCompoundIsJudgedInline pins the quality verdict of a compound whose split degrades to
 // a partial-parts keep: whether the in-run gate admits or rejects it, a verdict row must exist before
 // persist, and a rejected compound must leave neither a tag row nor a document assignment.
 func TestEnrich_ReKeptCompoundIsJudgedInline(t *testing.T) {

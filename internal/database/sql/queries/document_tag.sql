@@ -27,7 +27,7 @@ DELETE FROM document_tag WHERE document_id = $1 AND tag_id = $2;
 DELETE FROM document_tag WHERE document_id = $1;
 
 -- name: ClearEnrichDocumentTags :exec
-DELETE FROM document_tag WHERE document_id = $1 AND source IN ('enrich', 'kb');
+DELETE FROM document_tag WHERE document_id = $1 AND source = 'enrich';
 
 -- name: ReassignDocumentTags :execrows
 UPDATE document_tag dt

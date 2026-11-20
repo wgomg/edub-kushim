@@ -102,41 +102,32 @@ type CompoundVerdict struct {
 	Disagreement bool
 }
 
-// DecomposeTags runs the split gate over the compound candidates: the context-free parts pass judges each
-// candidate's content words (fold-resolved through the attested table and the promoted store view) once,
-// and the context-free compound pass reads what each phrase denotes. Both verdicts persist in their own
-// append-only tables, keyed by value and candidate, so a re-run reads them back instead of re-rolling; the
-// two answer sets fold into a tags.CompositionFeatures and dispose through tags.DecideComposition —
-// the parts test selects the branch, the split branch expands the compound into its resolved parts, the
-// keep branches leave it whole and apply its judged-dimensional parts alongside, and the drop branch
-// removes it. The returned tag list is the input with approved decompositions expanded in place, dropped
-// compounds removed, and kept compounds' alongside parts inserted after them, plus one composition
-// evidence row per judged candidate. Ordering is load-bearing: fold-resolve, filter, then the
-// remainder enters the judged downstream. A compound whose key already exists in the store is an
-// application, not a candidate, only when a persisted verdict under the current criteria version decides
-// it: it is then skipped before judgment, and a keep among those store-existing decided compounds gets its
-// parts applied alongside on every emission. A store-existing compound with no verdict, or only a degraded
-// judge_unavailable keep, stays a candidate and is re-judged until judgment succeeds when an adjudicator is
-// configured; without one it is skipped as before, because no verdict is reachable and re-judging would
-// only append rows forever.
-// storeKeys is the store's names plus alias keys, which the store-existing test reads; promotedNames is
-// the promoted tag names' Key→name view the fold resolution and the reconstructibility signal read — seam
-// fold resolution anchors only on promoted rows, and a resolved part is reconstructible only when it is
-// one. docId is the emitting document, stamped on fresh part and compound verdict rows (0 stores NULL
-// provenance, as the stored-compound sweep does). An operator split rule short-circuits judgment entirely:
-// a name carrying one is replaced by its recorded parts before classification, with alias canonicalization
-// left to the identity plan, and the application writes no composition row. A non-nil error is returned when
-// the provider account cannot pay, the adjudication-state lookup fails, or the operator rule lookup fails;
-// every other failure degrades to keeping the compounds. Without a configured adjudicator the conjunction
-// grammar fallback stands: explicit coordination splits mechanically and every other compound keeps whole
-// under judge_unavailable.
-func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]string, []tags.CompositionRow, error) {
+// DecomposeTags runs the split gate over the compound candidates.
+//
+// The returned tag list is the input with approved decompositions expanded in place, dropped compounds
+// removed, and kept compounds' alongside parts inserted after them, plus one composition evidence row per
+// judged candidate. The fourth return is the final alongside map, keyed by emitting compound name, so the
+// caller can attribute every part the list carries — including store-existing keeps that produce no
+// composition row.
+//
+// A compound whose key is already stored is an application, not a candidate, only when a persisted verdict
+// under the current criteria version decides it; an undecided or degraded candidate is re-judged when an
+// adjudicator is configured and skipped otherwise. An operator split rule replaces the name with its
+// recorded parts before classification and writes no composition row, with alias canonicalization left to
+// the identity plan. Without an adjudicator the conjunction fallback splits explicit coordination and keeps
+// the rest under judge_unavailable.
+//
+// storeKeys is the store's names plus alias keys; promotedNames the promoted Key→name view the fold
+// resolution and reconstructibility signal read; docId the emitting document stamped on fresh verdict rows
+// (0 stores NULL provenance). A non-nil error is returned only when the provider account cannot pay or a
+// lookup fails; every other failure degrades to keeping the compounds.
+func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKeys map[string]struct{}, promotedNames map[string]string, filter *analyzer.TagFilter, docId int64, reqID string) ([]string, []tags.CompositionRow, map[string][]string, error) {
 	// a recorded operator split is an application, not a judgment: it replaces the name before classification
 	// and reaches neither the store-existing skip nor the judges; the application writes no composition row
 	if len(names) > 0 {
 		rules, err := tags.OperatorSplitsForNames(ctx, a.queries, names)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if len(rules) > 0 {
 			for _, name := range names {
@@ -175,7 +166,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 	if len(storeExisting) > 0 {
 		states, err := tags.CompositionStatesForNames(ctx, a.queries, storeExisting, analyzer.TagSplitVersion)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for _, name := range storeExisting {
 			state, ok := states[tags.StoredName(name)]
@@ -202,7 +193,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 	}
 
 	if len(candidates) == 0 && len(skipped) == 0 {
-		return names, nil, nil
+		return names, nil, nil, nil
 	}
 
 	alongsideByCompound := a.storedCoverage(ctx, skipped, promotedNames, storeKeys, filter, reqID)
@@ -210,14 +201,14 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 	if !a.runner.HasTagAdjudicator() {
 		expanded, rows, err := a.conjunctionSplits(names, candidates, promotedNames, storeKeys, filter, reqID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return withAlongside(expanded, alongsideByCompound), rows, nil
+		return withAlongside(expanded, alongsideByCompound), rows, alongsideByCompound, nil
 	}
 
 	rows, err := a.JudgeCompounds(ctx, candidates, storeKeys, promotedNames, filter, docId, reqID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	components := make(map[string][]string, len(candidates))
 	dropped := make(map[string]bool, len(candidates))
@@ -233,7 +224,7 @@ func (a *Adjudicator) DecomposeTags(ctx context.Context, names []string, storeKe
 			}
 		}
 	}
-	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), rows, nil
+	return withAlongside(expandCandidates(names, components, dropped), alongsideByCompound), rows, alongsideByCompound, nil
 }
 
 // JudgeCompounds is the compound judgment the emission gate's DecomposeTags and the stored-compound sweep

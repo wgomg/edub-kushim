@@ -2123,7 +2123,7 @@ func TestDecomposeTags_WithoutAdjudicator(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _, _ := a.DecomposeTags(context.Background(), tt.in, nil, nil, filter, 0, "")
+			got, _, _, _ := a.DecomposeTags(context.Background(), tt.in, nil, nil, filter, 0, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.in, got, tt.want)
 			}
@@ -2204,7 +2204,7 @@ func TestDecomposeTags_TwoPassDecision(t *testing.T) {
 			adj := &mockAdjudicator{partFn: tt.partFn, compoundFn: tt.compoundFn}
 			a, docID := newSplitAdjudicator(t, adj, nil)
 			filter := analyzer.NewTagFilter(nil, nil, nil)
-			got, _, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, docID, "")
+			got, _, _, _ := a.DecomposeTags(context.Background(), tt.names, nil, nil, filter, docID, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("DecomposeTags(%v) = %v, want %v", tt.names, got, tt.want)
 			}
@@ -2221,7 +2221,7 @@ func TestDecomposeTags_CachedVerdictSkipsJudge(t *testing.T) {
 	filter := analyzer.NewTagFilter(nil, nil, nil)
 
 	a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
-	_, cached, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+	_, cached, _, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 
 	adjAssertEqual(t, adj.partCall, 1, "part judge calls after the persisted cache hit")
 	adjAssertEqual(t, adj.compoundCall, 1, "compound judge calls after the persisted cache hit")
@@ -2256,12 +2256,16 @@ func TestDecomposeTags_NoVerdictWarns(t *testing.T) {
 	}
 	a, docID := newSplitAdjudicator(t, adj, &buf)
 	filter := analyzer.NewTagFilter(nil, nil, nil)
+	ctx := context.Background()
 
-	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+	got, rows, alongside, _ := a.DecomposeTags(ctx, []string{"machine learning"}, nil, nil, filter, docID, "")
 
 	adjAssertEqual(t, len(got), 3, "the undecided keep stands whole and applies its dimensional parts alongside")
-	adjAssertEqual(t, len(rows), 1, "one composition row")
 	adjAssertEqual(t, rows[0].Reason, tags.CompositionReasonJudgeUnavailable, "keep reason")
+	wantAlongside := map[string][]string{"machine learning": {"machine", "learning"}}
+	if !reflect.DeepEqual(alongside, wantAlongside) {
+		t.Errorf("alongside = %#v, want the judged keep's applied parts %#v", alongside, wantAlongside)
+	}
 	out := buf.String()
 	if !strings.Contains(out, "<4>WARN") {
 		t.Errorf("expected a WARN level line, got:\n%s", out)
@@ -2292,7 +2296,7 @@ func TestDecomposeTags_StoreKeyedCompoundSkipsJudgment(t *testing.T) {
 		t.Fatalf("seed composition row: %v", err)
 	}
 
-	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+	got, rows, _, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
 
 	adjAssertEqual(t, adj.partCall, 0, "a store-keyed compound never reaches the part judge")
 	adjAssertEqual(t, adj.compoundCall, 0, "a store-keyed compound never reaches the compound judge")
@@ -2318,7 +2322,7 @@ func TestDecomposeTags_OperatorRuleSubstitutesBeforeJudgment(t *testing.T) {
 		seedOperatorRule(t, a, "machine learning", []string{"machine", "learning"})
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 
-		got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+		got, rows, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}
@@ -2339,7 +2343,7 @@ func TestDecomposeTags_OperatorRuleSubstitutesBeforeJudgment(t *testing.T) {
 		seedOperatorRule(t, a, "photosynthesis", []string{"photo", "synthesis"})
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 
-		got, rows, err := a.DecomposeTags(context.Background(), []string{"photosynthesis"}, nil, nil, filter, docID, "")
+		got, rows, _, err := a.DecomposeTags(context.Background(), []string{"photosynthesis"}, nil, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}
@@ -2360,7 +2364,7 @@ func TestDecomposeTags_OperatorRuleSubstitutesBeforeJudgment(t *testing.T) {
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 		storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
-		got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+		got, rows, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}
@@ -2377,7 +2381,7 @@ func TestDecomposeTags_OperatorRuleSubstitutesBeforeJudgment(t *testing.T) {
 		seedOperatorRule(t, a, "machine learning", []string{"machine", "learning"})
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 
-		got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+		got, rows, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}
@@ -2426,7 +2430,7 @@ func TestDecomposeTags_StoreExistingReJudgedUntilDecided(t *testing.T) {
 			storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 			tt.seed(t, a, docID)
 
-			got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+			got, rows, _, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
 
 			adjAssertEqual(t, adj.partCall, 1, "the undecided compound reaches the part judge once")
 			adjAssertEqual(t, adj.compoundCall, 1, "the undecided compound reaches the compound judge once")
@@ -2475,9 +2479,12 @@ func TestDecomposeTags_StoreExistingKeepAppliesCachedParts(t *testing.T) {
 	}
 
 	want := []string{"machine learning", "machine", "learning"}
-	got, rows, _ := a.DecomposeTags(ctx, []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+	got, rows, alongside, _ := a.DecomposeTags(ctx, []string{"machine learning"}, storeKeys, nil, filter, docID, "")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("DecomposeTags = %v, want the keep with its cached parts alongside %v", got, want)
+	}
+	if wantAlongside := map[string][]string{"machine learning": {"machine", "learning"}}; !reflect.DeepEqual(alongside, wantAlongside) {
+		t.Errorf("alongside = %v, want the store-existing keep's coverage parts %v", alongside, wantAlongside)
 	}
 	adjAssertEqual(t, adj.partCall, 0, "coverage reads the part cache, never the judge")
 	adjAssertEqual(t, adj.compoundCall, 0, "a decided compound is never re-judged")
@@ -2486,7 +2493,7 @@ func TestDecomposeTags_StoreExistingKeepAppliesCachedParts(t *testing.T) {
 		t.Errorf("coverage must be observable in the log, got:\n%s", buf.String())
 	}
 
-	again, rowsAgain, _ := a.DecomposeTags(ctx, []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+	again, rowsAgain, _, _ := a.DecomposeTags(ctx, []string{"machine learning"}, storeKeys, nil, filter, docID, "")
 	if !reflect.DeepEqual(again, want) {
 		t.Errorf("second emission = %v, want the same idempotent coverage %v", again, want)
 	}
@@ -2506,7 +2513,7 @@ func TestDecomposeTags_StoreExistingWithoutAdjudicatorStaysSkipped(t *testing.T)
 	filter := analyzer.NewTagFilter(nil, nil, nil)
 	storeKeys := map[string]struct{}{tags.Key("machine learning"): {}}
 
-	got, rows, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
+	got, rows, _, _ := a.DecomposeTags(context.Background(), []string{"machine learning"}, storeKeys, nil, filter, docID, "")
 
 	if !reflect.DeepEqual(got, []string{"machine learning"}) {
 		t.Errorf("DecomposeTags = %v, want the compound whole", got)
@@ -2661,7 +2668,7 @@ func TestDecomposeTags_CompositionRows(t *testing.T) {
 			a, docID := newSplitAdjudicator(t, tt.adj, nil)
 			filter := analyzer.NewTagFilter(nil, nil, tt.docTypes)
 
-			_, rows, _ := a.DecomposeTags(context.Background(), tt.names, nil, tags.StoreNames(tt.promoted), filter, docID, "")
+			_, rows, _, _ := a.DecomposeTags(context.Background(), tt.names, nil, tags.StoreNames(tt.promoted), filter, docID, "")
 
 			if len(rows) != 1 {
 				t.Fatalf("composition rows = %d, want 1", len(rows))
@@ -2713,7 +2720,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 
-		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
+		got, rows, _, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 
 		want := []string{"mexico", "revolution"}
 		if !reflect.DeepEqual(got, want) {
@@ -2742,7 +2749,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		a, docID := newSplitAdjudicator(t, adj, nil)
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 
-		got, _, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
+		got, _, _, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 		if !reflect.DeepEqual(got, []string{"mexico", "revolution"}) {
 			t.Errorf("DecomposeTags = %v, want the fold-resolved parts", got)
 		}
@@ -2762,7 +2769,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 
-		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, nil, filter, docID, "")
+		got, rows, _, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, nil, filter, docID, "")
 
 		want := []string{"mexican", "revolution"}
 		if !reflect.DeepEqual(got, want) {
@@ -2780,7 +2787,7 @@ func TestDecomposeTags_FoldResolvesPartsBeforeFilter(t *testing.T) {
 		a, docID := newSplitAdjudicator(t, splitCompounds(), nil)
 		filter := analyzer.NewTagFilter(nil, nil, []string{"mexico"})
 
-		got, rows, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
+		got, rows, _, _ := a.DecomposeTags(ctx, []string{"mexican revolution"}, nil, storeView, filter, docID, "")
 
 		if !reflect.DeepEqual(got, []string{"mexican revolution"}) {
 			t.Errorf("DecomposeTags = %v, want the compound kept whole", got)
@@ -2838,7 +2845,7 @@ func TestDecomposeTags_CreditErrorEscapes(t *testing.T) {
 	a, docID := newSplitAdjudicator(t, adj, nil)
 	filter := analyzer.NewTagFilter(nil, nil, nil)
 
-	got, rows, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+	got, rows, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 	if err == nil {
 		t.Fatal("credit exhaustion must escape DecomposeTags")
 	}
@@ -2863,7 +2870,7 @@ func TestDecomposeTags_TransientFailureRetriesOnce(t *testing.T) {
 	a, docID := newSplitAdjudicator(t, adj, nil)
 	filter := analyzer.NewTagFilter(nil, nil, nil)
 
-	got, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
+	got, _, _, err := a.DecomposeTags(context.Background(), []string{"machine learning"}, nil, nil, filter, docID, "")
 	if err != nil {
 		t.Fatalf("DecomposeTags() error = %v", err)
 	}
@@ -3067,7 +3074,7 @@ func TestDecomposeTags_StoreExistingPeriodIsFiatSkip(t *testing.T) {
 	ctx := context.Background()
 	storeKeys := map[string]struct{}{tags.Key("20th century"): {}}
 
-	got, rows, err := a.DecomposeTags(ctx, []string{"20th century"}, storeKeys, nil, filter, docID, "")
+	got, rows, _, err := a.DecomposeTags(ctx, []string{"20th century"}, storeKeys, nil, filter, docID, "")
 	if err != nil {
 		t.Fatalf("DecomposeTags: %v", err)
 	}
@@ -3227,7 +3234,7 @@ func TestDecomposeTags_TimeDesignationPartDropped(t *testing.T) {
 		a, docID := newSplitAdjudicator(t, adj, nil)
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 
-		got, rows, err := a.DecomposeTags(ctx, []string{"october revolution"}, nil, nil, filter, docID, "")
+		got, rows, _, err := a.DecomposeTags(ctx, []string{"october revolution"}, nil, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}
@@ -3261,7 +3268,7 @@ func TestDecomposeTags_TimeDesignationPartDropped(t *testing.T) {
 		filter := analyzer.NewTagFilter(nil, nil, nil)
 		storeKeys := map[string]struct{}{tags.Key("october"): {}}
 
-		got, _, err := a.DecomposeTags(ctx, []string{"october revolution"}, storeKeys, nil, filter, docID, "")
+		got, _, _, err := a.DecomposeTags(ctx, []string{"october revolution"}, storeKeys, nil, filter, docID, "")
 		if err != nil {
 			t.Fatalf("DecomposeTags: %v", err)
 		}

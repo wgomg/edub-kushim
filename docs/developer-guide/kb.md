@@ -209,14 +209,19 @@ gates; about-ness is the quality gate's call. A nomination the quality judge ans
 a subject matter of the document is retired at birth (reason `kb_not_subject`) instead of
 being deferred to review: the container was nominated without the document in hand, so the
 judge's answer is the only aboutness evidence and the single-signal deferral band does not
-apply. The retire records no verdict row, and a cached verdict that answers the same way is
-deleted with the retire: the name carries no cached answer, so a later document judges it on
-its own text. An abstained answer still defers, and the parts of a split nomination inherit
-the rule. The scheduled reconciliation pass applies the same answer to stored values
-([consolidation](consolidation.md) §9): an `origin='kb'` tag whose latest recorded verdict,
-under any policy version, answers the subject-matter question with no abstention loses its
-row, its assignments and every recorded verdict for its name, without a blocklist entry,
-while an explicit operator decision — an acceptance or operator standing — keeps the value.
+apply. The retire covers every part a nominated compound applies — split components and the
+alongside parts of a kept compound, whether judged on the emission or read from the store's
+coverage cache — because those names exist only through the nomination. The one exception is
+a name the analyzer already emitted, or a part of a compound it emitted: that carries
+document-emission evidence, so it is never treated as knowledge-base lineage. The retire
+records no verdict row, and a cached verdict that answers the same way is deleted with the
+retire: the name carries no cached answer, so a later document judges it on its own text. An
+abstained answer still defers. The scheduled reconciliation pass applies the same answer to
+stored values ([consolidation](consolidation.md) §9): an `origin='kb'` tag whose latest
+recorded verdict, under any policy version, answers the subject-matter question with no
+abstention loses its row, its assignments and every recorded verdict for its name, without a
+blocklist entry, while an explicit operator decision — an acceptance or operator standing —
+keeps the value.
 A container absent from the store is nominated only when an OEWN edge attests it. The
 uphill filter keys on each source's native reltype spelling (bare for OEWN, `/r/`-prefixed
 for ConceptNet), because the family vocabulary alone cannot carry edge direction.
@@ -228,12 +233,14 @@ exact and similar neighbours that already exist become pending pair evidence, an
 identity-held names are skipped like every other destructive pass. A report-only run counts
 without writing; the count appears in the run report as `kb_minted`.
 
-Provenance is recorded on both write planes. Document tag rows the containment channel
-attaches carry `document_tag.source = 'kb'`, and tags born from knowledge base nominations
-record `tag.origin = 'kb'`; the other origins are `analyzer`, `split` and `operator`
-(migration `00072_tag_origin.sql`, whose default backfills pre-existing rows as
-`analyzer`). Re-enrichment clears `kb` rows together with `enrich` rows; rows an operator or
-a split wrote are never cleared. The stage model these nominations feed is
+Provenance is recorded on the tag row: a tag born from a knowledge base nomination, or from
+any part such a nomination applies, records `tag.origin = 'kb'`; the other origins are
+`analyzer`, `split` and `operator` (migration `00072_tag_origin.sql`, whose default
+backfills pre-existing rows as `analyzer`). The `document_tag` plane does not distinguish
+the channel: every enrichment attachment, containment included, carries `source = 'enrich'`,
+and a re-enrichment clears exactly those rows (migration
+`00073_document_tag_source_enrich.sql` normalizes legacy `kb` rows to `enrich`), while rows an
+operator or the audit wrote are never cleared. The stage model these nominations feed is
 [the tag pipeline](../specs/tags/pipeline.md).
 
 The enricher ensures its configured sources once, on first use; the tag pass entry points

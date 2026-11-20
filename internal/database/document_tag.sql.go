@@ -61,7 +61,7 @@ func (q *Queries) ClearDocumentTags(ctx context.Context, documentID int64) error
 }
 
 const clearEnrichDocumentTags = `-- name: ClearEnrichDocumentTags :exec
-DELETE FROM document_tag WHERE document_id = $1 AND source IN ('enrich', 'kb')
+DELETE FROM document_tag WHERE document_id = $1 AND source = 'enrich'
 `
 
 func (q *Queries) ClearEnrichDocumentTags(ctx context.Context, documentID int64) error {

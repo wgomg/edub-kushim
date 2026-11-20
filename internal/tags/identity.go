@@ -136,12 +136,11 @@ type Registration struct {
 	Resolved    string
 	Disposition Disposition
 	Provisional bool
-	Source      string
 	Origin      string
 }
 
 // The tag origins recorded on the tag row at birth: the enrichment analyzer, a split part, an operator
-// create, or a knowledge base container nomination.
+// create, or a knowledge-base term — a containment nomination or a part a kb-nominated compound applied.
 const (
 	TagOriginAnalyzer = "analyzer"
 	TagOriginSplit    = "split"

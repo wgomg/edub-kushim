@@ -389,6 +389,14 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	// not admissible; drop it before decomposition so it never reaches the split gate or the store
 	analysis.Tags = dropTimeDesignations(analysis.Tags)
 
+	// the analyzer's own emission set, captured before containment appends its nominations: a name the
+	// analyzer already emitted, or one of its compounds' parts, carries document evidence and is never
+	// treated as kb-derived
+	analyzerNames := make(map[string]bool, len(analysis.Tags))
+	for _, name := range analysis.Tags {
+		analyzerNames[textnorm.NormalizeTag(name)] = true
+	}
+
 	// the containment channel: the knowledge base's uphill hypernym, instance and holonym neighbours of the
 	// candidates enter the list as ordinary candidates, so the split gate, the matcher, identity planning and
 	// the quality gate own them exactly like analyzer emissions. The name-list and time gates are the only
@@ -417,7 +425,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		}
 	}
 
-	decomposed, compositionRows, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, promotedStoreNames, tagFilter, document.ID, logId)
+	decomposed, compositionRows, alongside, err := e.admission.DecomposeTags(ctx, analysis.Tags, storeKeys, promotedStoreNames, tagFilter, document.ID, logId)
 	if err != nil {
 		if te := e.creditPause(logId, err); te != nil {
 			return nil, DocumentCounts{}, te
@@ -426,27 +434,7 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 	analysis.Tags = e.admission.ApplyDeletedTagPolicy(decomposed, blocklist, logId)
 
-	// the gate's kb lineage: the injected names plus every part of a split whose candidate the KB nominated,
-	// since those parts exist only because of the injection; provenance stays separate and records the
-	// creation channel (an injected name is kb, a split part is split)
-	kbDescended := make(map[string]bool, len(kbInjected))
-	for key := range kbInjected {
-		kbDescended[key] = true
-	}
-	splitParts := make(map[string]bool)
-	for _, row := range compositionRows {
-		if row.Disposition != tags.CompositionSplit {
-			continue
-		}
-		kbCandidate := kbInjected[textnorm.NormalizeTag(row.Candidate)]
-		for _, part := range row.Parts {
-			key := textnorm.NormalizeTag(part)
-			splitParts[key] = true
-			if kbCandidate {
-				kbDescended[key] = true
-			}
-		}
-	}
+	kbDescended, splitParts := kbLineage(analyzerNames, kbInjected, compositionRows, alongside)
 
 	identityStart := time.Now()
 	report("identity", "", 0)
@@ -633,14 +621,13 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 
 	e.ensureOCRLanguage(ctx, analysis.Language)
 
-	// the containment channel's provenance rides the registration into both planes: the document-tag write
-	// records the kb source, and a birth records the kb origin on the tag row
+	// the containment channel's lineage rides the registration into the tag row: a kb-injected name and
+	// every part a kb nomination's compound applied are born kb, and a plain split part keeps split
 	for i := range identityPlan.Registrations {
 		reg := &identityPlan.Registrations[i]
 		key := textnorm.NormalizeTag(reg.Input)
 		switch {
-		case kbInjected[key]:
-			reg.Source = curation.DocumentTagSourceKB
+		case kbDescended[key]:
 			reg.Origin = tags.TagOriginKB
 		case splitParts[key]:
 			reg.Origin = tags.TagOriginSplit
@@ -663,7 +650,6 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	}
 
 	var tagIDs []int64
-	tagSources := make(map[int64]string, len(results))
 	seenTagIDs := make(map[int64]bool, len(results))
 	for i, r := range results {
 		switch r.Status {
@@ -675,13 +661,11 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 			if !seenTagIDs[r.Entity.ID] {
 				seenTagIDs[r.Entity.ID] = true
 				tagIDs = append(tagIDs, r.Entity.ID)
-				tagSources[r.Entity.ID] = identityPlan.Registrations[i].Source
 			}
 		case types.Conflict, types.Apply, types.Alias:
 			if !seenTagIDs[r.Entity.ID] {
 				seenTagIDs[r.Entity.ID] = true
 				tagIDs = append(tagIDs, r.Entity.ID)
-				tagSources[r.Entity.ID] = identityPlan.Registrations[i].Source
 			}
 		default:
 			e.logger.Error(logId, "create tag %q: invalid", identityPlan.Registrations[i].Input)
@@ -692,14 +676,10 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 		return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("clear document tags: %w", err)}
 	}
 	for _, tagID := range tagIDs {
-		source := tagSources[tagID]
-		if source == "" {
-			source = curation.DocumentTagSourceEnrich
-		}
 		if err := txQ.AddDocumentTag(ctx, database.AddDocumentTagParams{
 			DocumentID: document.ID,
 			TagID:      tagID,
-			Source:     source,
+			Source:     curation.DocumentTagSourceEnrich,
 		}); err != nil {
 			return nil, DocumentCounts{}, &task.Error{ReqID: logId, Err: fmt.Errorf("add document tag: %w", err)}
 		}
@@ -1038,6 +1018,53 @@ func kbGateNames(kbDescended map[string]bool, outputs map[string]string) map[str
 		names[planOutputName(name, outputs)] = struct{}{}
 	}
 	return names
+}
+
+// kbLineage derives one emission's knowledge-base lineage in two sets. The first is the quality gate's:
+// the injected names plus every part a kb-nominated compound applied — split components and the parts a
+// kept compound carries alongside, whether the keep was judged on this emission or read from the store's
+// coverage cache. The analyzer's own emissions and its compounds' parts are subtracted, because those
+// names carry document-emission evidence and must never retire on kb grounds. The second set is every
+// split component, kb-lineaged or not, so the birth origin can tell a plain split from a kb-derived one.
+func kbLineage(analyzerNames, kbInjected map[string]bool, rows []tags.CompositionRow, alongside map[string][]string) (map[string]bool, map[string]bool) {
+	kbDescended := make(map[string]bool, len(kbInjected))
+	for name := range kbInjected {
+		kbDescended[name] = true
+	}
+	splitParts := make(map[string]bool)
+	kbParts := make(map[string]bool)
+	analyzerParts := make(map[string]bool)
+	mark := func(candidate string, parts []string, split bool) {
+		key := textnorm.NormalizeTag(candidate)
+		kb := kbInjected[key] && !analyzerNames[key]
+		for _, part := range parts {
+			partKey := textnorm.NormalizeTag(part)
+			if split {
+				splitParts[partKey] = true
+			}
+			if kb {
+				kbParts[partKey] = true
+			} else {
+				analyzerParts[partKey] = true
+			}
+		}
+	}
+	for _, row := range rows {
+		mark(row.Candidate, row.Parts, row.Disposition == tags.CompositionSplit)
+	}
+	for candidate, parts := range alongside {
+		mark(candidate, parts, false)
+	}
+	for key := range kbParts {
+		kbDescended[key] = true
+	}
+	for key := range analyzerNames {
+		delete(kbDescended, key)
+	}
+	for key := range analyzerParts {
+		delete(kbDescended, key)
+	}
+	return kbDescended, splitParts
 }
 
 // pruneRejectedParts drops from a row the parts the quality gate rejected and records the survivors under

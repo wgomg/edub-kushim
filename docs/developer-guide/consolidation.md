@@ -536,8 +536,9 @@ the versioned verdict cache until a criteria-version bump re-judges it. Removals
 bounded by `max_rejudge` per run.
 
 **KB not-subject removal** — the same run removes stored knowledge-base nominations the
-quality gate's answer condemns: an `origin='kb'` value whose latest recorded verdict, under
-any policy version, answers `subject_matter=false` with no abstention loses its row, its
+quality gate's answer condemns: an `origin='kb'` value — a containment nomination or a part
+a nominated compound applied — whose latest recorded verdict, under any policy version,
+answers `subject_matter=false` with no abstention loses its row, its
 document assignments and every recorded verdict for its name, with no blocklist entry, so
 enrichment may propose the value again and a future document judges it fresh. The scan covers
 provisional and promoted values alike; identity and composition holds do not exempt it — the
