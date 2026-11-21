@@ -10,11 +10,13 @@ import (
 	"image/png"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/go-pdf/fpdf"
+	"github.com/google/uuid"
 	gosseract "github.com/otiai10/gosseract/v2"
 	_mime "github.com/wgomg/edub-kushim/internal/documents/mime"
 	_ "golang.org/x/image/tiff"
@@ -36,6 +38,14 @@ const (
 	// tileMaxPerDoc bounds the per-document tile count; plan and result preallocation then never exceeds
 	// a proportional size, and even a 4,000-page A4 book is only 4,000 tiles
 	tileMaxPerDoc = 100_000
+
+	// chunkMaxPages caps how many pages one chunk's fpdf instance retains; every chunk re-embeds the
+	// font in the pre-optimizer output, so this bounds that duplication too
+	chunkMaxPages = 64
+
+	// chunkMaxPixels caps the summed page pixels in one chunk; the probe measures pages exactly and
+	// retained output bytes scale with page pixels, so a page count alone would not bound monster pages
+	chunkMaxPixels = 256_000_000
 )
 
 type ocrTileResult struct {
@@ -58,7 +68,9 @@ type tileSpec struct {
 // recognized by a worker pool of Tesseract engines, and written back as a searchable PDF that carries
 // an invisible-text overlay at reduced DPI. Pages larger than the tile budget are rendered, recognized
 // and placed as a grid of bounded tiles, so the per-page working set does not grow with the page's declared
-// dimensions. It is the body of the internal-ocr verb.
+// dimensions. Multi-page output is assembled into bounded chunks, joining them with MuPDF only when
+// more than one chunk is produced, so the PDF builder's retention does not grow with the document either.
+// It is the body of the internal-ocr verb.
 func RunStandalone(inputPath, outputPath string, languages []string, dataDir string, ocrWorkers int) error {
 	suppressLeptonicaStderr()
 
@@ -88,10 +100,6 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		return fmt.Errorf("PDF has no pages")
 	}
 
-	pdf := fpdf.New("P", "pt", "", "")
-	pdf.SetAutoPageBreak(false, 0)
-	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
-
 	_, _ = fmt.Fprintf(os.Stdout, "starting OCR on %d pages\n", numPages)
 
 	pageW := make([]int, numPages)
@@ -120,6 +128,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		client := newOCRClient(languages)
 		defer client.Close()
 
+		pdf := newChunkPDF()
 		for i := range numPages {
 			res, err := processPage(mupdfCtx, doc, i, plans[i], pageW[i], pageH[i], client)
 			if err != nil {
@@ -127,62 +136,99 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 			}
 			addPDFPage(pdf, res, i)
 		}
-	} else {
-		type tileJob struct {
-			pageIndex int
-			tileIndex int
-			core      image.Rectangle
-			samples   []byte
-			tw, th    int
-			ox, oy    int
+		if err := pdf.OutputFileAndClose(outputPath); err != nil {
+			return fmt.Errorf("save output PDF: %w", err)
 		}
+		return nil
+	}
 
-		type tileResult struct {
-			pageIndex int
-			tileIndex int
-			boxes     []gosseract.BoundingBox
-			jpegData  []byte
-			err       error
+	chunks := planChunks(pageW, pageH)
+	chunkTiles := make([]int, len(chunks))
+	maxChunkTiles := 0
+	for c, ch := range chunks {
+		for i := ch.firstPage; i < ch.lastPage; i++ {
+			chunkTiles[c] += len(plans[i])
 		}
+		maxChunkTiles = max(maxChunkTiles, chunkTiles[c])
+	}
 
-		numWorkers := ocrWorkers
-		if numWorkers <= 0 {
-			numWorkers = runtime.NumCPU()
+	docUUID := uuid.New().String()
+	var chunkPaths []string
+	defer func() {
+		for _, p := range chunkPaths {
+			_ = os.Remove(p)
 		}
-		numWorkers = min(numWorkers, totalTiles, runtime.NumCPU()*2)
+	}()
 
-		jobs := make(chan tileJob, numWorkers)
-		results := make(chan tileResult, totalTiles)
-		var wg sync.WaitGroup
+	type tileJob struct {
+		pageIndex int
+		tileIndex int
+		core      image.Rectangle
+		samples   []byte
+		tw, th    int
+		ox, oy    int
+	}
 
-		for range numWorkers {
-			wg.Go(func() {
-				worker := newOCRClient(languages)
-				defer worker.Close()
+	type tileResult struct {
+		pageIndex int
+		tileIndex int
+		boxes     []gosseract.BoundingBox
+		jpegData  []byte
+		err       error
+	}
 
-				for job := range jobs {
-					boxes, jpegData, err := computeTile(job.samples, job.tw, job.th, job.core, job.ox, job.oy, worker)
-					if err != nil {
-						results <- tileResult{
-							pageIndex: job.pageIndex,
-							tileIndex: job.tileIndex,
-							err:       fmt.Errorf("page %d: tile %d: %w", job.pageIndex, job.tileIndex, err),
-						}
-						continue
-					}
+	numWorkers := ocrWorkers
+	if numWorkers <= 0 {
+		numWorkers = runtime.NumCPU()
+	}
+	numWorkers = min(numWorkers, totalTiles, runtime.NumCPU()*2)
+
+	jobs := make(chan tileJob, numWorkers)
+	// cap results at the largest chunk's tile count: workers must never block sending a result while the
+	// producer is still pushing this chunk's jobs, or the full jobs and results channels deadlock
+	results := make(chan tileResult, maxChunkTiles)
+	var wg sync.WaitGroup
+
+	for range numWorkers {
+		wg.Go(func() {
+			worker := newOCRClient(languages)
+			defer worker.Close()
+
+			for job := range jobs {
+				boxes, jpegData, err := computeTile(job.samples, job.tw, job.th, job.core, job.ox, job.oy, worker)
+				if err != nil {
 					results <- tileResult{
 						pageIndex: job.pageIndex,
 						tileIndex: job.tileIndex,
-						boxes:     boxes,
-						jpegData:  jpegData,
+						err:       fmt.Errorf("page %d: tile %d: %w", job.pageIndex, job.tileIndex, err),
 					}
+					continue
 				}
-			})
+				results <- tileResult{
+					pageIndex: job.pageIndex,
+					tileIndex: job.tileIndex,
+					boxes:     boxes,
+					jpegData:  jpegData,
+				}
+			}
+		})
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var runErr error
+chunkLoop:
+	for c, ch := range chunks {
+		slots := make([][]tileResult, ch.lastPage-ch.firstPage)
+		for i := ch.firstPage; i < ch.lastPage; i++ {
+			slots[i-ch.firstPage] = make([]tileResult, len(plans[i]))
 		}
 
-		var phase1Err error
 	renderLoop:
-		for i := range numPages {
+		for i := ch.firstPage; i < ch.lastPage; i++ {
 			if i > 0 && i%10 == 0 {
 				_, _ = fmt.Fprintf(os.Stdout, "OCR page %d/%d\n", i+1, numPages)
 			}
@@ -191,7 +237,7 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 				samples, tw, th, ox, oy, err := doc.RenderTile(mupdfCtx, i, ocrDPI,
 					r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
 				if err != nil {
-					phase1Err = fmt.Errorf("page %d: tile %d: render error: %w", i, t, err)
+					runErr = fmt.Errorf("page %d: tile %d: render error: %w", i, t, err)
 					break renderLoop
 				}
 				jobs <- tileJob{
@@ -206,41 +252,68 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 				}
 			}
 		}
-		close(jobs)
-
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
-		resultsByPage := make([][]tileResult, numPages)
-		for i := range numPages {
-			resultsByPage[i] = make([]tileResult, len(plans[i]))
-		}
-		for r := range results {
-			resultsByPage[r.pageIndex][r.tileIndex] = r
+		if runErr != nil {
+			break chunkLoop
 		}
 
-		if phase1Err != nil {
-			return phase1Err
+		for range chunkTiles[c] {
+			r := <-results
+			slots[r.pageIndex-ch.firstPage][r.tileIndex] = r
 		}
 
-		for i := range numPages {
+		pdf := newChunkPDF()
+		for i := ch.firstPage; i < ch.lastPage; i++ {
 			res := ocrPageResult{w: pageW[i], h: pageH[i], tiles: make([]ocrTileResult, 0, len(plans[i]))}
-			for t := range resultsByPage[i] {
-				r := resultsByPage[i][t]
+			for t := range slots[i-ch.firstPage] {
+				r := slots[i-ch.firstPage][t]
 				if r.err != nil {
-					return r.err
+					runErr = r.err
+					break
 				}
 				res.tiles = append(res.tiles, ocrTileResult{jpegData: r.jpegData, core: plans[i][t].core})
 				res.boxes = append(res.boxes, r.boxes...)
 			}
+			if runErr != nil {
+				break
+			}
 			addPDFPage(pdf, res, i)
+			// fpdf now owns the encoded images; drop this page's chunk results so the slot and builder
+			// retention do not stack
+			slots[i-ch.firstPage] = nil
+		}
+		if runErr != nil {
+			break chunkLoop
+		}
+
+		chunkPath := filepath.Join(os.TempDir(), fmt.Sprintf("ocr_chunk_%s_%03d.pdf", docUUID, c))
+		chunkPaths = append(chunkPaths, chunkPath)
+		if err := pdf.OutputFileAndClose(chunkPath); err != nil {
+			runErr = fmt.Errorf("write chunk %d: %w", c, err)
+			break chunkLoop
 		}
 	}
 
-	if err := pdf.OutputFileAndClose(outputPath); err != nil {
-		return fmt.Errorf("save output PDF: %w", err)
+	close(jobs)
+	// workers must never stay blocked sending their last in-flight results, or the closer goroutine
+	// never runs and this drain never terminates
+	for range results {
+	}
+
+	if runErr != nil {
+		return runErr
+	}
+
+	if len(chunkPaths) == 1 {
+		// rename is the fast path, but it fails across filesystems (temp vs output directories); the
+		// join below then produces the same file
+		if err := os.Rename(chunkPaths[0], outputPath); err == nil {
+			return nil
+		}
+	}
+
+	if err := mupdfCtx.JoinPDFs(outputPath, chunkPaths); err != nil {
+		_ = os.Remove(outputPath)
+		return fmt.Errorf("join chunks: %w", err)
 	}
 	return nil
 }
@@ -384,6 +457,33 @@ func coreBounds(total int) []int {
 	return bounds
 }
 
+// chunkRange is a half-open page interval [firstPage, lastPage) assembled into one chunk PDF.
+type chunkRange struct {
+	firstPage int
+	lastPage  int
+}
+
+// planChunks groups pages into chunks whose retained PDF state stays bounded: a chunk closes before
+// the page that would push it past chunkMaxPages pages or chunkMaxPixels of summed page pixels. Every
+// chunk holds at least one page, so a lone oversized page only ever exceeds the pixel budget on its
+// own. Chunks cover every page in order and partition the document exactly.
+func planChunks(pageW, pageH []int) []chunkRange {
+	chunks := make([]chunkRange, 0, len(pageW)/chunkMaxPages+1)
+	first, pixels := 0, 0
+	for i := range pageW {
+		pagePixels := pageW[i] * pageH[i]
+		if i > first && (i-first >= chunkMaxPages || pixels+pagePixels > chunkMaxPixels) {
+			chunks = append(chunks, chunkRange{firstPage: first, lastPage: i})
+			first, pixels = i, 0
+		}
+		pixels += pagePixels
+	}
+	if first < len(pageW) {
+		chunks = append(chunks, chunkRange{firstPage: first, lastPage: len(pageW)})
+	}
+	return chunks
+}
+
 // computeTile OCRs one rendered tile and returns the boxes it owns together with the JPEG for its core
 // region. core is the tile's core rectangle in page pixels; ox, oy are the pixmap origin reported by
 // RenderTile. A box belongs to the tile whose core contains its centre, so words in the overlap are
@@ -448,6 +548,16 @@ func computeTile(samples []byte, tw, th int, core image.Rectangle, ox, oy int, c
 type fontMetrics struct {
 	ascent  float64
 	descent float64
+}
+
+// newChunkPDF returns an fpdf instance with the shared font and page settings already applied. Each
+// chunk, and the single-page path, assembles into its own instance: OutputFileAndClose finalizes and
+// closes the instance, so a fresh one per chunk is what bounds the builder's retention.
+func newChunkPDF() *fpdf.Fpdf {
+	pdf := fpdf.New("P", "pt", "", "")
+	pdf.SetAutoPageBreak(false, 0)
+	pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)
+	return pdf
 }
 
 func addPDFPage(pdf *fpdf.Fpdf, res ocrPageResult, idx int) {

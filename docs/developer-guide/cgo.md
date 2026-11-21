@@ -249,6 +249,14 @@ return samples, int(w), int(h), int(px), int(py), nil
 (`defer C.fz_drop_pixmap(ctx.p, p)` runs before the return.) No `Pixmap` handle
 crosses back to Go, so the caller owns only the sample slice.
 
+`JoinPDFs` moves a slice of paths across and nothing else: it builds one
+`C.CString` per path, frees them in a single deferred closure, and the C loop
+owns every MuPDF handle it creates — destination document, per-chunk source
+document, graft map — through `fz_var`/`fz_always`. Grafted streams are copied
+into the destination's xref, so the destination holds the joined file's stream
+bytes until `pdf_save_document` runs; the Go side receives only an error and a
+failing-chunk index.
+
 **C-allocated options with an embedded C string**
 (`mupdf_wrapper.go:338-381`): `NewCleanOptions` returns a `*CleanOptions`
 handle wrapping a `*C.pdf_clean_options` and allocates a `C.CString("85")`
@@ -315,9 +323,9 @@ func (d *MuDocument) RenderPage(ctx *MuContext, pageNum int, dpi float64) (width
   errors, and ingestion is not blocked (`mupdf_nocgo.go:7-8` comment). The
   `edub` binary simply can't render or OCR; it relies on `kushim` for that.
 
-`PageSizePixels` and `RenderTile` have matching stubs. The two files must stay
-in sync manually — adding a method to the wrapper without the stub breaks
-`CGO_ENABLED=0` builds.
+`PageSizePixels`, `RenderTile` and `JoinPDFs` have matching stubs. The two
+files must stay in sync manually — adding a method to the wrapper without the
+stub breaks `CGO_ENABLED=0` builds.
 
 ---
 
@@ -422,16 +430,21 @@ the artifacts.
 Tests that touch the wrappers carry `//go:build cgo` and only run with the
 toolchain installed:
 
-- `internal/cgo/mupdf_wrapper_test.go` — builds a minimal PDF in
-  memory **with computed xref byte offsets** (`minimalPDF(t, w, h)`) to
-  exercise the render-limit guard without fixture files. It also pins the
-  probe/tile contracts: `PageSizePixels` agrees with `RenderPage`,
-  `RenderTile` matches the corresponding sub-rectangle of a full render,
-  clamps at page edges, and rejects tiles outside the page.
+- `internal/cgo/mupdf_wrapper_test.go` — builds minimal PDFs in memory
+  **with computed xref byte offsets** (`minimalPDF` for a blank page,
+  `minimalPDFPage` when a distinguishable content stream matters) to exercise
+  the render-limit guard without fixture files. It also pins the probe/tile
+  contracts: `PageSizePixels` agrees with `RenderPage`, `RenderTile` matches
+  the corresponding sub-rectangle of a full render, clamps at page edges, and
+  rejects tiles outside the page. The join contract is covered with
+  filler-bearing single-page chunks: `JoinPDFs` preserves page count, order
+  and sizes without leaking one chunk's stream onto another page, rejects an
+  empty chunk list, and leaves no output file when a chunk is missing.
 - `internal/documents/ocr/gosseract_test.go`, `downscale_test.go`,
-  `tiles_test.go` — OCR stderr tolerance, image helpers, and the tiling
-  geometry (`planTiles`/`coreBounds`: exact partition, budget, order,
-  remainder handling, tile ceilings).
+  `tiles_test.go` — OCR stderr tolerance, image helpers, and the tiling and
+  chunking geometry (`planTiles`/`coreBounds`: exact partition, budget, order,
+  remainder handling, tile ceilings; `planChunks`: page-count and pixel-budget
+  boundaries, lone oversized page).
 - `internal/matcher/hugot_test.go` — model tests.
 - `internal/ops/cli` — no `//go:build cgo` tag of its own, but the package
   only compiles with CGo because `hugot.go` imports the cgo-gated tagmatcher
@@ -480,4 +493,4 @@ exercise the C logic through the public Go API.
 
 ---
 
-*Last verified against the tree: 2026-11-20. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-11-21. If code and doc disagree, code wins.*

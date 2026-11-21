@@ -227,7 +227,12 @@ rendering mode 3** (`3 Tr`) for invisible‑but‑selectable text. Pages larger
 than a 4 MP tile budget are rendered and OCR'd as a grid of bounded tiles
 (2000 px cores with a 128 px OCR‑only overlap), so the child's per‑page
 working memory does not scale with the page's declared dimensions; pages that
-fit the budget keep the single‑render single‑JPEG path.
+fit the budget keep the single‑render single‑JPEG path. Output is assembled in
+chunks of 64 pages or 256 MP of page pixels (whichever comes first): each
+chunk is written to a temporary PDF with its own `fpdf` instance, and the
+chunks are grafted into the final document with MuPDF
+(`pdf_graft_mapped_page`), so the PDF builder and the pending tile results
+never grow with document length.
 
 ### 4. Database Integration
 
@@ -851,7 +856,7 @@ clear upgrade path to Meilisearch, ZincSearch, or Elasticsearch if needed.
 | Text rendering mode 3 (`3 Tr`)    | PDF standard for invisible‑but‑selectable text. Works in all viewers. Set via `SetTextRenderingMode(3)` before `Text()` calls. (Used by gosseract adapter.)                                                                                                                                                                        |
 | Embedded CID font                 | LiberationSans registered via `AddUTF8FontFromBytes`. CID Type0 font with Identity-H encoding + ToUnicode CMap makes every language selectable and extractable, even when the font lacks glyphs for that script.                                                                                                                   |
 | Static C libraries                | Tesseract, Leptonica, and MuPDF linked statically. Single binary, no runtime deps. See `build-leptonica-tesseract.md`.                                                                                                                                                                                                             |
-| fpdf over MuPDF PDF creation      | fpdf is pure Go; MuPDF's PDF writing API requires additional CGo. (Only relevant for gosseract adapter.)                                                                                                                                                                                                                           |
+| fpdf for pages, MuPDF for the join | fpdf is pure Go and creates each page chunk; the final document is assembled by grafting chunk pages with MuPDF (`pdf_graft_mapped_page`), which deduplicates per-chunk resources and copies streams without recompression. (Only relevant for gosseract adapter.)                                                                                                                     |
 | TextRank over LLM summarization   | Extractive summarization via graph-based ranking is deterministic, zero-cost, privacy-preserving. Reduces token count before LLM call — cost saving and faster.                                                                                                                                                                    |
 | Hugot with ORT backend (default)  | ONNX Runtime for GPU-class CPU inference with BGE-M3. Auto-downloads `libonnxruntime.so`. ORT CPU memory arena and memory-pattern pre-allocation are disabled by default (internal `CpuMemArena`/`MemPattern` flags) to keep idle RSS at ~2.2–2.5 GB instead of ~4–5 GB. Go backend available as alternative with no runtime deps. |
 | `runWithTimeout` wrapper          | Ensures timeout detection for every non‑LLM adapter call, regardless of whether the adapter checks `ctx.Done()` internally. Eliminates the need for per‑adapter cancellation wiring. The LLM adapters install their own HTTP‑scoped deadline per attempt instead.                                                                                              |

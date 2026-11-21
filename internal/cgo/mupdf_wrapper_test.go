@@ -7,14 +7,91 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// minimalPDF builds a syntactically valid single-page PDF with the given
-// MediaBox dimensions (in points) and no content stream, computing correct
-// xref byte offsets. Used to exercise the page-dimension guard in
-// mupdf_render_page without depending on any on-disk fixture.
-func minimalPDF(t *testing.T, width, height int) []byte {
+// TestJoinPDFs_PreservesPagesInOrder joins two one-page minimal chunks and checks the destination
+// keeps both pages, in order, with their original sizes and no cross-chunk stream leakage.
+func TestJoinPDFs_PreservesPagesInOrder(t *testing.T) {
+	ctx, err := NewMuContext()
+	if err != nil {
+		t.Fatalf("NewMuContext: %v", err)
+	}
+	defer ctx.Close()
+
+	first := writeTempPDF(t, minimalPDFPage(t, 612, 792, strings.Repeat("A", 64)))
+	second := writeTempPDF(t, minimalPDFPage(t, 400, 500, strings.Repeat("B", 128)))
+
+	out := filepath.Join(t.TempDir(), "joined.pdf")
+	if err := ctx.JoinPDFs(out, []string{first, second}); err != nil {
+		t.Fatalf("JoinPDFs: %v", err)
+	}
+
+	joined, err := ctx.OpenMuDocument(out)
+	if err != nil {
+		t.Fatalf("OpenMuDocument: %v", err)
+	}
+	defer joined.Close(ctx)
+
+	if got := joined.NumPages(ctx); got != 2 {
+		t.Fatalf("joined NumPages = %d, want 2", got)
+	}
+
+	for i, want := range [][2]int{{612, 792}, {400, 500}} {
+		w, h, err := joined.PageSizePixels(ctx, i, 72)
+		if err != nil {
+			t.Fatalf("joined page %d size: %v", i, err)
+		}
+		if w != want[0] || h != want[1] {
+			t.Fatalf("joined page %d size = %dx%d, want %dx%d", i, w, h, want[0], want[1])
+		}
+	}
+
+	text0, err := joined.ExtractPageText(ctx, 0)
+	if err != nil {
+		t.Fatalf("joined page 0 text: %v", err)
+	}
+	if strings.Contains(text0, strings.Repeat("B", 128)) {
+		t.Fatalf("joined page 0 picked up the second chunk's stream: %q", text0)
+	}
+}
+
+func TestJoinPDFs_RejectsEmptyChunks(t *testing.T) {
+	ctx, err := NewMuContext()
+	if err != nil {
+		t.Fatalf("NewMuContext: %v", err)
+	}
+	defer ctx.Close()
+
+	out := filepath.Join(t.TempDir(), "joined.pdf")
+	if err := ctx.JoinPDFs(out, nil); err == nil {
+		t.Fatal("expected JoinPDFs to reject an empty chunk list, got nil error")
+	}
+}
+
+func TestJoinPDFs_FailsOnMissingChunk(t *testing.T) {
+	ctx, err := NewMuContext()
+	if err != nil {
+		t.Fatalf("NewMuContext: %v", err)
+	}
+	defer ctx.Close()
+
+	out := filepath.Join(t.TempDir(), "joined.pdf")
+	err = ctx.JoinPDFs(out, []string{filepath.Join(t.TempDir(), "absent.pdf")})
+	if err == nil {
+		t.Fatal("expected JoinPDFs to fail on a missing chunk, got nil error")
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("missing-chunk join must not produce an output file, stat: %v", statErr)
+	}
+}
+
+// minimalLegacyPDF builds the historical blank-page fixture: a single page with
+// the given MediaBox and an empty content stream. It predates the filler-bearing
+// minimalPDFPage and stays byte-identical so the existing render tests keep the
+// exact fixture they always had.
+func minimalLegacyPDF(t *testing.T, width, height int) []byte {
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -46,6 +123,44 @@ func minimalPDF(t *testing.T, width, height int) []byte {
 	return buf.Bytes()
 }
 
+// minimalPDFPage builds a syntactically valid single-page PDF with the given
+// MediaBox dimensions (in points), a content stream carrying a filler byte run,
+// and correct xref byte offsets. The filler makes each chunk's raw stream
+// distinguishable so join tests can detect cross-chunk stream leakage.
+func minimalPDFPage(t *testing.T, width, height int, filler string) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	offsets := make([]int, 6)
+
+	buf.WriteString("%PDF-1.4\n")
+
+	stream := fmt.Sprintf("q 10 10 100 100 re f\n(%s) Tj\nQ\n", filler)
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Contents 4 0 R /Resources << >> >>", width, height),
+		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(stream), stream),
+		"<< /Length 0 >>\nstream\nendstream",
+	}
+
+	for i, body := range objects {
+		offsets[i+1] = buf.Len()
+		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", i+1, body)
+	}
+
+	xrefOffset := buf.Len()
+	buf.WriteString("xref\n0 6\n")
+	buf.WriteString("0000000000 65535 f \n")
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[i])
+	}
+	buf.WriteString("trailer\n<< /Size 6 /Root 1 0 R >>\n")
+	fmt.Fprintf(&buf, "startxref\n%d\n%%%%EOF", xrefOffset)
+
+	return buf.Bytes()
+}
+
 func writeTempPDF(t *testing.T, data []byte) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.pdf")
@@ -72,7 +187,7 @@ func TestRenderPage_NormalSizeSucceeds(t *testing.T) {
 	}
 	defer ctx.Close()
 
-	path := writeTempPDF(t, minimalPDF(t, 612, 792)) // US Letter
+	path := writeTempPDF(t, minimalLegacyPDF(t, 612, 792)) // US Letter
 	doc, err := ctx.OpenMuDocument(path)
 	if err != nil {
 		t.Fatalf("OpenMuDocument: %v", err)
@@ -99,7 +214,7 @@ func TestRenderPage_RejectsOversizedPage(t *testing.T) {
 
 	// 4000x4000pt (~55.6x55.6in) renders to ~123M pixels at 200 DPI —
 	// comfortably over the 100M-pixel render guard in mupdf_render_page.
-	path := writeTempPDF(t, minimalPDF(t, 4000, 4000))
+	path := writeTempPDF(t, minimalLegacyPDF(t, 4000, 4000))
 	doc, err := ctx.OpenMuDocument(path)
 	if err != nil {
 		t.Fatalf("OpenMuDocument: %v", err)
@@ -120,7 +235,7 @@ func TestPageSizePixels_MatchesRenderedSize(t *testing.T) {
 	}
 	defer ctx.Close()
 
-	doc := openTestDocument(t, ctx, minimalPDF(t, 612, 792)) // US Letter
+	doc := openTestDocument(t, ctx, minimalLegacyPDF(t, 612, 792)) // US Letter
 	defer doc.Close(ctx)
 
 	w, h, err := doc.PageSizePixels(ctx, 0, 200)
@@ -152,7 +267,7 @@ func TestPageSizePixels_RejectsOversizedPage(t *testing.T) {
 	}
 	defer ctx.Close()
 
-	doc := openTestDocument(t, ctx, minimalPDF(t, 4000, 4000))
+	doc := openTestDocument(t, ctx, minimalLegacyPDF(t, 4000, 4000))
 	defer doc.Close(ctx)
 
 	// the page-level guard moves here so oversized pages fail before any
@@ -169,7 +284,7 @@ func TestRenderTile_WholePageMatchesRenderPage(t *testing.T) {
 	}
 	defer ctx.Close()
 
-	doc := openTestDocument(t, ctx, minimalPDF(t, 612, 792)) // US Letter
+	doc := openTestDocument(t, ctx, minimalLegacyPDF(t, 612, 792)) // US Letter
 	defer doc.Close(ctx)
 
 	// a tile covering the whole page must render the same pixels as the
@@ -200,7 +315,7 @@ func TestRenderTile_PartialTileMatchesSubrectangle(t *testing.T) {
 	}
 	defer ctx.Close()
 
-	doc := openTestDocument(t, ctx, minimalPDF(t, 612, 792)) // US Letter
+	doc := openTestDocument(t, ctx, minimalLegacyPDF(t, 612, 792)) // US Letter
 	defer doc.Close(ctx)
 
 	// pixels of a page-region tile must match that region of the full render.
@@ -238,7 +353,7 @@ func TestRenderTile_ClampsToPageBounds(t *testing.T) {
 	}
 	defer ctx.Close()
 
-	doc := openTestDocument(t, ctx, minimalPDF(t, 612, 792)) // US Letter, 1700x2200 px at 200 DPI
+	doc := openTestDocument(t, ctx, minimalLegacyPDF(t, 612, 792)) // US Letter, 1700x2200 px at 200 DPI
 	defer doc.Close(ctx)
 
 	// a tile hanging past the bottom-right corner is clipped to the page
@@ -262,7 +377,7 @@ func TestRenderTile_RejectsEmptyIntersection(t *testing.T) {
 	}
 	defer ctx.Close()
 
-	doc := openTestDocument(t, ctx, minimalPDF(t, 612, 792)) // US Letter
+	doc := openTestDocument(t, ctx, minimalLegacyPDF(t, 612, 792)) // US Letter
 	defer doc.Close(ctx)
 
 	// a tile entirely outside the page must fail instead of allocating.

@@ -56,6 +56,10 @@ func (c *MuContext) PdfCleanFile(inputPath, outputPath string, opts *CleanOption
 	return errors.New("MuPDF not available without CGo")
 }
 
+func (c *MuContext) JoinPDFs(outputPath string, chunkPaths []string) error {
+	return errors.New("MuPDF not available without CGo")
+}
+
 func NewCleanOptions() *CleanOptions {
 	return nil
 }

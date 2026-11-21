@@ -192,8 +192,8 @@ For `numPages > 1`, tiles are OCR'd by a worker pool:
 ```go
 numWorkers := min(ocrWorkers, totalTiles, runtime.NumCPU()*2)
 
-jobs := make(chan tileJob, numWorkers)        // page/tile index, core, samples, dims, origin
-results := make(chan tileResult, totalTiles)  // boxes + JPEG per tile, or an error
+jobs := make(chan tileJob, numWorkers)          // page/tile index, core, samples, dims, origin
+results := make(chan tileResult, maxChunkTiles) // boxes + JPEG per tile, or an error
 var wg sync.WaitGroup
 
 for range numWorkers {
@@ -213,15 +213,25 @@ for range numWorkers {
   a guard failure fails the document before any pixmap exists.
 - **One Tesseract client per worker** — gosseract clients are not
   concurrency-safe, so each worker owns its own.
-- The producer renders tiles and feeds `jobs` (buffered to `numWorkers`);
-  `RenderTile` releases each pixmap internally. The producer closes `jobs`, a
-  closer goroutine closes `results` after `wg.Wait()`.
-- **Deterministic output**: results land in a per-page, per-tile structure
-  indexed by the plans and are assembled page by page with tiles row-major —
+- **Chunk-synchronous production**: pages are grouped into chunks
+  (`planChunks`: 64 pages or 256 MP of summed page pixels, whichever comes
+  first), and the main goroutine works one chunk at a time. It renders that
+  chunk's pages into `jobs` (buffered to `numWorkers`) while the workers OCR,
+  then drains exactly the chunk's tile results into chunk-local slots, and
+  only then moves to the next chunk. `RenderTile` releases each pixmap
+  internally; the producer closes `jobs`, a closer goroutine closes `results`
+  after `wg.Wait()`.
+- **Bounded retention**: the results channel is sized to the largest chunk's
+  tile count, so workers never block sending while the producer is still
+  pushing jobs for that chunk — a full results buffer plus a full jobs buffer
+  would deadlock the producer. Only one chunk's boxes and JPEGs are retained
+  at a time.
+- **Deterministic output**: results land in per-chunk slots indexed by page and
+  tile, and pages are assembled in document order with tiles row-major —
   concurrent OCR, sequential PDF.
-- Render errors abort before assembly (`phase1Err`), and any tile error fails
-  the whole run as `page N: tile M: …` — an OCR failure on page 12 of a book
-  is a failed task, not a partial PDF.
+- Render errors abort the run (`runErr`), and any tile error fails the whole
+  run as `page N: tile M: …` — an OCR failure on page 12 of a book is a failed
+  task, not a partial PDF.
 
 ---
 
@@ -360,7 +370,33 @@ The pieces:
   (`pdf.AddUTF8FontFromBytes("KushimText", "", kushimFontData)`) — Unicode
   coverage for any script the OCR produces, no system font dependency.
 
-The whole PDF is written with `pdf.OutputFileAndClose(outputPath)`.
+Each chunk is written as its own fpdf document. `newChunkPDF` creates the
+instance and registers the embedded font; `addPDFPage` adds the chunk's pages
+in document order; `OutputFileAndClose` writes the chunk to
+`<os.TempDir()>/ocr_chunk_<doc-uuid>_<k>.pdf` and the instance is dropped. One
+chunk's image map and serialized buffer are therefore the whole of the
+builder's retention.
+
+The final document is produced as follows:
+
+- A multi-page document that produced one chunk is renamed to `outputPath`.
+  If the rename fails across filesystems, the join below is used instead. The
+  single-page and image paths write `outputPath` directly.
+- Several chunks are joined by `MuContext.JoinPDFs` → `mupdf_join_pdfs`: a
+  fresh destination comes from `pdf_create_document`, each chunk is opened in
+  turn, one graft map per chunk appends its pages with
+  `pdf_graft_mapped_page(…, -1, chunk, page)`, and the result is saved once
+  with `pdf_save_document` and the default write options. The graft map
+  deduplicates shared objects within a chunk, so the embedded font is copied
+  once per chunk rather than once per page; streams pass through raw, and the
+  optimizer (§12) still owns recompression.
+- Chunk files are deleted after the join and on every failure path. A failed
+  join also removes the partial `outputPath`, so a failed document leaves no
+  PDF behind.
+
+The join copies every grafted stream into the destination document's xref, so
+final assembly holds about one copy of the output's stream bytes; the fpdf
+builder and the tile results remain bounded by one chunk.
 
 ---
 
@@ -505,7 +541,9 @@ Notable behaviors:
 
 ## 12. Post-OCR optimization
 
-Both paths run the produced PDF through the optimizer (`gosseract.go:104-111`):
+Both paths run the produced PDF — one file, whether renamed from a single
+chunk or joined from several — through the optimizer
+(`gosseract.go:104-111`):
 
 ```go
 optResult, err := o.optimizer.Optimize(ctx, docId, outPath)
@@ -573,8 +611,9 @@ and `consumer.ocr.languages` is required before consumption runs.
   graphics state anyway).
 - **JPEG quality 60 for the visible image** is a size/quality tradeoff; the
   invisible layer is what matters for search, so the image can be aggressive.
-- **Temporary files** (`ocr_<uuid>.pdf` in `os.TempDir()`) are removed on
-  every error path and after optimization — a leaked temp PDF is usually a
+- **Temporary files** (`ocr_<uuid>.pdf` and `ocr_chunk_<uuid>_<k>.pdf` in
+  `os.TempDir()`) are removed on every error path, chunk files after assembly
+  and the output file after optimization — a leaked temp PDF is usually a
   missed `os.Remove` in a new early-return.
 - **`--clean`/`unpaper` failures in ocrmypdf** come with hints, not just
   errors (`ocrmypdf.go:47-66`) — when adding engines, copy this pattern.
@@ -585,4 +624,4 @@ and `consumer.ocr.languages` is required before consumption runs.
 
 ---
 
-*Last verified against the tree: 2026-11-20. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-11-21. If code and doc disagree, code wins.*

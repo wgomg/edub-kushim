@@ -45,3 +45,68 @@ func TestAddPDFPage_PlacesTilesAndInheritsTextBoxes(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanChunks(t *testing.T) {
+	tests := []struct {
+		name  string
+		pageW []int
+		pageH []int
+		want  []chunkRange
+	}{
+		{
+			name:  "few small pages form one chunk",
+			pageW: []int{1654, 1654, 1654},
+			pageH: []int{2339, 2339, 2339},
+			want:  []chunkRange{{firstPage: 0, lastPage: 3}},
+		},
+		{
+			name:  "page-count bound splits at 64",
+			pageW: repeatWidth(70, 1654),
+			pageH: repeatWidth(70, 2339),
+			want: []chunkRange{
+				{firstPage: 0, lastPage: 64},
+				{firstPage: 64, lastPage: 70},
+			},
+		},
+		{
+			name:  "pixel budget splits monster pages",
+			pageW: []int{4000, 4000, 4000},
+			pageH: []int{25000, 25000, 25000},
+			want: []chunkRange{
+				{firstPage: 0, lastPage: 2},
+				{firstPage: 2, lastPage: 3},
+			},
+		},
+		{
+			name:  "lone oversized page keeps its own chunk",
+			pageW: []int{40000, 4000},
+			pageH: []int{40000, 4000},
+			want: []chunkRange{
+				{firstPage: 0, lastPage: 1},
+				{firstPage: 1, lastPage: 2},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := planChunks(tt.pageW, tt.pageH)
+			if len(got) != len(tt.want) {
+				t.Fatalf("planChunks returned %d chunks, want %d: %v", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("chunk %d = %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func repeatWidth(n, v int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}

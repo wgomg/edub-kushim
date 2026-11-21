@@ -274,6 +274,56 @@ static int mupdf_pdf_clean_file(fz_context *ctx, const char *input_path,
 	}
 	return 0;
 }
+
+// mupdf_join_pdfs appends every page of every chunk into one new document and saves it at out_path.
+// Chunks are opened one at a time, and each gets a single graft map so shared objects (the embedded
+// font, images) are copied once per chunk instead of once per page. Streams are written out raw; the
+// caller's optimizer pass owns recompression. On failure, *out_failed_chunk names the failing chunk
+// index, or -1 when the failure happened outside a chunk (destination creation or save step).
+static int mupdf_join_pdfs(fz_context *ctx, const char *out_path,
+                           const char **chunk_paths, int n_chunks,
+                           int *out_failed_chunk)
+{
+	pdf_document *dst = NULL;
+	pdf_document *src = NULL;
+	pdf_graft_map *map = NULL;
+	int i, p, pages;
+
+	fz_var(dst);
+	fz_var(src);
+	fz_var(map);
+
+	*out_failed_chunk = -1;
+
+	fz_try(ctx) {
+		dst = pdf_create_document(ctx);
+		for (i = 0; i < n_chunks; i++) {
+			*out_failed_chunk = i;
+			src = pdf_open_document(ctx, chunk_paths[i]);
+			map = pdf_new_graft_map(ctx, dst);
+			pages = pdf_count_pages(ctx, src);
+			for (p = 0; p < pages; p++)
+				pdf_graft_mapped_page(ctx, map, -1, src, p);
+			pdf_drop_graft_map(ctx, map);
+			map = NULL;
+			pdf_drop_document(ctx, src);
+			src = NULL;
+		}
+		*out_failed_chunk = -1;
+		pdf_save_document(ctx, dst, out_path, &pdf_default_write_options);
+	}
+	fz_always(ctx) {
+		pdf_drop_graft_map(ctx, map);
+		pdf_drop_document(ctx, src);
+	}
+	fz_catch(ctx) {
+		pdf_drop_document(ctx, dst);
+		return 1;
+	}
+
+	pdf_drop_document(ctx, dst);
+	return 0;
+}
 */
 import "C"
 
@@ -450,6 +500,41 @@ func (c *MuContext) PdfCleanFile(inputPath, outputPath string, opts *CleanOption
 
 	if rc != 0 {
 		return fmt.Errorf("mupdf: pdf_clean_file failed")
+	}
+	return nil
+}
+
+// JoinPDFs appends every page of each chunk, in order, into one new PDF saved at outputPath. Chunks
+// are opened and grafted one chunk at a time, and every chunk's objects are copied through a single
+// graft map, so shared resources within a chunk are not duplicated per page. Streams are copied raw, with no
+// recompression or cleaning applied, leaving that to the caller's optimizer pass. A failed save may
+// leave a partial outputPath for the caller to remove.
+func (c *MuContext) JoinPDFs(outputPath string, chunkPaths []string) error {
+	if len(chunkPaths) == 0 {
+		return fmt.Errorf("mupdf: no chunks to join")
+	}
+
+	cOut := C.CString(outputPath)
+	defer C.free(unsafe.Pointer(cOut))
+
+	cPaths := make([]*C.char, len(chunkPaths))
+	for i, p := range chunkPaths {
+		cPaths[i] = C.CString(p)
+	}
+	defer func() {
+		for _, p := range cPaths {
+			C.free(unsafe.Pointer(p))
+		}
+	}()
+
+	failed := C.int(-1)
+	rc := C.mupdf_join_pdfs(c.p, cOut, (**C.char)(unsafe.Pointer(&cPaths[0])),
+		C.int(len(chunkPaths)), &failed)
+	if rc != 0 {
+		if int(failed) >= 0 {
+			return fmt.Errorf("mupdf: failed to join PDF chunk %d (%s)", int(failed), chunkPaths[failed])
+		}
+		return fmt.Errorf("mupdf: failed to create or save the joined PDF: %s", outputPath)
 	}
 	return nil
 }
