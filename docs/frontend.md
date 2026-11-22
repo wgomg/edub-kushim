@@ -55,6 +55,10 @@ Every route below is a SvelteKit `+page.svelte` under `web/src/routes/`.
 - **`src/lib/components/ListTable.svelte`**, **`src/lib/components/ListGrid.svelte`** —
   presentational list views: snippet cells, sort/paging events, selection and loading/empty
   states. **`Icon.svelte`** renders the app's stroke-icon catalogue by name.
+- **`src/lib/components/Suggest.svelte`** — the shared paged suggestion combobox behind every
+  tag/people autocomplete (search bar, filter panel, document tag/people pickers, batch tag
+  picker, fold dialog): debounced search, offset-append load-more footer, stale-response
+  invalidation, keyboard navigation and the listbox ARIA wiring.
 - **`src/lib/components/SearchBar.svelte`**, **`src/lib/components/FilterPanel.svelte`** —
   controlled search input with chips, autocomplete and keyboard navigation; collapsible panel
   over every filter field. Both emit partial filter patches to their route.

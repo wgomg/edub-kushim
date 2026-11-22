@@ -257,12 +257,6 @@ export const api = {
 	},
 
 	autocomplete: {
-		tags: (q, limit = 20) =>
-			requestStrict(`/api/v1/tags?q=${encodeURIComponent(q)}&limit=${limit}`).then(asList),
-
-		people: (q, limit = 20) =>
-			requestStrict(`/api/v1/people?q=${encodeURIComponent(q)}&limit=${limit}`).then(asList),
-
 		peopleTypes: () => requestStrict('/api/v1/people-types').then(asList),
 
 		documentTypes: () => requestStrict('/api/v1/document-types').then(asList)
@@ -274,9 +268,7 @@ export const api = {
 			if (q) params.set('q', q);
 			params.set('limit', String(limit));
 			params.set('offset', String(offset));
-			return request(`/api/v1/tags?${params.toString()}`, { signal }).then(
-				(data) => data ?? { results: [], total: 0 }
-			);
+			return request(`/api/v1/tags?${params.toString()}`, { signal });
 		},
 		create: (name) =>
 			requestRaw('/api/v1/tags', {

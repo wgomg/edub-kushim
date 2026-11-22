@@ -1,5 +1,6 @@
 <script>
 	import { api } from '#lib/api.js';
+	import Suggest from '#lib/components/Suggest.svelte';
 	import { formatSize } from '#lib/utils/html.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 
@@ -24,22 +25,60 @@
 		onChange = () => {}
 	} = $props();
 
+	const PAGE = 10;
+
 	let languages = $state([]);
 
 	const f = $derived(filters);
 
 	let tagInput = $state('');
-	let tagSuggestions = $state([]);
-	let tagDebounce = $state(null);
-	let tagSelIndex = $state(-1);
 	let personType = $state('');
 	let personInput = $state('');
-	let personSuggestions = $state([]);
-	let personDebounce = $state(null);
-	let personSelIndex = $state(-1);
 	let documentTypes = $state([]);
 	let fileMinRaw = $state('');
 	let fileMaxRaw = $state('');
+
+	async function fetchTagSuggestions(q, offset, signal) {
+		const data = await api.tags.list(q, PAGE, offset, signal);
+		if (!data) throw new Error('Failed to load tags');
+		const items = (data.results ?? []).map((t) => ({
+			...t,
+			name: t.matched_alias ? `${t.name} · alias: ${t.matched_alias}` : t.name,
+			tagName: t.name
+		}));
+		return { items, total: data.total ?? 0 };
+	}
+
+	async function fetchPersonSuggestions(q, offset, signal) {
+		const data = await api.people.list(q, PAGE, offset, signal);
+		if (!data) throw new Error('Failed to load people');
+		return { items: data.results ?? [], total: data.total ?? 0 };
+	}
+
+	function onTagEnter(q, first) {
+		if (first) {
+			addTag(first.tagName);
+			return true;
+		}
+		if (q.trim()) {
+			addTag(q.trim());
+			return true;
+		}
+		return false;
+	}
+
+	function onPersonEnter(q, first) {
+		if (!personType) return false;
+		if (first) {
+			addPerson(first.name);
+			return true;
+		}
+		if (q.trim()) {
+			addPerson(q.trim());
+			return true;
+		}
+		return false;
+	}
 
 	function emit(partial) {
 		onChange(partial);
@@ -56,84 +95,15 @@
 		api.filterLanguages().then((d) => (languages = d));
 	});
 
-	function onTagInput() {
-		if (tagDebounce) clearTimeout(tagDebounce);
-		tagSelIndex = -1;
-		const q = tagInput;
-		if (!q || q.length < 1) {
-			tagSuggestions = [];
-			return;
-		}
-		tagDebounce = setTimeout(async () => {
-			try {
-				tagSuggestions = await api.autocomplete.tags(q, 10);
-			} catch {
-				tagSuggestions = [];
-				toastStore.error('Could not load suggestions');
-			}
-		}, 200);
-	}
-
-	function onTagKeydown(e) {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			if (tagSuggestions.length > 0 && tagSelIndex >= 0) addTag(tagSuggestions[tagSelIndex].name);
-			else if (tagSuggestions.length > 0) addTag(tagSuggestions[0].name);
-			else if (tagInput.trim()) addTag(tagInput.trim());
-		} else if (e.key === 'ArrowDown' && tagSuggestions.length > 0) {
-			e.preventDefault();
-			tagSelIndex = (tagSelIndex + 1) % tagSuggestions.length;
-		} else if (e.key === 'ArrowUp' && tagSuggestions.length > 0) {
-			e.preventDefault();
-			tagSelIndex = (tagSelIndex - 1 + tagSuggestions.length) % tagSuggestions.length;
-		}
-	}
-
 	function addTag(name) {
 		if (name && !f.tags.includes(name)) {
 			emit({ tags: [...f.tags, name] });
 		}
 		tagInput = '';
-		tagSuggestions = [];
-		tagSelIndex = -1;
 	}
 
 	function removeTag(name) {
 		emit({ tags: f.tags.filter((t) => t !== name) });
-	}
-
-	function onPersonInput() {
-		if (personDebounce) clearTimeout(personDebounce);
-		personSelIndex = -1;
-		const q = personInput;
-		if (!q || q.length < 1 || !personType) {
-			personSuggestions = [];
-			return;
-		}
-		personDebounce = setTimeout(async () => {
-			try {
-				personSuggestions = await api.autocomplete.people(q, 10);
-			} catch {
-				personSuggestions = [];
-				toastStore.error('Could not load suggestions');
-			}
-		}, 200);
-	}
-
-	function onPersonKeydown(e) {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			if (personSuggestions.length > 0 && personSelIndex >= 0)
-				addPerson(personSuggestions[personSelIndex].name);
-			else if (personSuggestions.length > 0) addPerson(personSuggestions[0].name);
-			else if (personInput.trim() && personType) addPerson(personInput.trim());
-		} else if (e.key === 'ArrowDown' && personSuggestions.length > 0) {
-			e.preventDefault();
-			personSelIndex = (personSelIndex + 1) % personSuggestions.length;
-		} else if (e.key === 'ArrowUp' && personSuggestions.length > 0) {
-			e.preventDefault();
-			personSelIndex = (personSelIndex - 1 + personSuggestions.length) % personSuggestions.length;
-		}
 	}
 
 	function addPerson(name) {
@@ -141,8 +111,6 @@
 			emit({ people: [...f.people, { name, type: personType }] });
 		}
 		personInput = '';
-		personSuggestions = [];
-		personSelIndex = -1;
 	}
 
 	function removePerson(name, type) {
@@ -225,49 +193,18 @@
 		<div>
 			<label for="fp-tags" class="mb-1 block text-xs font-medium text-parchment-400">Tags</label>
 			<div class="relative">
-				<input
+				<Suggest
 					id="fp-tags"
-					name="fp-tags"
-					type="text"
-					bind:value={tagInput}
-					oninput={onTagInput}
-					onkeydown={onTagKeydown}
-					role="combobox"
-					aria-expanded={tagSuggestions.length > 0}
-					aria-controls="fp-tags-listbox"
-					aria-autocomplete="list"
-					aria-activedescendant={tagSelIndex >= 0 ? `fp-tag-option-${tagSelIndex}` : undefined}
 					placeholder="Type to search…"
-					autocomplete="off"
-					spellcheck="false"
-					class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+					fetch={fetchTagSuggestions}
+					onselect={(t) => addTag(t.tagName)}
+					onenter={onTagEnter}
+					onerror={() => toastStore.error('Could not load suggestions')}
+					bind:query={tagInput}
+					inputClass="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+					listClass="absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
+					rowClass="px-3 py-1.5 text-xs"
 				/>
-				{#if tagSuggestions.length > 0}
-					<ul
-						id="fp-tags-listbox"
-						role="listbox"
-						aria-labelledby="fp-tags"
-						class="absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
-					>
-						{#each tagSuggestions as t, i (i)}
-							<li
-								id={`fp-tag-option-${i}`}
-								role="option"
-								aria-selected={i === tagSelIndex}
-								class="cursor-pointer px-3 py-1.5 text-xs text-parchment-200 hover:bg-clay-800 {i ===
-								tagSelIndex
-									? 'bg-clay-800'
-									: ''}"
-								onmousedown={() => addTag(t.name)}
-							>
-								{t.name}
-								{#if t.matched_alias}
-									<span class="text-parchment-500"> · alias: {t.matched_alias}</span>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
 			</div>
 			{#if f.tags.length > 0}
 				<div class="mt-1.5 flex flex-wrap gap-1">
@@ -305,50 +242,20 @@
 					{/each}
 				</select>
 				<div class="relative w-1/2">
-					<input
+					<Suggest
 						id="fp-person"
-						name="fp-person"
-						type="text"
-						aria-label="Filter by person"
-						bind:value={personInput}
-						oninput={onPersonInput}
-						onkeydown={onPersonKeydown}
-						role="combobox"
-						aria-expanded={personSuggestions.length > 0}
-						aria-controls="fp-person-listbox"
-						aria-autocomplete="list"
-						aria-activedescendant={personSelIndex >= 0
-							? `fp-person-option-${personSelIndex}`
-							: undefined}
+						label="Filter by person"
+						placeholder={personType ? 'Name…' : 'Select type…'}
+						fetch={fetchPersonSuggestions}
 						disabled={!personType}
-						placeholder={personType ? 'Name…' : 'Select type'}
-						autocomplete="off"
-						spellcheck="false"
-						class="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50"
+						onselect={(p) => addPerson(p.name)}
+						onenter={onPersonEnter}
+						onerror={() => toastStore.error('Could not load suggestions')}
+						bind:query={personInput}
+						inputClass="w-full rounded-md border border-clay-700 bg-clay-950 px-3 py-1.5 text-xs text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50"
+						listClass="absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
+						rowClass="px-3 py-1.5 text-xs"
 					/>
-					{#if personSuggestions.length > 0}
-						<ul
-							id="fp-person-listbox"
-							role="listbox"
-							aria-labelledby="fp-person"
-							class="absolute top-full right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
-						>
-							{#each personSuggestions as p, i (i)}
-								<li
-									id={`fp-person-option-${i}`}
-									role="option"
-									aria-selected={i === personSelIndex}
-									class="cursor-pointer px-3 py-1.5 text-xs text-parchment-200 hover:bg-clay-800 {i ===
-									personSelIndex
-										? 'bg-clay-800'
-										: ''}"
-									onmousedown={() => addPerson(p.name)}
-								>
-									{p.name}
-								</li>
-							{/each}
-						</ul>
-					{/if}
 				</div>
 			</div>
 			{#if f.people.length > 0}

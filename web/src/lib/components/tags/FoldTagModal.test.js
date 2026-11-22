@@ -2,16 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import FoldTagModal from './FoldTagModal.svelte';
 
-const { autocompleteTags, foldTag, toastMock } = vi.hoisted(() => ({
-	autocompleteTags: vi.fn(),
+const { listTags, foldTag, toastMock } = vi.hoisted(() => ({
+	listTags: vi.fn(),
 	foldTag: vi.fn(),
 	toastMock: { success: vi.fn(), error: vi.fn() }
 }));
 
 vi.mock('#lib/api.js', () => ({
 	api: {
-		autocomplete: { tags: autocompleteTags },
-		tags: { fold: foldTag }
+		tags: { list: listTags, fold: foldTag }
 	}
 }));
 vi.mock('#lib/stores/toastStore.svelte.js', () => ({ toastStore: toastMock }));
@@ -26,7 +25,7 @@ function openModal() {
 }
 
 beforeEach(() => {
-	autocompleteTags.mockReset();
+	listTags.mockReset();
 	foldTag.mockReset();
 	toastMock.success.mockReset();
 	toastMock.error.mockReset();
@@ -34,10 +33,13 @@ beforeEach(() => {
 
 describe('FoldTagModal', () => {
 	it('folds the picked target and reports the result', async () => {
-		autocompleteTags.mockResolvedValue([
-			{ name: 'anarchist', document_count: 3 },
-			{ name: 'anarchism', document_count: 2 }
-		]);
+		listTags.mockResolvedValue({
+			results: [
+				{ name: 'anarchist', document_count: 3 },
+				{ name: 'anarchism', document_count: 2 }
+			],
+			total: 2
+		});
 		foldTag.mockResolvedValue({ ok: true, status: 204 });
 		const { onClose, onfolded } = openModal();
 
@@ -59,7 +61,10 @@ describe('FoldTagModal', () => {
 	});
 
 	it('surfaces the server refusal instead of closing', async () => {
-		autocompleteTags.mockResolvedValue([{ name: 'anarchism', document_count: 2 }]);
+		listTags.mockResolvedValue({
+			results: [{ name: 'anarchism', document_count: 2 }],
+			total: 1
+		});
 		foldTag.mockResolvedValue({
 			ok: false,
 			status: 409,

@@ -364,7 +364,10 @@ which resolves `$app/*` modules — and the `child_process`/`url` stub aliases):
   sort/paging events, pager end states, loading/empty, selection), `Icon.svelte` (every
   icon name used across the app renders markup), `SearchBar.svelte` (free text commits under
   `q`, facet prefix submission, backspace chip removal), `FilterPanel.svelte` (controlled
-  filter patches, tag autocomplete, failure toast), `UploadModal.svelte` (upload
+  filter patches, tag autocomplete, failure toast), `Suggest.svelte` (first-page fetch and
+  load-more append with the exact offset, footer hidden once the total is reached, Enter
+  picking the highlighted row, Enter without a highlight delegating to `onenter`,
+  stale-response discard on query change), `UploadModal.svelte` (upload
   success/error paths), `tags/DeletedTags.svelte` (memory-mode list: debounce commit, blur
   commit, unmount cancel, dropped pending write, stale-response ordering),
   `tags/provisionalQuery.js` (legacy verdict mapping, invalid-filter fallback),

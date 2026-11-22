@@ -12,10 +12,10 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('#lib/api.js', () => ({
 	api: {
+		tags: { list: apiMocks.tags },
+		people: { list: apiMocks.people },
 		autocomplete: {
-			documentTypes: apiMocks.documentTypes,
-			tags: apiMocks.tags,
-			people: apiMocks.people
+			documentTypes: apiMocks.documentTypes
 		},
 		filterLanguages: apiMocks.filterLanguages
 	}
@@ -58,7 +58,10 @@ describe('FilterPanel', () => {
 	});
 
 	it('adds a tag from the autocomplete suggestions on Enter', async () => {
-		apiMocks.tags.mockResolvedValue([{ name: 'invoice' }, { name: 'invoices' }]);
+		apiMocks.tags.mockResolvedValue({
+			results: [{ name: 'invoice' }, { name: 'invoices' }],
+			total: 2
+		});
 		const onChange = vi.fn();
 		render(FilterPanel, { filters: baseFilters(), onChange });
 
@@ -72,7 +75,10 @@ describe('FilterPanel', () => {
 	});
 
 	it('shows the matched alias hint and selects the canonical tag', async () => {
-		apiMocks.tags.mockResolvedValue([{ name: 'netherlands', matched_alias: 'holland' }]);
+		apiMocks.tags.mockResolvedValue({
+			results: [{ name: 'netherlands', matched_alias: 'holland' }],
+			total: 1
+		});
 		const onChange = vi.fn();
 		render(FilterPanel, { filters: baseFilters(), onChange });
 

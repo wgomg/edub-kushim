@@ -1,5 +1,6 @@
 <script>
 	import { api } from '#lib/api.js';
+	import Suggest from '#lib/components/Suggest.svelte';
 	import { formatSize } from '#lib/utils/html.js';
 	import { parseDateRange, parseSize } from '#lib/utils/searchSyntax.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
@@ -7,7 +8,7 @@
 	/**
 	 * Controlled search bar: the filter values come in as props — `q` is the free-text filter — and
 	 * every change leaves through `onSearch` as a partial filter patch. It owns only the text draft
-	 * and the suggestion popup.
+	 * and the suggestion popup, which pages tags and people through the shared `Suggest` component.
 	 */
 	let {
 		q = '',
@@ -23,12 +24,12 @@
 		onSearch = () => {}
 	} = $props();
 
+	const SUGGEST_PAGE = 10;
+	const MIXED_PAGE = 5;
+
 	let inputEl = $state(null);
 	let inputValue = $state('');
-	let showDropdown = $state(false);
-	let suggestions = $state([]);
-	let selectedIndex = $state(-1);
-	let debounceTimer = $state(null);
+	let mixed = null;
 
 	function emit(partial) {
 		onSearch({
@@ -59,101 +60,119 @@
 		return personTypes.includes(field);
 	}
 
-	async function fetchSuggestions(prefix, field) {
-		if (field === 'tag') {
-			const data = await api.autocomplete.tags(prefix, 10);
-			return data.map((t) => ({
-				label: tagSuggestionLabel(t.name, t.matched_alias),
+	async function fetchTagPage(q, offset, signal) {
+		const data = await api.tags.list(q, SUGGEST_PAGE, offset, signal);
+		if (!data) throw new Error('Failed to load tags');
+		return {
+			items: (data.results ?? []).map((t) => ({
+				name: tagSuggestionLabel(t.name, t.matched_alias),
 				value: t.name,
 				type: 'tag'
-			}));
-		}
+			})),
+			total: data.total ?? 0
+		};
+	}
 
-		if (field === 'type') {
-			const data = await api.autocomplete.documentTypes();
-			return data
-				.filter((dt) => dt.name.includes(prefix || ''))
-				.slice(0, 10)
-				.map((dt) => ({ label: dt.name, value: dt.name, type: 'documentType' }));
-		}
-
-		if (field === personAnyType) {
-			const data = await api.autocomplete.people(prefix, 10);
-			return data.map((p) => ({
-				label: `person: ${p.name}`,
+	async function fetchPeoplePage(q, offset, signal, type) {
+		const data = await api.people.list(q, SUGGEST_PAGE, offset, signal);
+		if (!data) throw new Error('Failed to load people');
+		return {
+			items: (data.results ?? []).map((p) => ({
+				name: `${type}: ${p.name}`,
 				value: p.name,
-				type: personAnyType
-			}));
-		}
-
-		if (field && isPersonField(field)) {
-			const data = await api.autocomplete.people(prefix, 10);
-			return data.map((p) => ({ label: `${field}: ${p.name}`, value: p.name, type: field }));
-		}
-
-		if (field && ['lang', 'created', 'modified', 'size'].includes(field)) {
-			return [];
-		}
-
-		if (!prefix || prefix.length < 2) return [];
-
-		const [tagsData, peopleData, typesData] = await Promise.all([
-			api.autocomplete.tags(prefix, 5),
-			api.autocomplete.people(prefix, 5),
-			api.autocomplete.documentTypes()
-		]);
-
-		const results = [];
-		for (const t of tagsData)
-			results.push({
-				label: `tag: ${tagSuggestionLabel(t.name, t.matched_alias)}`,
-				value: t.name,
-				type: 'tag'
-			});
-		for (const p of peopleData)
-			results.push({
-				label: `person: ${p.name}`,
-				value: p.name,
-				type: personAnyType
-			});
-		for (const dt of typesData) {
-			if (dt.name.includes(prefix))
-				results.push({ label: `type: ${dt.name}`, value: dt.name, type: 'documentType' });
-		}
-		return results.slice(0, 10);
+				type
+			})),
+			total: data.total ?? 0
+		};
 	}
 
-	function onInput() {
-		const text = inputValue;
+	async function fetchTypes(prefix) {
+		const types = await api.autocomplete.documentTypes();
+		const items = (types ?? [])
+			.filter((dt) => dt.name.includes(prefix))
+			.map((dt) => ({ name: `type: ${dt.name}`, value: dt.name, type: 'documentType' }));
+		return { items, total: items.length };
+	}
 
-		const fieldPrefix = getFieldPrefix(text);
-		if (fieldPrefix) {
-			debouncedFetch(fieldPrefix.value, fieldPrefix.field);
-		} else if (text.length >= 2) {
-			debouncedFetch(text, null);
-		} else {
-			showDropdown = false;
-			suggestions = [];
+	async function fetchMixed(q, offset, signal) {
+		const prefix = q.trim();
+		if (prefix.length < 2) return { items: [], total: 0 };
+
+		if (offset === 0 || !mixed || mixed.prefix !== prefix) {
+			mixed = {
+				prefix,
+				tagsOffset: 0,
+				peopleOffset: 0,
+				tagsTotal: 0,
+				peopleTotal: 0,
+				tagsDone: false,
+				peopleDone: false,
+				types: []
+			};
 		}
+
+		const cursors = mixed;
+		const items = [];
+
+		if (!cursors.tagsDone) {
+			const data = await api.tags.list(prefix, MIXED_PAGE, cursors.tagsOffset, signal);
+			if (!data) throw new Error('Failed to load tags');
+			const rows = data.results ?? [];
+			cursors.tagsOffset += rows.length;
+			cursors.tagsTotal = data.total ?? 0;
+			cursors.tagsDone = rows.length === 0 || cursors.tagsOffset >= cursors.tagsTotal;
+			items.push(
+				...rows.map((t) => ({
+					name: `tag: ${tagSuggestionLabel(t.name, t.matched_alias)}`,
+					value: t.name,
+					type: 'tag'
+				}))
+			);
+		}
+
+		if (!cursors.peopleDone) {
+			const data = await api.people.list(prefix, MIXED_PAGE, cursors.peopleOffset, signal);
+			if (!data) throw new Error('Failed to load people');
+			const rows = data.results ?? [];
+			cursors.peopleOffset += rows.length;
+			cursors.peopleTotal = data.total ?? 0;
+			cursors.peopleDone = rows.length === 0 || cursors.peopleOffset >= cursors.peopleTotal;
+			items.push(
+				...rows.map((p) => ({
+					name: `person: ${p.name}`,
+					value: p.name,
+					type: personAnyType
+				}))
+			);
+		}
+
+		if (offset === 0) {
+			const types = await api.autocomplete.documentTypes();
+			cursors.types = (types ?? [])
+				.filter((dt) => dt.name.includes(prefix))
+				.map((dt) => ({ name: `type: ${dt.name}`, value: dt.name, type: 'documentType' }));
+			items.push(...cursors.types);
+		}
+
+		return {
+			items,
+			total: cursors.tagsTotal + cursors.peopleTotal + cursors.types.length
+		};
 	}
 
-	function debouncedFetch(prefix, field) {
-		if (debounceTimer) clearTimeout(debounceTimer);
-		debounceTimer = setTimeout(async () => {
-			try {
-				suggestions = await fetchSuggestions(prefix, field);
-				showDropdown = suggestions.length > 0;
-				selectedIndex = -1;
-			} catch {
-				suggestions = [];
-				showDropdown = false;
-				selectedIndex = -1;
-				toastStore.error('Could not load suggestions');
-			}
-		}, 250);
+	async function fetchSuggestions(q, offset, signal) {
+		const fp = getFieldPrefix(q.trim());
+
+		if (!fp) return fetchMixed(q, offset, signal);
+		if (fp.field === 'tag') return fetchTagPage(fp.value, offset, signal);
+		if (fp.field === 'type') return fetchTypes(fp.value);
+		if (fp.field === personAnyType || isPersonField(fp.field)) {
+			return fetchPeoplePage(fp.value, offset, signal, fp.field);
+		}
+		return { items: [], total: 0 };
 	}
 
-	function selectSuggestion(s) {
+	function onPick(s) {
 		inputValue = '';
 		if (s.type === 'tag') {
 			emit({ tags: [...tags, s.value] });
@@ -162,8 +181,6 @@
 		} else {
 			emit({ people: [...people, { name: s.value, type: s.type }] });
 		}
-		showDropdown = false;
-		suggestions = [];
 		if (inputEl) inputEl.focus();
 	}
 
@@ -214,31 +231,12 @@
 			emitFreeText();
 		}
 		inputValue = '';
-		showDropdown = false;
-		suggestions = [];
 	}
 
 	function onKeyDown(e) {
 		if (e.key === 'Enter') {
 			e.preventDefault();
-			if (showDropdown && selectedIndex >= 0) {
-				selectSuggestion(suggestions[selectedIndex]);
-			} else {
-				onSubmit();
-			}
-		} else if (e.key === 'ArrowDown') {
-			e.preventDefault();
-			if (showDropdown) {
-				selectedIndex = Math.min(selectedIndex + 1, suggestions.length - 1);
-			}
-		} else if (e.key === 'ArrowUp') {
-			e.preventDefault();
-			if (showDropdown) {
-				selectedIndex = Math.max(selectedIndex - 1, -1);
-			}
-		} else if (e.key === 'Escape') {
-			showDropdown = false;
-			suggestions = [];
+			onSubmit();
 		} else if (e.key === 'Backspace' && !inputValue) {
 			if (tags.length > 0) {
 				emit({ tags: tags.slice(0, -1) });
@@ -421,64 +419,52 @@
 			</span>
 		{/if}
 
-		<input
-			id="searchbar-input"
-			name="searchbar-input"
-			bind:this={inputEl}
-			bind:value={inputValue}
-			oninput={onInput}
-			onkeydown={onKeyDown}
-			onblur={() =>
-				setTimeout(() => {
-					showDropdown = false;
-				}, 200)}
-			type="text"
-			role="combobox"
-			aria-label="Search documents"
-			aria-expanded={showDropdown}
-			aria-controls="searchbar-listbox"
-			aria-autocomplete="list"
-			aria-activedescendant={selectedIndex >= 0 ? `searchbar-option-${selectedIndex}` : undefined}
-			autocomplete="off"
-			spellcheck="false"
-			placeholder={tags.length === 0 &&
-			people.length === 0 &&
-			!documentType &&
-			!language &&
-			!dateCreated.from &&
-			!dateCreated.to &&
-			!dateModified.from &&
-			!dateModified.to &&
-			fileSize.min == null &&
-			fileSize.max == null &&
-			!q
-				? 'Search documents…'
-				: ''}
-			class="min-w-[120px] flex-1 border-0 bg-transparent p-0 text-parchment-200 placeholder-parchment-500 outline-none focus:ring-0"
-		/>
-	</div>
-
-	{#if showDropdown}
-		<ul
-			id="searchbar-listbox"
-			aria-labelledby="searchbar-input"
-			class="absolute top-full right-0 left-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-clay-800 bg-clay-900 shadow-lg"
-			role="listbox"
+		<Suggest
+			id="searchbar"
+			fetch={fetchSuggestions}
+			onselect={onPick}
+			onerror={() => toastStore.error('Could not load suggestions')}
+			bind:query={inputValue}
+			listClass="absolute top-full right-0 left-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-clay-800 bg-clay-900 shadow-lg"
+			rowClass="px-3 py-2 text-sm"
 		>
-			{#each suggestions as s, i (i)}
-				<li
-					id={`searchbar-option-${i}`}
-					role="option"
-					aria-selected={i === selectedIndex}
-					class="cursor-pointer px-3 py-2 text-sm text-parchment-200 hover:bg-clay-800 {i ===
-					selectedIndex
-						? 'bg-clay-800'
-						: ''}"
-					onmousedown={() => selectSuggestion(s)}
-				>
-					{s.label}
-				</li>
-			{/each}
-		</ul>
-	{/if}
+			{#snippet input({ oninput, onkeydown, close, panelOpen, listboxId, activeDescendant })}
+				<input
+					id="searchbar-input"
+					name="searchbar-input"
+					bind:this={inputEl}
+					bind:value={inputValue}
+					{oninput}
+					onkeydown={(e) => {
+						if (onkeydown(e)) return;
+						onKeyDown(e);
+					}}
+					onblur={() => setTimeout(close, 200)}
+					type="text"
+					role="combobox"
+					aria-label="Search documents"
+					aria-expanded={panelOpen}
+					aria-controls={listboxId}
+					aria-autocomplete="list"
+					aria-activedescendant={activeDescendant}
+					autocomplete="off"
+					spellcheck="false"
+					placeholder={tags.length === 0 &&
+					people.length === 0 &&
+					!documentType &&
+					!language &&
+					!dateCreated.from &&
+					!dateCreated.to &&
+					!dateModified.from &&
+					!dateModified.to &&
+					fileSize.min == null &&
+					fileSize.max == null &&
+					!q
+						? 'Search documents…'
+						: ''}
+					class="min-w-[120px] flex-1 border-0 bg-transparent p-0 text-parchment-200 placeholder-parchment-500 outline-none focus:ring-0"
+				/>
+			{/snippet}
+		</Suggest>
+	</div>
 </div>

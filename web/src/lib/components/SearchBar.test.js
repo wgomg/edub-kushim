@@ -9,9 +9,9 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('#lib/api.js', () => ({
 	api: {
+		tags: { list: apiMocks.tags },
+		people: { list: apiMocks.people },
 		autocomplete: {
-			tags: apiMocks.tags,
-			people: apiMocks.people,
 			documentTypes: apiMocks.documentTypes
 		}
 	}
@@ -38,8 +38,8 @@ function renderSearchBar(props = {}) {
 }
 
 beforeEach(() => {
-	apiMocks.tags.mockReset().mockResolvedValue([]);
-	apiMocks.people.mockReset().mockResolvedValue([]);
+	apiMocks.tags.mockReset().mockResolvedValue({ results: [], total: 0 });
+	apiMocks.people.mockReset().mockResolvedValue({ results: [], total: 0 });
 	apiMocks.documentTypes.mockReset().mockResolvedValue([]);
 });
 

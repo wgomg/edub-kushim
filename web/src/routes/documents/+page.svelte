@@ -9,6 +9,7 @@
 	import ListTable from '#lib/components/ListTable.svelte';
 	import SearchBar from '#lib/components/SearchBar.svelte';
 	import FilterPanel from '#lib/components/FilterPanel.svelte';
+	import Suggest from '#lib/components/Suggest.svelte';
 	import { createListQuery, toggleSortState } from '#lib/list/listQuery.svelte.js';
 	import { formatDate, formatSize } from '#lib/utils/html.js';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
@@ -28,7 +29,8 @@
 	let tagOptions = $state([]);
 	let tagSearchQuery = $state('');
 	let showTagPicker = $state(false);
-	let tagSearchTimer;
+
+	const BATCH_TAG_PAGE = 100;
 
 	let showTypePicker = $state(false);
 	let batchDocTypeId = $state(null);
@@ -220,16 +222,15 @@
 		documents.reload();
 	}
 
-	function onTagSearchInput(event) {
-		tagSearchQuery = event.target.value;
-		clearTimeout(tagSearchTimer);
-		tagSearchTimer = setTimeout(async () => {
-			try {
-				tagOptions = await api.autocomplete.tags(tagSearchQuery, 20);
-			} catch {
-				tagOptions = [];
-			}
-		}, 200);
+	function toggleBatchTag(id) {
+		if (batchTagIds.includes(id)) batchTagIds = batchTagIds.filter((t) => t !== id);
+		else batchTagIds = [...batchTagIds, id];
+	}
+
+	async function fetchBatchTags(q, offset, signal) {
+		const data = await api.tags.list(q, BATCH_TAG_PAGE, offset, signal);
+		if (!data) throw new Error('Failed to load tags');
+		return { items: data.results ?? [], total: data.total ?? 0 };
 	}
 
 	async function handleBatchAssign() {
@@ -466,39 +467,36 @@
 							class="absolute top-full left-0 z-30 mt-1 w-72 overscroll-contain rounded-lg border border-clay-800 bg-clay-950 shadow-xl"
 						>
 							<div class="p-3">
-								<input
-									type="text"
-									name="tag-search"
-									autocomplete="off"
+								<Suggest
+									id="batch-tag-search"
+									label="Search tags"
 									placeholder="Search tags…"
-									oninput={onTagSearchInput}
-									class="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-									aria-label="Search tags"
-								/>
-								<div class="mb-2 max-h-40 overflow-y-auto">
-									{#each tagOptions as tag (tag.id)}
+									fetch={fetchBatchTags}
+									combobox={false}
+									bind:query={tagSearchQuery}
+									bind:results={tagOptions}
+									inputClass="mb-2 w-full rounded-md border border-clay-700 bg-clay-900 px-3 py-1.5 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+									listClass="mb-2 max-h-40 overflow-y-auto"
+								>
+									{#snippet row({ item })}
 										<label
 											class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-clay-800"
 										>
 											<input
 												type="checkbox"
-												checked={batchTagIds.includes(tag.id)}
-												onchange={() => {
-													if (batchTagIds.includes(tag.id)) {
-														batchTagIds = batchTagIds.filter((t) => t !== tag.id);
-													} else {
-														batchTagIds = [...batchTagIds, tag.id];
-													}
-												}}
+												checked={batchTagIds.includes(item.id)}
+												onchange={() => toggleBatchTag(item.id)}
 												class="accent-gold-500"
 											/>
-											<span class="text-sm text-parchment-200">{tag.name}</span>
+											<span class="text-sm text-parchment-200">{item.name}</span>
 										</label>
-									{/each}
-									{#if tagOptions.length === 0 && tagSearchQuery}
-										<p class="px-2 py-3 text-center text-xs text-parchment-500">No tags found</p>
-									{/if}
-								</div>
+									{/snippet}
+								</Suggest>
+								{#if tagOptions.length === 0 && tagSearchQuery}
+									<p class="px-2 py-3 text-center text-xs text-parchment-500" aria-live="polite">
+										No tags found
+									</p>
+								{/if}
 								{#if batchTagIds.length > 0}
 									<div class="mb-2 flex flex-wrap gap-1">
 										{#each batchTagIds as tid (tid)}

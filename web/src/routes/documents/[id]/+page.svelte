@@ -8,8 +8,11 @@
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
 	import * as authStore from '#lib/stores/authStore.svelte.js';
 	import PdfViewer from '#lib/components/PdfViewer.svelte';
+	import Suggest from '#lib/components/Suggest.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	let { params } = $props();
+
+	const PICKER_PAGE = 100;
 
 	let doc = $state(null);
 
@@ -27,13 +30,10 @@
 	let reenriching = $state(false);
 
 	let tagQuery = $state('');
-	let tagResults = $state([]);
-	let tagHighlight = $state(-1);
 
 	let peopleQuery = $state('');
 	let peopleResults = $state([]);
 	let selectedPeopleTypeId = $state(1);
-	let peopleHighlight = $state(-1);
 
 	let dirty = $derived(
 		doc &&
@@ -123,58 +123,26 @@
 		}
 	}
 
-	async function searchTags(q) {
-		tagQuery = q;
-		tagHighlight = -1;
-		if (!q.trim()) {
-			tagResults = [];
-			return;
-		}
-		try {
-			tagResults = await api.autocomplete.tags(q);
-		} catch {
-			tagResults = [];
-		}
+	async function fetchTagPicker(q, offset, signal) {
+		const data = await api.tags.list(q, PICKER_PAGE, offset, signal);
+		if (!data) throw new Error('Failed to load tags');
+		return { items: data.results ?? [], total: data.total ?? 0 };
 	}
 
-	function onTagKeydown(e) {
-		if (e.key === 'ArrowDown') {
-			e.preventDefault();
-			if (tagResults.length > 0) {
-				tagHighlight = (tagHighlight + 1) % tagResults.length;
-				scrollTagHighlight();
-			}
-		} else if (e.key === 'ArrowUp') {
-			e.preventDefault();
-			if (tagResults.length > 0) {
-				tagHighlight =
-					tagHighlight < 0
-						? tagResults.length - 1
-						: (tagHighlight - 1 + tagResults.length) % tagResults.length;
-				scrollTagHighlight();
-			}
-		} else if (e.key === 'Enter') {
-			const tag = tagResults[tagHighlight];
-			if (tag) {
-				e.preventDefault();
-				selectTag(tag);
-			}
-		} else if (e.key === 'Escape') {
-			tagResults = [];
-			tagHighlight = -1;
-		}
+	async function fetchPeoplePicker(q, offset, signal) {
+		const data = await api.people.list(q, PICKER_PAGE, offset, signal);
+		if (!data) throw new Error('Failed to load people');
+		return { items: data.results ?? [], total: data.total ?? 0 };
 	}
 
-	function scrollTagHighlight() {
-		if (tagHighlight < 0) return;
-		document.getElementById(`tag-option-${tagHighlight}`)?.scrollIntoView({ block: 'nearest' });
-	}
-
-	function selectTag(tag) {
+	function pickTag(t) {
 		tagQuery = '';
-		tagResults = [];
-		tagHighlight = -1;
-		addTag(tag.id);
+		addTag(t.id);
+	}
+
+	function pickPerson(person) {
+		peopleQuery = '';
+		addPerson(person.id);
 	}
 
 	async function addTag(tagId) {
@@ -185,62 +153,6 @@
 	async function removeTag(tagId) {
 		await api.documents.tags.remove(params.id, tagId);
 		refreshDoc();
-	}
-
-	async function searchPeople(q) {
-		peopleQuery = q;
-		peopleHighlight = -1;
-		if (!q.trim()) {
-			peopleResults = [];
-			return;
-		}
-		try {
-			peopleResults = await api.autocomplete.people(q);
-		} catch {
-			peopleResults = [];
-		}
-	}
-
-	function onPeopleKeydown(e) {
-		if (e.key === 'ArrowDown') {
-			e.preventDefault();
-			if (peopleResults.length > 0) {
-				peopleHighlight = (peopleHighlight + 1) % peopleResults.length;
-				scrollPeopleHighlight();
-			}
-		} else if (e.key === 'ArrowUp') {
-			e.preventDefault();
-			if (peopleResults.length > 0) {
-				peopleHighlight =
-					peopleHighlight < 0
-						? peopleResults.length - 1
-						: (peopleHighlight - 1 + peopleResults.length) % peopleResults.length;
-				scrollPeopleHighlight();
-			}
-		} else if (e.key === 'Enter') {
-			const person = peopleResults[peopleHighlight];
-			if (person) {
-				e.preventDefault();
-				selectPerson(person);
-			}
-		} else if (e.key === 'Escape') {
-			peopleResults = [];
-			peopleHighlight = -1;
-		}
-	}
-
-	function scrollPeopleHighlight() {
-		if (peopleHighlight < 0) return;
-		document
-			.getElementById(`person-option-${peopleHighlight}`)
-			?.scrollIntoView({ block: 'nearest' });
-	}
-
-	function selectPerson(person) {
-		peopleQuery = '';
-		peopleResults = [];
-		peopleHighlight = -1;
-		addPerson(person.id);
 	}
 
 	async function addPerson(personId) {
@@ -424,33 +336,17 @@
 						{/if}
 						{#if !authStore.authEnabled() || authStore.isEditor()}
 							<div class="relative mt-2">
-								<input
-									type="text"
-									aria-label="Search tags"
-									autocomplete="off"
-									bind:value={tagQuery}
-									oninput={() => searchTags(tagQuery)}
-									onkeydown={onTagKeydown}
+								<Suggest
+									id="doc-tag-search"
+									label="Search tags"
 									placeholder="Search tags…"
-									class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+									fetch={fetchTagPicker}
+									onselect={pickTag}
+									bind:query={tagQuery}
+									inputClass="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+									listClass="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
+									rowClass="px-2 py-1 text-sm"
 								/>
-								{#if tagResults.length > 0}
-									<div
-										class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
-									>
-										{#each tagResults as tag, i (i)}
-											<button
-												id={`tag-option-${i}`}
-												onclick={() => selectTag(tag)}
-												onmouseenter={() => (tagHighlight = i)}
-												class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {tagHighlight ===
-												i
-													? 'bg-clay-800'
-													: ''}">{tag.name}</button
-											>
-										{/each}
-									</div>
-								{/if}
 							</div>
 						{/if}
 					</div>
@@ -487,33 +383,18 @@
 						{/if}
 						{#if !authStore.authEnabled() || authStore.isEditor()}
 							<div class="relative mt-2">
-								<input
-									type="text"
-									aria-label="Search people"
-									autocomplete="off"
-									bind:value={peopleQuery}
-									oninput={() => searchPeople(peopleQuery)}
-									onkeydown={onPeopleKeydown}
+								<Suggest
+									id="doc-people-search"
+									label="Search people"
 									placeholder="Search people…"
-									class="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+									fetch={fetchPeoplePicker}
+									onselect={pickPerson}
+									bind:query={peopleQuery}
+									bind:results={peopleResults}
+									inputClass="w-full rounded-md border border-clay-700 bg-clay-950 px-2 py-1 text-sm text-parchment-200 placeholder-parchment-600 focus:border-gold-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+									listClass="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
+									rowClass="px-2 py-1 text-sm"
 								/>
-								{#if peopleResults.length > 0}
-									<div
-										class="absolute top-full right-0 left-0 z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-clay-700 bg-clay-950 shadow-lg"
-									>
-										{#each peopleResults as person, i (i)}
-											<button
-												id={`person-option-${i}`}
-												onclick={() => selectPerson(person)}
-												onmouseenter={() => (peopleHighlight = i)}
-												class="w-full px-2 py-1 text-left text-sm text-parchment-200 hover:bg-clay-800 focus-visible:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none {peopleHighlight ===
-												i
-													? 'bg-clay-800'
-													: ''}">{person.name}</button
-											>
-										{/each}
-									</div>
-								{/if}
 								<div class="mt-2 flex gap-2">
 									<select
 										aria-label="Person type"
