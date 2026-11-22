@@ -52,6 +52,8 @@ func (d *MuDocument) Close(ctx *MuContext) {}
 
 func (c *MuContext) Close() {}
 
+func (c *MuContext) ShrinkStore() {}
+
 func (c *MuContext) PdfCleanFile(inputPath, outputPath string, opts *CleanOptions) error {
 	return errors.New("MuPDF not available without CGo")
 }

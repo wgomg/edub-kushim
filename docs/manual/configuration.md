@@ -127,7 +127,8 @@ The ingestion pipeline: which files are accepted and which tools process them.
 - `ocr` — engine `gosseract` (built-in, default) | `ocrmypdf` (external); `languages`
   (**required** — ISO 639-3, set by `kushim setup --languages`); optional `data_dir`
   (tessdata location); `timeout`; `ocr_workers` (parallel page workers per document —
-  `0`/unset = auto: `CPU cores / (max_concurrent_batches × consumer.workers)`).
+  `0`/unset = auto: `cgroup-aware CPU count / (max_concurrent_batches × consumer.workers)`,
+  clamped to twice the CPU count and to the document's tile count).
 - `thumbnail` — `enabled` (default `true`), engine (`mupdf`, the implemented one), `dpi`
   (`72`), `max_width` (`400` px; height follows a fixed 3:4 crop), `quality` (`80`,
   JPEG 1–100), `timeout` (`30`), `workers` (`1`), and the scheduled backfill:

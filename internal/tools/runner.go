@@ -178,7 +178,7 @@ func NewRunner(logger *log.Logger, cfg *config.Config, tools []string) *Runner {
 			}
 			ocrWorkers := cfg.Consumer.OCR.OcrWorkers
 			if ocrWorkers <= 0 {
-				ocrWorkers = max(1, runtime.NumCPU()/
+				ocrWorkers = max(1, runtime.GOMAXPROCS(0)/
 					max(cfg.Srv.MaxConcurrentBatches, 1)/max(cfg.Consumer.Workers, 1))
 			}
 			o, oErr := ocr.NewOCR(logger, toolCfg, cfg.Consumer.PdfOptimizer.Engine, cfg.Consumer.OCR.Languages, cfg.Consumer.OCR.DataDir, ocrWorkers)

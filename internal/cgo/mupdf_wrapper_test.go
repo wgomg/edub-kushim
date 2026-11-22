@@ -180,6 +180,36 @@ func openTestDocument(t *testing.T, ctx *MuContext, data []byte) *MuDocument {
 	return doc
 }
 
+func TestShrinkStore_PreservesRenderOutput(t *testing.T) {
+	ctx, err := NewMuContext()
+	if err != nil {
+		t.Fatalf("NewMuContext: %v", err)
+	}
+	defer ctx.Close()
+
+	doc := openTestDocument(t, ctx, minimalLegacyPDF(t, 612, 792)) // US Letter
+	defer doc.Close(ctx)
+
+	before, bw, bh, box, boy, err := doc.RenderTile(ctx, 0, 200, 100, 200, 400, 600)
+	if err != nil {
+		t.Fatalf("RenderTile before ShrinkStore: %v", err)
+	}
+
+	ctx.ShrinkStore()
+
+	after, aw, ah, aox, aoy, err := doc.RenderTile(ctx, 0, 200, 100, 200, 400, 600)
+	if err != nil {
+		t.Fatalf("RenderTile after ShrinkStore: %v", err)
+	}
+	if bw != aw || bh != ah || box != aox || boy != aoy {
+		t.Fatalf("RenderTile geometry changed across ShrinkStore: %dx%d at (%d,%d) vs %dx%d at (%d,%d)",
+			bw, bh, box, boy, aw, ah, aox, aoy)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("RenderTile samples changed across ShrinkStore")
+	}
+}
+
 func TestRenderPage_NormalSizeSucceeds(t *testing.T) {
 	ctx, err := NewMuContext()
 	if err != nil {

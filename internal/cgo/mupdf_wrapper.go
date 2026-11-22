@@ -52,6 +52,13 @@ static int mupdf_new_context(fz_context **out_ctx)
 	return 0;
 }
 
+// mupdf_shrink_store evicts cached objects so the store retains roughly 1% of its cap. In-use objects
+// are never evicted.
+static int mupdf_shrink_store(fz_context *ctx)
+{
+	return fz_shrink_store(ctx, 1);
+}
+
 // mupdf_open_document opens a PDF file. Returns 0 on success, non-zero on error.
 static int mupdf_open_document(fz_context *ctx, const char *path, fz_document **out_doc)
 {
@@ -469,6 +476,13 @@ func (d *MuDocument) Close(ctx *MuContext) {
 func (c *MuContext) Close() {
 	C.fz_drop_context(c.p)
 	c.p = nil
+}
+
+// ShrinkStore evicts cached objects from the context's store down toward a small fraction of its cap,
+// releasing C memory retained from finished work. In-use objects are never evicted. The context is not
+// thread-safe, so call it only from the goroutine that owns it.
+func (c *MuContext) ShrinkStore() {
+	C.mupdf_shrink_store(c.p)
 }
 
 // PdfCleanFile rewrites a PDF, removing unused objects and optionally

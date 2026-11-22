@@ -109,7 +109,11 @@ cmd := exec.CommandContext(ctx, os.Args[0], "internal-ocr",
 	"--datadir", o.dataDir,
 	"--ocr-workers", strconv.Itoa(o.ocrWorkers),
 )
-cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1")
+cmd.Env = append(os.Environ(),
+	"OMP_THREAD_LIMIT=1",             // parallelism comes from the tile pool, not OpenMP
+	"MALLOC_ARENA_MAX=4",             // cap glibc arenas
+	"MALLOC_MMAP_THRESHOLD_=1048576", // large tile buffers return to the OS on free
+)
 ```
 
 `os.Args[0]` is the running `kushim` binary; `cmd/kushim/main.go`
@@ -119,7 +123,9 @@ special-cases `internal-ocr` before normal command dispatch. Why this design:
   child kills only the child. The parent sees an exit error, cleans up, and
   the task fails gracefully instead of taking down the worker process.
 - **Memory isolation** — the 2–5 GB class of RSS this work can reach is
-  charged to the child, not the long-running daemon.
+  charged to the child, not the long-running daemon; the child also runs with
+  `MALLOC_ARENA_MAX=4` and a fixed 1 MB mmap threshold, so large tile buffers
+  are returned on free instead of being retained in per-thread arenas.
 - **Simple parallelism** — the child owns all worker goroutines for
   multi-page files.
 
@@ -132,12 +138,18 @@ go func() {
 	for scanner.Scan() {
 		o.logger.Info(docId, "%s", scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		o.logger.Warn(docId, "read OCR subprocess stdout: %v", err)
+	}
 }()
 ```
 
-and the child prints progress lines (`"starting OCR on %d pages"`,
-`"OCR page 50/200"`) that become log output. The context passed to
-`exec.CommandContext` cancels the child on timeout or shutdown.
+and the child prints progress lines that become log output: a startup line
+(`"starting OCR on %d pages with %d workers"`), periodic `"OCR page 50/200"`
+lines, and a final `"ocr done: pages …, workers …, peak RSS …"` line built
+from `VmHWM` in `/proc/self/status` — the measurement hook for comparing OCR
+settings across runs. A stdout read error is logged as a warning. The context
+passed to `exec.CommandContext` cancels the child on timeout or shutdown.
 
 ---
 
@@ -190,9 +202,12 @@ files feed the parallel pipeline (§5).
 For `numPages > 1`, tiles are OCR'd by a worker pool:
 
 ```go
-numWorkers := min(ocrWorkers, totalTiles, runtime.NumCPU()*2)
+numWorkers := min(ocrWorkers, totalTiles, runtime.GOMAXPROCS(0)*2)
+if numPages <= 1 {
+	numWorkers = 1                      // the single-page path runs sequentially
+}
 
-jobs := make(chan tileJob, numWorkers)          // page/tile index, core, samples, dims, origin
+jobs := make(chan tileJob, min(2, numWorkers))  // page/tile index, core, samples, dims, origin
 results := make(chan tileResult, maxChunkTiles) // boxes + JPEG per tile, or an error
 var wg sync.WaitGroup
 
@@ -201,7 +216,9 @@ for range numWorkers {
 		worker := newOCRClient(languages)     // one Tesseract client per worker
 		defer worker.Close()
 		for job := range jobs {
-			boxes, jpegData, err := computeTile(job.samples, job.tw, job.th,
+			samples := job.samples
+			job.samples = nil                 // the queued job stops pinning the render
+			boxes, jpegData, err := computeTile(samples, job.tw, job.th,
 				job.core, job.ox, job.oy, worker)
 			...
 		}
@@ -211,21 +228,34 @@ for range numWorkers {
 
 - **Probe pass first**: every page is measured and planned before rendering;
   a guard failure fails the document before any pixmap exists.
+- **Worker sizing**: `ocr_workers: 0` derives the pool from `GOMAXPROCS(0)`
+  — cgroup CPU-quota aware on Linux — divided by
+  `max_concurrent_batches × consumer.workers`; the result is clamped to the
+  document's tile count and `2 × GOMAXPROCS`. Explicit values are honored up
+  to the same clamp. Single-page files never build the pool.
 - **One Tesseract client per worker** — gosseract clients are not
   concurrency-safe, so each worker owns its own.
 - **Chunk-synchronous production**: pages are grouped into chunks
   (`planChunks`: 64 pages or 256 MP of summed page pixels, whichever comes
   first), and the main goroutine works one chunk at a time. It renders that
-  chunk's pages into `jobs` (buffered to `numWorkers`) while the workers OCR,
+  chunk's pages into `jobs` (a shallow 1–2-slot buffer) while the workers OCR,
   then drains exactly the chunk's tile results into chunk-local slots, and
   only then moves to the next chunk. `RenderTile` releases each pixmap
   internally; the producer closes `jobs`, a closer goroutine closes `results`
   after `wg.Wait()`.
+- **Shallow job queue**: each queued job retains its rendered tile (3 bytes
+  per pixel), and the producer is throttled by OCR anyway, so a deeper buffer
+  would only retain memory.
 - **Bounded retention**: the results channel is sized to the largest chunk's
   tile count, so workers never block sending while the producer is still
-  pushing jobs for that chunk — a full results buffer plus a full jobs buffer
-  would deadlock the producer. Only one chunk's boxes and JPEGs are retained
-  at a time.
+  pushing jobs for that chunk — that cap, not the jobs buffer, is what
+  prevents the send-side deadlock. Only one chunk's boxes and JPEGs are
+  retained at a time.
+- **Chunk-boundary release**: after each chunk's PDF is written, the child
+  evicts MuPDF's cache store (`MuContext.ShrinkStore`), calls `malloc_trim(0)`
+  on glibc builds, and runs `debug.FreeOSMemory()`. Nothing from the finished
+  chunk is referenced at that point, so eviction is free; these calls control
+  the release rate, not the per-tile working set.
 - **Deterministic output**: results land in per-chunk slots indexed by page and
   tile, and pages are assembled in document order with tiles row-major —
   concurrent OCR, sequential PDF.
@@ -240,27 +270,40 @@ for range numWorkers {
 `computeTile` produces everything one output tile needs:
 
 ```go
-ocrImg := samplesToRGBA(samples, tw, th)                // the whole overlapped render
-pngData, err := encodePNG(ocrImg)
-client.SetImageFromBytes(pngData)
-boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)  // word-level boxes
+ocrImg := samplesToGray(samples, tw, th)                  // 8-bit Rec.601 luma
+pngData, err := encodePNG(ocrImg)                         // the whole overlapped render
+ocrImg = nil
 
-coreLocal := core.Sub(image.Pt(ox, oy))                 // the core, in tile coordinates
-// keep a box iff its centre lies in coreLocal; offset kept boxes by (ox, oy)
-
+outW := tw * outputDPI / ocrDPI
+outH := th * outputDPI / ocrDPI
 lowSamples := downscaleRGB(samples, tw, th, outW, outH)   // nearest-neighbor
+samples = nil
 lowImg := samplesToRGBA(lowSamples, outW, outH)           // for the output JPEG
+lowSamples = nil
+coreLocal := core.Sub(image.Pt(ox, oy))                   // the core, in tile coordinates
 coreLow := image.Rect(                                    // the core mapped to 150 DPI
 	coreLocal.Min.X*outputDPI/ocrDPI, coreLocal.Min.Y*outputDPI/ocrDPI,
 	coreLocal.Max.X*outputDPI/ocrDPI, coreLocal.Max.Y*outputDPI/ocrDPI,
 ).Intersect(image.Rect(0, 0, outW, outH))
 jpegData, err := encodeJPEG(lowImg.SubImage(coreLow), 60) // core crop only
+lowImg = nil
+
+client.SetImageFromBytes(pngData)
+pngData = nil
+boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD) // word-level boxes
+// keep a box iff its centre lies in coreLocal; offset kept boxes by (ox, oy)
 ```
 
-- Tesseract gets a **lossless PNG** at 200 DPI of the whole overlapped tile
-  (compression artifacts hurt recognition); the visible image in the output
-  is a **JPEG at quality 60**, 150 DPI — OCR input and display image are
-  deliberately different.
+- Tesseract gets a **lossless 8-bit grayscale PNG** (Rec.601 luma, 1 byte per
+  pixel) at 200 DPI of the whole overlapped tile (compression artifacts hurt
+  recognition); the visible image in the output is a **JPEG at quality 60**,
+  150 DPI — OCR input and display image are deliberately different. Tesseract
+  converts RGB input to gray internally with the same weights, so the
+  recognition input is equivalent within ±1 rounding.
+- **Buffer lifetimes**: the JPEG and low-res image are encoded before
+  recognition and each large Go buffer is nil'ed once consumed, so only the
+  PNG is live during `GetBoundingBoxes` — the multi-second call where
+  Tesseract's pix and page structures peak.
 - **Ownership rule**: a word box belongs to the tile whose core contains the
   word's centre (`coreLocal`), so words seen by two overlapping renders are
   counted exactly once; kept boxes are translated to page pixels. With the
@@ -567,7 +610,7 @@ Under `consumer.ocr` (`internal/config/config.go`):
 |---|---|---|
 | `engine` | `gosseract` | `gosseract` (built-in) or `ocrmypdf` |
 | `languages` | `[eng]` | plus-separated tesseract codes (`eng+spa`) |
-| `workers` | — | OCR worker count for multi-page files (min of configured, total tiles, 2×CPU) |
+| `ocr_workers` | `0` (auto) | parallel tile workers for multi-page files; auto = cgroup-aware CPU count / (`max_concurrent_batches` × `consumer.workers`), clamped to 2×CPU and the tile count |
 | `data_dir` | `<config-dir>/tessdata` | tessdata download location |
 | `timeout` | — | per-document OCR budget (context-cancelled) |
 | `optimizer` | `gs` or `mupdf` | `pdfoptimizer.engine` — which clean pass runs after OCR |
@@ -585,9 +628,13 @@ and `consumer.ocr.languages` is required before consumption runs.
   and releases its pixmap internally — the caller owns only the sample slice.
 - **One Tesseract client per worker, never shared** — gosseract clients are
   not safe for concurrent use; the per-worker `newOCRClient` is deliberate.
-- **Worker count clamp** (`min(ocrWorkers, totalTiles, NumCPU()*2)`) — a
-  config of 64 workers on a 2-page PDF spawns 2; on a 4-core machine never
+- **Worker count clamp** (`min(ocrWorkers, totalTiles, GOMAXPROCS(0)*2)`) — a
+  config of 64 workers on a 2-page PDF spawns 2; a quota of 4 CPUs never runs
   more than 8.
+- **Allocator tuning is per-child** — `MALLOC_ARENA_MAX` and
+  `MALLOC_MMAP_THRESHOLD_` are set only on the `internal-ocr` child, and
+  `malloc_trim` is a no-op outside glibc, so the release controls do nothing
+  on musl builds.
 - **`sync.Once` poisons tessdata on failure** — a transient download error
   fails every OCR task in the process until restart. The enricher's
   fire-and-forget download mitigates this at setup time.
@@ -624,4 +671,4 @@ and `consumer.ocr.languages` is required before consumption runs.
 
 ---
 
-*Last verified against the tree: 2026-11-21. If code and doc disagree, code wins.*
+*Last verified against the tree: 2026-11-22. If code and doc disagree, code wins.*

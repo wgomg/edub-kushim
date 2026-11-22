@@ -71,6 +71,48 @@ func TestDownscaleRGB_Identity(t *testing.T) {
 	}
 }
 
+func TestSamplesToGray_ConvertsPrimaryChannels(t *testing.T) {
+	tests := []struct {
+		name    string
+		r, g, b byte
+		want    byte
+	}{
+		{"red", 255, 0, 0, 76},
+		{"green", 0, 255, 0, 150},
+		{"blue", 0, 0, 255, 29},
+		{"black", 0, 0, 0, 0},
+		{"white", 255, 255, 255, 255},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := samplesToGray([]byte{tt.r, tt.g, tt.b}, 1, 1).GrayAt(0, 0).Y; got != tt.want {
+				t.Errorf("samplesToGray(%d,%d,%d) = %d, want %d", tt.r, tt.g, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSamplesToGray_NeutralGrayRoundTrips(t *testing.T) {
+	w, h := 7, 5
+	samples := make([]byte, w*h*3)
+	for i := range w * h {
+		v := byte((i * 37) % 256)
+		samples[i*3], samples[i*3+1], samples[i*3+2] = v, v, v
+	}
+
+	img := samplesToGray(samples, w, h)
+
+	if b := img.Bounds(); b.Dx() != w || b.Dy() != h {
+		t.Fatalf("bounds = %v, want %dx%d", b, w, h)
+	}
+	for i := range w * h {
+		if got := img.Pix[i]; got != samples[i*3] {
+			t.Errorf("pixel %d: got %d, want %d", i, got, samples[i*3])
+		}
+	}
+}
+
 func TestImageToRGB_Opaque(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
 	for y := range 2 {

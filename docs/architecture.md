@@ -221,8 +221,9 @@ creation entirely at batch-enqueue time.
 
 When active, the gosseract adapter processes each page at 200 DPI — source
 material comes from a MuPDF render (image‑only PDF pages) or from a direct
-Go `image.Decode` (standalone PNG, JPEG, TIFF) — encodes to PNG, OCRs with
-Tesseract, and builds a searchable PDF with `go‑pdf/fpdf` using **text
+Go `image.Decode` (standalone PNG, JPEG, TIFF) — encodes each tile as an
+8‑bit grayscale PNG for OCR plus a 150 DPI JPEG for the visible image, and
+builds a searchable PDF with `go‑pdf/fpdf` using **text
 rendering mode 3** (`3 Tr`) for invisible‑but‑selectable text. Pages larger
 than a 4 MP tile budget are rendered and OCR'd as a grid of bounded tiles
 (2000 px cores with a 128 px OCR‑only overlap), so the child's per‑page
@@ -232,7 +233,9 @@ chunks of 64 pages or 256 MP of page pixels (whichever comes first): each
 chunk is written to a temporary PDF with its own `fpdf` instance, and the
 chunks are grafted into the final document with MuPDF
 (`pdf_graft_mapped_page`), so the PDF builder and the pending tile results
-never grow with document length.
+never grow with document length. After each chunk the child releases cached
+memory (MuPDF store eviction, glibc heap trim, forced Go GC), so peak RSS
+tracks the in‑flight tiles rather than the document.
 
 ### 4. Database Integration
 

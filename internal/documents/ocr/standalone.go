@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
+	"strings"
 	"sync"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -100,8 +102,6 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		return fmt.Errorf("PDF has no pages")
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "starting OCR on %d pages\n", numPages)
-
 	pageW := make([]int, numPages)
 	pageH := make([]int, numPages)
 	plans := make([][]tileSpec, numPages)
@@ -123,6 +123,22 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 				totalTiles, tileMaxPerDoc)
 		}
 	}
+
+	numWorkers := ocrWorkers
+	if numWorkers <= 0 {
+		numWorkers = runtime.GOMAXPROCS(0)
+	}
+	numWorkers = min(numWorkers, totalTiles, runtime.GOMAXPROCS(0)*2)
+	if numPages <= 1 {
+		// the single-page path recognizes its tiles sequentially through one client
+		numWorkers = 1
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "starting OCR on %d pages with %d workers\n", numPages, numWorkers)
+	defer func() {
+		_, _ = fmt.Fprintf(os.Stdout, "ocr done: pages %d, workers %d, peak RSS %s\n",
+			numPages, numWorkers, peakRSSValue())
+	}()
 
 	if numPages <= 1 {
 		client := newOCRClient(languages)
@@ -177,15 +193,11 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 		err       error
 	}
 
-	numWorkers := ocrWorkers
-	if numWorkers <= 0 {
-		numWorkers = runtime.NumCPU()
-	}
-	numWorkers = min(numWorkers, totalTiles, runtime.NumCPU()*2)
-
-	jobs := make(chan tileJob, numWorkers)
+	// jobs stays shallow: each queued job retains its rendered samples, and the producer is throttled by
+	// OCR anyway
+	jobs := make(chan tileJob, min(2, numWorkers))
 	// cap results at the largest chunk's tile count: workers must never block sending a result while the
-	// producer is still pushing this chunk's jobs, or the full jobs and results channels deadlock
+	// producer is still pushing this chunk's jobs, so the results buffer is what prevents the deadlock
 	results := make(chan tileResult, maxChunkTiles)
 	var wg sync.WaitGroup
 
@@ -195,7 +207,9 @@ func RunStandalone(inputPath, outputPath string, languages []string, dataDir str
 			defer worker.Close()
 
 			for job := range jobs {
-				boxes, jpegData, err := computeTile(job.samples, job.tw, job.th, job.core, job.ox, job.oy, worker)
+				samples := job.samples
+				job.samples = nil
+				boxes, jpegData, err := computeTile(samples, job.tw, job.th, job.core, job.ox, job.oy, worker)
 				if err != nil {
 					results <- tileResult{
 						pageIndex: job.pageIndex,
@@ -291,6 +305,10 @@ chunkLoop:
 			runErr = fmt.Errorf("write chunk %d: %w", c, err)
 			break chunkLoop
 		}
+
+		mupdfCtx.ShrinkStore()
+		trimProcessHeap()
+		debug.FreeOSMemory()
 	}
 
 	close(jobs)
@@ -392,6 +410,21 @@ func runStandaloneImage(inputPath, outputPath string, languages []string) error 
 	return nil
 }
 
+// peakRSSValue reports the process's peak resident set size from /proc/self/status, or "unknown" where
+// the file is unavailable (non-Linux hosts).
+func peakRSSValue() string {
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return "unknown"
+	}
+	for line := range strings.SplitSeq(string(status), "\n") {
+		if value, ok := strings.CutPrefix(line, "VmHWM:"); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return "unknown"
+}
+
 func newOCRClient(languages []string) *gosseract.Client {
 	client := gosseract.NewClient()
 	client.SetLanguage(LangString(languages))
@@ -490,38 +523,21 @@ func planChunks(pageW, pageH []int) []chunkRange {
 // counted once; kept boxes are returned in page-pixel coordinates. The JPEG covers the core only, so
 // placed images partition the page without double-painted overlap.
 func computeTile(samples []byte, tw, th int, core image.Rectangle, ox, oy int, client *gosseract.Client) ([]gosseract.BoundingBox, []byte, error) {
-	ocrImg := samplesToRGBA(samples, tw, th)
-
+	ocrImg := samplesToGray(samples, tw, th)
 	pngData, err := encodePNG(ocrImg)
 	ocrImg = nil
 	if err != nil {
 		return nil, nil, fmt.Errorf("PNG encode error: %w", err)
 	}
 
-	client.SetImageFromBytes(pngData)
-	boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
-	pngData = nil
-	if err != nil {
-		return nil, nil, fmt.Errorf("OCR error: %w", err)
-	}
-
-	coreLocal := core.Sub(image.Pt(ox, oy))
-	kept := boxes[:0]
-	for _, box := range boxes {
-		centre := image.Pt((box.Box.Min.X+box.Box.Max.X)/2, (box.Box.Min.Y+box.Box.Max.Y)/2)
-		if !centre.In(coreLocal) {
-			continue
-		}
-		box.Box = box.Box.Add(image.Pt(ox, oy))
-		kept = append(kept, box)
-	}
-
 	outW := tw * outputDPI / ocrDPI
 	outH := th * outputDPI / ocrDPI
-
 	lowSamples := downscaleRGB(samples, tw, th, outW, outH)
+	samples = nil
 	lowImg := samplesToRGBA(lowSamples, outW, outH)
+	lowSamples = nil
 
+	coreLocal := core.Sub(image.Pt(ox, oy))
 	coreLow := image.Rect(
 		coreLocal.Min.X*outputDPI/ocrDPI,
 		coreLocal.Min.Y*outputDPI/ocrDPI,
@@ -540,6 +556,23 @@ func computeTile(samples []byte, tw, th int, core image.Rectangle, ox, oy int, c
 	lowImg = nil
 	if err != nil {
 		return nil, nil, fmt.Errorf("JPEG encode error: %w", err)
+	}
+
+	client.SetImageFromBytes(pngData)
+	pngData = nil
+	boxes, err := client.GetBoundingBoxes(gosseract.RIL_WORD)
+	if err != nil {
+		return nil, nil, fmt.Errorf("OCR error: %w", err)
+	}
+
+	kept := boxes[:0]
+	for _, box := range boxes {
+		centre := image.Pt((box.Box.Min.X+box.Box.Max.X)/2, (box.Box.Min.Y+box.Box.Max.Y)/2)
+		if !centre.In(coreLocal) {
+			continue
+		}
+		box.Box = box.Box.Add(image.Pt(ox, oy))
+		kept = append(kept, box)
 	}
 
 	return kept, jpegData, nil
@@ -653,6 +686,22 @@ func samplesToRGBA(samples []byte, w, h int) *image.RGBA {
 			img.Pix[i+1] = samples[offset+1]
 			img.Pix[i+2] = samples[offset+2]
 			img.Pix[i+3] = 255
+		}
+	}
+	return img
+}
+
+// samplesToGray converts packed RGB samples to Rec.601 luma. The weights sum to 65536, so neutral gray
+// inputs round-trip exactly.
+func samplesToGray(samples []byte, w, h int) *image.Gray {
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			offset := (y*w + x) * 3
+			i := img.PixOffset(x, y)
+			img.Pix[i] = uint8((19595*int(samples[offset]) +
+				38470*int(samples[offset+1]) +
+				7471*int(samples[offset+2]) + 1<<15) >> 16)
 		}
 	}
 	return img

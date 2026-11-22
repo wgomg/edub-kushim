@@ -80,8 +80,13 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	// Parallelism comes from the page-worker pool, not intra-Tesseract OpenMP threads
-	cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1")
+	// Parallelism comes from the page-worker pool, not intra-Tesseract OpenMP threads; the malloc settings
+	// cap glibc arenas and force the large tile buffers onto mmap so they return to the OS on free
+	cmd.Env = append(os.Environ(),
+		"OMP_THREAD_LIMIT=1",
+		"MALLOC_ARENA_MAX=4",
+		"MALLOC_MMAP_THRESHOLD_=1048576",
+	)
 
 	if err := cmd.Start(); err != nil {
 		_ = os.Remove(outPath)
@@ -92,6 +97,9 @@ func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, e
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			o.logger.Info(docId, "%s", scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			o.logger.Warn(docId, "read OCR subprocess stdout: %v", err)
 		}
 	}()
 

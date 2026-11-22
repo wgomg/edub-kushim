@@ -386,7 +386,10 @@ check their intersected area as a backstop.
 
 **The store cap** (`mupdf_wrapper.go:18-24`) — `fz_new_context_imp` gets a
 256 MB cache store; the comment documents that `FZ_STORE_UNLIMITED` caused
-~5 GB RSS on a 963-page scanned book.
+~5 GB RSS on a 963-page scanned book. `MuContext.ShrinkStore()`
+(`fz_shrink_store(ctx, 1)`) evicts unreferenced cached objects down to ~1% of
+the cap; the OCR chunk loop calls it at every chunk boundary from the
+context-owning goroutine. In-use objects are never evicted.
 
 **stderr suppression** — MuPDF's recoverable warnings would pollute Go logs,
 so the print callbacks are nulled (`mupdf_wrapper.go:25, 37-39`), and
