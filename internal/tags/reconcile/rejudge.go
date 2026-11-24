@@ -156,8 +156,9 @@ func (r *Reconciler) Rejudge(ctx context.Context, req RejudgeRequest) (RejudgeRe
 }
 
 // rejudgeComposition judges one compound through the same entry point the sweep and the emission gate
-// use, then journals the row so the review surface reads it. A degraded keep is left unjournaled,
-// exactly as the sweep leaves it, so the compound stays undecided for a later run.
+// use, then journals the row so the review surface reads it. A degraded keep and an unchanged proxy
+// relational keep are left unjournaled, exactly as the sweep leaves them: the first stays undecided for a
+// later run, and the second keeps standing while the store-maturity wait continues.
 func (r *Reconciler) rejudgeComposition(ctx context.Context, cfg *config.Config, tag database.Tag) (tags.CompositionRow, error) {
 	promotedNames, err := r.client.Queries.ListPromotedTagNames(ctx)
 	if err != nil {
@@ -186,7 +187,7 @@ func (r *Reconciler) rejudgeComposition(ctx context.Context, cfg *config.Config,
 		return tags.CompositionRow{}, fmt.Errorf("judge returned %d rows for %q", len(rows), tag.Name)
 	}
 	row := rows[0]
-	if row.Reason != tags.CompositionReasonJudgeUnavailable {
+	if row.Reason != tags.CompositionReasonJudgeUnavailable && !row.ProxyRelationalKeep() {
 		if err := r.tag.RecordCompositionEvidence(ctx, rows); err != nil {
 			return tags.CompositionRow{}, err
 		}

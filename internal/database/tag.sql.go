@@ -188,13 +188,15 @@ FROM (
             ELSE false END AS degraded_unversioned,
             CASE WHEN $4::boolean THEN
                 EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition
+                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition, ce.reading
                             FROM tag_composition_event ce
                             WHERE ce.candidate = t.name
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) latest
                         WHERE latest.disposition = 'drop'
-                           OR latest.reason = ANY($7::text[]))
+                           OR (latest.reason = ANY($7::text[])
+                               AND NOT (latest.reason = 'relational_keep'
+                                        AND coalesce(latest.reading ->> 'source', '') = 'proxy')))
             ELSE false END AS composition_blocks,
             t.demoted_at IS NOT NULL AS demoted
     ) flag ON true
@@ -886,8 +888,8 @@ FROM (
     -- rule-set versions), and
     -- split_hold mirrors CompositionReview's compositionHolds reasons; the composition_blocks mirrors
     -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests; a relational
-    -- keep resting on the promoted-parts proxy is store-maturity pending, not a review obligation, so the
-    -- split_hold predicate excludes it exactly as proxyRelationalKeep does in the Go read
+    -- keep resting on the promoted-parts proxy is store-maturity pending, not a review obligation, so both
+    -- predicates exclude it exactly as ProxyRelationalKeep does in the Go reads
     LEFT JOIN LATERAL (
         SELECT
             CASE WHEN $2::boolean THEN
@@ -932,13 +934,15 @@ FROM (
             ELSE false END AS degraded_unversioned,
             CASE WHEN $2::boolean THEN
                 EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition
+                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition, ce.reading
                             FROM tag_composition_event ce
                             WHERE ce.candidate = t.name
                             ORDER BY ce.candidate, ce.created_at DESC
                         ) latest
                         WHERE latest.disposition = 'drop'
-                           OR latest.reason = ANY($5::text[]))
+                           OR (latest.reason = ANY($5::text[])
+                               AND NOT (latest.reason = 'relational_keep'
+                                        AND coalesce(latest.reading ->> 'source', '') = 'proxy')))
             ELSE false END AS composition_blocks,
             t.demoted_at IS NOT NULL AS demoted
     ) flag ON true

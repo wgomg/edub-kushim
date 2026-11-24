@@ -25,6 +25,7 @@ const skipReasonLabels = {
 	decided: 'already decided — nothing to do',
 	identity_hold: 'held for review beside a live store value',
 	composition_hold: 'held for review',
+	store_maturity_pending: 'a relational keep still waits on store maturity — nothing changed',
 	period_store_application: 'a seeded period — applied whole by design',
 	seeded: 'a seeded value — operator-owned and never swept',
 	split_invalid: 'the components did not validate — kept whole',

@@ -14,6 +14,10 @@ import (
 	"github.com/wgomg/edub-kushim/internal/types"
 )
 
+// skipStoreMaturityPending is the tally key for a relational keep resting on the promoted-parts proxy:
+// nothing changed, so the compound waits for its parts to promote rather than for review.
+const skipStoreMaturityPending = "store_maturity_pending"
+
 type compoundEntry struct {
 	name           string
 	docCount       int64
@@ -22,6 +26,7 @@ type compoundEntry struct {
 	components     []string
 	demote         bool // a decided drop whose influence still stands: revoke it, do not judge or split
 	notify         bool // a decided drop on operator standing: keep it and report the disagreement
+	redispose      bool // proxy relational keep: store-maturity pending, re-derived every run
 	standingSource string
 	reason         string
 	skipReason     string
@@ -119,10 +124,11 @@ func (r *Reconciler) buildCompoundWorklist(ctx context.Context, allTags []databa
 
 // compoundEntryFor classifies one stored compound candidate into the work it represents: an application owed
 // for a decided split, a demotion owed for a decided drop still promoted, a notification owed for a decided
-// drop on operator standing, or a judgment owed otherwise. A nil entry comes with the tally key naming why
-// the sweep has nothing to do. A recorded operator split rule outranks it on both paths, and for the
-// journal-driven candidates that remain, the compound arm and the opening gate's probe both read membership
-// through it, so the two cannot disagree about what work is due.
+// drop on operator standing, a re-disposition owed for a relational keep resting on the promoted-parts proxy,
+// or a judgment owed otherwise. A nil entry comes with the tally key naming why the sweep has nothing to do.
+// A recorded operator split rule outranks it on both paths, and for the journal-driven candidates that
+// remain, the compound arm and the opening gate's probe both read membership through it, so the two cannot
+// disagree about what work is due.
 func compoundEntryFor(name string, promoted bool, standingSource string, docCount int64, held map[string]tags.IdentityHold,
 	compositionHeld map[string]string, states map[string]tags.CompositionState) (*compoundEntry, string) {
 	if _, ok := held[name]; ok {
@@ -145,6 +151,9 @@ func compoundEntryFor(name string, promoted bool, standingSource string, docCoun
 	if _, ok := compositionHeld[name]; ok {
 		return nil, "composition_hold"
 	}
+	if ok && state.Decided && tags.ProxyRelationalKeep(state.Reason, state.ReadingSource) {
+		return &compoundEntry{name: name, docCount: docCount, redispose: true, standingSource: standingSource}, ""
+	}
 	if ok && state.Decided {
 		return nil, "decided"
 	}
@@ -154,13 +163,21 @@ func compoundEntryFor(name string, promoted bool, standingSource string, docCoun
 // Stored compounds are judged through the same entry point the emission gate uses, so a verdict binds
 // identically on either path — including the substrate reading the judgment consults. Only a split acts here;
 // a decided drop belongs to demotion. An entry whose split parts a recorded operator rule already decided is
-// applied, not judged, so the operator's parts win over a re-derived disposition.
+// applied, not judged, so the operator's parts win over a re-derived disposition. A re-dispose entry is
+// judged like any candidate; when the fresh row still rests on the promoted-parts proxy it tallies the
+// store-maturity wait and is left out of the journal, so an unchanged keep writes nothing.
 func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Config, entries []*compoundEntry, promotedNames map[string]string, liveNames map[string]struct{}) {
 	if !cfg.Enricher.TagAdjudicator.Enabled {
 		componentFilter := analyzer.NewTagFilter(nil, nil, nil)
 		for _, e := range entries {
 			if e.demote || e.notify || e.split {
 				// a demotion, a notification, or a decided operator rule is not judged here
+				continue
+			}
+			if e.redispose {
+				// a decided keep is never re-derived without a judge, and the conjunction fallback would split it
+				// deterministically — the exact opposite of a decided keep
+				e.skipReason = skipStoreMaturityPending
 				continue
 			}
 			if textnorm.SplitJointTag(e.name) == nil {
@@ -198,6 +215,12 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 		return
 	}
 	for i, row := range rows {
+		if row.ProxyRelationalKeep() {
+			// the re-derivation still rests on the promoted-parts proxy: nothing changed, so the stored keep
+			// stands and the run tallies the wait instead of journaling a restatement of it
+			judged[i].skipReason = skipStoreMaturityPending
+			continue
+		}
 		switch row.Disposition {
 		case tags.CompositionSplit:
 			judged[i].split = true
@@ -216,10 +239,11 @@ func (r *Reconciler) decideCompoundSplits(ctx context.Context, cfg *config.Confi
 		}
 	}
 	// a degraded keep is judgment still owed, not a verdict: journaling one would make the sweep's own hold
-	// filter skip the compound on every later run, so an outage leaves the entry undecided, as at emission
+	// filter skip the compound on every later run, so an outage leaves the entry undecided, as at emission;
+	// a proxy relational keep is left unjournaled for the same reason, so the store-maturity wait is retried
 	recorded := make([]tags.CompositionRow, 0, len(rows))
 	for _, row := range rows {
-		if row.Reason == tags.CompositionReasonJudgeUnavailable {
+		if row.ProxyRelationalKeep() || row.Reason == tags.CompositionReasonJudgeUnavailable {
 			continue
 		}
 		recorded = append(recorded, row)

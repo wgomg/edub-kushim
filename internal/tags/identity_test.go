@@ -3,6 +3,7 @@ package tags
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"reflect"
 	"testing"
@@ -1274,30 +1275,119 @@ func TestCompositionReview(t *testing.T) {
 // decision needs no action.
 func TestCompositionActionFor(t *testing.T) {
 	cases := []struct {
-		name        string
-		disposition CompositionDisposition
-		reason      string
-		want        CompositionAction
+		name          string
+		disposition   CompositionDisposition
+		reason        string
+		readingSource string
+		want          CompositionAction
 	}{
-		{"a decided drop retires", CompositionDrop, CompositionReasonNoDimension, CompositionActionDrop},
-		{"a part rejection retires", CompositionDrop, CompositionReasonPartRejected, CompositionActionDrop},
-		{"a degraded keep re-judges", CompositionKeep, CompositionReasonJudgeUnavailable, CompositionActionDegraded},
-		{"a deferred split splits", CompositionKeep, CompositionReasonSplitDefer, CompositionActionUndecided},
-		{"conflicting evidence splits", CompositionKeep, CompositionReasonConflictingEvidence, CompositionActionUndecided},
-		{"a sample disagreement splits", CompositionKeep, CompositionReasonSampleDisagreement, CompositionActionUndecided},
-		{"a reconstructible named unit needs nothing", CompositionKeep, CompositionReasonNamedUnitReconstructible, ""},
-		{"a relational keep applies its parts", CompositionKeep, CompositionReasonRelationalKeep, CompositionActionKeep},
-		{"a decided keep needs nothing", CompositionKeep, CompositionReasonNamedUnit, ""},
-		{"an operator keep needs nothing", CompositionKeep, CompositionReasonOperatorKeep, ""},
-		{"an operator split needs nothing", CompositionSplit, CompositionReasonOperator, ""},
-		{"a drop wins over the reason", CompositionDrop, CompositionReasonOperator, CompositionActionDrop},
+		{"a decided drop retires", CompositionDrop, CompositionReasonNoDimension, "", CompositionActionDrop},
+		{"a part rejection retires", CompositionDrop, CompositionReasonPartRejected, "", CompositionActionDrop},
+		{"a degraded keep re-judges", CompositionKeep, CompositionReasonJudgeUnavailable, "", CompositionActionDegraded},
+		{"a deferred split splits", CompositionKeep, CompositionReasonSplitDefer, "", CompositionActionUndecided},
+		{"conflicting evidence splits", CompositionKeep, CompositionReasonConflictingEvidence, "", CompositionActionUndecided},
+		{"a sample disagreement splits", CompositionKeep, CompositionReasonSampleDisagreement, "", CompositionActionUndecided},
+		{"a reconstructible named unit needs nothing", CompositionKeep, CompositionReasonNamedUnitReconstructible, "", ""},
+		{"a relational keep applies its parts", CompositionKeep, CompositionReasonRelationalKeep, ReconstructibilitySourceSubstrate, CompositionActionKeep},
+		{"a decided keep needs nothing", CompositionKeep, CompositionReasonNamedUnit, "", ""},
+		{"an operator keep needs nothing", CompositionKeep, CompositionReasonOperatorKeep, "", ""},
+		{"an operator split needs nothing", CompositionSplit, CompositionReasonOperator, "", ""},
+		{"a drop wins over the reason", CompositionDrop, CompositionReasonOperator, "", CompositionActionDrop},
+		{"a proxy relational keep reports no action", CompositionKeep, CompositionReasonRelationalKeep, ReconstructibilitySourceProxy, ""},
+		{"a relational keep with unreadable evidence still applies its parts", CompositionKeep, CompositionReasonRelationalKeep, "", CompositionActionKeep},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CompositionActionFor(tc.disposition, tc.reason)
+			got := CompositionActionFor(tc.disposition, tc.reason, tc.readingSource)
 			if got != tc.want {
-				t.Errorf("CompositionActionFor(%q, %q) = %q, want %q", tc.disposition, tc.reason, got, tc.want)
+				t.Errorf("CompositionActionFor(%q, %q, %q) = %q, want %q", tc.disposition, tc.reason, tc.readingSource, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDecidedCompositionKeep pins which composition states own the dimension question: a decided keep
+// under the named-unit reasons (proxy reading included) owns it, while every other reason — deferred
+// splits, conflicts, degraded keeps, operator decisions, drops and splits — leaves the quality gate's
+// own signals in charge.
+func TestDecidedCompositionKeep(t *testing.T) {
+	cases := []struct {
+		name        string
+		disposition CompositionDisposition
+		reason      string
+		want        bool
+	}{
+		{"named unit keep owns the dimension", CompositionKeep, CompositionReasonNamedUnit, true},
+		{"reconstructible named unit owns the dimension", CompositionKeep, CompositionReasonNamedUnitReconstructible, true},
+		{"relational keep on the substrate owns the dimension", CompositionKeep, CompositionReasonRelationalKeep, true},
+		{"a deferred split leaves the quality gate in charge", CompositionKeep, CompositionReasonSplitDefer, false},
+		{"a conflicting split leaves the quality gate in charge", CompositionKeep, CompositionReasonConflictingEvidence, false},
+		{"a degraded keep leaves the quality gate in charge", CompositionKeep, CompositionReasonJudgeUnavailable, false},
+		{"an operator keep leaves the quality gate in charge", CompositionKeep, CompositionReasonOperatorKeep, false},
+		{"an operator split leaves the quality gate in charge", CompositionSplit, CompositionReasonOperator, false},
+		{"a drop leaves the quality gate in charge", CompositionDrop, CompositionReasonNoDimension, false},
+		{"a named unit split leaves the quality gate in charge", CompositionSplit, CompositionReasonNamedUnit, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DecidedCompositionKeep(tc.disposition, tc.reason); got != tc.want {
+				t.Errorf("DecidedCompositionKeep(%q, %q) = %t, want %t", tc.disposition, tc.reason, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadingSource pins the evidence read the hold and action predicates share: the recorded source
+// passes through, and absent or unreadable evidence reads as no source, so malformed evidence never
+// releases a hold or a composition action.
+func TestReadingSource(t *testing.T) {
+	cases := []struct {
+		name    string
+		reading string
+		want    string
+	}{
+		{"the substrate source passes through", `{"source":"substrate","band":"firm"}`, ReconstructibilitySourceSubstrate},
+		{"the proxy source passes through", `{"source":"proxy"}`, ReconstructibilitySourceProxy},
+		{"an empty object reads as no source", `{}`, ""},
+		{"a missing reading reads as no source", ``, ""},
+		{"malformed evidence reads as no source", `not json`, ""},
+		{"an unrelated shape reads as no source", `[1,2]`, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ReadingSource(json.RawMessage(tc.reading)); got != tc.want {
+				t.Errorf("ReadingSource(%q) = %q, want %q", tc.reading, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCompositionRowProxyRelationalKeep pins the row-level proxy read: a relational keep whose recorded
+// reading is the promoted-parts proxy reports it, and a row without evidence or with another reason
+// or reading never does, so the hold stands by default.
+func TestCompositionRowProxyRelationalKeep(t *testing.T) {
+	proxy := &CompositionReading{Source: ReconstructibilitySourceProxy}
+	substrate := &CompositionReading{Source: ReconstructibilitySourceSubstrate}
+
+	cases := []struct {
+		name string
+		row  CompositionRow
+		want bool
+	}{
+		{"a proxy relational keep reports the proxy", CompositionRow{Reason: CompositionReasonRelationalKeep, Reading: proxy}, true},
+		{"a substrate relational keep stays a hold", CompositionRow{Reason: CompositionReasonRelationalKeep, Reading: substrate}, false},
+		{"a row without evidence fails closed", CompositionRow{Reason: CompositionReasonRelationalKeep}, false},
+		{"a proxy reading on another reason never fires", CompositionRow{Reason: CompositionReasonSplitDefer, Reading: proxy}, false},
+		{"a named unit with a proxy reading never fires", CompositionRow{Reason: CompositionReasonNamedUnit, Reading: proxy}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.row.ProxyRelationalKeep(); got != tc.want {
+				t.Errorf("ProxyRelationalKeep(%+v) = %t, want %t", tc.row, got, tc.want)
 			}
 		})
 	}

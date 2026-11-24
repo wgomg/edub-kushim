@@ -7997,10 +7997,15 @@ components:
     TagQualityCriteriaView:
       type: object
       description: |-
-        TagQualityCriteriaView is the API view of the judge's rubric answers;
-        a nil answer had no signal in the stored payload.
+        TagQualityCriteriaView is the API view of the judge's rubric answers; a nil answer had no signal in the
+        stored payload. CompositionKept mirrors the stored shape: nil on an ordinary row and true on a row the
+        composition gate decided to keep, which carries no dimension key.
       properties:
         atomic:
+          anyOf:
+            - type: boolean
+            - type: "null"
+        composition_keep:
           anyOf:
             - type: boolean
             - type: "null"
@@ -8031,6 +8036,7 @@ components:
         - atomic
         - not_form_genre
         - defer
+        - composition_keep
     TagQualityVerdictInfo:
       type: object
       description: |-

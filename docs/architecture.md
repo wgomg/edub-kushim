@@ -406,7 +406,10 @@ The enrichment pipeline:
    features — the rubric judge's answers (one temperature-0 LLM call per
    document, or the cached verdict row) together with the `dimension` verdict
    the parts pass owns (read from the shared parts cache, judged on a miss,
-   and stamped onto the row) plus the emission's deterministic
+   and stamped onto the row; a compound the composition gate decided to keep
+   whole owns the question instead, carrying `composition_keep` and no
+   `dimension`, with the parts pass neither judged nor consulted) plus the
+   emission's deterministic
    signals (a detail annotated `other`, and a best store similarity below the
    internal `no_anchor_similarity` 0.60 cut). The rubric asks
    `subject_matter`, `person_class`, `atomic` and
@@ -461,7 +464,7 @@ The enrichment pipeline:
     accepted deferral returns to the floor rule. An identity-held name — a fold the gate refused
    beside a live store value — and a composition-held name — its latest
     composition verdict under the current split criteria version defers,
-    conflicts, disagrees, is a relational keep, is a degraded
+    conflicts, disagrees, is a relational keep on the substrate reading, is a degraded
     `judge_unavailable` keep, or is a decided drop — are likewise
    provisional and blocked from inline and sweep promotion until an operator
    resolves them or a later verdict decides them; the degraded keep is
@@ -470,7 +473,10 @@ The enrichment pipeline:
    scan — reads the measurement substrate: over each judged cover the store's own
    reconstructibility reading decides, and a composition the reading places far from its
    parts' intersection keeps whole as a relational keep instead of splitting, with the
-   promoted-parts proxy answering where the store cannot measure. The containment
+   promoted-parts proxy answering where the store cannot measure. A proxy-reading
+   relational keep is not a hold: the stored-compound scan re-disposes it on every run,
+   journaling only a changed decision and tallying an unchanged one as
+   `store_maturity_pending`. The containment
    readings surface read-only on the tags page's Overlap tab
    (`GET /api/v1/tags/siblings`), with no automatic merge.
 6. **New Tag Store Update** — tag creation, the enrichment-owned `document_tag` sweep,

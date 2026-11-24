@@ -72,7 +72,9 @@ uncertain:
 - **Quality (admission) judge** — is this string a subject matter or a dimension, is it atomic,
   does it name a person, is it not a publishing format? Its answers decide admit, defer or reject,
   and are shown as the verdict badge and a rubric line under each queue entry — the failing checks
-  plus a score, with every criterion on hover. A documented individual's name is rejected on the
+  plus a score over the checks that have an answer, with every criterion on hover; a check with no
+  answer (a deferral, or a compound the composition judge kept whole) carries its reason instead of
+  counting. A documented individual's name is rejected on the
   person question alone; a mythological, legendary, fictional or unclear person reading is held
   for review instead.
 - **Identity judge** — is this name the same concept as an existing value, just spelled or formed

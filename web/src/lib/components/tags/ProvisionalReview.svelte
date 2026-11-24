@@ -563,19 +563,46 @@
 		return 'bg-clay-800 text-parchment-600';
 	}
 
+	function criterionAnswered(value) {
+		return value !== undefined && value !== null;
+	}
+
 	function passingCount(tag) {
-		return rubricCriteria.filter((c) => criterionPassed(c, tag.verdict.criteria?.[c.key])).length;
+		return rubricCriteria.filter(
+			(c) =>
+				criterionAnswered(tag.verdict.criteria?.[c.key]) &&
+				criterionPassed(c, tag.verdict.criteria?.[c.key])
+		).length;
+	}
+
+	function answeredCount(tag) {
+		return rubricCriteria.filter((c) => criterionAnswered(tag.verdict.criteria?.[c.key])).length;
 	}
 
 	function failingCriteria(tag) {
 		return rubricCriteria.filter((c) => !criterionPassed(c, tag.verdict.criteria?.[c.key]));
 	}
 
+	function criterionReason(tag, value) {
+		if (criterionAnswered(value)) return '';
+		if (tag.verdict.criteria?.defer === true) return 'deferred';
+		if (tag.verdict.criteria?.composition_keep === true) return 'composition keep';
+		return '';
+	}
+
+	function criterionText(tag, c) {
+		const value = tag.verdict.criteria?.[c.key];
+		const reason = criterionReason(tag, value);
+		return `${c.label} ${criterionDisplay(c, value)}${reason ? ` (${reason})` : ''}`;
+	}
+
 	function rubricSummary(tag) {
 		const passed = passingCount(tag);
-		return passed === rubricCriteria.length
-			? `rubric ${passed}/${rubricCriteria.length} ✓`
-			: `rubric ${passed}/${rubricCriteria.length}`;
+		const answered = answeredCount(tag);
+		const deferred = tag.verdict.criteria?.defer === true;
+		const mark = !deferred && passed === answered ? ' ✓' : '';
+		const suffix = deferred ? ' · deferred' : '';
+		return `rubric ${passed}/${answered}${mark}${suffix}`;
 	}
 
 	function rubricTitle(tag) {
@@ -856,8 +883,7 @@
 						<div class="flex flex-wrap items-center gap-1.5" title={rubricTitle(tag)}>
 							{#each failingCriteria(tag) as c (c.key)}
 								<span class="{criteriaPill} {criterionClass(c, tag.verdict.criteria?.[c.key])}">
-									{c.label}
-									{criterionDisplay(c, tag.verdict.criteria?.[c.key])}
+									{criterionText(tag, c)}
 								</span>
 							{/each}
 							<span class={summaryPill}>{rubricSummary(tag)}</span>

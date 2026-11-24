@@ -56,8 +56,9 @@ func NewVerdictStore(queries *database.Queries, runner *tools.Runner, logger *lo
 
 // PartDimensionFeature reads a value's parts verdict into the quality gate's dimension feature: a real
 // verdict yields its answer, while an absent or abstained verdict is not a false answer — it reports
-// abstain so the caller defers instead of fabricating a failing signal. The parts pass is the
-// single owner of the dimension question, so every consumer reads this one mapping.
+// abstain so the caller defers instead of fabricating a failing signal. The parts pass owns the dimension
+// question for every candidate the composition gate does not own, so every such consumer reads this one
+// mapping.
 func PartDimensionFeature(v PartVerdict, ok bool) (dimension bool, abstain bool) {
 	if !ok || v.Deferred {
 		return false, true

@@ -1510,6 +1510,108 @@ func TestApplyTagQuality(t *testing.T) {
 	})
 }
 
+// TestApplyTagQuality_CompositionKept pins the owned-row stamp: a compound the split gate decided to keep
+// whole admits on the composition decision while the parts verdict is missing — the parts store is never
+// built or read, the judge's abstention owns nothing, and the row carries composition_keep with no
+// dimension key. A non-owned compound with the same missing verdict still defers.
+func TestApplyTagQuality_CompositionKept(t *testing.T) {
+	a, q, adj := newTestAdjudicator(t)
+	a.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+	setUnexportedField(t, a.runner, "tagQualityJudge", adj)
+	adj.qualityFn = func(_ context.Context, _ string, candidates []analyzer.TagQualityCandidate) ([]analyzer.TagQualityResult, error) {
+		results := make([]analyzer.TagQualityResult, len(candidates))
+		for i := range candidates {
+			results[i] = analyzer.TagQualityResult{
+				Index:         i,
+				SubjectMatter: true,
+				PersonClass:   types.PersonClassNotPerson,
+				Atomic:        true,
+				NotFormGenre:  true,
+			}
+		}
+		return results, nil
+	}
+	missingPart := func(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+		results := make([]analyzer.TagPartResult, len(values))
+		for i := range values {
+			results[i] = analyzer.TagPartResult{Index: i, Defer: true}
+		}
+		return results, nil
+	}
+	ctx := context.Background()
+	docID, _ := database.CreateTestDocument(t, q, "owned-quality-doc")
+	noStore := map[string]struct{}{}
+
+	analysis := func(name string) *tools.ContentAnalysisResult {
+		return &tools.ContentAnalysisResult{
+			Tags:       []string{name},
+			TagDetails: []analyzer.TagDetail{{Term: name, Category: analyzer.TagCategoryTopic}},
+		}
+	}
+
+	t.Run("an owned name admits without a parts verdict or a parts judge call", func(t *testing.T) {
+		a2, q2, adj2 := newTestAdjudicator(t)
+		a2.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+		setUnexportedField(t, a2.runner, "tagQualityJudge", adj2)
+		adj2.qualityFn = adj.qualityFn
+		adj2.partFn = missingPart
+		kept, decisions, err := a2.ApplyTagQuality(ctx, TagQualityInput{
+			Analysis:        analysis("quartz widget"),
+			DBNames:         noStore,
+			ReducedText:     "text",
+			DocID:           docID,
+			CompositionKept: map[string]struct{}{"quartz widget": {}},
+		}, "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality: %v", err)
+		}
+		adjAssertEqual(t, len(kept), 1, "the owned compound is kept")
+		adjAssertEqual(t, decisions["quartz widget"].Outcome, tags.AdmissionAdmit, "decision outcome")
+		adjAssertEqual(t, adj2.partCall, 0, "the parts store is never built or read for an owned name")
+
+		rows, err := q2.LatestTagQualityEventsForNames(ctx, database.LatestTagQualityEventsForNamesParams{
+			PolicyVersion: analyzer.TagQualityVersion,
+			TagNames:      []string{"quartz widget"},
+		})
+		if err != nil {
+			t.Fatalf("read quality rows: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("quality rows = %d, want the stamped owned row", len(rows))
+		}
+		var criteria analyzer.TagQualityCriteria
+		if err := json.Unmarshal(rows[0].Criteria, &criteria); err != nil {
+			t.Fatalf("unmarshal owned criteria: %v", err)
+		}
+		if criteria.CompositionKept == nil || !*criteria.CompositionKept {
+			t.Errorf("owned criteria = %s, want composition_keep true", rows[0].Criteria)
+		}
+		if criteria.Dimension != nil {
+			t.Errorf("owned criteria = %s, want no dimension key", rows[0].Criteria)
+		}
+	})
+
+	t.Run("the same missing verdict still defers without composition ownership", func(t *testing.T) {
+		a2, _, adj2 := newTestAdjudicator(t)
+		a2.config.Enricher.TagQuality.Llm = config.LlmConfig{Provider: "test", Model: "judge-model"}
+		setUnexportedField(t, a2.runner, "tagQualityJudge", adj2)
+		adj2.qualityFn = adj.qualityFn
+		adj2.partFn = missingPart
+		kept, decisions, err := a2.ApplyTagQuality(ctx, TagQualityInput{
+			Analysis:    analysis("opal widget"),
+			DBNames:     noStore,
+			ReducedText: "text",
+			DocID:       docID,
+		}, "")
+		if err != nil {
+			t.Fatalf("ApplyTagQuality: %v", err)
+		}
+		adjAssertEqual(t, len(kept), 1, "the undecided tag is kept provisional")
+		adjAssertEqual(t, decisions["opal widget"].Outcome, tags.AdmissionDefer, "decision outcome")
+		adjAssertEqual(t, adj2.partCall, 1, "the non-owned name reads the parts store")
+	})
+}
+
 func TestApplyTagQuality_JudgeFailureWarns(t *testing.T) {
 	a, q, adj := newTestAdjudicator(t)
 	var buf bytes.Buffer

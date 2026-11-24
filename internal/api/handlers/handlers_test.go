@@ -4709,13 +4709,16 @@ func TestListProvisionalCompositionAction(t *testing.T) {
 		name        string
 		disposition tags.CompositionDisposition
 		reason      string
+		reading     *tags.CompositionReading
 		want        tags.CompositionAction
 	}{
-		{"action undecided split hold", tags.CompositionKeep, tags.CompositionReasonSplitDefer, tags.CompositionActionUndecided},
-		{"action reconstructible named unit keep is final", tags.CompositionKeep, tags.CompositionReasonNamedUnitReconstructible, ""},
-		{"action decided drop", tags.CompositionDrop, tags.CompositionReasonNoDimension, tags.CompositionActionDrop},
-		{"action degraded keep", tags.CompositionKeep, tags.CompositionReasonJudgeUnavailable, tags.CompositionActionDegraded},
-		{"action final keep", tags.CompositionKeep, tags.CompositionReasonOperatorKeep, ""},
+		{"action undecided split hold", tags.CompositionKeep, tags.CompositionReasonSplitDefer, nil, tags.CompositionActionUndecided},
+		{"action reconstructible named unit keep is final", tags.CompositionKeep, tags.CompositionReasonNamedUnitReconstructible, nil, ""},
+		{"action decided drop", tags.CompositionDrop, tags.CompositionReasonNoDimension, nil, tags.CompositionActionDrop},
+		{"action degraded keep", tags.CompositionKeep, tags.CompositionReasonJudgeUnavailable, nil, tags.CompositionActionDegraded},
+		{"action final keep", tags.CompositionKeep, tags.CompositionReasonOperatorKeep, nil, ""},
+		{"action substrate relational keep applies parts", tags.CompositionKeep, tags.CompositionReasonRelationalKeep,
+			&tags.CompositionReading{Source: tags.ReconstructibilitySourceSubstrate}, tags.CompositionActionKeep},
 	}
 
 	rows := make([]tags.CompositionRow, 0, len(cases))
@@ -4725,12 +4728,21 @@ func TestListProvisionalCompositionAction(t *testing.T) {
 		testutil.AssertNoError(t, err, "set provisional")
 		docID := database.CreateUniqueDocument(t, env.client.Queries, tc.name+" doc")
 		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+		_, err = env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       tc.name,
+			Criteria:      json.RawMessage(`{"defer":true}`),
+			VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		})
+		testutil.AssertNoError(t, err, "seed deferring verdict")
 		rows = append(rows, tags.CompositionRow{
 			DocumentID:      docID,
 			Candidate:       tc.name,
 			Disposition:     tc.disposition,
 			Reason:          tc.reason,
 			CriteriaVersion: analyzer.TagSplitVersion,
+			Reading:         tc.reading,
 		})
 	}
 	testutil.AssertNoError(t, env.tagSvc.RecordCompositionEvidence(ctx, rows), "write composition events")
@@ -4929,5 +4941,96 @@ func TestPromoteAliasEndpoint(t *testing.T) {
 
 	t.Run("a blank name returns 400", func(t *testing.T) {
 		testutil.AssertEqual(t, promote("").Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestListProvisionalProxyKeepFacets pins the observable facet shift: a deferred compound whose latest
+// composition row is a relational keep on the promoted-parts proxy is neither a review hold nor a
+// composition action — the store-maturity wait leaves it in needs_decision, while a substrate relational
+// keep on the same verdict still holds for review and offers the keep action.
+func TestListProvisionalProxyKeepFacets(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "proxy facet doc")
+	seed := func(name string, reading tags.CompositionReading) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+		row, err := env.client.Queries.GetTag(ctx, id)
+		testutil.AssertNoError(t, err, "read fixture tag")
+		_, err = env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       row.Name,
+			Criteria:      json.RawMessage(`{"defer":true}`),
+			Pass:          false,
+			VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		})
+		testutil.AssertNoError(t, err, "seed deferring verdict")
+		testutil.AssertNoError(t, env.tagSvc.RecordCompositionEvidence(ctx, []tags.CompositionRow{{
+			DocumentID:      docID,
+			Candidate:       name,
+			Disposition:     tags.CompositionKeep,
+			Reason:          tags.CompositionReasonRelationalKeep,
+			CriteriaVersion: analyzer.TagSplitVersion,
+			Reading:         &reading,
+		}}), "seed relational keep")
+		return id
+	}
+
+	proxyID := seed("proxy facet provisional", tags.CompositionReading{Source: tags.ReconstructibilitySourceProxy})
+	substrateID := seed("substrate facet provisional", tags.CompositionReading{Source: tags.ReconstructibilitySourceSubstrate})
+
+	find := func(resp ProvisionalTagListResponse, id int64) (ProvisionalTagResponse, bool) {
+		for _, r := range resp.Results {
+			if r.ID == id {
+				return r, true
+			}
+		}
+		return ProvisionalTagResponse{}, false
+	}
+	list := func(state string) ProvisionalTagListResponse {
+		t.Helper()
+		target := "/api/v1/tags/provisional?facets=true"
+		if state != "" {
+			target += "&state=" + state
+		}
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", target, nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		return resp
+	}
+
+	t.Run("the proxy keep needs a decision rather than a review hold", func(t *testing.T) {
+		resp := list("needs_decision")
+		row, ok := find(resp, proxyID)
+		if !ok {
+			t.Errorf("proxy keep missing from needs_decision: %+v", resp.Results)
+			return
+		}
+		testutil.AssertEqual(t, row.CompositionAction, tags.CompositionAction(""), "no composition action for a store-maturity wait")
+		testutil.AssertEqual(t, row.CompositionReason, tags.CompositionReasonRelationalKeep, "the latest reason still reads")
+		testutil.AssertEqual(t, resp.StateFacets["needs_decision"], int64(1), "the facet counts the proxy keep")
+		testutil.AssertEqual(t, resp.StateFacets["split_hold"], int64(1), "only the substrate keep is a review hold")
+
+		hold := list("split_hold")
+		if _, ok := find(hold, proxyID); ok {
+			t.Error("the proxy keep must not appear in split_hold")
+		}
+	})
+
+	t.Run("a substrate relational keep still holds for review", func(t *testing.T) {
+		resp := list("split_hold")
+		row, ok := find(resp, substrateID)
+		if !ok {
+			t.Fatalf("substrate keep missing from split_hold: %+v", resp.Results)
+		}
+		testutil.AssertEqual(t, row.CompositionAction, tags.CompositionActionKeep, "the substrate keep offers its parts alongside")
 	})
 }

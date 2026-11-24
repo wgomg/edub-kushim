@@ -196,7 +196,10 @@ things`, `black bloc`) stay whole, and a compound whose key already exists in th
   current-version verdict decides it; one with no verdict, or only a degraded
   `judge_unavailable` keep, re-enters judgment until a verdict exists, and a decided keep
   applies its judged-dimensional parts alongside from the persisted cache on every
-  emission, making no model call.
+  emission, making no model call. A relational keep resting on the promoted-parts proxy
+  never settles: it re-enters judgment on every reconciliation run, and only a changed
+  decision journals a row — an unchanged keep is tallied as `store_maturity_pending` and
+  writes nothing.
 - **Operator rules**: both operator split entry points (`POST /api/v1/tags/split` and the review
   surface's split disposition) record the applied components in `tag_operator_split`. On every later
   emission a name carrying a rule is replaced by its recorded components before classification — no
@@ -279,10 +282,15 @@ created (`Adjudicator.ApplyTagQuality`):
   `not_form_genre` — plus the `dimension` verdict the parts pass owns (read from the
   shared parts cache, judged on a miss), the judge's optional `defer` abstention, and the
   emission's deterministic signals: a typed detail annotated `other`, and a best store
-  similarity below the internal no-anchor floor (0.60).
+  similarity below the internal no-anchor floor (0.60). A compound the composition gate
+  decided to keep whole owns the dimension question instead: its row carries
+  `composition_keep` and no `dimension`, the decision reads the dimension as satisfied,
+  and the parts pass is neither judged nor consulted for it.
 - **Decision**: the pinned rule set (`tags.DecideAdmission`) defers on the judge's
   abstention, rejects a candidate judged neither subject matter nor a dimension with reason
-  `no_dimension` (definition §3.6's drop leg), then resolves the person class: a documented
+  `no_dimension` (definition §3.6's drop leg) — a composition-owned compound reads its
+  dimension as satisfied by the keep, and a parts-pass abstention is not merged into its
+  deferral — then resolves the person class: a documented
   individual rejects as `person_facet` independent of subject matter, while mythological,
   legendary, fictional and undecided readings defer as `person_review`. Only a tag naming
   no person reaches the corroborated rules, which reject two or more failing signals when
@@ -305,13 +313,14 @@ created (`Adjudicator.ApplyTagQuality`):
   of up to 40 candidates per document; the reduced document text serves the
   `subject_matter` question alone, the other criteria answering on the candidate.
 - **Cache**: verdicts are stored in `tag_quality_event` keyed by
-  `(tag_name, policy_version)` with the recorded outcome (`reject`/`defer`/`admit`). A
-  re-emitted name resolves from the cache — the decision re-runs over the stored rubric
-  with the current emission's deterministic signals.
+  `(tag_name, policy_version)` with the recorded outcome (`reject`/`defer`/`admit`); a
+  composition-owned row stores `composition_keep` in place of `dimension`. A re-emitted
+  name resolves from the cache — the decision re-runs over the stored rubric with the
+  current emission's deterministic signals.
 - **Failure safety**: same retry taxonomy as adjudication; a reply that omits verdicts
   for some candidates salvages the entries it returned and defers only the missing ones;
   every other non-credit failure keeps every novel tag with a defer decision.
-- **Logging**: rejections and defers are logged as `tagquality[v8]:` lines carrying the
+- **Logging**: rejections and defers are logged as `tagquality[v9]:` lines carrying the
   outcome and reason, siblings of the `identity[v14]` and `policy[v2]` lines.
 
 The decision thresholds are pinned constants, not configuration keys; the judge LLM
@@ -359,7 +368,8 @@ composition-held name (a decided drop, defer, conflict, disagreement, a substrat
 relational keep, or degraded `judge_unavailable` keep) are
 skipped by both the inline check and the sweep until an operator resolves them or a later
 verdict decides them — a relational keep resting only on parts the store has not promoted
-yet is not held; it waits on store maturity like any admitted value.
+yet is not held; it waits on store maturity like any admitted value, reports no composition
+action, and leaves the queue's bare-deferral affordances in place.
 
 Influence is revocable (definition §6.4): a promoted value that stops qualifying is
 demoted, which clears `promoted_at`, records the reason, and removes the name from the
@@ -460,11 +470,13 @@ lock-drain-heartbeat discipline for the pass.
   seeded periods, identity-held and composition-held names, and compounds a
   current-version verdict already decided) is judged through the same composition
   decision the emission gate runs, reading the substrate reconstructibility of every
-  judged cover so a far reading keeps whole as a relational keep. Only a split touches
-  the store immediately; a decided drop demotes the standing tag. A stored compound
-  carrying an operator split rule instead applies its recorded components without
-  judging — whatever the current-version journal says — and the opening gate counts rule
-  carriers as due work.
+  judged cover so a far reading keeps whole as a relational keep. A relational keep on
+  the promoted-parts proxy re-enters the scan on every run: an unchanged re-derivation is
+  tallied as `store_maturity_pending` and journals nothing, and the class is exempt from
+  the compound cap. Only a split touches the store immediately; a decided drop demotes
+  the standing tag. A stored compound carrying an operator split rule instead applies
+  its recorded components without judging — whatever the current-version journal says —
+  and the opening gate counts rule carriers as due work.
 - **KB mint arm** — provisional tags with no same-intent evidence are probed against the
   installed knowledge base: exact and similar neighbours that are live store names become
   pending same-intent evidence for the identity pass, and the resolver judges them like any

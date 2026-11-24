@@ -409,7 +409,7 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			}
 			compositionByCandidate[e.Candidate] = compositionView{
 				Reason: e.Reason,
-				Action: tags.CompositionActionFor(tags.CompositionDisposition(e.Disposition), e.Reason),
+				Action: tags.CompositionActionFor(tags.CompositionDisposition(e.Disposition), e.Reason, tags.ReadingSource(e.Reading)),
 				Parts:  parts,
 			}
 		}
@@ -1374,15 +1374,17 @@ type DeletedTagListResponse struct {
 	Total   int64                `json:"total"`
 }
 
-// TagQualityCriteriaView is the API view of the judge's rubric answers;
-// a nil answer had no signal in the stored payload.
+// TagQualityCriteriaView is the API view of the judge's rubric answers; a nil answer had no signal in the
+// stored payload. CompositionKept mirrors the stored shape: nil on an ordinary row and true on a row the
+// composition gate decided to keep, which carries no dimension key.
 type TagQualityCriteriaView struct {
-	SubjectMatter *bool   `json:"subject_matter"`
-	Dimension     *bool   `json:"dimension"`
-	PersonClass   *string `json:"person_class"`
-	Atomic        *bool   `json:"atomic"`
-	NotFormGenre  *bool   `json:"not_form_genre"`
-	Defer         *bool   `json:"defer"`
+	SubjectMatter   *bool   `json:"subject_matter"`
+	Dimension       *bool   `json:"dimension"`
+	PersonClass     *string `json:"person_class"`
+	Atomic          *bool   `json:"atomic"`
+	NotFormGenre    *bool   `json:"not_form_genre"`
+	Defer           *bool   `json:"defer"`
+	CompositionKept *bool   `json:"composition_keep"`
 }
 
 // TagQualityVerdictInfo is the latest recorded quality verdict for a
@@ -1424,9 +1426,9 @@ type ProvisionalTagResponse struct {
 	Compound             bool                   `json:"compound,omitempty"`
 }
 
-// compositionView is one candidate's latest composition journal row as the queue reads it: the
-// recorded reason, the action class derived from it, and the parts a split or an apply-alongside keep
-// carries.
+// compositionView is one candidate's latest composition journal row as the queue reads it: the recorded
+// reason, the action class derived from the reason and reading source, and the parts that a split or an
+// apply-alongside keep carries.
 type compositionView struct {
 	Reason string
 	Action tags.CompositionAction

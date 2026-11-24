@@ -17,7 +17,7 @@ ORDER BY candidate, created_at DESC;
 
 -- name: LatestCompositionEventsForNames :many
 SELECT DISTINCT ON (candidate)
-       candidate, parts, disposition, reason, criteria_version, model, reconstructible, created_at
+       candidate, parts, disposition, reason, criteria_version, model, reconstructible, reading, created_at
 FROM tag_composition_event
 WHERE candidate = ANY(@candidates::text[])
 ORDER BY candidate, created_at DESC;

@@ -474,16 +474,19 @@ func (e *Enricher) Enrich(ctx context.Context, document database.Document, repor
 	planOutputs := admission.OutputByInput(identityPlan)
 
 	// one builder for the quality-gate input keeps every judged pass on identical criteria; only the
-	// tag list and the plan-output map differ between the emission and re-kept passes
+	// tag list and the plan-output map differ between the emission and re-kept passes. The composition rows
+	// are read at call time, so the re-kept pass no longer marks these compounds as composition-owned when
+	// the split-degrade loop rewrote them
 	qualityInput := func(a *tools.ContentAnalysisResult, outputs map[string]string) admission.TagQualityInput {
 		return admission.TagQualityInput{
-			Analysis:    a,
-			Decisions:   decisions,
-			DBNames:     dbNames,
-			ReducedText: llmContent.Text,
-			DocID:       document.ID,
-			ForceDefer:  pendingLanguage,
-			KBInjected:  kbGateNames(kbDescended, outputs),
+			Analysis:        a,
+			Decisions:       decisions,
+			DBNames:         dbNames,
+			ReducedText:     llmContent.Text,
+			DocID:           document.ID,
+			ForceDefer:      pendingLanguage,
+			KBInjected:      kbGateNames(kbDescended, outputs),
+			CompositionKept: compositionKeptNames(compositionRows, outputs),
 		}
 	}
 
@@ -1004,6 +1007,20 @@ func planOutputName(part string, outputs map[string]string) string {
 		return output
 	}
 	return part
+}
+
+// compositionKeptNames reports the compounds the split gate decided to keep whole, translated into the
+// identity plan's output names so the quality gate stamps the same name it judges: a row's candidate
+// carries the pre-plan name, and a renamed candidate must follow the mapping the rejection test reads.
+func compositionKeptNames(rows []tags.CompositionRow, outputs map[string]string) map[string]struct{} {
+	names := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if !tags.DecidedCompositionKeep(row.Disposition, row.Reason) {
+			continue
+		}
+		names[planOutputName(row.Candidate, outputs)] = struct{}{}
+	}
+	return names
 }
 
 // kbGateNames translates the KB lineage set into the identity plan's output names, the vocabulary the

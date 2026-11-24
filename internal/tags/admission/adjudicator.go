@@ -1082,9 +1082,9 @@ func DecisionFromStored(criteria json.RawMessage, pass bool, features tags.Admis
 	return tags.AdmissionDecision{Outcome: tags.AdmissionReject, Reason: reasonLegacyReject}
 }
 
-// JudgeFeatures folds the judge's rubric answers into a feature set; the
-// judge slots are overwritten and the deterministic features pass through
-// as given. Callers without an emission context pass a zero set.
+// JudgeFeatures folds the judge's rubric answers into a feature set; the judge slots — the composition
+// ownership marker included — are overwritten, and the deterministic features pass through as given.
+// Callers without an emission context pass a zero set.
 func JudgeFeatures(r analyzer.TagQualityResult, f tags.AdmissionFeatures) tags.AdmissionFeatures {
 	f.SubjectMatter = r.SubjectMatter
 	f.Dimension = r.Dimension
@@ -1092,6 +1092,7 @@ func JudgeFeatures(r analyzer.TagQualityResult, f tags.AdmissionFeatures) tags.A
 	f.Atomic = r.Atomic
 	f.NotFormGenre = r.NotFormGenre
 	f.JudgeDefer = r.Defer
+	f.CompositionKept = r.CompositionKept
 	return f
 }
 
@@ -1270,15 +1271,18 @@ func (a *Adjudicator) ResolveLanguages(ctx context.Context, analysis *tools.Cont
 // TagQualityInput is the per-document input the quality gate decides over: the analysis whose tags are
 // filtered, the matcher decisions, the store names a candidate is checked against, the document text the
 // subject-matter criterion reads, the document id, the names the language guard's ForceDefer holds for
-// review, and the knowledge-base-nominated names (KBInjected, keyed by the plan's output names).
+// review, the knowledge-base-nominated names (KBInjected), and the compounds the composition gate decided
+// to keep whole (CompositionKept), both keyed by the plan's output names. A CompositionKept name's dimension
+// question is already answered, so the parts pass neither judges nor stamps it.
 type TagQualityInput struct {
-	Analysis    *tools.ContentAnalysisResult
-	Decisions   []policy.Decision
-	DBNames     map[string]struct{}
-	ReducedText string
-	DocID       int64
-	ForceDefer  map[string]struct{}
-	KBInjected  map[string]struct{}
+	Analysis        *tools.ContentAnalysisResult
+	Decisions       []policy.Decision
+	DBNames         map[string]struct{}
+	ReducedText     string
+	DocID           int64
+	ForceDefer      map[string]struct{}
+	KBInjected      map[string]struct{}
+	CompositionKept map[string]struct{}
 }
 
 // ApplyTagQuality filters the analysis's tags through the admission decision: each novel candidate's
@@ -1286,8 +1290,10 @@ type TagQualityInput struct {
 // emission's deterministic signals — resolve through tags.DecideAdmission. The parts pass owns that
 // dimension question alone, so the gate resolves each uncached candidate's dimension verdict from the
 // shared parts cache and stamps it; an absent or abstained verdict defers rather than counting as a false
-// answer. A name in ForceDefer is held for review and never admitted plain. A KB-injected candidate the
-// judge answers is not a subject matter of the document is retired on either the cached or the fresh path:
+// answer. A compound in CompositionKept is the exception: the composition gate's keep already answered the
+// dimension question, so the gate stamps composition_keep and never builds or reads the parts store for it.
+// A name in ForceDefer is held for review and never admitted plain. A KB-injected candidate the judge
+// answers is not a subject matter of the document is retired on either the cached or the fresh path:
 // the injection carries no document-emission evidence for the gray band to weigh, so the judge's answer is
 // the only aboutness evidence there is. The retire records no verdict row and, on the cached path, deletes
 // the name's recorded verdicts, so the name leaves the list and a later document judges it fresh. Rejected
@@ -1304,6 +1310,7 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 	docId := in.DocID
 	forceDefer := in.ForceDefer
 	kbInjected := in.KBInjected
+	compositionKept := in.CompositionKept
 	typedByTerm := make(map[string]analyzer.TagDetail, len(analysis.TagDetails))
 	for _, d := range analysis.TagDetails {
 		typedByTerm[textnorm.NormalizeTag(d.Term)] = d
@@ -1395,24 +1402,36 @@ func (a *Adjudicator) ApplyTagQuality(ctx context.Context, in TagQualityInput, r
 
 	var dimensionVerdicts map[string]PartVerdict
 	if len(uncached) > 0 && a.runner.HasTagAdjudicator() {
-		// the parts pass owns the dimension question: resolve each uncached novel name's
-		// dimension verdict from the shared parts cache, judging the misses, and stamp it onto the
-		// quality result so the admission decision reads one verdict, never two. Without an adjudicator
-		// there is no verdict to read, so the stamp abstains and the quality result defers.
-		names := make([]string, len(uncached))
-		for i, n := range uncached {
-			names[i] = n.emitted
+		// the parts pass owns the dimension question: resolve each uncached novel name's dimension verdict
+		// from the shared parts cache, judging the misses, and stamp it onto the full quality result so the
+		// admission decision reads one verdict only, never two. Without an adjudicator there is no verdict
+		// to read, so the stamp abstains and the whole quality result defers. A composition-owned name is left
+		// out: its whole-phrase verdict is not the question's owner and its phrase is not part of the split
+		// gate's fan.
+		names := make([]string, 0, len(uncached))
+		for _, n := range uncached {
+			if _, owned := compositionKept[n.emitted]; owned {
+				continue
+			}
+			names = append(names, n.emitted)
 		}
-		partStore := NewVerdictStore(a.queries, a.runner, a.logger, VerdictModels{Gate: a.config.ResolvedLexicalGateLlm().Model, Fold: a.config.ResolvedAdjudicatorLlm().Model}, tags.PromotedGuardKeys(dbNames))
-		var derr error
-		dimensionVerdicts, derr = partStore.Parts(ctx, names, docId, reqID)
-		if derr != nil {
-			return nil, nil, derr
+		if len(names) > 0 {
+			partStore := NewVerdictStore(a.queries, a.runner, a.logger, VerdictModels{Gate: a.config.ResolvedLexicalGateLlm().Model, Fold: a.config.ResolvedAdjudicatorLlm().Model}, tags.PromotedGuardKeys(dbNames))
+			var derr error
+			dimensionVerdicts, derr = partStore.Parts(ctx, names, docId, reqID)
+			if derr != nil {
+				return nil, nil, derr
+			}
 		}
 	}
-	// an absent or abstained parts verdict is not a false answer: it defers rather than fabricating a
-	// failing signal the model never produced
+	// a composition-owned name gets its marker before anything else, so a stray reply value can never make
+	// it into the stamp; an absent or abstained parts verdict is not a false answer: it defers instead of
+	// fabricating a failing signal the model never produced
 	stampDimension := func(r *analyzer.TagQualityResult, name string) {
+		if _, owned := compositionKept[name]; owned {
+			r.CompositionKept = true
+			return
+		}
 		v, ok := dimensionVerdicts[name]
 		dimension, abstain := PartDimensionFeature(v, ok)
 		if abstain {

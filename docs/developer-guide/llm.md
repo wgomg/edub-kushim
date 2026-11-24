@@ -860,8 +860,12 @@ for i := range 2 {
     `not_form_genre`, with `defer` as the judge's abstention, while the
     `dimension` verdict is the parts pass's (read from the shared parts cache,
     judged on a miss, and stamped onto the row; a missing or abstained verdict
-    defers); the decision defers on abstention, rejects a candidate judged
-    neither subject matter nor a dimension as `no_dimension` (definition §3.6's
+    defers). A compound the composition gate decided to keep whole carries
+    `composition_keep` and no `dimension` instead: the parts store is not read
+    for it, its parts-pass abstention is not merged into the deferral, and the
+    decision reads the dimension as satisfied. The decision defers on
+    abstention, rejects a candidate judged neither subject matter nor a
+    dimension as `no_dimension` (definition §3.6's
     drop leg), then resolves the person class — a documented individual rejects
     as `person_facet` independent of subject matter, while mythological,
     legendary, fictional and undecided readings defer as `person_review` — and
@@ -870,7 +874,7 @@ for i := range 2 {
     set of deterministic signals alone or on exactly one failing signal (the gray
     band), and admit when nothing fails.
     Rejections drop the tag for that document — the registration and its pending
-    identity evidence never reach the store — and log `tagquality[v8]: reject …
+    identity evidence never reach the store — and log `tagquality[v9]: reject …
     (reason=corroborated_failures|no_dimension|person_facet source=judge|cache …)`; defers are
     kept and logged too, and admitted
     candidates journal at DEBUG. Works and places are judged by the ordinary

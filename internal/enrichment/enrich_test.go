@@ -135,6 +135,47 @@ func TestDocumentCountsAdd(t *testing.T) {
 	}
 }
 
+// TestCompositionKeptNames pins what the quality gate stamps as owned: a row decides ownership by
+// disposition and reason alone (reading-independent, like the admission ladder), mapped through the plan
+// outputs, so a split-degrade rewrite out of the decided set quietly drops out of the stamp.
+func TestCompositionKeptNames(t *testing.T) {
+	rows := []tags.CompositionRow{
+		{Candidate: "cold war", Disposition: tags.CompositionKeep, Reason: tags.CompositionReasonNamedUnit},
+		{Candidate: "iron curtain", Disposition: tags.CompositionKeep, Reason: tags.CompositionReasonRelationalKeep},
+		{Candidate: "berlin wall", Disposition: tags.CompositionSplit, Reason: tags.CompositionReasonPartialParts},
+		{Candidate: "wall street", Disposition: tags.CompositionDrop, Reason: tags.CompositionReasonNoDimension},
+	}
+
+	t.Run("decided keeps map through the plan outputs", func(t *testing.T) {
+		got := compositionKeptNames(rows, map[string]string{"cold war": "Cold War", "iron curtain": "Iron Curtain"})
+		if len(got) != 2 {
+			t.Fatalf("compositionKeptNames() = %v, want 2 owned names", got)
+		}
+		if _, ok := got["Cold War"]; !ok {
+			t.Errorf("compositionKeptNames() = %v, want the renamed named unit", got)
+		}
+		if _, ok := got["Iron Curtain"]; !ok {
+			t.Errorf("compositionKeptNames() = %v, want the relational keep", got)
+		}
+	})
+
+	t.Run("rewritten and dropped rows never mark ownership", func(t *testing.T) {
+		got := compositionKeptNames(rows, map[string]string{})
+		if _, ok := got[textnorm.NormalizeTag("berlin wall")]; ok {
+			t.Errorf("compositionKeptNames() = %v, want no partial-parts keep", got)
+		}
+		if _, ok := got[textnorm.NormalizeTag("wall street")]; ok {
+			t.Errorf("compositionKeptNames() = %v, want no dropped candidate", got)
+		}
+	})
+
+	t.Run("no rows means no owned names", func(t *testing.T) {
+		if got := compositionKeptNames(nil, map[string]string{"cold war": "Cold War"}); len(got) != 0 {
+			t.Errorf("compositionKeptNames(nil) = %v, want empty", got)
+		}
+	})
+}
+
 // barMatcher answers Match with a fixed candidate list so the test controls
 // every similarity the injection bar sees.
 type barMatcher struct {

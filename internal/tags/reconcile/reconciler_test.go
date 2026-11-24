@@ -1000,6 +1000,216 @@ func TestBuildCompoundWorklist_DecidedDropQueuesDemotion(t *testing.T) {
 // the worklist: with the reason no longer a hold, a decided named_unit_reconstructible keep must land
 // on the decided skip rather than the judgment queue — re-judging it every sweep would append rows for
 // a keep that is already final.
+// TestCompoundEntryFor_RedisposeKeep pins the sweep's re-disposition branch: a stored relational keep
+// resting on the promoted-parts proxy re-enters the worklist as a re-dispose entry instead of the
+// decided skip, while a substrate hold routes to review and a decided non-proxy keep stays decided.
+func TestCompoundEntryFor_RedisposeKeep(t *testing.T) {
+	proxy := func() map[string]tags.CompositionState {
+		return map[string]tags.CompositionState{tags.StoredName("proxy maturity"): {
+			Disposition:   tags.CompositionKeep,
+			Decided:       true,
+			Reason:        tags.CompositionReasonRelationalKeep,
+			ReadingSource: tags.ReconstructibilitySourceProxy,
+		}}
+	}
+
+	t.Run("a proxy relational keep re-enters as a re-dispose entry", func(t *testing.T) {
+		entry, skip := compoundEntryFor("proxy maturity", true, "", 3, nil, nil, proxy())
+		if skip != "" {
+			t.Fatalf("skip = %q, want the candidate to enter the worklist", skip)
+		}
+		if entry == nil || !entry.redispose {
+			t.Fatalf("entry = %+v, want a re-dispose entry", entry)
+		}
+		if entry.name != "proxy maturity" || entry.docCount != 3 {
+			t.Errorf("entry = %+v, want the candidate name and standing mass", entry)
+		}
+	})
+
+	t.Run("a substrate relational keep stays a composition hold", func(t *testing.T) {
+		held := map[string]string{"proxy maturity": tags.CompositionReasonRelationalKeep}
+		states := map[string]tags.CompositionState{tags.StoredName("proxy maturity"): {
+			Disposition:   tags.CompositionKeep,
+			Decided:       true,
+			Reason:        tags.CompositionReasonRelationalKeep,
+			ReadingSource: tags.ReconstructibilitySourceSubstrate,
+		}}
+		if entry, skip := compoundEntryFor("proxy maturity", true, "", 1, nil, held, states); entry != nil || skip != "composition_hold" {
+			t.Errorf("got entry=%+v skip=%q, want the composition hold", entry, skip)
+		}
+	})
+
+	t.Run("a decided non-proxy keep stays decided", func(t *testing.T) {
+		states := map[string]tags.CompositionState{tags.StoredName("proxy maturity"): {
+			Disposition: tags.CompositionKeep,
+			Decided:     true,
+			Reason:      tags.CompositionReasonNamedUnit,
+		}}
+		if entry, skip := compoundEntryFor("proxy maturity", false, "", 1, nil, nil, states); entry != nil || skip != "decided" {
+			t.Errorf("got entry=%+v skip=%q, want the decided skip", entry, skip)
+		}
+	})
+
+	t.Run("an undecided candidate owes a fresh judgment", func(t *testing.T) {
+		entry, skip := compoundEntryFor("proxy maturity", false, "", 1, nil, nil,
+			map[string]tags.CompositionState{})
+		if entry == nil || entry.redispose {
+			t.Errorf("entry = %+v, want a plain judgment entry", entry)
+		}
+		if skip != "" {
+			t.Errorf("skip = %q, want none", skip)
+		}
+	})
+}
+
+// TestDecideCompoundSplits_RedisposeKeep pins the re-disposition loop without a judge: a re-dispose
+// entry leaves the run with the store-maturity tally and no split — the deterministic conjunction
+// path must never pick up a decided keep.
+func TestDecideCompoundSplits_RedisposeKeep(t *testing.T) {
+	cfg := &config.Config{}
+	r := &Reconciler{logger: testutil.NewTestLogger()}
+	entries := []*compoundEntry{{name: "proxy maturity", redispose: true}}
+
+	r.decideCompoundSplits(context.Background(), cfg, entries, nil, nil)
+
+	if entries[0].split {
+		t.Error("a re-dispose entry must never split through the deterministic path")
+	}
+	if entries[0].skipReason != skipStoreMaturityPending {
+		t.Errorf("skipReason = %q, want the store-maturity wait %q", entries[0].skipReason, skipStoreMaturityPending)
+	}
+
+	report := &Report{Skips: map[string]int{}}
+	r.planCompoundSplits(entries, report)
+	if report.Skips[skipStoreMaturityPending] != 1 {
+		t.Errorf("skips = %v, want the store-maturity tally carried to the report", report.Skips)
+	}
+}
+
+// TestDecideCompoundSplits_ProxyKeepWritesNothing pins the judged re-disposition: a compound whose fresh
+// row still rests on the promoted-parts proxy tallies the store-maturity wait and leaves the journal
+// untouched; a compound whose verdict changed journals the one changed row; and a degraded row is
+// never journaled, so an outage cannot make the sweep's own hold filter skip the compound later.
+func TestDecideCompoundSplits_ProxyKeepWritesNothing(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	countRows := func(t *testing.T, candidate string) int {
+		t.Helper()
+		var n int
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT count(*) FROM tag_composition_event WHERE candidate = $1",
+				tags.StoredName(candidate)).Scan(&n),
+			"count journal rows")
+		return n
+	}
+	seedProxyKeep := func(t *testing.T, candidate string) {
+		t.Helper()
+		if _, err := client.DB().ExecContext(ctx, `
+			INSERT INTO tag_composition_event
+			    (document_id, candidate, parts, disposition, reason, reading, criteria_version, model, created_at)
+			VALUES (NULL, $1, '["beacon","hill"]'::jsonb, 'keep', 'relational_keep',
+			        '{"source":"proxy"}'::jsonb, $2, 'judge-m', now())`,
+			tags.StoredName(candidate), analyzer.TagSplitVersion); err != nil {
+			t.Fatalf("seed stored proxy keep: %v", err)
+		}
+	}
+	runnerWith := func(t *testing.T, judge sweepStubGate) *tools.Runner {
+		t.Helper()
+		runner := &tools.Runner{}
+		setUnexportedField(t, runner, "logger", log.NewDiscardLogger())
+		setUnexportedField(t, runner, "config", &config.Config{
+			Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
+		})
+		setUnexportedField(t, runner, "tagLexicalGate", judge)
+		return runner
+	}
+	decide := func(t *testing.T, names []string, judge sweepStubGate) []*compoundEntry {
+		t.Helper()
+		entries := make([]*compoundEntry, len(names))
+		for i, name := range names {
+			entries[i] = &compoundEntry{name: name}
+		}
+		r := &Reconciler{client: client, runner: runnerWith(t, judge), logger: logger,
+			tag: curation.NewTag(client, logger, testutil.NewMockEmbedder())}
+		r.decideCompoundSplits(ctx,
+			&config.Config{Enricher: config.EnricherConfig{
+				TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true},
+			}},
+			entries, nil, nil)
+		return entries
+	}
+
+	t.Run("an unchanged proxy keep tallies the wait and writes nothing", func(t *testing.T) {
+		seedProxyKeep(t, "beacon hill")
+		seedPartVerdicts(t, client.Queries, []string{"beacon", "hill", "beacon hill"}, true)
+		seedCompoundVerdict(t, client.Queries, "beacon hill", analyzer.TagCompoundNamedUnit)
+		journaled := decide(t, []string{"beacon hill"}, sweepStubGate{})
+		if journaled[0].skipReason != skipStoreMaturityPending {
+			t.Errorf("skipReason = %q, want the store-maturity wait", journaled[0].skipReason)
+		}
+		if journaled[0].split || journaled[0].demote || journaled[0].notify {
+			t.Errorf("entry = %+v, want no split, demotion, or notification", journaled[0])
+		}
+		testutil.AssertEqual(t, countRows(t, "beacon hill"), 1, "an unchanged keep writes no journal row")
+	})
+
+	t.Run("a changed verdict journals the one changed row", func(t *testing.T) {
+		seedPartVerdicts(t, client.Queries, []string{"granite", "slab", "granite slab"}, false)
+		seedCompoundVerdict(t, client.Queries, "granite slab", analyzer.TagCompoundNamedUnit)
+		journaled := decide(t, []string{"granite slab"}, sweepStubGate{})
+		if journaled[0].skipReason != tags.CompositionReasonNamedUnit {
+			t.Errorf("skipReason = %q, want the fresh keep reason", journaled[0].skipReason)
+		}
+		testutil.AssertEqual(t, countRows(t, "granite slab"), 1, "a changed verdict journals one row")
+	})
+
+	t.Run("a degraded row is never journaled", func(t *testing.T) {
+		journaled := decide(t, []string{"silent orbit"}, sweepStubGate{})
+		if journaled[0].skipReason != tags.CompositionReasonJudgeUnavailable {
+			t.Errorf("skipReason = %q, want the degraded keep standing aside", journaled[0].skipReason)
+		}
+		testutil.AssertEqual(t, countRows(t, "silent orbit"), 0, "a degraded verdict journals nothing")
+	})
+}
+
+// sweepStubGate answers every judged split pass the sweep reaches, so a re-disposition test runs the
+// cache-free paths without an LLM: nonempty replies judge, empty replies degrade.
+type sweepStubGate struct {
+	analyzer.TagAdjudicator
+	analyzer.TagLexicalGate
+	parts     []analyzer.TagPartResult
+	compounds []analyzer.TagCompoundResult
+}
+
+func (s sweepStubGate) JudgeTagParts(_ context.Context, values []string) ([]analyzer.TagPartResult, error) {
+	if len(s.parts) == 0 {
+		return nil, nil
+	}
+	if len(s.parts) != len(values) {
+		return nil, nil
+	}
+	return s.parts, nil
+}
+
+func (s sweepStubGate) JudgeTagCompounds(_ context.Context, candidates []string) ([]analyzer.TagCompoundResult, error) {
+	if len(s.compounds) == 0 {
+		return nil, nil
+	}
+	if len(s.compounds) != len(candidates) {
+		return nil, nil
+	}
+	return s.compounds, nil
+}
+
 func TestBuildCompoundWorklist_DecidedKeepSkipsJudgment(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_URL") == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -1638,4 +1848,185 @@ func TestBuildCompoundWorklist_OperatorStandingNotifiesInsteadOfDemoting(t *test
 		t.Error("the operator decision outranks the composition journal")
 	}
 	testutil.AssertEqual(t, entries[0].reason, tags.CompositionReasonNoDimension, "the journal reason")
+}
+
+// TestRejudgeStoredName_CompositionOwned pins the re-judge stamp for a decided compound: a passing
+// quality answer over a store-existing named-unit keep admits on the composition decision — the row
+// carries composition_keep with no dimension key — while the same parts abstention defers a compound
+// with no journal row.
+func TestRejudgeStoredName_CompositionOwned(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+
+	judge := &fakeQualityJudge{quality: []analyzer.TagQualityResult{{
+		Index: 0, SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassNotPerson,
+		Atomic: true, NotFormGenre: true,
+	}}}
+	r := newQualityJudgeReconciler(t, client, judge)
+	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagMatcher:     config.TagMatcherConfig{ReduceTargetWords: 4000},
+		TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true},
+	}}
+	seedLiveTag := func(t *testing.T, name string) int64 {
+		t.Helper()
+		id := database.MustCreateTag(t, client.Queries, name)
+		docID := database.CreateUniqueDocument(t, client.Queries, name)
+		database.MustAddDocumentTag(t, client.Queries, docID, id)
+		if _, err := client.DB().ExecContext(ctx,
+			"UPDATE document SET text_content = 'a short document about the subject', word_count = 6 WHERE id = $1", docID); err != nil {
+			t.Fatalf("seed document text: %v", err)
+		}
+		return id
+	}
+	seedOwnedKeep := func(t *testing.T, name string) {
+		t.Helper()
+		if _, err := client.DB().ExecContext(ctx, `
+			INSERT INTO tag_composition_event
+			    (document_id, candidate, parts, disposition, reason, criteria_version, created_at)
+			VALUES (NULL, $1, '[]'::jsonb, 'keep', $2, $3, now())`,
+			tags.StoredName(name), tags.CompositionReasonNamedUnit, analyzer.TagSplitVersion); err != nil {
+			t.Fatalf("seed decided keep: %v", err)
+		}
+	}
+	// seedDeferredParts writes abstained verdicts for every resolved segment the parts pass reads, so
+	// the non-owned branch has one abstention to merge into the deferral and never calls a judge.
+	seedDeferredParts := func(t *testing.T, name string) {
+		t.Helper()
+		parts := tags.ResolvedSegments(name, nil, nil)
+		if len(parts) == 0 {
+			t.Fatalf("no resolved parts for %q", name)
+		}
+		for _, part := range parts {
+			if _, err := client.DB().ExecContext(ctx, `
+				INSERT INTO tag_part_dimension_event
+				    (document_id, value, criteria, dimensional, policy_version, verdict_model)
+				VALUES (NULL, $1, '{"dimensional":false,"defer":true}'::jsonb, false, $2, 'judge-m')`,
+				part, analyzer.TagPartDimensionVersion); err != nil {
+				t.Fatalf("seed deferred part %q: %v", part, err)
+			}
+		}
+	}
+	readCriteria := func(t *testing.T, name string) analyzer.TagQualityCriteria {
+		t.Helper()
+		rows, err := client.Queries.LatestTagQualityEventsForNames(ctx,
+			database.LatestTagQualityEventsForNamesParams{
+				PolicyVersion: analyzer.TagQualityVersion,
+				TagNames:      []string{name},
+			})
+		testutil.AssertNoError(t, err, "read quality rows")
+		if len(rows) != 1 {
+			t.Fatalf("quality rows for %q = %d, want the re-judged row", name, len(rows))
+		}
+		var criteria analyzer.TagQualityCriteria
+		testutil.AssertNoError(t, json.Unmarshal(rows[0].Criteria, &criteria), "unmarshal criteria")
+		return criteria
+	}
+
+	t.Run("an owned compound admits on the composition decision", func(t *testing.T) {
+		id := seedLiveTag(t, "granite pinnacle")
+		seedOwnedKeep(t, "granite pinnacle")
+
+		decision, _, err := r.rejudgeStoredName(ctx, cfg, id, "granite pinnacle")
+		testutil.AssertNoError(t, err, "re-judge the owned compound")
+		testutil.AssertEqual(t, decision.Outcome, tags.AdmissionAdmit, "the keep decides admission")
+		testutil.AssertEqual(t, decision.Reason, tags.ReasonAdmitted, "the admitted reason")
+
+		criteria := readCriteria(t, "granite pinnacle")
+		if criteria.CompositionKept == nil || !*criteria.CompositionKept {
+			t.Errorf("criteria = %+v, want the composition ownership marker", criteria)
+		}
+		if criteria.Dimension != nil {
+			t.Errorf("criteria = %+v, want no dimension key on an owned row", criteria)
+		}
+	})
+
+	t.Run("the same parts abstention defers without composition ownership", func(t *testing.T) {
+		id := seedLiveTag(t, "silent butte")
+		seedDeferredParts(t, "silent butte")
+
+		decision, _, err := r.rejudgeStoredName(ctx, cfg, id, "silent butte")
+		testutil.AssertNoError(t, err, "re-judge the undecided compound")
+		testutil.AssertEqual(t, decision.Outcome, tags.AdmissionDefer, "the parts abstention defers")
+		testutil.AssertEqual(t, decision.Reason, tags.ReasonJudgeDefer, "the merged abstention defers as judge_defer")
+
+		criteria := readCriteria(t, "silent butte")
+		if criteria.CompositionKept != nil {
+			t.Errorf("criteria = %+v, want no composition ownership marker", criteria)
+		}
+	})
+}
+
+// TestRejudgeComposition_ProxyKeepUnchanged pins the operator re-judge against the sweep's journal
+// policy: a fresh row that still rests on the promoted-parts proxy is returned but not journaled, while
+// a changed keep journals the one row the reviewer will see.
+func TestRejudgeComposition_ProxyKeepUnchanged(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	client := database.NewTestClient(t)
+	database.ResetTestDatabase(client.DB())
+	t.Cleanup(func() { client.DB().Close() })
+	logger := testutil.NewTestLogger()
+
+	runner := &tools.Runner{}
+	setUnexportedField(t, runner, "logger", log.NewDiscardLogger())
+	setUnexportedField(t, runner, "config", &config.Config{
+		Enricher: config.EnricherConfig{TagAdjudicator: config.TagAdjudicatorConfig{Timeout: 0}},
+	})
+	setUnexportedField(t, runner, "tagLexicalGate", sweepStubGate{})
+	r := &Reconciler{
+		client: client,
+		runner: runner,
+		tag:    curation.NewTag(client, logger, testutil.NewMockEmbedder()),
+		logger: logger,
+	}
+	cfg := &config.Config{Enricher: config.EnricherConfig{
+		TagAdjudicator: config.TagAdjudicatorConfig{Enabled: true},
+	}}
+	countRows := func(t *testing.T, name string) int {
+		t.Helper()
+		var n int
+		testutil.AssertNoError(t,
+			client.DB().QueryRowContext(ctx,
+				"SELECT count(*) FROM tag_composition_event WHERE candidate = $1",
+				tags.StoredName(name)).Scan(&n),
+			"count journal rows")
+		return n
+	}
+
+	t.Run("an unchanged proxy keep leaves the journal untouched", func(t *testing.T) {
+		proxyID := database.MustCreateTag(t, client.Queries, "beacon pinnacle")
+		seedPartVerdicts(t, client.Queries, tags.ResolvedSegments("beacon pinnacle", nil, nil), true)
+		seedCompoundVerdict(t, client.Queries, "beacon pinnacle", analyzer.TagCompoundNamedUnit)
+		stored, err := client.Queries.GetTag(ctx, proxyID)
+		testutil.AssertNoError(t, err, "read the proxy fixture")
+
+		row, err := r.rejudgeComposition(ctx, cfg, stored)
+		testutil.AssertNoError(t, err, "re-judge composition")
+		if row.Reason != tags.CompositionReasonRelationalKeep || !row.ProxyRelationalKeep() {
+			t.Fatalf("row = %+v, want an unchanged proxy relational keep", row)
+		}
+		testutil.AssertEqual(t, countRows(t, stored.Name), 0, "an unchanged proxy keep writes no journal row")
+	})
+
+	t.Run("a changed keep journals one row", func(t *testing.T) {
+		changedID := database.MustCreateTag(t, client.Queries, "granite butte")
+		seedPartVerdicts(t, client.Queries, tags.ResolvedSegments("granite butte", nil, nil), false)
+		seedCompoundVerdict(t, client.Queries, "granite butte", analyzer.TagCompoundNamedUnit)
+		stored, err := client.Queries.GetTag(ctx, changedID)
+		testutil.AssertNoError(t, err, "read the changed fixture")
+
+		row, err := r.rejudgeComposition(ctx, cfg, stored)
+		testutil.AssertNoError(t, err, "re-judge composition")
+		testutil.AssertEqual(t, row.Reason, tags.CompositionReasonNamedUnit, "the fresh keep reason")
+		testutil.AssertEqual(t, countRows(t, stored.Name), 1, "a changed keep journals one row")
+	})
 }

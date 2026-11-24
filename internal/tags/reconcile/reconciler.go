@@ -406,10 +406,23 @@ func (r *Reconciler) run(ctx context.Context, progress task.ProgressFunc) (Repor
 		report.Capped = len(worklist) - cfg.Enricher.TagReconcile.MaxRejudge
 		worklist = worklist[:cfg.Enricher.TagReconcile.MaxRejudge]
 	}
-	if remaining := cfg.Enricher.TagReconcile.MaxRejudge - len(worklist); len(compoundWorklist) > remaining {
-		report.Capped += len(compoundWorklist) - remaining
-		compoundWorklist = compoundWorklist[:remaining]
+	// re-dispose entries are exempt from the compound cap: with current caches they make no model call, and
+	// leaving them inside the budget would starve the tail of the class behind permanently unmeasurable keeps
+	remaining := cfg.Enricher.TagReconcile.MaxRejudge - len(worklist)
+	judgedCompounds := make([]*compoundEntry, 0, len(compoundWorklist))
+	var redisposedCompounds []*compoundEntry
+	for _, entry := range compoundWorklist {
+		if entry.redispose {
+			redisposedCompounds = append(redisposedCompounds, entry)
+			continue
+		}
+		judgedCompounds = append(judgedCompounds, entry)
 	}
+	if len(judgedCompounds) > remaining {
+		report.Capped += len(judgedCompounds) - remaining
+		judgedCompounds = judgedCompounds[:remaining]
+	}
+	compoundWorklist = append(judgedCompounds, redisposedCompounds...)
 
 	progress("evidence", "ranking worklist pairs", 0)
 	r.evidencePass(ctx, cfg, worklist)

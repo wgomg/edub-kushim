@@ -296,6 +296,26 @@ describe('ProvisionalReview verdict labels', () => {
 		);
 		expect(screen.getByText(/person class\s*real individual/)).toBeTruthy();
 	});
+
+	it('scores only answered criteria and explains an absent dimension on a composition-owned row', async () => {
+		await renderLabel(
+			tag({
+				verdict: verdict({
+					criteria: { ...rubric, dimension: undefined, composition_keep: true }
+				})
+			}),
+			'rubric 4/4 ✓'
+		);
+		expect(screen.getByText(/dimension\s*— \(composition keep\)/)).toBeTruthy();
+	});
+
+	it('appends the deferral marker without a check mark and explains an absent dimension', async () => {
+		await renderLabel(
+			tag({ verdict: verdict({ criteria: { ...rubric, dimension: undefined, defer: true } }) }),
+			'rubric 4/4 · deferred'
+		);
+		expect(screen.getByText(/dimension\s*— \(deferred\)/)).toBeTruthy();
+	});
 });
 
 describe('ProvisionalReview filters and paging', () => {

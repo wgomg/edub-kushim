@@ -3193,11 +3193,12 @@ TagQualityConfigResponse is the quality judge's API view.
 
 ### TagQualityCriteriaView
 
-TagQualityCriteriaView is the API view of the judge's rubric answers; a nil answer had no signal in the stored payload.
+TagQualityCriteriaView is the API view of the judge's rubric answers; a nil answer had no signal in the stored payload. CompositionKept mirrors the stored shape: nil on an ordinary row and true on a row the composition gate decided to keep, which carries no dimension key.
 
 | Field | Type | Required |
 |---|---|---|
 | `atomic` | boolean (nullable) | yes |
+| `composition_keep` | boolean (nullable) | yes |
 | `defer` | boolean (nullable) | yes |
 | `dimension` | boolean (nullable) | yes |
 | `not_form_genre` | boolean (nullable) | yes |

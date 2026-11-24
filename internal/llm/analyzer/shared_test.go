@@ -1887,6 +1887,101 @@ func TestParseTagQualityResponse_DimensionOwnedByPartsPass(t *testing.T) {
 	}
 }
 
+// TestTagQualityCompositionOwnedShape pins the v9 owned-row wire: a composition-owned result carries
+// composition_keep and no dimension key, so the stored shape states which decision owns the dimension
+// question; an ordinary row's shape is byte-identical to the historical one.
+func TestTagQualityCompositionOwnedShape(t *testing.T) {
+	owned := TagQualityResult{
+		SubjectMatter: true, PersonClass: types.PersonClassNotPerson, Atomic: true, NotFormGenre: true,
+		CompositionKept: true,
+	}
+	raw, err := json.Marshal(owned.Criteria())
+	if err != nil {
+		t.Fatalf("marshal owned criteria: %v", err)
+	}
+	var shape map[string]any
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		t.Fatalf("unmarshal owned criteria: %v", err)
+	}
+	if shape["composition_keep"] != true {
+		t.Errorf("owned row = %s, want composition_keep true", raw)
+	}
+	if _, ok := shape["dimension"]; ok {
+		t.Errorf("owned row = %s, want no dimension key", raw)
+	}
+
+	ordinary := TagQualityResult{
+		SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassNotPerson, Atomic: true,
+		NotFormGenre: true,
+	}
+	raw, err = json.Marshal(ordinary.Criteria())
+	if err != nil {
+		t.Fatalf("marshal ordinary criteria: %v", err)
+	}
+	want := `{"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false}`
+	if string(raw) != want {
+		t.Errorf("ordinary row = %s, want %s", raw, want)
+	}
+
+	if got := owned.Criteria().String(); got != "subject_matter=true dimension=false person_class=not_person atomic=true not_form_genre=true defer=false composition_keep=true" {
+		t.Errorf("owned audit line = %q, want the composition marker appended", got)
+	}
+	if got := ordinary.Criteria().String(); got != "subject_matter=true dimension=true person_class=not_person atomic=true not_form_genre=true defer=false" {
+		t.Errorf("ordinary audit line = %q, want no composition marker", got)
+	}
+}
+
+// TestTagQualityCompositionOwnedResult pins the v9 read path: an owned stored row round-trips back to a
+// composition-owned answer, and an ordinary stored row still reads its stamped dimension.
+func TestTagQualityCompositionOwnedResult(t *testing.T) {
+	owned := TagQualityResult{
+		SubjectMatter: true, PersonClass: types.PersonClassNotPerson, Atomic: true, NotFormGenre: true,
+		CompositionKept: true,
+	}
+	res, ok := owned.Criteria().Result()
+	if !ok {
+		t.Fatal("owned criteria must be complete")
+	}
+	if !res.CompositionKept {
+		t.Errorf("round trip = %+v, want composition ownership preserved", res)
+	}
+	if res.Dimension {
+		t.Errorf("round trip = %+v, want no dimension answer on an owned row", res)
+	}
+
+	ordinary := TagQualityResult{
+		SubjectMatter: true, Dimension: true, PersonClass: types.PersonClassNotPerson, Atomic: true,
+		NotFormGenre: true,
+	}
+	res, ok = ordinary.Criteria().Result()
+	if !ok {
+		t.Fatal("ordinary criteria must be complete")
+	}
+	if res.CompositionKept {
+		t.Errorf("round trip = %+v, want no composition ownership on an ordinary row", res)
+	}
+	if !res.Dimension {
+		t.Errorf("round trip = %+v, want the stamped dimension preserved", res)
+	}
+}
+
+// TestParseTagQualityResponse_IgnoresStrayCompositionKeep pins that a stray composition_keep in a judge
+// reply never decides: the judge is never asked the question, so the parser drops the key and only the
+// gate stamps ownership.
+func TestParseTagQualityResponse_IgnoresStrayCompositionKeep(t *testing.T) {
+	reply := `{"tags":[{"index":0,"subject_matter":true,"dimension":true,"person_class":"not_person","atomic":true,"not_form_genre":true,"defer":false,"composition_keep":true}]}`
+	results, err := ParseTagQualityResponse(reply, 1)
+	if err != nil {
+		t.Fatalf("parse reply with a stray composition_keep: %v", err)
+	}
+	if results[0].CompositionKept {
+		t.Errorf("parsed result = %+v, want the stray composition_keep ignored", results[0])
+	}
+	if !results[0].Criteria().Complete() {
+		t.Error("the row without composition ownership must still read complete")
+	}
+}
+
 // TestBuildTagTranslationPrompt pins the language guard's judged question: every flagged value appears in
 // the prompt, the English-jargon rule lets an already-English value pass unchanged, and the reply shape is
 // the indexed JSON envelope the parser expects.

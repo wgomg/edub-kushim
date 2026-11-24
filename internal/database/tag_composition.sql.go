@@ -49,7 +49,7 @@ func (q *Queries) InsertTagCompositionEvent(ctx context.Context, arg InsertTagCo
 
 const latestCompositionEventsForNames = `-- name: LatestCompositionEventsForNames :many
 SELECT DISTINCT ON (candidate)
-       candidate, parts, disposition, reason, criteria_version, model, reconstructible, created_at
+       candidate, parts, disposition, reason, criteria_version, model, reconstructible, reading, created_at
 FROM tag_composition_event
 WHERE candidate = ANY($1::text[])
 ORDER BY candidate, created_at DESC
@@ -63,6 +63,7 @@ type LatestCompositionEventsForNamesRow struct {
 	CriteriaVersion string
 	Model           sql.NullString
 	Reconstructible sql.NullBool
+	Reading         json.RawMessage
 	CreatedAt       time.Time
 }
 
@@ -83,6 +84,7 @@ func (q *Queries) LatestCompositionEventsForNames(ctx context.Context, candidate
 			&i.CriteriaVersion,
 			&i.Model,
 			&i.Reconstructible,
+			&i.Reading,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

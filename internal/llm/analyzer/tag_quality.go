@@ -16,41 +16,54 @@ type TagQualityCandidate struct {
 	Category string
 }
 
-// TagQualityResult is one candidate's rubric answers: the boolean criteria, the person class value,
-// and the judge's abstention. The answers are features, not a verdict — the admission decision combines
-// them.
+// TagQualityResult is one candidate's rubric answers: the boolean criteria, the person class value, the
+// judge's abstention, and whether the composition gate decided to keep the candidate whole. The answers
+// are features, not a verdict — the admission decision combines them. A composition-owned result carries
+// no dimension answer: the composition decision owns that question.
 type TagQualityResult struct {
-	Index         int
-	SubjectMatter bool
-	Dimension     bool
-	PersonClass   string
-	Atomic        bool
-	NotFormGenre  bool
-	Defer         bool
+	Index           int
+	SubjectMatter   bool
+	Dimension       bool
+	PersonClass     string
+	Atomic          bool
+	NotFormGenre    bool
+	Defer           bool
+	CompositionKept bool
 }
 
-// TagQualityCriteria is the persisted wire shape of one candidate's rubric
-// verdict. Pointer fields distinguish an omitted key from an explicit
-// false; defer is optional, so an omitted defer reads as false.
+// TagQualityCriteria is the persisted wire shape of one candidate's rubric verdict. Pointer-valued fields
+// distinguish an omitted key from an explicit false; defer is optional, so an omitted defer reads as
+// false, and the dimension markers are conditional: an ordinary row carries dimension, while an owned row
+// carries composition_keep instead.
 type TagQualityCriteria struct {
-	SubjectMatter *bool   `json:"subject_matter"`
-	Dimension     *bool   `json:"dimension"`
-	PersonClass   *string `json:"person_class"`
-	Atomic        *bool   `json:"atomic"`
-	NotFormGenre  *bool   `json:"not_form_genre"`
-	Defer         *bool   `json:"defer"`
+	SubjectMatter *bool `json:"subject_matter"`
+	// Dimension is the parts pass's stamped verdict; an absent key means the parts pass did not own the
+	// row (a composition-owned keep) or abstained.
+	Dimension       *bool   `json:"dimension,omitempty"`
+	PersonClass     *string `json:"person_class"`
+	Atomic          *bool   `json:"atomic"`
+	NotFormGenre    *bool   `json:"not_form_genre"`
+	Defer           *bool   `json:"defer"`
+	CompositionKept *bool   `json:"composition_keep,omitempty"`
 }
 
-// Criteria returns the persisted wire shape of the answers.
+// Criteria returns the persisted wire shape of the answers. A composition-owned row carries composition_keep
+// and no dimension key, so the stored shape states which decision owns the dimension question; an ordinary
+// row's shape is unchanged.
 func (r TagQualityResult) Criteria() TagQualityCriteria {
-	return TagQualityCriteria{
+	c := TagQualityCriteria{
 		SubjectMatter: &r.SubjectMatter,
-		Dimension:     &r.Dimension,
 		PersonClass:   &r.PersonClass,
 		Atomic:        &r.Atomic,
 		NotFormGenre:  &r.NotFormGenre,
 		Defer:         &r.Defer,
 	}
+	if r.CompositionKept {
+		c.CompositionKept = &r.CompositionKept
+	} else {
+		c.Dimension = &r.Dimension
+	}
+	return c
 }
 
 // Complete reports whether the judge-owned criteria were specified, the person class included and carrying
@@ -62,58 +75,56 @@ func (c TagQualityCriteria) Complete() bool {
 		c.Atomic != nil && c.NotFormGenre != nil
 }
 
-// Result reads the persisted criteria back into rubric answers; the
-// second return is false when any judge-owned criterion is missing. The
-// dimension answer is read when present (a stamped row) and reads false
-// otherwise, so a caller that has not stamped the parts verdict sees a
-// missing dimension as a failing signal, never as an admission.
+// Result reads the persisted criteria back into rubric answers; the second return is false when any
+// judge-owned criterion is missing. The dimension answer is read when present (a stamped row) and reads
+// false otherwise, so a caller that has not stamped the parts verdict sees a missing dimension as a
+// failing signal, never as an admission. A composition-owned row carries composition_keep instead: the
+// admission ladder then reads the dimension as satisfied by the composition decision.
 func (c TagQualityCriteria) Result() (TagQualityResult, bool) {
 	if !c.Complete() {
 		return TagQualityResult{}, false
 	}
 	return TagQualityResult{
-		SubjectMatter: *c.SubjectMatter,
-		Dimension:     c.Dimension != nil && *c.Dimension,
-		PersonClass:   *c.PersonClass,
-		Atomic:        *c.Atomic,
-		NotFormGenre:  *c.NotFormGenre,
-		Defer:         c.Defer != nil && *c.Defer,
+		SubjectMatter:   *c.SubjectMatter,
+		Dimension:       c.Dimension != nil && *c.Dimension,
+		PersonClass:     *c.PersonClass,
+		Atomic:          *c.Atomic,
+		NotFormGenre:    *c.NotFormGenre,
+		Defer:           c.Defer != nil && *c.Defer,
+		CompositionKept: c.CompositionKept != nil && *c.CompositionKept,
 	}, true
 }
 
-// String renders the answers for the audit log, treating an omitted
-// boolean as false and an omitted class as empty.
+// String renders the answers for the audit log, treating an omitted boolean as false and an omitted class
+// as empty. The composition-owned marker is appended only when set, so an ordinary audit line is unchanged.
 func (c TagQualityCriteria) String() string {
 	personClass := ""
 	if c.PersonClass != nil {
 		personClass = *c.PersonClass
 	}
-	return fmt.Sprintf("subject_matter=%t dimension=%t person_class=%s atomic=%t not_form_genre=%t defer=%t",
+	line := fmt.Sprintf("subject_matter=%t dimension=%t person_class=%s atomic=%t not_form_genre=%t defer=%t",
 		c.SubjectMatter != nil && *c.SubjectMatter,
 		c.Dimension != nil && *c.Dimension,
 		personClass,
 		c.Atomic != nil && *c.Atomic,
 		c.NotFormGenre != nil && *c.NotFormGenre,
 		c.Defer != nil && *c.Defer)
+	if c.CompositionKept != nil && *c.CompositionKept {
+		line += " composition_keep=true"
+	}
+	return line
 }
 
-// TagQualityVersion pins the quality judge's criteria: the rubric, the prompt, and the policy version of its
-// cached verdict rows. A criteria or prompt change bumps it so an older generation's verdicts never apply.
-// v4 narrows the document snippet to the subject-matter criterion: the snippet serves question 1, criteria
-// 2–5 are judged on the tag as a store-global dimension, and the text stays in the single call — the
-// withholding is by prompt framing. v5 makes the parts pass the single owner of the dimension question: the
-// quality judge answers the document-scoped questions and the gate stamps the parts verdict as the row's
-// dimension feature, with the language guard riding the same policy version. v6 removes the place and work
-// components from question 2: places are ordinary dimension values judged by dimensionality and recurrence,
-// works are ordinary candidates, and the criterion asks the person question alone under the wire key
-// `not_person`; the whitelisted-place hint retires with it. Cache lookup is version-filtered, so v5 verdicts
-// never apply and the stored v5 rows are superseded evidence. v7 embeds TagDefinition so the atomicity
-// question's "each work as tags on their own" resolves against the system's definition. v8 replaces the
-// boolean person question with the five-class person_class answer: a documented individual rejects, the
-// non-real or undecided classes hold for review, and a tag naming no person continues to the admission
-// ladder; a reply without a valid class is incomplete and defers. Cache lookup is version-filtered, so v7
-// verdicts never apply and their stored rows are superseded evidence.
-const TagQualityVersion = "v8"
+// TagQualityVersion pins the quality judge's criteria: the rubric, the prompt, and the policy version of
+// its cached verdict rows. A criteria or prompt change bumps it so an older generation's verdicts never
+// apply.
+//
+// v9 changes what the gate stamps, not the rubric: a compound the composition gate decided to keep whole
+// carries `composition_keep` and no `dimension`, and the parts pass's abstention is no longer merged into
+// `defer` for it; every other candidate still reads the parts pass's verdict. The judge's questions are
+// unchanged, and cache lookup is version-filtered, so v8 verdicts never apply and their stored rows are
+// superseded evidence.
+const TagQualityVersion = "v9"
 
 // TagQualitySystemMessage is the system prompt of the quality judge.
 const TagQualitySystemMessage = "You are a tag-quality judge. Answer the rubric in the user message for each candidate tag."
@@ -167,9 +178,10 @@ func (e *IncompleteReplyError) MissingSet() map[int]bool {
 // ParseTagQualityResponse errors when any candidate lacks a fully specified verdict — a person_class
 // outside the five answers counting as missing, since a zero-valued result must never be read as an
 // all-criteria-false rejection, or a truncated response would cache a spurious permanent rejection.
-// An omitted defer reads as false. A bare top-level array is accepted as the envelope's value, and an
-// entry without an index is placed by its position in the array. A truncated reply returns the typed
-// *IncompleteReplyError alongside the populated results.
+// An omitted defer reads as false. A stray composition_keep in a reply is ignored: the judge is never asked
+// it, and only the gate stamps composition ownership. A bare top-level array is accepted as the envelope's
+// value, and an entry without an index is placed by its position in the array. A truncated reply returns the
+// typed *IncompleteReplyError alongside the populated results.
 func ParseTagQualityResponse(content string, n int) ([]TagQualityResult, error) {
 	content = wrapBareArray(cleanCodeBlock(strings.TrimSpace(content)), "tags")
 	var parsed struct {

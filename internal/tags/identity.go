@@ -226,6 +226,24 @@ func compositionHolds(reason string) bool {
 	return slices.Contains(compositionHoldReasons, reason)
 }
 
+// decidedCompositionKeepReasons is the single definition of the keeps that decide the composition gate's
+// question: the named-unit keep, its reconstructible gray class, and the relational keep on a substrate
+// reading. A keep under any of these leaves the dimension question answered, so the parts pass neither
+// owns it nor stamps a verdict over it.
+var decidedCompositionKeepReasons = []string{
+	CompositionReasonNamedUnit,
+	CompositionReasonNamedUnitReconstructible,
+	CompositionReasonRelationalKeep,
+}
+
+// DecidedCompositionKeep reports whether a composition disposition and reason leave the composition gate
+// owning the dimension question: a keep under one of the decided-keep reasons. Every other reason — a
+// deferred split, a conflict, a degraded keep, an operator decision, a drop or a split — leaves the
+// quality gate's own signals in charge.
+func DecidedCompositionKeep(disposition CompositionDisposition, reason string) bool {
+	return disposition == CompositionKeep && slices.Contains(decidedCompositionKeepReasons, reason)
+}
+
 // CompositionAction names the operator actions one recorded composition decision calls for, derived
 // from the same hold policy compositionHolds applies: Undecided offers a split or a keep, Keep offers
 // the parts-alongside application or a keep, Degraded offers a re-judge, and Drop offers nothing but
@@ -241,9 +259,11 @@ const (
 )
 
 // CompositionActionFor classifies one journal row for the review queue: a decided drop can only be retired,
-// a degraded keep must be judged again, the relational named-unit keep applies its parts alongside, and
-// the remaining holds split or keep. A final keep reports the empty action.
-func CompositionActionFor(disposition CompositionDisposition, reason string) CompositionAction {
+// a degraded keep must be judged again, the relational named-unit keep applies its parts alongside when its
+// reading is the substrate's, and the remaining holds split or keep. A final keep reports the empty action,
+// and so does a relational keep resting on the promoted-parts proxy — store maturity, not review, is what
+// it waits on, so the queue offers no composition action for it.
+func CompositionActionFor(disposition CompositionDisposition, reason, readingSource string) CompositionAction {
 	if disposition == CompositionDrop {
 		return CompositionActionDrop
 	}
@@ -254,6 +274,9 @@ func CompositionActionFor(disposition CompositionDisposition, reason string) Com
 		return ""
 	}
 	if reason == CompositionReasonRelationalKeep {
+		if ProxyRelationalKeep(reason, readingSource) {
+			return ""
+		}
 		return CompositionActionKeep
 	}
 	return CompositionActionUndecided
@@ -274,6 +297,16 @@ type CompositionRow struct {
 	Model           string
 	Reconstructible *bool
 	Reading         *CompositionReading
+}
+
+// ProxyRelationalKeep reports whether this row is a relational keep resting only on the promoted-parts
+// proxy. A row without evidence is not a proxy keep, so the hold it would otherwise carry stands and
+// malformed evidence never releases a compound.
+func (r CompositionRow) ProxyRelationalKeep() bool {
+	if r.Reading == nil {
+		return false
+	}
+	return ProxyRelationalKeep(r.Reason, r.Reading.Source)
 }
 
 // CompositionReading is the reconstructibility evidence behind one composition row: the substrate's numbers
@@ -299,6 +332,19 @@ const (
 	ReconstructibilitySourceProxy     = "proxy"
 	ReconstructibilitySourceAbsent    = "absent"
 )
+
+// ReadingSource names what answered a composition row's parts test, as recorded in the row's reading
+// evidence. It returns the empty string when the evidence is absent or unreadable, so malformed evidence
+// never reads as a source.
+func ReadingSource(reading json.RawMessage) string {
+	var recorded struct {
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(reading, &recorded); err != nil {
+		return ""
+	}
+	return recorded.Source
+}
 
 // Plan is the deterministic identity plan for a batch of candidate
 // names: registrations, alias writes, the evidence rows the judging
@@ -769,22 +815,13 @@ func identityHoldForDecision(kind, verdict, anchor, foldClass string) (IdentityH
 	return IdentityHold{Anchor: anchor, FoldClass: foldClass}, true
 }
 
-// proxyRelationalKeep reports whether a relational keep rests only on the promoted-parts proxy instead of
+// ProxyRelationalKeep reports whether a relational keep rests only on the promoted-parts proxy instead of
 // the substrate's far-band reading. Such a hold is store-maturity pending — its parts are not all promoted
 // yet — not a judgment the operator owes, so the review reads and the promotion gate both let it through;
-// the store's own sweep re-disposes it once the parts promote. A row whose reading cannot be read keeps the
-// hold, so malformed evidence never silently releases a compound.
-func proxyRelationalKeep(reason string, reading []byte) bool {
-	if reason != CompositionReasonRelationalKeep {
-		return false
-	}
-	var recorded struct {
-		Source string `json:"source"`
-	}
-	if err := json.Unmarshal(reading, &recorded); err != nil {
-		return false
-	}
-	return recorded.Source == ReconstructibilitySourceProxy
+// the store's own sweep re-disposes it once the parts promote. An unreadable reading reports no source, so
+// malformed evidence never releases a compound.
+func ProxyRelationalKeep(reason, readingSource string) bool {
+	return reason == CompositionReasonRelationalKeep && readingSource == ReconstructibilitySourceProxy
 }
 
 // CompositionReview reads each named candidate's latest composition journal row under criteriaVersion once
@@ -809,13 +846,16 @@ func CompositionReview(ctx context.Context, q *database.Queries, names []string,
 	held := make(map[string]string, len(rows))
 	states := make(map[string]CompositionState, len(rows))
 	for _, row := range rows {
-		if compositionHolds(row.Reason) && !proxyRelationalKeep(row.Reason, row.Reading) {
+		readingSource := ReadingSource(row.Reading)
+		if compositionHolds(row.Reason) && !ProxyRelationalKeep(row.Reason, readingSource) {
 			held[row.Candidate] = row.Reason
 		}
 		states[row.Candidate] = CompositionState{
-			Disposition: CompositionDisposition(row.Disposition),
-			Decided:     row.Reason != CompositionReasonJudgeUnavailable,
-			DecidedAt:   row.DecidedAt,
+			Disposition:   CompositionDisposition(row.Disposition),
+			Decided:       row.Reason != CompositionReasonJudgeUnavailable,
+			DecidedAt:     row.DecidedAt,
+			Reason:        row.Reason,
+			ReadingSource: readingSource,
 		}
 	}
 	return held, states, nil
@@ -834,16 +874,21 @@ func CompositionHeldNames(ctx context.Context, q *database.Queries, names []stri
 }
 
 // CompositionState is one compound candidate's latest persisted composition state under a criteria
-// version: the disposition, whether the row is a decision at all, and when the current-version record
-// first stood. Decided is false exactly for a degraded keep (judge_unavailable) — the compound pass never
-// answered, so the row is evidence that judgment is still owed, not a verdict to replay. DecidedAt is the
-// earliest row under the criteria version that carries a decision, falling back to the first row for a
-// degraded-only candidate, so re-emissions never refresh it and a criteria bump starts a fresh instant;
+// version: the disposition, whether the row is a decision at all, when the current-version record first
+// stood, and the reason and reading source the row recorded. Decided is false exactly for a degraded keep
+// (judge_unavailable) — the compound pass never answered, so the row is evidence that judgment is still
+// owed, not a verdict to replay. Reason and ReadingSource let a caller classify a decided keep without a
+// second journal read: a decided keep under a decided-keep reason owns the dimension question, and a
+// relational keep whose reading source is the promoted-parts proxy still waits on store maturity. DecidedAt
+// is the earliest row under the criteria version that carries a decision, falling back to the first row for
+// a degraded-only candidate, so re-emissions never refresh it and a criteria bump starts a fresh instant;
 // retention reads it as the age of the decision.
 type CompositionState struct {
-	Disposition CompositionDisposition
-	Decided     bool
-	DecidedAt   time.Time
+	Disposition   CompositionDisposition
+	Decided       bool
+	DecidedAt     time.Time
+	Reason        string
+	ReadingSource string
 }
 
 // CompositionStatesForNames returns each named candidate's latest composition state under

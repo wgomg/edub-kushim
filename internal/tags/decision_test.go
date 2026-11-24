@@ -131,6 +131,33 @@ func TestDecideAdmission(t *testing.T) {
 			f.Dimension = false
 			return f
 		}(), AdmissionReject, ReasonNoDimension},
+		{"a composition-owned abstention admits on the keep", func() AdmissionFeatures {
+			f := admissible
+			f.Dimension = false
+			f.CompositionKept = true
+			return f
+		}(), AdmissionAdmit, ReasonAdmitted},
+		{"composition ownership does not mask a judge failure", func() AdmissionFeatures {
+			f := admissible
+			f.Dimension = false
+			f.Atomic = false
+			f.CompositionKept = true
+			return f
+		}(), AdmissionDefer, ReasonSingleSignal},
+		{"composition ownership does not mask a missing subject", func() AdmissionFeatures {
+			f := admissible
+			f.SubjectMatter = false
+			f.Dimension = false
+			f.CompositionKept = true
+			return f
+		}(), AdmissionDefer, ReasonSingleSignal},
+		{"judge abstention outranks composition ownership", func() AdmissionFeatures {
+			f := admissible
+			f.JudgeDefer = true
+			f.Dimension = false
+			f.CompositionKept = true
+			return f
+		}(), AdmissionDefer, ReasonJudgeDefer},
 	}
 
 	for _, tc := range cases {

@@ -403,8 +403,11 @@ func (r *Reconciler) sweepProvisionalTags(ctx context.Context, cfg *config.Confi
 var errNoJudgeText = errors.New("no live document text")
 
 // rejudgeStoredName decides one stored name afresh under the current criteria from its first live document
-// and records the verdict, so the provisional sweep and the demotion arm judge identically. A name with no
-// live document text yields errNoJudgeText, and any other failure is returned for the caller to count.
+// and records the verdict, so the provisional sweep, the demotion arm, and the operator's re-judge judge
+// identically. A compound whose latest composition row decided to keep it whole is stamped composition-owned
+// instead: the composition gate already answered the dimension question, so the parts store is never built
+// or read for it. A name with no live document text yields errNoJudgeText, and any other failure is returned
+// for the caller to count.
 func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, tagID int64, name string) (tags.AdmissionDecision, string, error) {
 	docID, err := r.client.FirstDocumentIDForTag(ctx, tagID)
 	if err != nil {
@@ -429,6 +432,15 @@ func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, 
 		r.logger.Error("", "tag reconcile: reduce text for tag %q: %v", name, err)
 	}
 
+	// a unit is never a compound, so a single word's journal read returns nothing; the state read is one
+	// indexed lookup and a failure never spends the judge call
+	states, err := tags.CompositionStatesForNames(ctx, r.client.Queries, []string{name}, analyzer.TagSplitVersion)
+	if err != nil {
+		return tags.AdmissionDecision{}, "", err
+	}
+	state := states[tags.StoredName(name)]
+	compositionOwned := tags.DecidedCompositionKeep(state.Disposition, state.Reason)
+
 	candidates := []analyzer.TagQualityCandidate{{
 		Index:    0,
 		Term:     name,
@@ -446,17 +458,23 @@ func (r *Reconciler) rejudgeStoredName(ctx context.Context, cfg *config.Config, 
 	}
 
 	res := results[0]
-	// the parts pass owns the dimension question: resolve its verdict for this name and stamp it, so a
-	// re-judged name is not decided on a fabricated false dimension; an absent or abstained verdict defers
-	partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, admission.VerdictModels{Gate: cfg.ResolvedLexicalGateLlm().Model, Fold: cfg.ResolvedAdjudicatorLlm().Model}, nil)
-	dimension, abstain, verr := partStore.DimensionFeature(ctx, name, docID, "")
-	if verr != nil {
-		return tags.AdmissionDecision{}, "", verr
-	}
-	if abstain {
-		res.Defer = true
+	if compositionOwned {
+		// the composition gate keeps the compound whole and owns the dimension question: the parts verdict is
+		// neither read nor merged into the judge's abstention, exactly as the emission gate stamps it
+		res.CompositionKept = true
 	} else {
-		res.Dimension = dimension
+		// the parts pass owns the dimension question: resolve its verdict for this name and stamp it, so a
+		// re-judged name is not decided on a fabricated false dimension; an absent or abstained verdict defers
+		partStore := admission.NewVerdictStore(r.client.Queries, r.runner, r.logger, admission.VerdictModels{Gate: cfg.ResolvedLexicalGateLlm().Model, Fold: cfg.ResolvedAdjudicatorLlm().Model}, nil)
+		dimension, abstain, verr := partStore.DimensionFeature(ctx, name, docID, "")
+		if verr != nil {
+			return tags.AdmissionDecision{}, "", verr
+		}
+		if abstain {
+			res.Defer = true
+		} else {
+			res.Dimension = dimension
+		}
 	}
 	criteria, err := json.Marshal(res.Criteria())
 	if err != nil {
