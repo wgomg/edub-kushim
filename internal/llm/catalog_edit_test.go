@@ -75,11 +75,11 @@ func TestMutationsPersistAcrossReload(t *testing.T) {
 func TestRemoveProviderOrphanAndCascade(t *testing.T) {
 	r := newMutableRegistry(t)
 
-	err := r.RemoveProvider("zhipu", false, nil)
+	err := r.RemoveProvider("zai", false, nil)
 	if errs.KindOf(err) != errs.KindConflict || !strings.Contains(err.Error(), "models") {
 		t.Fatalf("remove without cascade: got %v, want an orphan-model conflict", err)
 	}
-	if err := r.RemoveProvider("zhipu", true, nil); err != nil {
+	if err := r.RemoveProvider("zai", true, nil); err != nil {
 		t.Fatalf("remove with cascade: %v", err)
 	}
 
@@ -88,11 +88,11 @@ func TestRemoveProviderOrphanAndCascade(t *testing.T) {
 		t.Fatalf("pair must stay loadable after cascade: %v", err)
 	}
 	catalog := reloaded.Catalog()
-	if slices.ContainsFunc(catalog.Providers, func(p ProviderInput) bool { return p.Provider == "zhipu" }) {
-		t.Errorf("providers still contain zhipu: %v", catalog.Providers)
+	if slices.ContainsFunc(catalog.Providers, func(p ProviderInput) bool { return p.Provider == "zai" }) {
+		t.Errorf("providers still contain zai: %v", catalog.Providers)
 	}
-	if slices.ContainsFunc(catalog.Models, func(m ModelInput) bool { return m.Provider == "zhipu" }) {
-		t.Errorf("cascade left zhipu models behind: %v", catalog.Models)
+	if slices.ContainsFunc(catalog.Models, func(m ModelInput) bool { return m.Provider == "zai" }) {
+		t.Errorf("cascade left zai models behind: %v", catalog.Models)
 	}
 }
 
@@ -101,18 +101,18 @@ func TestRemoveProviderOrphanAndCascade(t *testing.T) {
 func TestRemoveInUseGuard(t *testing.T) {
 	r := newMutableRegistry(t)
 	inUse := &config.Config{Enricher: config.EnricherConfig{ContentAnalyzer: config.ContentAnalyzerConfig{
-		Llm: config.LlmConfig{Provider: "zhipu", Model: "glm-5"},
+		Llm: config.LlmConfig{Provider: "zai", Model: "glm-5"},
 	}}}
 
-	err := r.RemoveModel("zhipu", "glm-5", inUse)
+	err := r.RemoveModel("zai", "glm-5", inUse)
 	if errs.KindOf(err) != errs.KindConflict || !strings.Contains(err.Error(), "in use") {
 		t.Errorf("remove referenced model: got %v, want an in-use conflict", err)
 	}
-	err = r.RemoveProvider("zhipu", true, inUse)
+	err = r.RemoveProvider("zai", true, inUse)
 	if errs.KindOf(err) != errs.KindConflict || !strings.Contains(err.Error(), "in use") {
 		t.Errorf("remove referenced provider: got %v, want an in-use conflict", err)
 	}
-	if err := r.RemoveModel("zhipu", "glm-5", nil); err != nil {
+	if err := r.RemoveModel("zai", "glm-5", nil); err != nil {
 		t.Errorf("remove with a nil config: %v, want the guard lifted", err)
 	}
 }
@@ -122,14 +122,14 @@ func TestRemoveInUseGuard(t *testing.T) {
 func TestRemoveInUseGuardLexicalGate(t *testing.T) {
 	r := newMutableRegistry(t)
 	inUse := &config.Config{Enricher: config.EnricherConfig{TagLexicalGate: config.TagLexicalGateConfig{
-		Llm: config.LlmConfig{Provider: "zhipu", Model: "glm-5"},
+		Llm: config.LlmConfig{Provider: "zai", Model: "glm-5"},
 	}}}
 
-	if err := r.RemoveModel("zhipu", "glm-5", inUse); err == nil {
+	if err := r.RemoveModel("zai", "glm-5", inUse); err == nil {
 		t.Error("remove model referenced by tag_lexical_gate: want an in-use conflict")
 	}
 	inUse.Enricher.TagLexicalGate.Llm = config.LlmConfig{}
-	if err := r.RemoveModel("zhipu", "glm-5", inUse); err != nil {
+	if err := r.RemoveModel("zai", "glm-5", inUse); err != nil {
 		t.Errorf("remove after dropping the gate reference: %v, want success", err)
 	}
 }
@@ -211,5 +211,47 @@ func TestSetProviderPreservesComment(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "anthropic") {
 		t.Errorf("mutation not written:\n%s", data)
+	}
+}
+
+func TestReasoningToggleValidation(t *testing.T) {
+	r := newMutableRegistry(t)
+	tests := []struct {
+		name     string
+		toggle   *ReasoningToggle
+		effort   string
+		wantText string
+	}{
+		{"empty path segment", &ReasoningToggle{Field: "thinking..type", On: "enabled", Off: "disabled"}, "", "dot-separated"},
+		{"numeric value", &ReasoningToggle{Field: "thinking.type", On: 1, Off: "disabled"}, "", "string or a boolean"},
+		{"equal values", &ReasoningToggle{Field: "thinking.type", On: "enabled", Off: "enabled"}, "", "different"},
+		{"bad effort path", nil, "reasoning effort", "dot-separated"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := r.AddModel(ModelInput{
+				Provider: "deepseek", ModelID: "invalid-" + tt.name,
+				ReasoningToggle: tt.toggle, ReasoningEffortField: tt.effort,
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.wantText) {
+				t.Fatalf("AddModel() error = %v, want %q", err, tt.wantText)
+			}
+		})
+	}
+
+	valid := ModelInput{
+		Provider: "deepseek", ModelID: "valid-toggle-model", DisplayName: "Valid Toggle Model",
+		ReasoningToggle:      &ReasoningToggle{Field: "thinking.type", On: "enabled", Off: "disabled"},
+		ReasoningEffortField: "reasoning_effort",
+	}
+	if err := r.AddModel(valid); err != nil {
+		t.Fatalf("AddModel(valid) error = %v", err)
+	}
+	caps := r.Lookup("deepseek", "valid-toggle-model")
+	if caps == nil || caps.ReasoningKnob.Toggle == nil || caps.ReasoningKnob.Toggle.Field != "thinking.type" {
+		t.Fatalf("cataloged knob = %+v, want thinking.type", caps)
+	}
+	if caps.ReasoningKnob.EffortField() != "reasoning_effort" {
+		t.Errorf("effort field = %q, want reasoning_effort", caps.ReasoningKnob.EffortField())
 	}
 }

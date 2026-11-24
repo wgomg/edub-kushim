@@ -3,13 +3,16 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/llm/autofill"
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
@@ -21,18 +24,20 @@ type LlmHandler struct {
 	registry   atomic.Pointer[llm.Registry]
 	catalogDir string
 	getConfig  func() *config.Config
+	autofill   *autofill.Client
 	logger     *log.Logger
 }
 
 // NewLlmHandler wires the handler to the model registry (nil when its load failed), the catalog directory
-// the reset writes, the live configuration for its reference checks, and the logger.
+// the reset writes, the live configuration for its reference checks, the autofill client, and the logger.
 func NewLlmHandler(
 	registry *llm.Registry,
 	catalogDir string,
 	getConfig func() *config.Config,
+	autofillClient *autofill.Client,
 	logger *log.Logger,
 ) *LlmHandler {
-	h := &LlmHandler{catalogDir: catalogDir, getConfig: getConfig, logger: logger}
+	h := &LlmHandler{catalogDir: catalogDir, getConfig: getConfig, autofill: autofillClient, logger: logger}
 	h.registry.Store(registry)
 	return h
 }
@@ -196,6 +201,49 @@ func (h *LlmHandler) ResetCatalogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, reg.Catalog())
 }
 
+// Autofill proposes catalog values for the provider and model forms from models.dev and the provider's
+// model-list endpoint. It is read-only: the editor still saves through the catalog mutations, so the
+// token in the body is used for the probe and never stored.
+func (h *LlmHandler) Autofill(w http.ResponseWriter, r *http.Request) {
+	var in autofill.AutofillRequest
+	if !decodeJSONBody(w, r, &in) {
+		return
+	}
+	in.Provider = stripTags(in.Provider)
+	in.Adapter = stripTags(in.Adapter)
+	in.OfficialURL = strings.TrimSpace(stripTags(in.OfficialURL))
+	in.ModelID = stripTags(in.ModelID)
+	in.ModelsDevProvider = stripTags(in.ModelsDevProvider)
+	in.Token = strings.TrimSpace(in.Token)
+
+	if in.Provider == "" && in.OfficialURL == "" && in.ModelsDevProvider == "" {
+		http.Error(w, "enter a provider name or URL first", http.StatusBadRequest)
+		return
+	}
+	if in.OfficialURL != "" {
+		if _, ok := llm.ParseEndpointURL(in.OfficialURL); !ok {
+			http.Error(w, fmt.Sprintf("official_url %q must be an absolute http(s) URL", in.OfficialURL),
+				http.StatusBadRequest)
+			return
+		}
+	}
+	if in.Adapter == "" {
+		in.Adapter = "openai-compatible"
+	}
+
+	out, err := h.autofill.Fill(r.Context(), in)
+	if err != nil {
+		if errors.Is(err, autofill.ErrUnknownProvider) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		h.logger.Error("", "llm catalog autofill: %v", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // requireRegistry answers 503 when the catalog has not loaded, telling the caller to restore the defaults,
 // and otherwise returns the live registry, nil after answering.
 func (h *LlmHandler) requireRegistry(w http.ResponseWriter) *llm.Registry {
@@ -322,5 +370,15 @@ func sanitizeModelInput(in *llm.ModelInput) {
 	in.DisplayName = stripTags(in.DisplayName)
 	for i := range in.ReasoningEfforts {
 		in.ReasoningEfforts[i] = stripTags(in.ReasoningEfforts[i])
+	}
+	in.ReasoningEffortField = stripTags(in.ReasoningEffortField)
+	if in.ReasoningToggle != nil {
+		in.ReasoningToggle.Field = stripTags(in.ReasoningToggle.Field)
+		if s, ok := in.ReasoningToggle.On.(string); ok {
+			in.ReasoningToggle.On = stripTags(s)
+		}
+		if s, ok := in.ReasoningToggle.Off.(string); ok {
+			in.ReasoningToggle.Off = stripTags(s)
+		}
 	}
 }

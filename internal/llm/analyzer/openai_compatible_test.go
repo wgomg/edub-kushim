@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -155,6 +156,105 @@ func TestResponses_OutputCapError(t *testing.T) {
 
 // TestOpenAI_ReasoningPolicy pins the catalog's two-state policy on the chat
 // dialect for the three states a default configuration can reach.
+func TestOpenAI_ReasoningRequestShapes(t *testing.T) {
+	tests := []struct {
+		name     string
+		capsJSON string
+		want     map[string]any
+	}{
+		{
+			name:     "toggle and effort",
+			capsJSON: `"reasoning_efforts":["high"],"reasoning_toggle":{"field":"thinking.type","on":"enabled","off":"disabled"},"reasoning_effort_field":"reasoning_effort"`,
+			want:     map[string]any{"thinking": map[string]any{"type": "enabled"}, "reasoning_effort": "high"},
+		},
+		{
+			name:     "toggle only",
+			capsJSON: `"reasoning_efforts":["high"],"reasoning_toggle":{"field":"enable_thinking","on":true,"off":false}`,
+			want:     map[string]any{"enable_thinking": true},
+		},
+		{
+			name:     "disable form when the toggle is off",
+			capsJSON: `"disable_reasoning":true,"reasoning_toggle":{"field":"thinking.type","on":"enabled","off":"disabled"},"reasoning_effort_field":"reasoning_effort"`,
+			want:     map[string]any{"thinking": map[string]any{"type": "disabled"}},
+		},
+		{
+			name:     "no vendor knob falls back to reasoning_effort",
+			capsJSON: `"reasoning_efforts":["minimal"]`,
+			want:     map[string]any{"reasoning_effort": "minimal"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotReq := make(chan []byte, 1)
+			f := newFixtureWithCatalog(t, tt.capsJSON, func(w http.ResponseWriter, r *http.Request) {
+				raw, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read request: %v", err)
+				} else {
+					gotReq <- raw
+				}
+				writeTestJSON(w, http.StatusOK, map[string]any{
+					"choices": []any{map[string]any{"message": map[string]any{"content": fencedVerdictResponse}}},
+				})
+			})
+
+			if _, err := f.openAI(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs()); err != nil {
+				t.Fatalf("Adjudicate() error = %v", err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(<-gotReq, &body); err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range tt.want {
+				if !reflect.DeepEqual(body[key], want) {
+					t.Errorf("%s = %v, want %v", key, body[key], want)
+				}
+			}
+			for _, key := range []string{"thinking", "reasoning_effort", "enable_thinking"} {
+				if _, expected := tt.want[key]; expected {
+					continue
+				}
+				if _, present := body[key]; present {
+					t.Errorf("unexpected %s in request body", key)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenAI_ResponsesDisableUsesEffortNone(t *testing.T) {
+	gotReq := make(chan []byte, 1)
+	f := newFixtureWithCatalog(t,
+		`"max_input_tokens":100000,"max_output_tokens":4096,"disable_reasoning":true,`+
+			`"reasoning_efforts":["low"],"uses_responses_endpoint":true`,
+		func(w http.ResponseWriter, r *http.Request) {
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read request: %v", err)
+			} else {
+				gotReq <- raw
+			}
+			writeTestJSON(w, http.StatusOK, completedResponses(fencedVerdictResponse))
+		})
+
+	if _, err := f.openAI(t, f.catalogedCaps(t)).Adjudicate(context.Background(), testPairs()); err != nil {
+		t.Fatalf("Adjudicate() error = %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(<-gotReq, &body); err != nil {
+		t.Fatal(err)
+	}
+	reasoning, ok := body["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "none" {
+		t.Errorf("reasoning = %v, want effort none", body["reasoning"])
+	}
+	for _, key := range []string{"reasoning_effort", "thinking", "enable_thinking"} {
+		if _, present := body[key]; present {
+			t.Errorf("chat-dialect %s must not be sent on the Responses dialect", key)
+		}
+	}
+}
+
 func TestOpenAI_ReasoningPolicy(t *testing.T) {
 	tests := []struct {
 		name string

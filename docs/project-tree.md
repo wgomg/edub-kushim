@@ -54,6 +54,7 @@ edub-kushim/
 │   ├── kb  # offline lexical knowledge base: artifact installer and read interfaces
 │   ├── llm  # LLM capability registry and provider/model catalogs
 │   │   ├── analyzer  # LLM classification adapters, prompts, gates and judges
+│   │   ├── autofill  # catalog form autofill: models.dev lookup and provider model-list probe
 │   │   └── testdata  # analyzer test fixtures
 │   ├── log  # structured logging and memory metrics
 │   ├── matcher  # tag matcher: Hugot engine, RPC client, embedding store

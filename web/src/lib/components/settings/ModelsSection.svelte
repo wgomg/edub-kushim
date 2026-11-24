@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { confirmStore } from '#lib/stores/confirmStore.svelte.js';
 	import { toastStore } from '#lib/stores/toastStore.svelte.js';
+	import TokenField from './TokenField.svelte';
 
 	let {
 		catalog = { providers: [], models: [] },
@@ -18,6 +19,7 @@
 		onAddModel = () => {},
 		onUpdateModel = () => {},
 		onRemoveModel = () => {},
+		onAutofill = async () => ({ ok: false, status: 0, data: null }),
 		onReset = async () => false
 	} = $props();
 
@@ -34,6 +36,12 @@
 	let providerForm = $state(emptyProviderForm());
 	let modelForm = $state(emptyModelForm());
 	let editModelBase = $state(null);
+
+	let providerToken = $state('');
+	let modelToken = $state('');
+	let providerAutofill = $state(emptyAutofill());
+	let modelAutofill = $state(emptyAutofill());
+	let reasoningKnob = $state(emptyReasoningKnob());
 
 	let adapterOptions = $derived(
 		[
@@ -102,6 +110,46 @@
 		};
 	}
 
+	function emptyReasoningKnob() {
+		return { field: '', on: '', off: '', effort: '' };
+	}
+
+	function reasoningKnobFrom(model) {
+		return {
+			field: model.reasoning_toggle?.field ?? '',
+			on: model.reasoning_toggle ? String(model.reasoning_toggle.on) : '',
+			off: model.reasoning_toggle ? String(model.reasoning_toggle.off) : '',
+			effort: model.reasoning_effort_field ?? ''
+		};
+	}
+
+	function emptyAutofill() {
+		return {
+			busy: false,
+			status: '',
+			error: false,
+			endpoint: '',
+			notes: [],
+			candidates: [],
+			models: []
+		};
+	}
+
+	function resetAutofill() {
+		providerToken = '';
+		modelToken = '';
+		providerAutofill = emptyAutofill();
+		modelAutofill = emptyAutofill();
+		reasoningKnob = emptyReasoningKnob();
+	}
+
+	function knobValue(raw) {
+		const value = raw.trim();
+		if (value === 'true') return true;
+		if (value === 'false') return false;
+		return value;
+	}
+
 	function modelsFor(providerName) {
 		return catalog.models.filter((model) => model.provider === providerName);
 	}
@@ -150,8 +198,8 @@
 		return usedBy[`${provider}/*`] ?? [];
 	}
 
-	function modelBody(form) {
-		return {
+	function modelBody(form, knob = reasoningKnob) {
+		const body = {
 			...form,
 			provider: panelProvider,
 			model_id: form.model_id.trim(),
@@ -163,6 +211,12 @@
 				.map((value) => value.trim())
 				.filter(Boolean)
 		};
+		const field = knob.field.trim();
+		body.reasoning_toggle = field
+			? { field, on: knobValue(knob.on), off: knobValue(knob.off) }
+			: null;
+		body.reasoning_effort_field = knob.effort.trim();
+		return body;
 	}
 
 	function openAddProvider() {
@@ -171,6 +225,7 @@
 		panelModelId = null;
 		providerForm = emptyProviderForm();
 		providerErrors = { name: '', url: '' };
+		resetAutofill();
 	}
 
 	function openEditProvider(provider) {
@@ -184,6 +239,7 @@
 			session_header: provider.session_header ?? ''
 		};
 		providerErrors = { name: '', url: '' };
+		resetAutofill();
 	}
 
 	function openAddModel(providerName) {
@@ -193,6 +249,7 @@
 		modelForm = emptyModelForm();
 		editModelBase = null;
 		modelErrors = { id: '' };
+		resetAutofill();
 	}
 
 	function openEditModel(model) {
@@ -202,6 +259,8 @@
 		modelForm = modelFormFrom(model);
 		editModelBase = model;
 		modelErrors = { id: '' };
+		resetAutofill();
+		reasoningKnob = reasoningKnobFrom(model);
 	}
 
 	function closePanel() {
@@ -209,6 +268,7 @@
 		panelProvider = null;
 		panelModelId = null;
 		editModelBase = null;
+		resetAutofill();
 	}
 
 	function submitProvider(event) {
@@ -278,6 +338,144 @@
 			toastStore.success('Model update staged.');
 		}
 		closePanel();
+	}
+
+	const modelFieldLabels = [
+		['display_name', 'display name'],
+		['max_input_tokens', 'max input tokens'],
+		['max_output_tokens', 'max output tokens'],
+		['disable_reasoning', 'disable reasoning'],
+		['reasoning_efforts', 'reasoning efforts'],
+		['supports_structured_output', 'structured output'],
+		['supports_temperature', 'temperature'],
+		['supports_prompt_caching', 'prompt caching'],
+		['uses_max_completion_tokens', 'max_completion_tokens'],
+		['uses_responses_endpoint', 'Responses API'],
+		['reasoning_toggle', 'reasoning toggle'],
+		['reasoning_effort_field', 'reasoning effort field']
+	];
+
+	function endpointStatusLine(endpoint, modelCount) {
+		if (!endpoint) return '';
+		switch (endpoint.status) {
+			case 'ok':
+				return `Reachable — ${modelCount} model${modelCount === 1 ? '' : 's'} listed.`;
+			case 'unauthorized':
+				return 'The endpoint requires a token.';
+			case 'not_found':
+				return `No model list at ${endpoint.url}.`;
+			case 'redirected':
+				return `Redirected to ${endpoint.detail}; use that URL.`;
+			case 'unreachable':
+				return `Could not reach ${endpoint.url}.`;
+			case 'invalid_response':
+				return `Unexpected response from ${endpoint.url}.`;
+			default:
+				return '';
+		}
+	}
+
+	function autofillState(data, res) {
+		const state = emptyAutofill();
+		if (!res.ok) {
+			state.status = data?.error ?? `Autofill failed (${res.status}).`;
+			state.error = true;
+			return state;
+		}
+		state.endpoint = endpointStatusLine(data?.endpoint, data?.models?.length ?? 0);
+		state.notes = data?.notes ?? [];
+		state.candidates = data?.provider_candidates ?? [];
+		state.models = data?.models ?? [];
+		return state;
+	}
+
+	function modelStatus(data) {
+		const filled = data?.filled ?? [];
+		const found = new Set(filled.map((item) => item.field));
+		const missing = modelFieldLabels
+			.filter(([field]) => !found.has(field))
+			.map(([, label]) => label);
+		const sources = [...new Set(filled.map((item) => item.source))].join(', ');
+		const parts = [];
+		if (filled.length) {
+			parts.push(
+				`Autofilled ${filled.length} field${filled.length === 1 ? '' : 's'}${sources ? ` (${sources})` : ''}.`
+			);
+		} else {
+			parts.push('No catalog fields found.');
+		}
+		if (missing.length) parts.push(`Not found: ${missing.join(', ')}.`);
+		return parts.join(' ');
+	}
+
+	function applyModelFields(fields) {
+		if (fields.display_name !== undefined) modelForm.display_name = fields.display_name;
+		if (fields.max_input_tokens !== undefined)
+			modelForm.max_input_tokens = String(fields.max_input_tokens);
+		if (fields.max_output_tokens !== undefined)
+			modelForm.max_output_tokens = String(fields.max_output_tokens);
+		if (fields.disable_reasoning !== undefined)
+			modelForm.disable_reasoning = fields.disable_reasoning;
+		if (fields.reasoning_efforts !== undefined)
+			modelForm.reasoning_efforts = fields.reasoning_efforts.join(', ');
+		if (fields.supports_structured_output !== undefined)
+			modelForm.supports_structured_output = fields.supports_structured_output;
+		if (fields.supports_temperature !== undefined)
+			modelForm.supports_temperature = fields.supports_temperature;
+		if (fields.supports_prompt_caching !== undefined)
+			modelForm.supports_prompt_caching = fields.supports_prompt_caching;
+		if (fields.uses_max_completion_tokens !== undefined)
+			modelForm.uses_max_completion_tokens = fields.uses_max_completion_tokens;
+		if (fields.uses_responses_endpoint !== undefined)
+			modelForm.uses_responses_endpoint = fields.uses_responses_endpoint;
+		if (fields.reasoning_toggle) {
+			reasoningKnob.field = fields.reasoning_toggle.field ?? '';
+			reasoningKnob.on =
+				fields.reasoning_toggle.on === undefined ? '' : String(fields.reasoning_toggle.on);
+			reasoningKnob.off =
+				fields.reasoning_toggle.off === undefined ? '' : String(fields.reasoning_toggle.off);
+		}
+		if (fields.reasoning_effort_field !== undefined)
+			reasoningKnob.effort = fields.reasoning_effort_field;
+	}
+
+	async function autofillProvider(overrides = {}) {
+		providerAutofill = { ...emptyAutofill(), busy: true };
+		const res = await onAutofill({
+			provider: providerForm.provider.trim(),
+			adapter: providerForm.adapter.trim() || 'openai-compatible',
+			official_url: providerForm.official_url.trim(),
+			token: providerToken.trim() || undefined,
+			...overrides
+		});
+		providerAutofill = autofillState(res.data, res);
+		if (!res.ok) return;
+		const suggestion = res.data?.provider;
+		if (suggestion?.official_url) providerForm.official_url = suggestion.official_url;
+		if (suggestion?.adapter) providerForm.adapter = suggestion.adapter;
+	}
+
+	async function autofillModel(overrides = {}) {
+		const provider = catalog.providers.find((item) => item.provider === panelProvider);
+		modelAutofill = { ...emptyAutofill(), busy: true };
+		const res = await onAutofill({
+			provider: panelProvider,
+			adapter: provider?.adapter ?? '',
+			official_url: provider?.official_url ?? '',
+			model_id: modelForm.model_id.trim(),
+			token: modelToken.trim() || undefined,
+			...overrides
+		});
+		modelAutofill = autofillState(res.data, res);
+		if (!res.ok) return;
+		if (res.data?.model) applyModelFields(res.data.model);
+		modelAutofill.status = modelStatus(res.data);
+	}
+
+	function chooseCandidate(candidate) {
+		const overrides = { models_dev_provider: candidate.models_dev_provider };
+		if (panelMode?.startsWith('provider')) autofillProvider(overrides);
+		else autofillModel(overrides);
 	}
 
 	async function removeProvider(provider) {
@@ -760,6 +958,59 @@
 								class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] text-sm text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
 							/>
 						</div>
+						<div class="field sm:col-span-2">
+							<label
+								for="provider-autofill-token"
+								class="text-[0.8125rem] font-medium text-parchment-200"
+							>
+								API token
+								<span class="font-normal text-parchment-500">(optional)</span>
+							</label>
+							<div class="flex gap-2">
+								<TokenField id="provider-autofill-token" bind:value={providerToken} />
+								<button
+									type="button"
+									onclick={() => autofillProvider()}
+									disabled={providerAutofill.busy ||
+										(!providerForm.provider.trim() && !providerForm.official_url.trim())}
+									class="rounded-lg border border-clay-700 px-2.5 py-[0.45rem] text-[0.8125rem] font-medium text-parchment-300 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+								>
+									{providerAutofill.busy ? 'Autofilling…' : 'Autofill'}
+								</button>
+							</div>
+							<p class="text-[0.6875rem] text-parchment-500">
+								Used only to list this provider's models. It is not saved.
+							</p>
+						</div>
+						{#if providerAutofill.endpoint || providerAutofill.status || providerAutofill.notes.length || providerAutofill.candidates.length}
+							<div
+								class="rounded-lg border border-clay-700 bg-clay-950/60 px-3 py-2 text-[0.6875rem] text-parchment-500 sm:col-span-2"
+							>
+								{#if providerAutofill.endpoint}
+									<p>{providerAutofill.endpoint}</p>
+								{/if}
+								{#if providerAutofill.status}
+									<p class="text-terracotta-400">{providerAutofill.status}</p>
+								{/if}
+								{#if providerAutofill.candidates.length}
+									<p class="mt-1">Several models.dev providers match:</p>
+									<div class="mt-1 flex flex-wrap gap-1.5">
+										{#each providerAutofill.candidates as candidate (candidate.models_dev_provider)}
+											<button
+												type="button"
+												onclick={() => chooseCandidate(candidate)}
+												class="rounded border border-clay-700 px-1.5 py-0.5 text-[0.6875rem] text-parchment-300 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+											>
+												{candidate.name || candidate.models_dev_provider}
+											</button>
+										{/each}
+									</div>
+								{/if}
+								{#each providerAutofill.notes as note, index (index)}
+									<p class="mt-1">{note}</p>
+								{/each}
+							</div>
+						{/if}
 					</div>
 					<p class="mt-4 text-[0.6875rem] text-parchment-500">
 						Provider changes stay staged until you apply them. Removing a provider also stages the
@@ -795,6 +1046,7 @@
 								name="model_id"
 								type="text"
 								autocomplete="off"
+								list="model-id-options"
 								bind:value={modelForm.model_id}
 								disabled={panelMode === 'model-edit'}
 								placeholder="llama-4-scout…"
@@ -809,6 +1061,65 @@
 								</p>
 							{/if}
 						</div>
+						<datalist id="model-id-options">
+							{#each modelAutofill.models as model (model.id)}
+								<option value={model.id}>{model.display_name}</option>
+							{/each}
+						</datalist>
+						<div class="field sm:col-span-2">
+							<label
+								for="model-autofill-token"
+								class="text-[0.8125rem] font-medium text-parchment-200"
+							>
+								API token
+								<span class="font-normal text-parchment-500">(optional)</span>
+							</label>
+							<div class="flex gap-2">
+								<TokenField id="model-autofill-token" bind:value={modelToken} />
+								<button
+									type="button"
+									onclick={() => autofillModel()}
+									disabled={modelAutofill.busy || !modelForm.model_id.trim()}
+									class="rounded-lg border border-clay-700 px-2.5 py-[0.45rem] text-[0.8125rem] font-medium text-parchment-300 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none disabled:opacity-50"
+								>
+									{modelAutofill.busy ? 'Autofilling…' : 'Autofill'}
+								</button>
+							</div>
+							<p class="text-[0.6875rem] text-parchment-500">
+								Used only to list this provider's models. It is not saved.
+							</p>
+						</div>
+						{#if modelAutofill.endpoint || modelAutofill.status || modelAutofill.notes.length || modelAutofill.candidates.length}
+							<div
+								class="rounded-lg border border-clay-700 bg-clay-950/60 px-3 py-2 text-[0.6875rem] text-parchment-500 sm:col-span-2"
+							>
+								{#if modelAutofill.endpoint}
+									<p>{modelAutofill.endpoint}</p>
+								{/if}
+								{#if modelAutofill.status}
+									<p class={modelAutofill.error ? 'text-terracotta-400' : ''}>
+										{modelAutofill.status}
+									</p>
+								{/if}
+								{#if modelAutofill.candidates.length}
+									<p class="mt-1">Several models.dev providers match:</p>
+									<div class="mt-1 flex flex-wrap gap-1.5">
+										{#each modelAutofill.candidates as candidate (candidate.models_dev_provider)}
+											<button
+												type="button"
+												onclick={() => chooseCandidate(candidate)}
+												class="rounded border border-clay-700 px-1.5 py-0.5 text-[0.6875rem] text-parchment-300 hover:bg-clay-800 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+											>
+												{candidate.name || candidate.models_dev_provider}
+											</button>
+										{/each}
+									</div>
+								{/if}
+								{#each modelAutofill.notes as note, index (index)}
+									<p class="mt-1">{note}</p>
+								{/each}
+							</div>
+						{/if}
 						<div class="field sm:col-span-2">
 							<label for="model-name" class="text-[0.8125rem] font-medium text-parchment-200"
 								>Display name</label
@@ -925,6 +1236,75 @@
 								/>
 								max_completion_tokens
 							</label>
+						</div>
+						<div class="mt-3 border-t border-dashed border-clay-700 pt-3">
+							<p class="text-[0.8125rem] font-medium text-parchment-300">Reasoning request</p>
+							<div class="mt-2 grid gap-2 sm:grid-cols-2">
+								<div>
+									<label for="model-knob-field" class="text-[0.6875rem] text-parchment-500"
+										>Toggle field</label
+									>
+									<input
+										id="model-knob-field"
+										name="reasoning_toggle_field"
+										type="text"
+										autocomplete="off"
+										bind:value={reasoningKnob.field}
+										placeholder="thinking.type…"
+										spellcheck="false"
+										class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] font-mono text-xs text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+								</div>
+								<div>
+									<label for="model-knob-effort" class="text-[0.6875rem] text-parchment-500"
+										>Effort field</label
+									>
+									<input
+										id="model-knob-effort"
+										name="reasoning_effort_field"
+										type="text"
+										autocomplete="off"
+										bind:value={reasoningKnob.effort}
+										placeholder="reasoning_effort…"
+										spellcheck="false"
+										class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] font-mono text-xs text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+								</div>
+								<div>
+									<label for="model-knob-on" class="text-[0.6875rem] text-parchment-500"
+										>On value</label
+									>
+									<input
+										id="model-knob-on"
+										name="reasoning_toggle_on"
+										type="text"
+										autocomplete="off"
+										bind:value={reasoningKnob.on}
+										placeholder="enabled…"
+										spellcheck="false"
+										class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] font-mono text-xs text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+								</div>
+								<div>
+									<label for="model-knob-off" class="text-[0.6875rem] text-parchment-500"
+										>Off value</label
+									>
+									<input
+										id="model-knob-off"
+										name="reasoning_toggle_off"
+										type="text"
+										autocomplete="off"
+										bind:value={reasoningKnob.off}
+										placeholder="disabled…"
+										spellcheck="false"
+										class="w-full rounded-lg border border-clay-800 bg-clay-950 px-2.5 py-[0.45rem] font-mono text-xs text-parchment-200 placeholder-parchment-500 focus:border-gold-500 focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:outline-none"
+									/>
+								</div>
+							</div>
+							<p class="mt-1 text-[0.6875rem] text-parchment-500">
+								Only for providers whose API does not take <code>reasoning_effort</code>.
+								<code>true</code> and <code>false</code> are sent as booleans.
+							</p>
 						</div>
 					</details>
 

@@ -151,7 +151,13 @@
       ],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": true
+      "supports_prompt_caching": true,
+      "reasoning_toggle": {
+        "field": "thinking.type",
+        "on": "enabled",
+        "off": "disabled"
+      },
+      "reasoning_effort_field": "reasoning_effort"
     },
     {
       "provider": "deepseek",
@@ -166,7 +172,13 @@
       ],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": true
+      "supports_prompt_caching": true,
+      "reasoning_toggle": {
+        "field": "thinking.type",
+        "on": "enabled",
+        "off": "disabled"
+      },
+      "reasoning_effort_field": "reasoning_effort"
     },
     {
       "provider": "mistral",
@@ -382,7 +394,7 @@
       "supports_prompt_caching": true
     },
     {
-      "provider": "qwen",
+      "provider": "alibaba",
       "model_id": "qwen3.7-max",
       "display_name": "Qwen 3.7 Max",
       "max_input_tokens": 1000000,
@@ -391,10 +403,15 @@
       "reasoning_efforts": [],
       "supports_structured_output": false,
       "supports_temperature": true,
-      "supports_prompt_caching": false
+      "supports_prompt_caching": false,
+      "reasoning_toggle": {
+        "field": "enable_thinking",
+        "on": true,
+        "off": false
+      }
     },
     {
-      "provider": "qwen",
+      "provider": "alibaba",
       "model_id": "qwen3.7-plus",
       "display_name": "Qwen 3.7 Plus",
       "max_input_tokens": 1000000,
@@ -403,10 +420,15 @@
       "reasoning_efforts": [],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": false
+      "supports_prompt_caching": false,
+      "reasoning_toggle": {
+        "field": "enable_thinking",
+        "on": true,
+        "off": false
+      }
     },
     {
-      "provider": "qwen",
+      "provider": "alibaba",
       "model_id": "qwen3.6-flash",
       "display_name": "Qwen 3.6 Flash",
       "max_input_tokens": 1000000,
@@ -415,10 +437,15 @@
       "reasoning_efforts": [],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": false
+      "supports_prompt_caching": false,
+      "reasoning_toggle": {
+        "field": "enable_thinking",
+        "on": true,
+        "off": false
+      }
     },
     {
-      "provider": "zhipu",
+      "provider": "zai",
       "model_id": "glm-5",
       "display_name": "GLM-5",
       "max_input_tokens": 204800,
@@ -427,10 +454,15 @@
       "reasoning_efforts": [],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": true
+      "supports_prompt_caching": true,
+      "reasoning_toggle": {
+        "field": "thinking.type",
+        "on": "enabled",
+        "off": "disabled"
+      }
     },
     {
-      "provider": "zhipu",
+      "provider": "zai",
       "model_id": "glm-5.1",
       "display_name": "GLM-5.1",
       "max_input_tokens": 200000,
@@ -439,10 +471,15 @@
       "reasoning_efforts": [],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": true
+      "supports_prompt_caching": true,
+      "reasoning_toggle": {
+        "field": "thinking.type",
+        "on": "enabled",
+        "off": "disabled"
+      }
     },
     {
-      "provider": "zhipu",
+      "provider": "zai",
       "model_id": "glm-5-turbo",
       "display_name": "GLM-5 Turbo",
       "max_input_tokens": 204800,
@@ -451,10 +488,15 @@
       "reasoning_efforts": [],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": true
+      "supports_prompt_caching": true,
+      "reasoning_toggle": {
+        "field": "thinking.type",
+        "on": "enabled",
+        "off": "disabled"
+      }
     },
     {
-      "provider": "zhipu",
+      "provider": "zai",
       "model_id": "glm-4.7",
       "display_name": "GLM-4.7",
       "max_input_tokens": 204800,
@@ -463,7 +505,12 @@
       "reasoning_efforts": [],
       "supports_structured_output": true,
       "supports_temperature": true,
-      "supports_prompt_caching": true
+      "supports_prompt_caching": true,
+      "reasoning_toggle": {
+        "field": "thinking.type",
+        "on": "enabled",
+        "off": "disabled"
+      }
     },
     {
       "provider": "opencode-go",

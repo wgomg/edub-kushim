@@ -178,11 +178,10 @@ func (l *LlmOpenAiCompatible) buildResponsesRequest(messages []openaiChatMessage
 	return body
 }
 
-// addThinkingConfig applies the catalog's two-state reasoning policy for the
-// chat and responses dialects: a disableable model takes its provider-native
-// disable form while the reasoning toggle is off; the rest run at the lowest
-// cataloged effort, except a model with no cataloged effort levels, which
-// sends no reasoning knob at all.
+// addThinkingConfig applies the catalog's two-state reasoning policy for the chat and responses dialects:
+// a disableable model takes its catalog-declared disable form while the reasoning toggle is off; the
+// rest run at the lowest cataloged effort, except a model with no cataloged effort levels, which sends
+// no reasoning knob at all.
 func (l *LlmOpenAiCompatible) addThinkingConfig(body map[string]any) {
 	if l.caps == nil {
 		return
@@ -211,31 +210,45 @@ func (l *LlmOpenAiCompatible) enableThinking(body map[string]any, effort string)
 		return
 	}
 
-	switch l.llmCfg.Provider {
-	case "deepseek":
-		body["thinking"] = map[string]string{"type": "enabled"}
-		body["reasoning_effort"] = effort
-
-	case "qwen":
-		body["enable_thinking"] = true
-
-	case "zhipu":
-		body["thinking"] = map[string]string{"type": "enabled"}
-
-	default:
-		body["reasoning_effort"] = effort
+	knob := l.caps.ReasoningKnob
+	if knob.Toggle != nil {
+		setBodyField(body, knob.Toggle.Field, knob.Toggle.On)
+	}
+	// a toggle-only knob carries the state alone; a knob without a toggle, or one that also names an effort
+	// field, sends the level
+	if field := knob.EffortField(); field != "" && (knob.Toggle == nil || knob.Effort != "") {
+		setBodyField(body, field, effort)
 	}
 }
 
 func (l *LlmOpenAiCompatible) disableThinking(body map[string]any) {
-	switch l.llmCfg.Provider {
-	case "deepseek", "zhipu":
-		body["thinking"] = map[string]string{"type": "disabled"}
-	case "qwen":
-		body["enable_thinking"] = false
-	default:
-		body["reasoning_effort"] = "none"
+	if l.caps.UsesResponsesEndpoint {
+		body["reasoning"] = map[string]string{"effort": "none"}
+		return
 	}
+
+	knob := l.caps.ReasoningKnob
+	if knob.Toggle != nil {
+		setBodyField(body, knob.Toggle.Field, knob.Toggle.Off)
+		return
+	}
+	setBodyField(body, knob.EffortField(), "none")
+}
+
+// setBodyField assigns value at a dot-separated field path, creating the intermediate objects the request
+// body needs. Catalog validation restricts every segment to letters, digits, "_" and "-".
+func setBodyField(body map[string]any, path string, value any) {
+	parts := strings.Split(path, ".")
+	target := body
+	for _, part := range parts[:len(parts)-1] {
+		next, ok := target[part].(map[string]any)
+		if !ok {
+			next = make(map[string]any)
+			target[part] = next
+		}
+		target = next
+	}
+	target[parts[len(parts)-1]] = value
 }
 
 func (l *LlmOpenAiCompatible) doRequest(ctx context.Context, reqBody map[string]any) (*openaiResponse, error) {

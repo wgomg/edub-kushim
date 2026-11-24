@@ -23,7 +23,7 @@ const llmInUseConfig = llmBaseConfig + `enricher:
   contentanalyzer:
     llm:
       adapter: openai-compatible
-      provider: zhipu
+      provider: zai
       model: glm-5
 `
 
@@ -50,14 +50,14 @@ func TestLLMVerbFieldSetPersists(t *testing.T) {
 	if err := runner.ExecuteCommand("llm", nil); err != nil {
 		t.Errorf("dump: %v", err)
 	}
-	if err := runner.ExecuteCommand("llm", []string{"providers.zhipu.adapter"}); err != nil {
+	if err := runner.ExecuteCommand("llm", []string{"providers.zai.adapter"}); err != nil {
 		t.Errorf("get: %v", err)
 	}
-	if err := runner.ExecuteCommand("llm", []string{"providers.zhipu.adapter", "custom-adapter"}); err != nil {
+	if err := runner.ExecuteCommand("llm", []string{"providers.zai.adapter", "custom-adapter"}); err != nil {
 		t.Fatalf("set a string field: %v", err)
 	}
 	if err := runner.ExecuteCommand("llm",
-		[]string{"models.zhipu/glm-5.supports_temperature", "false"}); err != nil {
+		[]string{"models.zai/glm-5.supports_temperature", "false"}); err != nil {
 		t.Fatalf("set a boolean field: %v", err)
 	}
 
@@ -98,21 +98,21 @@ func TestLLMVerbFieldSetPersists(t *testing.T) {
 func TestLLMVerbUnsetGuards(t *testing.T) {
 	referenced, _ := llmTestRunner(t, llmInUseConfig)
 
-	err := referenced.ExecuteCommand("llm", []string{"--unset", "providers.zhipu"})
+	err := referenced.ExecuteCommand("llm", []string{"--unset", "providers.zai"})
 	if err == nil || !strings.Contains(err.Error(), "in use") {
 		t.Errorf("unset a referenced provider: got %v, want an in-use error", err)
 	}
-	err = referenced.ExecuteCommand("llm", []string{"--unset", "models.zhipu/glm-5"})
+	err = referenced.ExecuteCommand("llm", []string{"--unset", "models.zai/glm-5"})
 	if err == nil || !strings.Contains(err.Error(), "in use") {
 		t.Errorf("unset a referenced model: got %v, want an in-use error", err)
 	}
 
 	plain, configDir := llmTestRunner(t, llmBaseConfig)
-	err = plain.ExecuteCommand("llm", []string{"--unset", "providers.zhipu"})
+	err = plain.ExecuteCommand("llm", []string{"--unset", "providers.zai"})
 	if err == nil || !strings.Contains(err.Error(), "models") {
 		t.Errorf("unset a provider with models: got %v, want an orphan-model error", err)
 	}
-	if err := plain.ExecuteCommand("llm", []string{"--unset", "providers.zhipu", "--cascade"}); err != nil {
+	if err := plain.ExecuteCommand("llm", []string{"--unset", "providers.zai", "--cascade"}); err != nil {
 		t.Fatalf("cascade unset: %v", err)
 	}
 	for _, name := range []string{"provider_catalog.json", "model_catalog.json"} {
@@ -120,8 +120,8 @@ func TestLLMVerbUnsetGuards(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(data), "zhipu") {
-			t.Errorf("cascade left zhipu in %s:\n%s", name, data)
+		if strings.Contains(string(data), "zai") {
+			t.Errorf("cascade left zai in %s:\n%s", name, data)
 		}
 	}
 }
@@ -141,5 +141,49 @@ func TestLLMVerbResetRecoversMangledCatalog(t *testing.T) {
 	}
 	if _, err := llm.NewRegistry(configDir); err != nil {
 		t.Errorf("catalogs must load after --reset: %v", err)
+	}
+}
+
+func catalogToggle(t *testing.T, path, modelID string) *llm.ReasoningToggle {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Models []struct {
+			ModelID         string               `json:"model_id"`
+			ReasoningToggle *llm.ReasoningToggle `json:"reasoning_toggle"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode model catalog: %v", err)
+	}
+	for _, model := range doc.Models {
+		if model.ModelID == modelID {
+			return model.ReasoningToggle
+		}
+	}
+	t.Fatalf("model %s missing from %s", modelID, path)
+	return nil
+}
+
+func TestLLMVerbReasoningToggleRoundTrip(t *testing.T) {
+	runner, configDir := llmTestRunner(t, llmBaseConfig)
+	const key = "models.deepseek/deepseek-flash.reasoning_toggle"
+	const toggle = `{"field":"thinking.type","on":"enabled","off":"disabled"}`
+	path := filepath.Join(configDir, "model_catalog.json")
+
+	if err := runner.ExecuteCommand("llm", []string{key, toggle}); err != nil {
+		t.Fatalf("set reasoning_toggle: %v", err)
+	}
+	if got := catalogToggle(t, path, "deepseek-flash"); got == nil || got.Field != "thinking.type" {
+		t.Fatalf("cataloged toggle = %+v, want thinking.type", got)
+	}
+	if err := runner.ExecuteCommand("llm", []string{key, ""}); err != nil {
+		t.Fatalf("clear reasoning_toggle: %v", err)
+	}
+	if got := catalogToggle(t, path, "deepseek-flash"); got != nil {
+		t.Errorf("clearing the toggle left it in the catalog: %+v", got)
 	}
 }

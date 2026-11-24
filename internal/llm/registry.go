@@ -46,6 +46,43 @@ func SessionID() string {
 	return sessionID
 }
 
+// ReasoningToggle names the request field that switches a model's reasoning on and off, as a dot-separated
+// path, and the value each state takes; On and Off are a string or a boolean.
+type ReasoningToggle struct {
+	Field string `json:"field"`
+	On    any    `json:"on"`
+	Off   any    `json:"off"`
+}
+
+// ReasoningKnob is the request shape that carries a model's reasoning state: the optional toggle and
+// the field that takes the effort level. A knob with neither a toggle nor an effort field leaves the
+// OpenAI-compatible default, reasoning_effort.
+type ReasoningKnob struct {
+	Toggle *ReasoningToggle
+	Effort string
+}
+
+// EffortField returns the request field that takes the effort level: Effort, reasoning_effort for a
+// knob that names neither a toggle nor an effort field, and empty when a toggle carries the state alone.
+func (k ReasoningKnob) EffortField() string {
+	if k.Effort != "" {
+		return k.Effort
+	}
+	if k.Toggle != nil {
+		return ""
+	}
+	return "reasoning_effort"
+}
+
+// clone returns a copy whose toggle the caller cannot share with the catalog entry.
+func (k ReasoningKnob) clone() ReasoningKnob {
+	if k.Toggle != nil {
+		t := *k.Toggle
+		k.Toggle = &t
+	}
+	return k
+}
+
 // ModelCapability is what a cataloged model allows: reasoning control and
 // effort levels, temperature, prompt caching, structured output, the output
 // bound's request field, the request dialect, and the context and output
@@ -70,6 +107,11 @@ type ModelCapability struct {
 	// UsesResponsesEndpoint selects the Responses-API dialect (endpoint path,
 	// request body, response shape) inside the OpenAI-compatible adapter.
 	UsesResponsesEndpoint bool
+
+	// ReasoningKnob is the request shape the OpenAI-compatible adapter sends for this model; a zero knob
+	// is the OpenAI default of a bare reasoning_effort. It is not part of the API surface: the editor reads
+	// the catalog fields.
+	ReasoningKnob ReasoningKnob `json:"-"`
 }
 
 // RunsAtEffortLevel reports that a model with no disable flag falls back to a
@@ -77,6 +119,50 @@ type ModelCapability struct {
 // callers may widen the budget for them.
 func (c *ModelCapability) RunsAtEffortLevel() bool {
 	return c != nil && !c.CanDisableReasoning && len(c.ReasoningEffortLevels) > 0
+}
+
+var embeddedReasoningKnobs = sync.OnceValues(loadEmbeddedReasoningKnobs)
+
+// loadEmbeddedReasoningKnobs parses the embedded default catalog and indexes its reasoning request shapes
+// by provider; a corrupt embedded catalog returns an error instead of an empty index.
+func loadEmbeddedReasoningKnobs() (map[string]ReasoningKnob, error) {
+	var doc modelCatalogDoc
+	if err := json.Unmarshal(defaultModelCatalog, &doc); err != nil {
+		return nil, fmt.Errorf("parse embedded model catalog: %w", err)
+	}
+	knobs := make(map[string]ReasoningKnob)
+	for _, e := range doc.Models {
+		if e.ReasoningToggle == nil && e.ReasoningEffortField == "" {
+			continue
+		}
+		if _, ok := knobs[e.Provider]; ok {
+			continue
+		}
+		knobs[e.Provider] = ReasoningKnob{Toggle: e.ReasoningToggle, Effort: e.ReasoningEffortField}
+	}
+	return knobs, nil
+}
+
+// DefaultReasoningKnob returns the reasoning request shape the embedded default catalog declares for a
+// provider and reports whether the provider has one, plus an error when the embedded catalog is corrupt.
+// The first default entry of a provider that declares either field supplies the shape; a legacy provider
+// name resolves through providerAliases. The catalog editor uses it for the fields models.dev and the
+// provider's model list cannot describe.
+func DefaultReasoningKnob(provider string) (ReasoningKnob, bool, error) {
+	knobs, err := embeddedReasoningKnobs()
+	if err != nil {
+		return ReasoningKnob{}, false, err
+	}
+	knob, ok := knobs[provider]
+	if !ok {
+		if current, alias := providerAliases[provider]; alias {
+			knob, ok = knobs[current]
+		}
+	}
+	if !ok {
+		return ReasoningKnob{}, false, nil
+	}
+	return knob.clone(), true, nil
 }
 
 // ProviderModel is one cataloged model of a provider, as exposed to the API surface.
@@ -94,18 +180,20 @@ type providerEntry struct {
 }
 
 type modelEntry struct {
-	Provider                 string   `json:"provider"`
-	ModelID                  string   `json:"model_id"`
-	DisplayName              string   `json:"display_name"`
-	MaxInputTokens           int      `json:"max_input_tokens"`
-	MaxOutputTokens          int      `json:"max_output_tokens"`
-	DisableReasoning         bool     `json:"disable_reasoning,omitempty"`
-	ReasoningEfforts         []string `json:"reasoning_efforts,omitempty"`
-	SupportsStructuredOutput bool     `json:"supports_structured_output"`
-	SupportsTemperature      bool     `json:"supports_temperature"`
-	SupportsPromptCaching    bool     `json:"supports_prompt_caching"`
-	UsesMaxCompletionTokens  bool     `json:"uses_max_completion_tokens,omitempty"`
-	UsesResponsesEndpoint    bool     `json:"uses_responses_endpoint,omitempty"`
+	Provider                 string           `json:"provider"`
+	ModelID                  string           `json:"model_id"`
+	DisplayName              string           `json:"display_name"`
+	MaxInputTokens           int              `json:"max_input_tokens"`
+	MaxOutputTokens          int              `json:"max_output_tokens"`
+	DisableReasoning         bool             `json:"disable_reasoning,omitempty"`
+	ReasoningEfforts         []string         `json:"reasoning_efforts,omitempty"`
+	SupportsStructuredOutput bool             `json:"supports_structured_output"`
+	SupportsTemperature      bool             `json:"supports_temperature"`
+	SupportsPromptCaching    bool             `json:"supports_prompt_caching"`
+	UsesMaxCompletionTokens  bool             `json:"uses_max_completion_tokens,omitempty"`
+	UsesResponsesEndpoint    bool             `json:"uses_responses_endpoint,omitempty"`
+	ReasoningToggle          *ReasoningToggle `json:"reasoning_toggle,omitempty"`
+	ReasoningEffortField     string           `json:"reasoning_effort_field,omitempty"`
 }
 
 // providerCatalogDoc is the on-disk provider catalog: the format version, the provider entries, and
@@ -426,20 +514,40 @@ func entryToCapability(e *modelEntry) *ModelCapability {
 		MaxOutputTokens:          e.MaxOutputTokens,
 		UsesMaxCompletionTokens:  e.UsesMaxCompletionTokens,
 		UsesResponsesEndpoint:    e.UsesResponsesEndpoint,
+		ReasoningKnob:            ReasoningKnob{Toggle: e.ReasoningToggle, Effort: e.ReasoningEffortField}.clone(),
 	}
 }
 
-// Lookup returns the capability of a provider/model pair, nil when the
-// pair is not cataloged.
+// Lookup returns the capability of a provider/model pair, nil when the pair is not cataloged. A provider
+// the catalog does not define under its current name resolves through providerAliases.
 func (r *Registry) Lookup(provider, modelID string) *ModelCapability {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	i, ok := r.index[modelKey(provider, modelID)]
+	i, ok := r.index[modelKey(r.resolveProvider(provider), modelID)]
 	if !ok {
 		return nil
 	}
 	return entryToCapability(&r.models[i])
+}
+
+// providerAliases maps the provider names older default catalogs used to the names models.dev gives the
+// same providers, so configurations written against those defaults keep resolving after a catalog reset.
+var providerAliases = map[string]string{
+	"qwen":  "alibaba",
+	"zhipu": "zai",
+}
+
+// resolveProvider returns the provider itself when the catalog defines it, else the current name of a
+// legacy alias, else the provider unchanged. Callers hold the read lock.
+func (r *Registry) resolveProvider(provider string) string {
+	if _, ok := r.providers[provider]; ok {
+		return provider
+	}
+	if current, ok := providerAliases[provider]; ok {
+		return current
+	}
+	return provider
 }
 
 // Adapters lists the distinct adapter keys in the catalog, sorted.
@@ -496,7 +604,7 @@ func (r *Registry) ModelsForProvider(provider string) []ProviderModel {
 func (r *Registry) ProviderDefaultURL(provider string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.providers[provider].OfficialURL
+	return r.providers[r.resolveProvider(provider)].OfficialURL
 }
 
 // ProviderSessionHeader returns the header a provider expects its client
@@ -504,14 +612,14 @@ func (r *Registry) ProviderDefaultURL(provider string) string {
 func (r *Registry) ProviderSessionHeader(provider string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.providers[provider].SessionHeader
+	return r.providers[r.resolveProvider(provider)].SessionHeader
 }
 
 // ProviderAdapter returns the provider's adapter kind, custom when the provider catalog does not name one.
 func (r *Registry) ProviderAdapter(provider string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	p, ok := r.providers[provider]
+	p, ok := r.providers[r.resolveProvider(provider)]
 	if !ok {
 		return "custom"
 	}

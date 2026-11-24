@@ -23,6 +23,9 @@ const catalogLockFile = "catalog.lock"
 // headerTokenRE matches an HTTP field-name token, the shape a provider's session header must have.
 var headerTokenRE = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
+// reasoningFieldPathRE matches a dot-separated request field path, the shape a reasoning knob names.
+var reasoningFieldPathRE = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
+
 // ProviderInput is a provider's editable catalog fields: the name (its key), the adapter kind, the endpoint
 // base URL, and the optional session header the provider expects its client session identifier in.
 type ProviderInput struct {
@@ -33,20 +36,23 @@ type ProviderInput struct {
 }
 
 // ModelInput is a model's editable catalog fields, mirroring the on-disk entry: its key (provider and
-// model id), display name, token limits and capability flags.
+// model id), display name, token limits, capability flags, and the optional vendor reasoning request
+// shape.
 type ModelInput struct {
-	Provider                 string   `json:"provider"`
-	ModelID                  string   `json:"model_id"`
-	DisplayName              string   `json:"display_name,omitempty"`
-	MaxInputTokens           int      `json:"max_input_tokens,omitempty"`
-	MaxOutputTokens          int      `json:"max_output_tokens,omitempty"`
-	DisableReasoning         bool     `json:"disable_reasoning,omitempty"`
-	ReasoningEfforts         []string `json:"reasoning_efforts,omitempty"`
-	SupportsStructuredOutput bool     `json:"supports_structured_output,omitempty"`
-	SupportsTemperature      bool     `json:"supports_temperature,omitempty"`
-	SupportsPromptCaching    bool     `json:"supports_prompt_caching,omitempty"`
-	UsesMaxCompletionTokens  bool     `json:"uses_max_completion_tokens,omitempty"`
-	UsesResponsesEndpoint    bool     `json:"uses_responses_endpoint,omitempty"`
+	Provider                 string           `json:"provider"`
+	ModelID                  string           `json:"model_id"`
+	DisplayName              string           `json:"display_name,omitempty"`
+	MaxInputTokens           int              `json:"max_input_tokens,omitempty"`
+	MaxOutputTokens          int              `json:"max_output_tokens,omitempty"`
+	DisableReasoning         bool             `json:"disable_reasoning,omitempty"`
+	ReasoningEfforts         []string         `json:"reasoning_efforts,omitempty"`
+	SupportsStructuredOutput bool             `json:"supports_structured_output,omitempty"`
+	SupportsTemperature      bool             `json:"supports_temperature,omitempty"`
+	SupportsPromptCaching    bool             `json:"supports_prompt_caching,omitempty"`
+	UsesMaxCompletionTokens  bool             `json:"uses_max_completion_tokens,omitempty"`
+	UsesResponsesEndpoint    bool             `json:"uses_responses_endpoint,omitempty"`
+	ReasoningToggle          *ReasoningToggle `json:"reasoning_toggle,omitempty"`
+	ReasoningEffortField     string           `json:"reasoning_effort_field,omitempty"`
 }
 
 // Catalog is the full editable catalog: every provider, including the ones with no models, and every
@@ -394,6 +400,16 @@ func (r *Registry) applyMutation(op string, m func(st catalogState) (catalogChan
 	return nil
 }
 
+// ParseEndpointURL parses value as an absolute http(s) URL, the only kind the catalog accepts as a provider
+// endpoint, and reports whether it is one.
+func ParseEndpointURL(value string) (*url.URL, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return nil, false
+	}
+	return parsed, true
+}
+
 // providerEntryFrom builds and validates a provider entry: a name, an adapter and an absolute http(s)
 // official_url are required, the name must avoid "." and "/" because both delimit catalog keys, and
 // the session header, when set, must be a valid HTTP header name.
@@ -409,14 +425,47 @@ func providerEntryFrom(name string, in ProviderInput) (providerEntry, error) {
 	if strings.ContainsAny(name, "./") {
 		return providerEntry{}, fmt.Errorf("provider %q must not contain %q or %q, both catalog key delimiters", name, ".", "/")
 	}
-	parsed, err := url.Parse(officialURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+	if _, ok := ParseEndpointURL(officialURL); !ok {
 		return providerEntry{}, fmt.Errorf("official_url %q must be an absolute http(s) URL", officialURL)
 	}
 	if header != "" && !headerTokenRE.MatchString(header) {
 		return providerEntry{}, fmt.Errorf("session_header %q is not a valid HTTP header name", header)
 	}
 	return providerEntry{Provider: name, Adapter: adapter, OfficialURL: officialURL, SessionHeader: header}, nil
+}
+
+// reasoningToggleFrom trims and validates a model's reasoning toggle: the field must be a dot-separated
+// request path and the two values must differ and each be a string or a boolean, the only JSON scalars
+// an adapter can place at a field path.
+func reasoningToggleFrom(in *ReasoningToggle) (*ReasoningToggle, error) {
+	if in == nil {
+		return nil, nil
+	}
+	toggle := *in
+	toggle.Field = strings.TrimSpace(toggle.Field)
+	if s, ok := toggle.On.(string); ok {
+		toggle.On = strings.TrimSpace(s)
+	}
+	if s, ok := toggle.Off.(string); ok {
+		toggle.Off = strings.TrimSpace(s)
+	}
+	if !reasoningFieldPathRE.MatchString(toggle.Field) {
+		return nil, fmt.Errorf("reasoning_toggle.field %q must be a dot-separated request field path", toggle.Field)
+	}
+	for _, v := range []struct {
+		name  string
+		value any
+	}{{"on", toggle.On}, {"off", toggle.Off}} {
+		switch v.value.(type) {
+		case string, bool:
+		default:
+			return nil, fmt.Errorf("reasoning_toggle.%s must be a string or a boolean", v.name)
+		}
+	}
+	if toggle.On == toggle.Off {
+		return nil, errors.New("reasoning_toggle.on and reasoning_toggle.off must be different")
+	}
+	return &toggle, nil
 }
 
 // modelEntryFrom builds and validates a model entry: provider and model_id are required, token limits
@@ -440,6 +489,15 @@ func modelEntryFrom(provider, modelID string, in ModelInput) (modelEntry, error)
 		efforts = append(efforts, e)
 	}
 
+	toggle, err := reasoningToggleFrom(in.ReasoningToggle)
+	if err != nil {
+		return modelEntry{}, err
+	}
+	effortField := strings.TrimSpace(in.ReasoningEffortField)
+	if effortField != "" && !reasoningFieldPathRE.MatchString(effortField) {
+		return modelEntry{}, fmt.Errorf("reasoning_effort_field %q must be a dot-separated request field path", effortField)
+	}
+
 	return modelEntry{
 		Provider:                 provider,
 		ModelID:                  modelID,
@@ -453,6 +511,8 @@ func modelEntryFrom(provider, modelID string, in ModelInput) (modelEntry, error)
 		SupportsPromptCaching:    in.SupportsPromptCaching,
 		UsesMaxCompletionTokens:  in.UsesMaxCompletionTokens,
 		UsesResponsesEndpoint:    in.UsesResponsesEndpoint,
+		ReasoningToggle:          toggle,
+		ReasoningEffortField:     effortField,
 	}, nil
 }
 
@@ -468,6 +528,11 @@ func providerInputFrom(p providerEntry) ProviderInput {
 
 // modelInputFrom maps a catalog entry to its editable view.
 func modelInputFrom(m modelEntry) ModelInput {
+	toggle := m.ReasoningToggle
+	if toggle != nil {
+		copied := *toggle
+		toggle = &copied
+	}
 	return ModelInput{
 		Provider:                 m.Provider,
 		ModelID:                  m.ModelID,
@@ -481,6 +546,8 @@ func modelInputFrom(m modelEntry) ModelInput {
 		SupportsPromptCaching:    m.SupportsPromptCaching,
 		UsesMaxCompletionTokens:  m.UsesMaxCompletionTokens,
 		UsesResponsesEndpoint:    m.UsesResponsesEndpoint,
+		ReasoningToggle:          toggle,
+		ReasoningEffortField:     m.ReasoningEffortField,
 	}
 }
 

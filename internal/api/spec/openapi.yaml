@@ -1623,6 +1623,38 @@ paths:
                 properties:
                   error:
                     type: string
+  /api/v1/llm/catalog/autofill:
+    post:
+      summary: Autofill proposes catalog values for the provider and model forms from models.dev and the provider's model-list endpoint.
+      description: |-
+        It is read-only: the editor still saves through the catalog mutations, so the
+        token in the body is used for the probe and never stored.
+      operationId: postApiV1LlmCatalogAutofill
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutofillRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutofillResponse'
+        "400":
+          description: Bad Request
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/llm/models:
     get:
       summary: ListModels serves the catalog's adapters, providers and models.
@@ -5743,6 +5775,53 @@ components:
         - initialized
         - log_level
         - logging
+    AutofillRequest:
+      type: object
+      description: |-
+        AutofillRequest is one autofill lookup: the provider form's current values, the model being edited when
+        the model form asks, an optional models.dev provider id picked from an earlier response's candidates,
+        and the optional provider token used only for the model-list probe.
+      properties:
+        adapter:
+          type: string
+        model_id:
+          type: string
+        models_dev_provider:
+          type: string
+        official_url:
+          type: string
+        provider:
+          type: string
+        token:
+          type: string
+    AutofillResponse:
+      type: object
+      description: |-
+        AutofillResponse is what the lookup found. An absent field means the sources had nothing for it, so
+        the editor leaves the form value untouched; the notes explain every source that failed or disagreed.
+      properties:
+        endpoint:
+          $ref: '#/components/schemas/EndpointStatus'
+        filled:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilledField'
+        model:
+          $ref: '#/components/schemas/ModelFields'
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelRef'
+        notes:
+          type: array
+          items:
+            type: string
+        provider:
+          $ref: '#/components/schemas/ProviderSuggestion'
+        provider_candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderCandidate'
     AvailableFileType:
       type: object
       description: AvailableFileType is one ingest format the UI can offer.
@@ -6750,6 +6829,22 @@ components:
         - enabled
         - binary
         - timeout
+    EndpointStatus:
+      type: object
+      description: |-
+        EndpointStatus reports how the provider's model-list probe ended: URL is the probed address, Status
+        one of ok, unauthorized, not_found, redirected, unreachable or invalid_response, and Detail a short
+        classification that never carries the response body.
+      properties:
+        detail:
+          type: string
+        status:
+          type: string
+        url:
+          type: string
+      required:
+        - url
+        - status
     EngineEntry:
       type: object
       description: |-
@@ -6951,6 +7046,17 @@ components:
       required:
         - min
         - max
+    FilledField:
+      type: object
+      description: FilledField names one field the lookup filled and the source that supplied it.
+      properties:
+        field:
+          type: string
+        source:
+          type: string
+      required:
+        - field
+        - source
     Filter:
       type: object
       description: |-
@@ -7242,11 +7348,45 @@ components:
         - path
         - interval
         - time
+    ModelFields:
+      type: object
+      description: |-
+        ModelFields is the model form's suggestion set: every key is the ModelInput JSON name of the same
+        field, and a present key means a source reported it. The two reasoning request fields come from the
+        embedded default catalog only.
+      properties:
+        disable_reasoning:
+          type: boolean
+        display_name:
+          type: string
+        max_input_tokens:
+          type: integer
+        max_output_tokens:
+          type: integer
+        reasoning_effort_field:
+          type: string
+        reasoning_efforts:
+          type: array
+          items:
+            type: string
+        reasoning_toggle:
+          $ref: '#/components/schemas/ReasoningToggle'
+        supports_prompt_caching:
+          type: boolean
+        supports_structured_output:
+          type: boolean
+        supports_temperature:
+          type: boolean
+        uses_max_completion_tokens:
+          type: boolean
+        uses_responses_endpoint:
+          type: boolean
     ModelInput:
       type: object
       description: |-
         ModelInput is a model's editable catalog fields, mirroring the on-disk entry: its key (provider and
-        model id), display name, token limits and capability flags.
+        model id), display name, token limits, capability flags, and the optional vendor reasoning request
+        shape.
       properties:
         disable_reasoning:
           type: boolean
@@ -7260,10 +7400,14 @@ components:
           type: string
         provider:
           type: string
+        reasoning_effort_field:
+          type: string
         reasoning_efforts:
           type: array
           items:
             type: string
+        reasoning_toggle:
+          $ref: '#/components/schemas/ReasoningToggle'
         supports_prompt_caching:
           type: boolean
         supports_structured_output:
@@ -7277,6 +7421,18 @@ components:
       required:
         - provider
         - model_id
+    ModelRef:
+      type: object
+      description: |-
+        ModelRef is one model id the provider's endpoint listed, with its display name when the endpoint does
+        publish one.
+      properties:
+        display_name:
+          type: string
+        id:
+          type: string
+      required:
+        - id
     OCRResponse:
       type: object
       description: OCRResponse is the OCR section's API view.
@@ -7455,6 +7611,19 @@ components:
         - active_batches
         - orphaned_batches
         - missing_tools
+    ProviderCandidate:
+      type: object
+      description: |-
+        ProviderCandidate is one plausible models.dev provider when the request matched several; the editor
+        repeats the lookup with ModelsDevProvider set to the chosen id.
+      properties:
+        models_dev_provider:
+          type: string
+        name:
+          type: string
+      required:
+        - models_dev_provider
+        - name
     ProviderInput:
       type: object
       description: |-
@@ -7473,6 +7642,16 @@ components:
         - provider
         - adapter
         - official_url
+    ProviderSuggestion:
+      type: object
+      description: |-
+        ProviderSuggestion is what the provider form takes from models.dev: the endpoint base of the protocol
+        the adapter speaks, and the adapter when the current one cannot work.
+      properties:
+        adapter:
+          type: string
+        official_url:
+          type: string
     ProvisionalTagListResponse:
       type: object
       description: |-
@@ -7571,6 +7750,26 @@ components:
         - created_at
         - verdict
         - pending_identity
+    ReasoningToggle:
+      type: object
+      description: |-
+        ReasoningToggle names the request field that switches a model's reasoning on and off, as a dot-separated
+        path, and the value each state takes; On and Off are a string or a boolean.
+      properties:
+        field:
+          type: string
+        "off":
+          anyOf:
+            - type: object
+            - type: "null"
+        "on":
+          anyOf:
+            - type: object
+            - type: "null"
+      required:
+        - field
+        - "on"
+        - "off"
     ReclaimConfigResponse:
       type: object
       description: ReclaimConfigResponse is the reclaim section's API view.

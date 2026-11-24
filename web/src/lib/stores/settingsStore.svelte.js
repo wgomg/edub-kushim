@@ -763,6 +763,10 @@ function removeModel(provider, modelId) {
 	];
 }
 
+async function autofillCatalog(payload) {
+	return api.llm.autofill(payload);
+}
+
 async function resetCatalog() {
 	if (busy) {
 		toastStore.error('Wait for the current operation to finish before restoring catalogs.');
@@ -886,5 +890,6 @@ export const settingsStore = {
 	addModel,
 	updateModel,
 	removeModel,
+	autofillCatalog,
 	resetCatalog
 };

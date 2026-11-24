@@ -641,3 +641,62 @@ func TestConcurrentReloadAndProviderReads(t *testing.T) {
 		<-done
 	}
 }
+
+func TestDefaultReasoningKnobFromEmbeddedDefaults(t *testing.T) {
+	tests := []struct {
+		provider string
+		field    string
+		on, off  any
+		effort   string
+		wantKnob bool
+	}{
+		{"deepseek", "thinking.type", "enabled", "disabled", "reasoning_effort", true},
+		{"alibaba", "enable_thinking", true, false, "", true},
+		{"qwen", "enable_thinking", true, false, "", true},
+		{"zai", "thinking.type", "enabled", "disabled", "", true},
+		{"unknown", "", nil, nil, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			knob, found, err := DefaultReasoningKnob(tt.provider)
+			if err != nil {
+				t.Fatalf("DefaultReasoningKnob(%q) error = %v", tt.provider, err)
+			}
+			if found != tt.wantKnob {
+				t.Fatalf("found = %v, want %v", found, tt.wantKnob)
+			}
+			if !found {
+				return
+			}
+			if knob.Toggle == nil || knob.Toggle.Field != tt.field ||
+				knob.Toggle.On != tt.on || knob.Toggle.Off != tt.off {
+				t.Errorf("toggle = %+v, want field %q with %v/%v", knob.Toggle, tt.field, tt.on, tt.off)
+			}
+			if knob.Effort != tt.effort {
+				t.Errorf("effort field = %q, want %q", knob.Effort, tt.effort)
+			}
+		})
+	}
+}
+
+func TestLegacyProviderNamesResolveAgainstCurrentDefaults(t *testing.T) {
+	r, err := NewRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Lookup("qwen", "qwen3.7-plus") == nil {
+		t.Error("qwen should resolve its model against the renamed alibaba defaults")
+	}
+	if r.Lookup("zhipu", "glm-5") == nil {
+		t.Error("zhipu should resolve its model against the renamed zai defaults")
+	}
+	if got := r.ProviderDefaultURL("qwen"); got != "https://dashscope-intl.aliyuncs.com/compatible-mode/v1" {
+		t.Errorf("ProviderDefaultURL(qwen) = %q, want the alibaba endpoint", got)
+	}
+	if got := r.ProviderAdapter("qwen"); got != "openai-compatible" {
+		t.Errorf("ProviderAdapter(qwen) = %q, want openai-compatible", got)
+	}
+	if got := r.ProviderDefaultURL("unknown"); got != "" {
+		t.Errorf("ProviderDefaultURL(unknown) = %q, want empty", got)
+	}
+}

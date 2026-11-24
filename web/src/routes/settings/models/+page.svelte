@@ -47,5 +47,6 @@
 	onAddModel={settingsStore.addModel}
 	onUpdateModel={settingsStore.updateModel}
 	onRemoveModel={settingsStore.removeModel}
+	onAutofill={settingsStore.autofillCatalog}
 	onReset={settingsStore.resetCatalog}
 />

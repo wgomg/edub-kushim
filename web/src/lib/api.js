@@ -562,6 +562,13 @@ export const api = {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)
+			}),
+
+		autofill: (body) =>
+			requestRaw('/api/v1/llm/catalog/autofill', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
 			})
 	},
 

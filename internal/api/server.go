@@ -21,6 +21,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/documents/consumption"
 	"github.com/wgomg/edub-kushim/internal/enrichment"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/llm/autofill"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
 	"github.com/wgomg/edub-kushim/internal/ops/configtask"
@@ -208,9 +209,10 @@ func registerRoutes(
 	if err != nil {
 		logger.Error("", "load model catalogs: %v", err)
 	}
-	llmHandler := handlers.NewLlmHandler(llmRegistry, cfg.App.ConfigDir, getConfig, logger)
+	llmHandler := handlers.NewLlmHandler(llmRegistry, cfg.App.ConfigDir, getConfig, autofill.NewClient(), logger)
 	mux.Handle("GET /api/v1/llm/models", RequireRole(viewer...)(http.HandlerFunc(llmHandler.ListModels)))
 	mux.Handle("GET /api/v1/llm/catalog", RequireRole(viewer...)(http.HandlerFunc(llmHandler.GetCatalog)))
+	mux.Handle("POST /api/v1/llm/catalog/autofill", RequireRole(admin...)(http.HandlerFunc(llmHandler.Autofill)))
 	mux.Handle("POST /api/v1/llm/providers", RequireRole(admin...)(http.HandlerFunc(llmHandler.AddProvider)))
 	mux.Handle("PUT /api/v1/llm/providers/{name}", RequireRole(admin...)(http.HandlerFunc(llmHandler.SetProvider)))
 	mux.Handle("DELETE /api/v1/llm/providers/{name}", RequireRole(admin...)(http.HandlerFunc(llmHandler.RemoveProvider)))

@@ -231,7 +231,7 @@ as a **hub** plus one focused page per area:
 | Intake | `/settings/intake` | uploads & server, watched inbox, accepted file types, office converter |
 | Processing | `/settings/processing` | OCR, text extraction, PDF optimizer, thumbnails, throughput & recovery |
 | Enrichment | `/settings/enrichment` | content analyzer, tag matcher, knowledge base, adjudicator, lexical gate, quality, reconciliation, measurement, workers |
-| AI providers & models | `/settings/models` | the provider/model catalog (master–detail editor) |
+| AI providers & models | `/settings/models` | the provider/model catalog (master–detail editor with form autofill) |
 | Storage | `/settings/storage` | directories, trash retention, database connection |
 | Safety | `/settings/safety` | backups (per-mode schedules), mirror |
 | Access | `/settings/access` | sign-in toggle, user management |
@@ -323,8 +323,14 @@ amber banner is the same signal at global scope.
   enrichment workers. An at-a-glance strip links to the catalog page.
 - **Models** — master–detail: filterable provider pane (`?provider=` deep-link), model table
   with capability chips and a *Used by* column; add/edit/remove side panels stage catalog
-  operations (they apply with **Apply Changes**, not immediately); *Restore Default Catalogs*
-  sits in a danger section and replaces both catalog files after a confirmation.
+  operations (they apply with **Apply Changes**, not immediately). The provider and model
+  forms carry an **Autofill** button: it proposes the endpoint, adapter, token limits,
+  capability flags and the vendor reasoning request shape from models.dev and, when you give
+  it an optional API token for the call (never saved), from the provider's own model list;
+  whatever it cannot find stays yours to fill in. The model form offers the endpoint's model
+  ids as suggestions and exposes the reasoning request fields under *Capabilities*.
+  *Restore Default Catalogs* sits in a danger section and replaces both catalog files after a
+  confirmation.
 - **Storage** — directories (consumption, storage, migration mode with a warning for `move`),
   trash retention, database connection (host/port/user/name/ssl mode, runtime with
   container name).

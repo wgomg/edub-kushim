@@ -6,7 +6,7 @@ A self-hosted document management system. Point it at a folder of PDFs and it or
 
 Tags stay clean without effort: near-duplicate labels are merged as your vocabulary grows, so you never end up with `car repair`, `car-repair`, and `repairing a car` fighting over the same idea. Expect a large tag review queue on a fresh collection — the judges have no stored decisions yet — and watch it shrink as the scheduled passes promote, merge and retire candidates while later emissions reuse the decisions already made. And nothing needs babysitting — if a run is interrupted by a crash or a restart, the unfinished work is detected and retried automatically.
 
-Classification runs on an LLM of your choice. A starter catalog of providers and models ships with the app, and you can bring your own — manage both on the **AI providers & models** settings page, using [models.dev/providers](https://models.dev/providers/) as the reference for what to enter. **Before adding anything to the catalog, check it:** the entry is exactly how the app talks to that model, so verify the endpoint and key work and that what you record about the model (context window, output limits, structured-output support) matches reality — a wrong entry surfaces as failed or degraded classification.
+Classification runs on an LLM of your choice. A starter catalog of providers and models ships with the app, and you can bring your own — manage both on the **AI providers & models** settings page. Its **Autofill** button proposes the endpoint, limits, capabilities and the vendor reasoning shape from [models.dev](https://models.dev) and the provider's own model list; anything it cannot find is yours to fill in. **Check the entry before saving:** it is exactly how the app talks to that model, so verify the endpoint and key work and that the recorded capabilities match reality — a wrong entry surfaces as failed or degraded classification.
 
 It ships as two small programs: **kushim** does the heavy lifting behind the scenes (reading PDFs, running OCR, and the engine that matches tags), while **edub** serves the web interface and API.
 
@@ -211,7 +211,7 @@ New to the codebase? The guides in [`docs/developer-guide/`](docs/developer-guid
 
 ## Key Features
 
-- **Unattended bulk classification with auto-recovery** — every document in a batch gets tags, type, title, and people extracted without manual intervention; labels are normalized against the existing vocabulary, and stuck processing tasks are reclaimed and retried automatically. LLM providers: OpenAI, Anthropic, DeepSeek, Mistral, Qwen, Zhipu
+- **Unattended bulk classification with auto-recovery** — every document in a batch gets tags, type, title, and people extracted without manual intervention; labels are normalized against the existing vocabulary, and stuck processing tasks are reclaimed and retried automatically. LLM providers: OpenAI, Anthropic, DeepSeek, Mistral, Alibaba (Qwen), Z.AI (GLM)
 - **Semantic tag matching** — Hugot embeddings with cosine similarity (Go or ONNX Runtime backend) over a canonical tag vocabulary ([guide](docs/developer-guide/semantic-matching.md))
 - **Tag vocabulary hygiene** — typed emissions with facet gates, canonical-form identity, compound decomposition, optional LLM adjudication and quality gates, scheduled reconciliation and coverage audit ([guide](docs/developer-guide/consolidation.md) · [specs](docs/specs/tags/overview.md))
 - **OCR pipeline** — Tesseract + MuPDF for image-only PDFs, with searchable PDF output ([guide](docs/developer-guide/ocr-pipeline.md))

@@ -423,34 +423,26 @@ func (l *LlmOpenAiCompatible) buildRequest(messages []openaiChatMessage, temp fl
   `max_output_tokens` as `finish_reason: "length"` so the output-cap check
   fires — leaving `Analyze`, `AnalyzeDocType` and the judged helper
   dialect-agnostic.
-- **Reasoning knobs follow a two-state catalog policy** (`addThinkingConfig`,
-  `openai_compatible.go:188-207`; the provider switch lives in
-  `enableThinking`/`disableThinking`, `openai_compatible.go:210-241`) — a switch
-  on `Provider` because every vendor names it differently:
-
-```go
-switch l.llmCfg.Provider {
-case "deepseek":
-  body["thinking"] = map[string]string{"type": "enabled"}
-  body["reasoning_effort"] = effort
-case "qwen":
-  body["enable_thinking"] = true
-case "zhipu":
-  body["thinking"] = map[string]string{"type": "enabled"}
-default:
-  body["reasoning_effort"] = effort
-}
-```
+- **Reasoning knobs are catalog data** (`addThinkingConfig`,
+  `openai_compatible.go:185-253`): each model entry names its vendor's request
+  shape. `reasoning_toggle` is the dot-separated field that switches reasoning
+  and the `on`/`off` value each state takes (a string or a boolean);
+  `reasoning_effort_field` is the field that carries the level, empty when the
+  toggle alone does the work. The default catalog declares
+  `thinking: {type: enabled|disabled}` for DeepSeek and Z.AI,
+  `enable_thinking: true|false` for Alibaba, plus `reasoning_effort` for
+  DeepSeek; every other entry falls back to `reasoning_effort`.
 
   A model that can disable reasoning (`disable_reasoning: true`) takes the
-  provider's disable form when the toggle is off (`thinking: {type: disabled}`
-  for deepseek/zhipu, `enable_thinking: false` for qwen, and
-  `reasoning_effort: "none"` otherwise). A model that cannot disable reasoning
-  always runs at its lowest cataloged effort — `reasoning_effort` for the chat
-  dialect, `reasoning: {effort}` for the Responses dialect — or sends no knob
-  when it catalogs no effort levels. The programmatic-only `Reasoning` toggle
-  forces the enable form. Adding a provider with a different knob means
-  extending this switch.
+  entry's `off` form while the reasoning toggle is off; without a toggle it
+  sends `reasoning_effort: "none"` instead. A model that cannot disable
+  reasoning always runs at its lowest cataloged effort, or sends no knob when
+  it catalogs no effort levels. On the Responses dialect `reasoning.effort` is
+  the only knob: the lowest level enables it and `none` disables it. The
+  programmatic-only `Reasoning` toggle forces the enable form. A new vendor
+  shape is data, not code: set the two fields on the entry — the catalog
+  editor's Autofill proposes them for the providers the embedded defaults
+  know.
 
 `Analyze` and `AnalyzeDocType` mirror the Anthropic flow: same template,
 same 3-turn replay, `temperature = 0` for refinement, same lenient `Type`
@@ -550,8 +542,9 @@ var tokenLimitRE = regexp.MustCompile(
 ```
 
 - **`InsufficientCreditsError`** (`gates.go:117`) — **HTTP 402 or 429** is
-  a credit error for any provider; plus a qwen special case: HTTP 400 with
-  `"arrearage"` in the body.
+  a credit error for any provider; plus the Alibaba arrearage quirk: HTTP 400
+  with `"arrearage"` in the body (provider `alibaba` or its legacy `qwen`
+  name).
 - **`OutputCapError`** — the provider stopped at the requested output bound
   (`finish_reason: "length"`); the judged call fails instead of handing the
   truncated body to the parser. Never retried.
@@ -626,20 +619,24 @@ so a failing load never creates files. An existing file is never overwritten
 or replaced — user edits are authoritative. `provider_catalog.json` defines
 providers — `provider`, `adapter`, `official_url`, optional `session_header`
 — and `model_catalog.json` defines their models: `provider`, `model_id`,
-`display_name`, the token limits, and the capability flags
+`display_name`, the token limits, the capability flags
 (`max_input_tokens`, `max_output_tokens`, `disable_reasoning`,
 `reasoning_efforts`, `supports_structured_output`, `supports_temperature`,
 `supports_prompt_caching`, `uses_max_completion_tokens` (the OpenAI GPT-5
 family rejects `max_tokens`; the flag makes the adapters send the output
 budget as `max_completion_tokens`), and `uses_responses_endpoint` (the entry
-is served only over the Responses API)). Both files are versioned wrapper
-objects (`{"version": 1, "providers": [...]}` / `{"version": 1, "models":
-[...]}`) and may carry an ignored `_comment` hint key; the seeded defaults
-point at [models.dev/providers](https://models.dev/providers/) for provider
-and model documentation. Eight providers ship in the default catalog: openai,
-deepseek, mistral, anthropic, qwen, zhipu, opencode-go, opencode — the
-provider catalog's `official_url` is how the adapters know the endpoint, and
-providers that declare `session_header` receive the process-stable
+is served only over the Responses API)), and the optional vendor reasoning
+shape (`reasoning_toggle`, `reasoning_effort_field`; see §5). Both files are
+versioned wrapper objects (`{"version": 1, "providers": [...]}` /
+`{"version": 1, "models": [...]}`) and may carry an ignored `_comment` hint
+key; the seeded defaults point at
+[models.dev/providers](https://models.dev/providers/) for provider and model
+documentation. Eight providers ship in the default catalog: openai, deepseek,
+mistral, anthropic, alibaba, zai, opencode-go, opencode. The legacy names
+`qwen` and `zhipu` resolve to `alibaba` and `zai` when the catalog does not
+define them, so configurations written against the old defaults keep working.
+The provider catalog's `official_url` is how the adapters know the endpoint,
+and providers that declare `session_header` receive the process-stable
 `llm.SessionID()` in that header on every request (both adapters set it; the
 opencode gateways ask for `x-opencode-session`, which they use for request
 routing and prompt caching):
@@ -651,7 +648,7 @@ i, ok := r.index[key]
 return entryToCapability(entry)
 ```
 
-(`registry.go:374-385`). Loading validates each file's version (`1`, any
+(`registry.go:523-533`). Loading validates each file's version (`1`, any
 other or missing value fails before entry validation), the required fields
 (`provider`, `adapter`, `official_url` for providers; `provider`,
 `model_id` for models), and rejects a model whose provider is absent from
@@ -710,8 +707,36 @@ locally and replay on Apply Changes). Consumer processes and the
 queue's consume forks load the catalogs fresh per batch, so file edits reach
 the pipeline without any restart.
 
+### 9.2 Autofilling the catalog forms
+
+`internal/llm/autofill` backs the settings editor's **Autofill** buttons
+(`POST /api/v1/llm/catalog/autofill`, admin). `Client.Fill` merges three
+sources and reports the origin of every field it fills:
+
+- **models.dev** — the experimental v2 chat catalog, fetched lazily, cached in
+  memory for 24 hours and served stale when a refresh fails. Provider matching
+  tries an exact catalog name first, then URL equality, host, display name and
+  a name prefix; an ambiguous match returns candidates for the editor to
+  choose. It supplies token limits, the reasoning toggle and effort levels,
+  cache, structured output, temperature, the default protocol
+  (`recommended_api`) and the `max_tokens` field mapping.
+- **The provider's own `/models` endpoint** — probed with the adapter's auth
+  scheme (Bearer, or `x-api-key` plus `anthropic-version`) and an optional
+  token the editor asks for. The request never follows redirects and its body
+  is size-capped. It supplies the model ids the configured host actually
+  serves and, where the provider publishes them, display names, token limits
+  and effort levels; endpoint values override models.dev's.
+- **The embedded default catalog** — the vendor reasoning request shape, which
+  neither external source publishes (`DefaultReasoningKnob`; `qwen` and
+  `zhipu` resolve to their current entries).
+
+Nothing is written: the editor applies the suggestions to the form and the
+user saves through the staged catalog operations. An unavailable source is a
+note, never an error, and the probe token is used only for that request — it
+is never stored or logged.
+
 Note: neither catalog nor `ModelCapability` models per-token costs —
-`entryToCapability` (`registry.go:358-370`) maps only the capability flags
+`entryToCapability` (`registry.go:506-518`) maps only the capability flags
 and limits.
 
 ---

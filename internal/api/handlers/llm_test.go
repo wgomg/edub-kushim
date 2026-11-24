@@ -11,6 +11,7 @@ import (
 
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/llm"
+	"github.com/wgomg/edub-kushim/internal/llm/autofill"
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
@@ -39,7 +40,7 @@ func TestListModels_CapabilityContract(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	handler := NewLlmHandler(reg, dir, func() *config.Config { return nil }, log.NewLogger("silent"))
+	handler := NewLlmHandler(reg, dir, func() *config.Config { return nil }, autofill.NewClient(), log.NewLogger("silent"))
 	handler.ListModels(rec, httptest.NewRequest(http.MethodGet, "/api/v1/llm/models", nil))
 
 	var resp struct {
@@ -94,11 +95,11 @@ func TestCatalogMutationEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
-	handler := NewLlmHandler(reg, dir, func() *config.Config { return nil }, log.NewLogger("silent"))
+	handler := NewLlmHandler(reg, dir, func() *config.Config { return nil }, autofill.NewClient(), log.NewLogger("silent"))
 
 	rec := httptest.NewRecorder()
 	handler.AddProvider(rec, httptest.NewRequest(http.MethodPost, "/api/v1/llm/providers",
-		strings.NewReader(`{"provider":"zhipu","adapter":"openai-compatible","official_url":"https://z.test"}`)))
+		strings.NewReader(`{"provider":"zai","adapter":"openai-compatible","official_url":"https://z.test"}`)))
 	if rec.Code != http.StatusConflict {
 		t.Errorf("duplicate provider: status = %d, want 409", rec.Code)
 	}
@@ -139,12 +140,12 @@ func TestRemoveModelInUseConflict(t *testing.T) {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 	cfg := &config.Config{Enricher: config.EnricherConfig{ContentAnalyzer: config.ContentAnalyzerConfig{
-		Llm: config.LlmConfig{Provider: "zhipu", Model: "glm-5"},
+		Llm: config.LlmConfig{Provider: "zai", Model: "glm-5"},
 	}}}
-	handler := NewLlmHandler(reg, dir, func() *config.Config { return cfg }, log.NewLogger("silent"))
+	handler := NewLlmHandler(reg, dir, func() *config.Config { return cfg }, autofill.NewClient(), log.NewLogger("silent"))
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/llm/models/zhipu/glm-5", nil)
-	req.SetPathValue("provider", "zhipu")
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/llm/models/zai/glm-5", nil)
+	req.SetPathValue("provider", "zai")
 	req.SetPathValue("model", "glm-5")
 	rec := httptest.NewRecorder()
 	handler.RemoveModel(rec, req)
@@ -159,7 +160,7 @@ func TestRemoveModelInUseConflict(t *testing.T) {
 // TestNilRegistryRecoversThroughReset pins the recovery path: with no loaded registry the catalog reads
 // answer 503, and a reset installs a fresh registry so the reads serve again without a restart.
 func TestNilRegistryRecoversThroughReset(t *testing.T) {
-	handler := NewLlmHandler(nil, t.TempDir(), func() *config.Config { return nil }, log.NewLogger("silent"))
+	handler := NewLlmHandler(nil, t.TempDir(), func() *config.Config { return nil }, autofill.NewClient(), log.NewLogger("silent"))
 
 	rec := httptest.NewRecorder()
 	handler.GetCatalog(rec, httptest.NewRequest(http.MethodGet, "/api/v1/llm/catalog", nil))
@@ -178,5 +179,31 @@ func TestNilRegistryRecoversThroughReset(t *testing.T) {
 	handler.GetCatalog(rec, httptest.NewRequest(http.MethodGet, "/api/v1/llm/catalog", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("get after reset: status = %d body = %s, want 200 without a restart", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAutofillValidation(t *testing.T) {
+	handler := NewLlmHandler(nil, t.TempDir(), func() *config.Config { return nil },
+		autofill.NewClient(), log.NewLogger("silent"))
+	tests := []struct {
+		name     string
+		body     string
+		wantText string
+	}{
+		{"no lookup target", `{}`, "enter a provider name or URL first"},
+		{"relative url", `{"official_url":"not-a-url"}`, "absolute http(s) URL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.Autofill(rec, httptest.NewRequest(http.MethodPost,
+				"/api/v1/llm/catalog/autofill", strings.NewReader(tt.body)))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body = %s, want 400", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tt.wantText) {
+				t.Errorf("body = %q, want %q", rec.Body.String(), tt.wantText)
+			}
+		})
 	}
 }

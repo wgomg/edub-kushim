@@ -170,7 +170,7 @@ func newReplyParseError(step, model, raw string) *ReplyParseError {
 }
 
 // InsufficientCreditsError means the provider account cannot pay: HTTP
-// 402, a 429 the caller treats as billing, or the qwen arrearage quirk.
+// 402, a 429 the caller treats as billing, or the alibaba arrearage quirk.
 type InsufficientCreditsError struct {
 	Provider   string
 	HTTPStatus int
@@ -188,7 +188,8 @@ func parseInsufficientCreditsError(body []byte, statusCode int, provider string)
 	if statusCode == 429 {
 		return &InsufficientCreditsError{Provider: provider, HTTPStatus: statusCode, RawBody: string(body)}
 	}
-	if provider == "qwen" && statusCode == 400 && strings.Contains(strings.ToLower(string(body)), "arrearage") {
+	if (provider == "alibaba" || provider == "qwen") && statusCode == 400 &&
+		strings.Contains(strings.ToLower(string(body)), "arrearage") {
 		return &InsufficientCreditsError{Provider: provider, HTTPStatus: statusCode, RawBody: string(body)}
 	}
 	return nil

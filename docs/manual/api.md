@@ -391,6 +391,11 @@ provider or model referenced by the enricher configuration (content analyzer, it
 tag adjudicator, tag quality) is always refused. The same catalog is editable from the
 settings UI and `kushim llm` ([cli.md](cli.md#kushim-llm)); changes apply without a restart.
 
+The editor's **Autofill** calls `POST /api/v1/llm/catalog/autofill` (admin): it proposes
+provider and model form values from models.dev and from the provider's
+`GET {official_url}/models`, returning the values it found, their sources and any notes. The
+optional `token` in the body is used only for that probe and is never stored.
+
 ### Settings apply
 
 The settings UI and the setup wizard share the configuration API (admin role):

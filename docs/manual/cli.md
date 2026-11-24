@@ -569,11 +569,11 @@ View and edit the provider and model catalogs with the same grammar:
 
 ```bash
 kushim llm                                          # dump every field
-kushim llm providers.zhipu.adapter                  # get
-kushim llm providers.zhipu.adapter custom-adapter   # set
+kushim llm providers.zai.adapter                   # get
+kushim llm providers.zai.adapter custom-adapter    # set
 kushim llm providers.groq '{"adapter":"openai-compatible","official_url":"https://api.groq.com/openai/v1"}'
-kushim llm --unset providers.zhipu                  # remove (asks for confirmation)
-kushim llm --unset providers.zhipu --cascade        # remove the provider and its models
+kushim llm --unset providers.zai                   # remove (asks for confirmation)
+kushim llm --unset providers.zai --cascade         # remove the provider and its models
 kushim llm --reset [--providers | --models]         # restore embedded defaults
 ```
 

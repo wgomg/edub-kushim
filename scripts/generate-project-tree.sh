@@ -61,6 +61,7 @@ declare -A description=(
   ["internal/errs"]="error classification and database error mapping"
   ["internal/kb"]="offline lexical knowledge base: artifact installer and read interfaces"
   ["internal/llm"]="LLM capability registry and provider/model catalogs"
+  ["internal/llm/autofill"]="catalog form autofill: models.dev lookup and provider model-list probe"
   ["internal/llm/analyzer"]="LLM classification adapters, prompts, gates and judges"
   ["internal/llm/testdata"]="analyzer test fixtures"
   ["internal/log"]="structured logging and memory metrics"

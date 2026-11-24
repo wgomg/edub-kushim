@@ -1498,6 +1498,20 @@ GetCatalog serves the full editable catalog: every provider and model with all t
 | 200 | [Catalog](#catalog) |
 | 503 | object |
 
+#### `POST /api/v1/llm/catalog/autofill`
+
+Autofill proposes catalog values for the provider and model forms from models.dev and the provider's model-list endpoint.
+
+It is read-only: the editor still saves through the catalog mutations, so the token in the body is used for the probe and never stored.
+
+Request body (required) (`application/json`): [AutofillRequest](#autofillrequest)
+
+| Status | Body |
+|---|---|
+| 200 | [AutofillResponse](#autofillresponse) |
+| 400 | string |
+| 500 | string |
+
 #### `GET /api/v1/llm/models`
 
 ListModels serves the catalog's adapters, providers and models.
@@ -1979,6 +1993,33 @@ AppConfigResponse is the app section's API view.
 | `initialized` | boolean | yes |
 | `log_level` | string | yes |
 | `logging` | [LoggingConfigResponse](#loggingconfigresponse) | yes |
+
+### AutofillRequest
+
+AutofillRequest is one autofill lookup: the provider form's current values, the model being edited when the model form asks, an optional models.dev provider id picked from an earlier response's candidates, and the optional provider token used only for the model-list probe.
+
+| Field | Type | Required |
+|---|---|---|
+| `adapter` | string | no |
+| `model_id` | string | no |
+| `models_dev_provider` | string | no |
+| `official_url` | string | no |
+| `provider` | string | no |
+| `token` | string | no |
+
+### AutofillResponse
+
+AutofillResponse is what the lookup found. An absent field means the sources had nothing for it, so the editor leaves the form value untouched; the notes explain every source that failed or disagreed.
+
+| Field | Type | Required |
+|---|---|---|
+| `endpoint` | [EndpointStatus](#endpointstatus) | no |
+| `filled` | array of [FilledField](#filledfield) | no |
+| `model` | [ModelFields](#modelfields) | no |
+| `models` | array of [ModelRef](#modelref) | no |
+| `notes` | array of string | no |
+| `provider` | [ProviderSuggestion](#providersuggestion) | no |
+| `provider_candidates` | array of [ProviderCandidate](#providercandidate) | no |
 
 ### AvailableFileType
 
@@ -2510,6 +2551,16 @@ DocxOdtConverterResponse is the converter section's API view.
 | `enabled` | boolean | yes |
 | `timeout` | integer | yes |
 
+### EndpointStatus
+
+EndpointStatus reports how the provider's model-list probe ended: URL is the probed address, Status one of ok, unauthorized, not_found, redirected, unreachable or invalid_response, and Detail a short classification that never carries the response body.
+
+| Field | Type | Required |
+|---|---|---|
+| `detail` | string | no |
+| `status` | string | yes |
+| `url` | string | yes |
+
 ### EngineEntry
 
 EngineEntry is one selectable engine for the setup UI: its value and display label.
@@ -2607,6 +2658,15 @@ FileSizeRange is one size bound pair in bytes, each side optional.
 |---|---|---|
 | `max` | integer (nullable) | yes |
 | `min` | integer (nullable) | yes |
+
+### FilledField
+
+FilledField names one field the lookup filled and the source that supplied it.
+
+| Field | Type | Required |
+|---|---|---|
+| `field` | string | yes |
+| `source` | string | yes |
 
 ### Filter
 
@@ -2757,9 +2817,28 @@ MirrorConfigResponse is the mirror section's API view.
 | `path` | string | yes |
 | `time` | string | yes |
 
+### ModelFields
+
+ModelFields is the model form's suggestion set: every key is the ModelInput JSON name of the same field, and a present key means a source reported it. The two reasoning request fields come from the embedded default catalog only.
+
+| Field | Type | Required |
+|---|---|---|
+| `disable_reasoning` | boolean | no |
+| `display_name` | string | no |
+| `max_input_tokens` | integer | no |
+| `max_output_tokens` | integer | no |
+| `reasoning_effort_field` | string | no |
+| `reasoning_efforts` | array of string | no |
+| `reasoning_toggle` | [ReasoningToggle](#reasoningtoggle) | no |
+| `supports_prompt_caching` | boolean | no |
+| `supports_structured_output` | boolean | no |
+| `supports_temperature` | boolean | no |
+| `uses_max_completion_tokens` | boolean | no |
+| `uses_responses_endpoint` | boolean | no |
+
 ### ModelInput
 
-ModelInput is a model's editable catalog fields, mirroring the on-disk entry: its key (provider and model id), display name, token limits and capability flags.
+ModelInput is a model's editable catalog fields, mirroring the on-disk entry: its key (provider and model id), display name, token limits, capability flags, and the optional vendor reasoning request shape.
 
 | Field | Type | Required |
 |---|---|---|
@@ -2769,12 +2848,23 @@ ModelInput is a model's editable catalog fields, mirroring the on-disk entry: it
 | `max_output_tokens` | integer | no |
 | `model_id` | string | yes |
 | `provider` | string | yes |
+| `reasoning_effort_field` | string | no |
 | `reasoning_efforts` | array of string | no |
+| `reasoning_toggle` | [ReasoningToggle](#reasoningtoggle) | no |
 | `supports_prompt_caching` | boolean | no |
 | `supports_structured_output` | boolean | no |
 | `supports_temperature` | boolean | no |
 | `uses_max_completion_tokens` | boolean | no |
 | `uses_responses_endpoint` | boolean | no |
+
+### ModelRef
+
+ModelRef is one model id the provider's endpoint listed, with its display name when the endpoint does publish one.
+
+| Field | Type | Required |
+|---|---|---|
+| `display_name` | string | no |
+| `id` | string | yes |
 
 ### OCRResponse
 
@@ -2883,6 +2973,15 @@ ProcessingHealth is the dashboard's processing health: success rate, last-week c
 | `orphaned_batches` | integer | yes |
 | `success_rate` | number | yes |
 
+### ProviderCandidate
+
+ProviderCandidate is one plausible models.dev provider when the request matched several; the editor repeats the lookup with ModelsDevProvider set to the chosen id.
+
+| Field | Type | Required |
+|---|---|---|
+| `models_dev_provider` | string | yes |
+| `name` | string | yes |
+
 ### ProviderInput
 
 ProviderInput is a provider's editable catalog fields: the name (its key), the adapter kind, the endpoint base URL, and the optional session header the provider expects its client session identifier in.
@@ -2893,6 +2992,15 @@ ProviderInput is a provider's editable catalog fields: the name (its key), the a
 | `official_url` | string | yes |
 | `provider` | string | yes |
 | `session_header` | string | no |
+
+### ProviderSuggestion
+
+ProviderSuggestion is what the provider form takes from models.dev: the endpoint base of the protocol the adapter speaks, and the adapter when the current one cannot work.
+
+| Field | Type | Required |
+|---|---|---|
+| `adapter` | string | no |
+| `official_url` | string | no |
 
 ### ProvisionalTagListResponse
 
@@ -2930,6 +3038,16 @@ ProvisionalTagResponse describes a tag awaiting review, with its latest verdict 
 | `pending_identity` | integer | yes |
 | `standing_source` | string | no |
 | `verdict` | [TagQualityVerdictInfo](#tagqualityverdictinfo) (nullable) | yes |
+
+### ReasoningToggle
+
+ReasoningToggle names the request field that switches a model's reasoning on and off, as a dot-separated path, and the value each state takes; On and Off are a string or a boolean.
+
+| Field | Type | Required |
+|---|---|---|
+| `field` | string | yes |
+| `off` | object (nullable) | yes |
+| `on` | object (nullable) | yes |
 
 ### ReclaimConfigResponse
 

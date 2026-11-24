@@ -93,4 +93,60 @@ describe('ModelsSection', () => {
 		await waitFor(() => expect(onRemoveProvider).toHaveBeenCalledWith('groq', true));
 		expect(toastSuccess).toHaveBeenCalled();
 	});
+
+	it('uses the optional token for autofill without staging it in the catalog', async () => {
+		const onAutofill = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			data: {
+				provider: { official_url: 'https://filled.test/v1', adapter: 'openai-compatible' },
+				models: [],
+				filled: []
+			}
+		});
+		const onUpdateProvider = vi.fn();
+		renderSection({ onAutofill, onUpdateProvider });
+
+		const [edit] = await screen.findAllByRole('button', { name: 'Edit' });
+		await fireEvent.click(edit);
+		await fireEvent.input(await screen.findByLabelText(/API token/), {
+			target: { value: 'secret-token' }
+		});
+		const [autofill] = await screen.findAllByRole('button', { name: 'Autofill' });
+		await fireEvent.click(autofill);
+
+		await waitFor(() =>
+			expect(onAutofill).toHaveBeenCalledWith(
+				expect.objectContaining({ provider: 'groq', token: 'secret-token' })
+			)
+		);
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Provider' }));
+		await waitFor(() => expect(onUpdateProvider).toHaveBeenCalledTimes(1));
+		expect(JSON.stringify(onUpdateProvider.mock.calls[0])).not.toContain('secret-token');
+	});
+
+	it('clears the reasoning request fields when the user empties them', async () => {
+		const onUpdateModel = vi.fn();
+		const withKnob = {
+			...scout,
+			reasoning_toggle: { field: 'thinking.type', on: 'enabled', off: 'disabled' },
+			reasoning_effort_field: 'reasoning_effort'
+		};
+		renderSection({
+			catalog: { providers: [groq], models: [withKnob] },
+			usedBy: {},
+			onUpdateModel
+		});
+
+		const edits = await screen.findAllByRole('button', { name: 'Edit' });
+		await fireEvent.click(edits[1]);
+		await fireEvent.input(await screen.findByLabelText('Toggle field'), { target: { value: '' } });
+		await fireEvent.input(screen.getByLabelText('Effort field'), { target: { value: '' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Model' }));
+
+		await waitFor(() => expect(onUpdateModel).toHaveBeenCalledTimes(1));
+		const payload = onUpdateModel.mock.calls[0][2];
+		expect(payload.reasoning_toggle).toBeNull();
+		expect(payload.reasoning_effort_field).toBe('');
+	});
 });

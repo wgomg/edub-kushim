@@ -16,7 +16,7 @@ import (
 // lives in exactly one such table, shared by key parsing, get, set and the dump.
 type fieldSpec[T any] struct {
 	name string
-	get  func(T) any
+	get  func(T) (any, error)
 	set  func(*T, string) error
 }
 
@@ -56,37 +56,81 @@ func boolSetter[T any](name string, field func(*T) *bool) func(*T, string) error
 	}
 }
 
+// reasoningToggleSetter assigns the reasoning request shape from one JSON object; an empty value or
+// null clears it.
+func reasoningToggleSetter(name string, field func(*llm.ModelInput) **llm.ReasoningToggle) func(*llm.ModelInput, string) error {
+	return func(m *llm.ModelInput, raw string) error {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || raw == "null" {
+			*field(m) = nil
+			return nil
+		}
+		var toggle llm.ReasoningToggle
+		if err := json.Unmarshal([]byte(raw), &toggle); err != nil {
+			return fmt.Errorf("%s expects a JSON object with field, on and off, or \"\" to clear", name)
+		}
+		*field(m) = &toggle
+		return nil
+	}
+}
+
+// reasoningToggleText renders a reasoning request shape as compact JSON for get and dump; empty when unset.
+func reasoningToggleText(t *llm.ReasoningToggle) (any, error) {
+	if t == nil {
+		return "", nil
+	}
+	data, err := json.Marshal(t)
+	if err != nil {
+		return nil, fmt.Errorf("encode reasoning_toggle: %w", err)
+	}
+	return string(data), nil
+}
+
 // providerFieldSpecs and modelFieldSpecs are the catalogs' settable fields, in dump order.
 var providerFieldSpecs = []fieldSpec[llm.ProviderInput]{
-	{name: "adapter", get: func(p llm.ProviderInput) any { return p.Adapter },
+	{name: "adapter", get: func(p llm.ProviderInput) (any, error) { return p.Adapter, nil },
 		set: textSetter("adapter", func(p *llm.ProviderInput) *string { return &p.Adapter })},
-	{name: "official_url", get: func(p llm.ProviderInput) any { return p.OfficialURL },
+	{name: "official_url", get: func(p llm.ProviderInput) (any, error) { return p.OfficialURL, nil },
 		set: textSetter("official_url", func(p *llm.ProviderInput) *string { return &p.OfficialURL })},
-	{name: "session_header", get: func(p llm.ProviderInput) any { return p.SessionHeader },
+	{name: "session_header", get: func(p llm.ProviderInput) (any, error) { return p.SessionHeader, nil },
 		set: textSetter("session_header", func(p *llm.ProviderInput) *string { return &p.SessionHeader })},
 }
 
 var modelFieldSpecs = []fieldSpec[llm.ModelInput]{
-	{name: "display_name", get: func(m llm.ModelInput) any { return m.DisplayName },
+	{name: "display_name", get: func(m llm.ModelInput) (any, error) { return m.DisplayName, nil },
 		set: textSetter("display_name", func(m *llm.ModelInput) *string { return &m.DisplayName })},
-	{name: "max_input_tokens", get: func(m llm.ModelInput) any { return m.MaxInputTokens },
+	{name: "max_input_tokens", get: func(m llm.ModelInput) (any, error) { return m.MaxInputTokens, nil },
 		set: intSetter("max_input_tokens", func(m *llm.ModelInput) *int { return &m.MaxInputTokens })},
-	{name: "max_output_tokens", get: func(m llm.ModelInput) any { return m.MaxOutputTokens },
+	{name: "max_output_tokens", get: func(m llm.ModelInput) (any, error) { return m.MaxOutputTokens, nil },
 		set: intSetter("max_output_tokens", func(m *llm.ModelInput) *int { return &m.MaxOutputTokens })},
-	{name: "disable_reasoning", get: func(m llm.ModelInput) any { return m.DisableReasoning },
+	{name: "disable_reasoning", get: func(m llm.ModelInput) (any, error) { return m.DisableReasoning, nil },
 		set: boolSetter("disable_reasoning", func(m *llm.ModelInput) *bool { return &m.DisableReasoning })},
-	{name: "reasoning_efforts", get: func(m llm.ModelInput) any { return m.ReasoningEfforts },
+	{name: "reasoning_efforts", get: func(m llm.ModelInput) (any, error) { return m.ReasoningEfforts, nil },
 		set: func(m *llm.ModelInput, raw string) error { m.ReasoningEfforts = listStrings(raw); return nil }},
-	{name: "supports_structured_output", get: func(m llm.ModelInput) any { return m.SupportsStructuredOutput },
+	{name: "supports_structured_output", get: func(m llm.ModelInput) (any, error) {
+		return m.SupportsStructuredOutput, nil
+	},
 		set: boolSetter("supports_structured_output", func(m *llm.ModelInput) *bool { return &m.SupportsStructuredOutput })},
-	{name: "supports_temperature", get: func(m llm.ModelInput) any { return m.SupportsTemperature },
+	{name: "supports_temperature", get: func(m llm.ModelInput) (any, error) { return m.SupportsTemperature, nil },
 		set: boolSetter("supports_temperature", func(m *llm.ModelInput) *bool { return &m.SupportsTemperature })},
-	{name: "supports_prompt_caching", get: func(m llm.ModelInput) any { return m.SupportsPromptCaching },
+	{name: "supports_prompt_caching", get: func(m llm.ModelInput) (any, error) {
+		return m.SupportsPromptCaching, nil
+	},
 		set: boolSetter("supports_prompt_caching", func(m *llm.ModelInput) *bool { return &m.SupportsPromptCaching })},
-	{name: "uses_max_completion_tokens", get: func(m llm.ModelInput) any { return m.UsesMaxCompletionTokens },
+	{name: "uses_max_completion_tokens", get: func(m llm.ModelInput) (any, error) {
+		return m.UsesMaxCompletionTokens, nil
+	},
 		set: boolSetter("uses_max_completion_tokens", func(m *llm.ModelInput) *bool { return &m.UsesMaxCompletionTokens })},
-	{name: "uses_responses_endpoint", get: func(m llm.ModelInput) any { return m.UsesResponsesEndpoint },
+	{name: "uses_responses_endpoint", get: func(m llm.ModelInput) (any, error) {
+		return m.UsesResponsesEndpoint, nil
+	},
 		set: boolSetter("uses_responses_endpoint", func(m *llm.ModelInput) *bool { return &m.UsesResponsesEndpoint })},
+	{name: "reasoning_toggle", get: func(m llm.ModelInput) (any, error) {
+		return reasoningToggleText(m.ReasoningToggle)
+	},
+		set: reasoningToggleSetter("reasoning_toggle", func(m *llm.ModelInput) **llm.ReasoningToggle { return &m.ReasoningToggle })},
+	{name: "reasoning_effort_field", get: func(m llm.ModelInput) (any, error) { return m.ReasoningEffortField, nil },
+		set: textSetter("reasoning_effort_field", func(m *llm.ModelInput) *string { return &m.ReasoningEffortField })},
 }
 
 // providerFields and modelFields are the catalogs' valid field names, derived from the spec tables.
@@ -127,7 +171,7 @@ func fieldValue[T any](kind string, specs []fieldSpec[T], v T, field string) (an
 	if !ok {
 		return nil, unknownField(kind, field)
 	}
-	return spec.get(v), nil
+	return spec.get(v)
 }
 
 // catalogKey is one parsed dot-notation catalog key: the catalog kind ("providers" or "models"), the
@@ -256,13 +300,21 @@ func dumpCatalog(c *container.Container) error {
 	for _, p := range catalog.Providers {
 		base := "providers." + p.Provider + "."
 		for _, spec := range providerFieldSpecs {
-			lines = append(lines, base+spec.name+" = "+dumpValue(spec.get(p)))
+			value, err := spec.get(p)
+			if err != nil {
+				return err
+			}
+			lines = append(lines, base+spec.name+" = "+dumpValue(value))
 		}
 	}
 	for _, m := range catalog.Models {
 		base := "models." + m.Provider + "/" + m.ModelID + "."
 		for _, spec := range modelFieldSpecs {
-			lines = append(lines, base+spec.name+" = "+dumpValue(spec.get(m)))
+			value, err := spec.get(m)
+			if err != nil {
+				return err
+			}
+			lines = append(lines, base+spec.name+" = "+dumpValue(value))
 		}
 	}
 	sort.Strings(lines)
@@ -306,7 +358,11 @@ func getCatalogValue(c *container.Container, key string) error {
 			return fmt.Errorf("provider %q is not cataloged", parsed.name)
 		}
 		if parsed.field == "" {
-			printValue(providerMap(p))
+			entry, err := providerMap(p)
+			if err != nil {
+				return err
+			}
+			printValue(entry)
 			return nil
 		}
 		value, err := fieldValue("provider", providerFieldSpecs, p, parsed.field)
@@ -321,7 +377,11 @@ func getCatalogValue(c *container.Container, key string) error {
 			return fmt.Errorf("model %s/%s is not cataloged", parsed.name, parsed.modelID)
 		}
 		if parsed.field == "" {
-			printValue(modelMap(m))
+			entry, err := modelMap(m)
+			if err != nil {
+				return err
+			}
+			printValue(entry)
 			return nil
 		}
 		value, err := fieldValue("model", modelFieldSpecs, m, parsed.field)
@@ -516,21 +576,29 @@ func findModelInput(reg *llm.Registry, provider, modelID string) (llm.ModelInput
 }
 
 // providerMap renders a provider entry, identity included, for a whole-entry get.
-func providerMap(p llm.ProviderInput) map[string]any {
+func providerMap(p llm.ProviderInput) (map[string]any, error) {
 	entry := map[string]any{"provider": p.Provider}
 	for _, spec := range providerFieldSpecs {
-		entry[spec.name] = spec.get(p)
+		value, err := spec.get(p)
+		if err != nil {
+			return nil, err
+		}
+		entry[spec.name] = value
 	}
-	return entry
+	return entry, nil
 }
 
 // modelMap renders a model entry, identity included, for a whole-entry get.
-func modelMap(m llm.ModelInput) map[string]any {
+func modelMap(m llm.ModelInput) (map[string]any, error) {
 	entry := map[string]any{"provider": m.Provider, "model_id": m.ModelID}
 	for _, spec := range modelFieldSpecs {
-		entry[spec.name] = spec.get(m)
+		value, err := spec.get(m)
+		if err != nil {
+			return nil, err
+		}
+		entry[spec.name] = value
 	}
-	return entry
+	return entry, nil
 }
 
 // scalarText coerces a raw value to text, rejecting list values.

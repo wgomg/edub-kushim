@@ -23,12 +23,12 @@
       "official_url": "https://api.anthropic.com/v1"
     },
     {
-      "provider": "qwen",
+      "provider": "alibaba",
       "adapter": "openai-compatible",
       "official_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     },
     {
-      "provider": "zhipu",
+      "provider": "zai",
       "adapter": "openai-compatible",
       "official_url": "https://api.z.ai/api/paas/v4"
     },
