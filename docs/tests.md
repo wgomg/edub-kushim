@@ -234,8 +234,8 @@ make test-cgo-musl     # podman: kushim-musl-builder
 CGo (`hugot.go` imports the `//go:build cgo`-gated matcher engine), and
 kushim — the only binary importing it — is always built with CGo.
 `internal/documents/textextractor` likewise runs only in this tier: it is not
-part of `make test`, and its `pdftotext` adapter tests skip when the binary is
-absent.
+part of `make test`; its flag tests use a fake binary, while the adapter test
+that runs the real `pdftotext` binary skips when it is absent.
 `internal/tools` runs in both tiers: `make test` builds it without CGo, and
 `make test-cgo` re-runs it with the cgo adapters linked.
 `internal/llm/analyzer` likewise runs in both tiers: `make test` builds it

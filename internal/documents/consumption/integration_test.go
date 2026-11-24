@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wgomg/edub-kushim/internal/config"
 	"github.com/wgomg/edub-kushim/internal/database"
+	"github.com/wgomg/edub-kushim/internal/documents/ocr"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/task"
@@ -26,13 +27,16 @@ import (
 
 // integrationTestRunner satisfies the consumption.runner interface.
 type integrationTestRunner struct {
-	extractText     string
-	extractTextErr  error
-	ocrTmpPath      string
-	ocrErr          error
-	optimizeTmpPath string
-	optimizeErr     error
-	convertErr      error
+	extractText        string
+	extractTextErr     error
+	extractTextGarbled bool
+	ocrTmpPath         string
+	ocrErr             error
+	ocrMode            ocr.Mode
+	ocrCalls           int
+	optimizeTmpPath    string
+	optimizeErr        error
+	convertErr         error
 }
 
 func (r *integrationTestRunner) ExtractText(ctx context.Context, path string, _ string) (*tools.TextExtractionResult, error) {
@@ -43,10 +47,12 @@ func (r *integrationTestRunner) ExtractText(ctx context.Context, path string, _ 
 	if text == "" {
 		text = "extracted text from " + filepath.Base(path)
 	}
-	return &tools.TextExtractionResult{Text: &text}, nil
+	return &tools.TextExtractionResult{Text: &text, Garbled: r.extractTextGarbled}, nil
 }
 
-func (r *integrationTestRunner) OCR(ctx context.Context, docId, path string) (*tools.OCRResult, error) {
+func (r *integrationTestRunner) OCR(ctx context.Context, docId, path string, mode ocr.Mode) (*tools.OCRResult, error) {
+	r.ocrCalls++
+	r.ocrMode = mode
 	if r.ocrErr != nil {
 		return nil, r.ocrErr
 	}
@@ -225,13 +231,56 @@ func TestConsumerEmptyTextGoesToOcr(t *testing.T) {
 	consumer, cfg, _, cleanup := setupConsumerTest(t)
 	defer cleanup()
 
-	consumer.runner = &integrationTestRunner{extractText: ""}
+	runner := &integrationTestRunner{extractText: ""}
+	consumer.runner = runner
 
 	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "ocr-test.pdf")
 	os.WriteFile(pdfPath, testutil.MinimalTextPDF("Needs OCR"), 0644)
 	file, _ := FileFromPath(pdfPath)
 	_, err := consumer.Process(context.Background(), file, uuid.New().String(), task.NoopProgress)
 	testutil.AssertNoError(t, err, "process with OCR fallback")
+	testutil.AssertEqual(t, runner.ocrMode, ocr.ModeMissingText, "empty-text OCR mode")
+}
+
+func TestConsumerGarbledPDFTextForcesOCR(t *testing.T) {
+	consumer, cfg, _, cleanup := setupConsumerTest(t)
+	defer cleanup()
+
+	runner := &integrationTestRunner{extractText: "¹¸£ºg»´¸´¼²½£ºw¾¬¿´±£À", extractTextGarbled: true}
+	consumer.runner = runner
+
+	pdfPath := filepath.Join(cfg.Storage.ConsumptionDir, "garbled.pdf")
+	os.WriteFile(pdfPath, testutil.MinimalTextPDF("Garbled text layer"), 0644)
+	file, _ := FileFromPath(pdfPath)
+	_, err := consumer.Process(context.Background(), file, uuid.New().String(), task.NoopProgress)
+	testutil.AssertNoError(t, err, "process garbled PDF")
+	testutil.AssertEqual(t, runner.ocrMode, ocr.ModeForce, "garbled-text OCR mode")
+	testutil.AssertEqual(t, runner.ocrCalls, 1, "garbled text after OCR must not trigger another OCR run")
+}
+
+func TestConsumerGarbledNonPDFTextIsStoredWithoutOCR(t *testing.T) {
+	consumer, cfg, client, cleanup := setupConsumerTest(t)
+	defer cleanup()
+
+	consumer.config.Consumer.Converter.Enabled = false
+	const garbled = "¹¸£ºg»´¸´¼²½£ºw¾¬¿´±£À"
+	runner := &integrationTestRunner{extractText: garbled, extractTextGarbled: true}
+	consumer.runner = runner
+
+	docxPath := filepath.Join(cfg.Storage.ConsumptionDir, "garbled.docx")
+	testutil.CreateMinimalDocx(t, docxPath, "Hello from DOCX")
+	file, err := FileFromPath(docxPath)
+	testutil.AssertNoError(t, err, "file from path")
+	docID := uuid.New().String()
+	_, err = consumer.Process(context.Background(), file, docID, task.NoopProgress)
+	testutil.AssertNoError(t, err, "process garbled DOCX")
+	testutil.AssertEqual(t, runner.ocrCalls, 0, "no OCR path exists for directly extracted formats")
+
+	doc, err := client.GetDocument(context.Background(), docID)
+	testutil.AssertNoError(t, err, "get document")
+	if !doc.TextContent.Valid || doc.TextContent.String != garbled {
+		t.Errorf("text content = %q (valid %v), want the garbled text preserved", doc.TextContent.String, doc.TextContent.Valid)
+	}
 }
 
 func TestConsumerTextExtractionFailure(t *testing.T) {

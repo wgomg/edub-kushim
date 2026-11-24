@@ -30,14 +30,14 @@ func NewPDFToText(logger *log.Logger, cfg config.ToolConfig) (*PDFToText, error)
 	return &PDFToText{logger: logger, config: cfg}, nil
 }
 
-// Extract shells out to pdftotext in raw mode with UTF-8 output, in
-// stream order. The path must be absolute.
+// Extract shells out to pdftotext in raw mode with UTF-8 output and diagonal text discarded, in stream order.
+// The path must be absolute.
 func (p *PDFToText) Extract(ctx context.Context, path string, _ string) (*string, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s: input path must be absolute, got %q", p.Name(), path)
 	}
 
-	cmd := exec.CommandContext(ctx, p.config.Command, "-raw", "-nopgbrk", "-enc", "UTF-8", path, "-")
+	cmd := exec.CommandContext(ctx, p.config.Command, "-raw", "-nopgbrk", "-nodiag", "-enc", "UTF-8", path, "-")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

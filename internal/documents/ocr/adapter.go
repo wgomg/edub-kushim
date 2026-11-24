@@ -14,13 +14,25 @@ import (
 	"github.com/wgomg/edub-kushim/internal/log"
 )
 
+// Mode selects how an engine treats pages that already carry a text layer.
+type Mode int
+
+const (
+	// ModeMissingText OCRs only the pages without text and passes the rest through unchanged; it suits scans and
+	// mixed documents whose layers are missing rather than broken.
+	ModeMissingText Mode = iota
+	// ModeForce discards the existing text layer and rebuilds it from the rendered pages; it suits layers whose
+	// glyph mapping is unusable and rasterizes born-digital content.
+	ModeForce
+)
+
 // OCR is the optical-character-recognition seam: Process runs one
 // document through the engine and returns the searchable PDF's path when
 // one was produced.
 type OCR interface {
-	// Process recognizes the document at path and returns the searchable
-	// PDF's path; nil when nothing was recognized.
-	Process(ctx context.Context, docId, path string) (*string, error)
+	// Process recognizes the document at path and returns the searchable PDF's path; nil when nothing was
+	// recognized. mode selects how pages that already carry text are treated.
+	Process(ctx context.Context, docId, path string, mode Mode) (*string, error)
 	// CanHandle reports whether the engine accepts the content type.
 	CanHandle(mimeType string) bool
 	// Name identifies the engine.

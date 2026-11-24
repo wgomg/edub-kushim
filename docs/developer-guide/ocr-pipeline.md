@@ -548,35 +548,46 @@ temporary file removed.
 ## 11. The ocrmypdf engine
 
 The alternative engine delegates to the external `ocrmypdf` tool
-(`ocrmypdf.go:37-91`). Constructor validates the binary exists with
-`exec.LookPath` and gives install hints (`ocrmypdf.go:25-35`). The command:
+(`ocrmypdf.go:40-113`). Constructor validates the binary exists with
+`exec.LookPath` and gives install hints (`ocrmypdf.go:26-38`). The command:
 
 ```go
-args := []string{
-	"--language", strings.Join(o.languages, "+"),
-	"--output-type", "pdfa-2",
-	"--optimize", "2",
-	"--rotate-pages",
-	"--deskew",
-	"--clean",
-	"--pdfa-image-compression", "jpeg",
-	"--jpeg-quality", "85",
-	"--png-quality", "85",
-	"--oversample", "150",
-	path,
-	outputPath,
-}
-cmd := exec.CommandContext(ctx, o.config.Command, args...)
+	pageMode := "--skip-text"
+	if mode == ModeForce {
+		pageMode = "--force-ocr"
+	}
+	args := []string{
+		"--language", strings.Join(o.languages, "+"),
+		"--output-type", "pdfa-2",
+		"--optimize", "2",
+		"--rotate-pages",
+		"--deskew",
+		"--clean",
+		"--pdfa-image-compression", "jpeg",
+		"--jpeg-quality", "85",
+		"--png-quality", "85",
+		"--oversample", "150",
+		pageMode,
+		path,
+		outputPath,
+	}
 ```
 
 Notable behaviors:
 
+- **Page mode**: `ModeMissingText` passes `--skip-text`, so pages that already
+  carry text are left untouched and only textless pages are OCR'd — mixed
+  born-digital/scanned files pass through instead of failing with "already has
+  text". `ModeForce` passes `--force-ocr` to rasterize every page and rebuild
+  an unusable text layer; the consumer requests it when charset reversal
+  cannot recover the extracted text.
 - **Error hints**: stderr is scanned for known failure modes and the error
   gets a concrete suggestion — missing tesseract language packs, missing
-  unpaper, missing pngquant/optipng, missing tesseract itself
-  (`ocrmypdf.go:47-66`). This is the "helpful error" pattern: diagnose in
-  code, not in a wiki.
-- It requires absolute input paths (`ocrmypdf.go:40-43`).
+  unpaper, missing pngquant/optipng, missing tesseract itself, and an
+  existing text layer ocrmypdf refused to touch (the hint names the page-mode
+  flag that was passed) (`ocrmypdf.go:88-100`). This is the "helpful error"
+  pattern: diagnose in code, not in a wiki.
+- It requires absolute input paths (`ocrmypdf.go:43-46`).
 - The `--rotate-pages`/`--deskew`/`--clean` flags are OCR-quality features
   the built-in engine doesn't have — the tradeoff for external dependencies.
 
@@ -663,7 +674,7 @@ and `consumer.ocr.languages` is required before consumption runs.
   and the output file after optimization — a leaked temp PDF is usually a
   missed `os.Remove` in a new early-return.
 - **`--clean`/`unpaper` failures in ocrmypdf** come with hints, not just
-  errors (`ocrmypdf.go:47-66`) — when adding engines, copy this pattern.
+  errors (`ocrmypdf.go:88-100`) — when adding engines, copy this pattern.
 - **The render caps and tile ceilings are DoS guards** — the 100 MP render
   cap, the 50 MP image cap, and `tileMaxPerPage`/`tileMaxPerDoc` all bound
   allocations that untrusted page dimensions would otherwise drive. Never

@@ -59,10 +59,12 @@ type Runner struct {
 	reductionCache    *textreducer.ReductionCache
 }
 
-// TextExtractionResult carries the extracted text; nil when nothing could
-// be extracted.
+// TextExtractionResult carries the extracted text; nil when nothing could be extracted. Garbled marks text
+// that looks like a wrong-charset decode and that no reversal could recover, so callers can fall back to OCR
+// where the format allows it.
 type TextExtractionResult struct {
-	Text *string
+	Text    *string
+	Garbled bool
 }
 
 // OCRResult reports a run of OCR over a document: Success when it ran,
@@ -303,9 +305,10 @@ func NewRunnerWithMatcher(logger *log.Logger, cfg *config.Config, tools []string
 }
 
 // ExtractText extracts a document's text with the configured extractor chain for its MIME type and repairs
-// invalid UTF-8: CESU-8 surrogate pairs recombine into proper characters and every remaining invalid
-// sequence becomes U+FFFD. The path must exist; the returned Text pointer is nil when the document yields
-// no text.
+// invalid UTF-8: CESU-8 surrogate pairs recombine into proper characters and every remaining invalid sequence
+// becomes U+FFFD. Text that still looks like a wrong-charset decode gets one lossless reversal attempt; when
+// no candidate is confident the result is flagged Garbled. The path must exist; the returned Text pointer is
+// nil when the document yields no text.
 func (r *Runner) ExtractText(ctx context.Context, path string, mimeType string) (*TextExtractionResult, error) {
 	if r.textExtractor == nil {
 		return nil, fmt.Errorf("text extractor not configured")
@@ -328,23 +331,34 @@ func (r *Runner) ExtractText(ctx context.Context, path string, mimeType string) 
 		return nil, fmt.Errorf("text extractor: %w", err)
 	}
 
+	garbled := false
 	if text != nil {
 		repaired, pairs, replaced := repairUTF8(*text)
 		if pairs+replaced > 0 {
 			r.logger.Debug("", "text extractor: repaired invalid utf-8 in %s: %d surrogate pairs recombined, %d sequences replaced with U+FFFD", path, pairs, replaced)
 			*text = repaired
 		}
+
+		repaired, outcome, rev := repairGarbledText(*text)
+		switch outcome {
+		case garbleRepaired:
+			r.logger.Info("", "text extractor: repaired garbled text in %s: %s -> %s (score %.2f)", path, rev.wrong, rev.trueCharset, rev.score)
+			*text = repaired
+		case garbleUnrecoverable:
+			r.logger.Debug("", "text extractor: %s yielded garbled text that no candidate charset reversed", path)
+			garbled = true
+		}
 	}
 
-	result := TextExtractionResult{Text: text}
+	result := TextExtractionResult{Text: text, Garbled: garbled}
 
 	return &result, nil
 }
 
-// OCR runs OCR over a PDF, rendering pages and writing an invisible-text
-// overlay so the result is searchable. The path must exist; TmpPath in the
-// result points at the generated PDF.
-func (r *Runner) OCR(ctx context.Context, docId, path string) (*OCRResult, error) {
+// OCR runs OCR over a PDF, rendering pages and writing an invisible-text overlay so the result is searchable.
+// The path must exist; mode selects how pages that already carry text are treated. TmpPath in the result
+// points at the generated PDF.
+func (r *Runner) OCR(ctx context.Context, docId, path string, mode ocr.Mode) (*OCRResult, error) {
 	if r.ocr == nil {
 		return nil, fmt.Errorf("OCR not configured")
 	}
@@ -360,7 +374,7 @@ func (r *Runner) OCR(ctx context.Context, docId, path string) (*OCRResult, error
 	}
 
 	outputPath, err := runWithTimeout(ctx, func() (*string, error) {
-		return r.ocr.Process(ctx, docId, path)
+		return r.ocr.Process(ctx, docId, path, mode)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ocr: %w", err)

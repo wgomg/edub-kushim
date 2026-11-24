@@ -37,10 +37,10 @@ func NewOcrMyPdf(logger *log.Logger, cfg config.ToolConfig, languages []string) 
 	return &OcrMyPdf{logger: logger, config: cfg, languages: languages}, nil
 }
 
-// Process shells out to ocrmypdf, skipping files that already carry a
-// text layer (skip-text mode), and returns the searchable PDF's temp
-// path. The path must be absolute.
-func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, error) {
+// Process shells out to ocrmypdf and returns the searchable PDF's temp path. mode maps to the page-mode flag:
+// --skip-text leaves pages that already carry text untouched, --force-ocr discards the existing layer and
+// re-OCRs every page. The path must be absolute.
+func (o *OcrMyPdf) Process(ctx context.Context, docId, path string, mode Mode) (*string, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s: input path must be absolute, got %q", o.Name(), path)
 	}
@@ -54,6 +54,11 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 	)
 	outputPath := filepath.Join(tmpDir, outputName)
 
+	pageMode := "--skip-text"
+	if mode == ModeForce {
+		pageMode = "--force-ocr"
+	}
+
 	args := []string{
 		"--language", strings.Join(o.languages, "+"),
 		"--output-type", "pdfa-2",
@@ -65,6 +70,7 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 		"--jpeg-quality", "85",
 		"--png-quality", "85",
 		"--oversample", "150",
+		pageMode,
 		path,
 		outputPath,
 	}
@@ -89,6 +95,8 @@ func (o *OcrMyPdf) Process(ctx context.Context, docId, path string) (*string, er
 			hint = "install pngquant (e.g. 'sudo apt install pngquant') for image optimization, or ocrmypdf will skip it"
 		} else if strings.Contains(stderrStr, "tesseract") && strings.Contains(stderrStr, "not found") {
 			hint = "install tesseract (e.g. 'sudo apt install tesseract-ocr')"
+		} else if strings.Contains(stderrStr, "already has text") || strings.Contains(stderrStr, "prior OCR found") || strings.Contains(stderrStr, "already contains text") {
+			hint = fmt.Sprintf("the input already carries a text layer ocrmypdf refused to touch; it was invoked with %s", pageMode)
 		}
 		if hint != "" {
 			return nil, fmt.Errorf("%s failed: %w, stderr: %s\n... %s", o.Name(), err, stderrStr, hint)

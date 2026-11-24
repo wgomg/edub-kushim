@@ -208,12 +208,21 @@ All extracted text passes through `tools.Runner.ExtractText`, which repairs
 invalid UTF-8 before the text is stored. PDF font maps occasionally emit
 CESU-8/WTF-8 surrogate sequences; a valid surrogate pair is recombined into
 the proper 4-byte character, and any other malformed sequence becomes
-`U+FFFD`. Stored `text_content` is therefore always valid UTF-8, so a single
-malformed glyph cannot fail a document's ingestion.
+`U+FFFD`. Text that is valid UTF-8 but decodes as mojibake (a wrong-charset
+text layer, typically a CJK byte stream read as Latin-1) gets one lossless
+charset-reversal attempt over a small candidate matrix. A confident candidate
+replaces the extracted text; otherwise the result is flagged garbled and the
+document is re-OCR'd in forced mode to rebuild the text layer. Formats with
+no OCR path keep the extracted text with a warning. Stored `text_content` is
+therefore always valid UTF-8, and a broken glyph mapping cannot reach
+enrichment unnoticed.
 
 The external‑tool adapters (`pdftotext` for text extraction, `ocrmypdf` for OCR,
-Ghostscript for PDF optimization) are available as alternatives. Configure via
-`consumer.textextractor`, `consumer.ocr`, and `consumer.pdfoptimizer`.
+Ghostscript for PDF optimization) are available as alternatives. The
+`pdftotext` adapter extracts in stream order with UTF-8 output and discards
+diagonal text (`-nodiag`), keeping watermark glyphs out of `text_content`.
+Configure via `consumer.textextractor`, `consumer.ocr`, and
+`consumer.pdfoptimizer`.
 Thumbnails use the `consumer.thumbnail` section (`engine: 'mupdf'`, the only
 implemented engine) with `dpi`, `max_width`, `quality`, `timeout`, and
 `workers`; disabling `consumer.thumbnail.enabled` skips thumbnail-task

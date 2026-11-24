@@ -53,10 +53,10 @@ func NewGosseract(logger *log.Logger, cfg config.ToolConfig, optimizerCmd string
 	return &Gosseract{logger: logger, config: cfg, optimizer: optimizer, languages: languages, dataDir: dataDir, ocrWorkers: ocrWorkers}, nil
 }
 
-// Process forks the internal-ocr verb over the document and returns the
-// searchable PDF's temp path. PDFs only; the internal-ocr verb accepts
-// images directly.
-func (o *Gosseract) Process(ctx context.Context, docId, path string) (*string, error) {
+// Process forks the internal-ocr verb over the document and returns the searchable PDF's temp path. PDFs
+// only; the internal-ocr verb accepts images directly. The engine rasterizes every page and rebuilds the
+// text layer, so both modes behave as force.
+func (o *Gosseract) Process(ctx context.Context, docId, path string, _ Mode) (*string, error) {
 	if err := EnsureLanguages(o.logger, o.dataDir, o.languages); err != nil {
 		return nil, fmt.Errorf("tessdata setup: %w", err)
 	}

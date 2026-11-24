@@ -29,6 +29,7 @@ import (
 	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/documents/converter"
 	mime "github.com/wgomg/edub-kushim/internal/documents/mime"
+	"github.com/wgomg/edub-kushim/internal/documents/ocr"
 	"github.com/wgomg/edub-kushim/internal/documents/pdfoptimizer"
 	"github.com/wgomg/edub-kushim/internal/documents/storage"
 	"github.com/wgomg/edub-kushim/internal/log"
@@ -41,7 +42,7 @@ import (
 // This extraction exists solely to allow mock implementations in tests.
 type runner interface {
 	ExtractText(ctx context.Context, path string, mimeType string) (*tools.TextExtractionResult, error)
-	OCR(ctx context.Context, docId, path string) (*tools.OCRResult, error)
+	OCR(ctx context.Context, docId, path string, mode ocr.Mode) (*tools.OCRResult, error)
 	OptimizePdf(ctx context.Context, docId, path string) (*tools.PdfOptimizationResult, error)
 	ConvertToPdf(ctx context.Context, path string, mimeType string) (*string, error)
 }
@@ -632,7 +633,7 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	if mime.IsImage(file.MimeType) {
 		c.logger.Info(documentID, "image file %s, proceeding directly to OCR", file.Name)
 		file.PageCount = 1
-		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore, report)
+		return c.ocrAndReextract(ctx, file, documentID, memBefore, memBefore, report, ocr.ModeMissingText)
 	}
 
 	report("extract-text", "", 0)
@@ -648,7 +649,8 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	if info, err := os.Stat(extractPath); err == nil {
 		extractFileSize = info.Size()
 	}
-	if extractResult.Text != nil && *extractResult.Text != "" && float64(len(*extractResult.Text))/float64(extractFileSize) >= minTextDensityRatio {
+	if extractResult.Text != nil && *extractResult.Text != "" && !extractResult.Garbled &&
+		float64(len(*extractResult.Text))/float64(extractFileSize) >= minTextDensityRatio {
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 
 		if mime.IsPDF(extractMimeType) {
@@ -668,15 +670,23 @@ func (c *Consumer) extractText(ctx context.Context, file File, documentID string
 	}
 
 	if extractResult.Text != nil && *extractResult.Text != "" && !mime.IsPDF(extractMimeType) {
+		if extractResult.Garbled {
+			c.logger.Warn(documentID, "%s: garbled text from %s cannot be OCR'd, storing it as extracted", file.Name, extractMimeType)
+		}
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 		return file, nil
 	}
 
+	if extractResult.Garbled {
+		c.logger.Info(documentID, "garbled text in %s could not be repaired, forcing OCR", file.Name)
+		return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore, report, ocr.ModeForce)
+	}
+
 	c.logger.Info(documentID, "no text extracted from %s, OCR needed", file.Name)
-	return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore, report)
+	return c.ocrAndReextract(ctx, file, documentID, memAfterExtract, memBefore, report, ocr.ModeMissingText)
 }
 
-func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll log.MemSnapshot, report task.ProgressFunc) (File, error) {
+func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID string, memBeforeOCR, memBeforeAll log.MemSnapshot, report task.ProgressFunc, mode ocr.Mode) (File, error) {
 	ocrInputPath := file.OriginalPath
 	if file.ConvertedPdfTmpPath != nil {
 		ocrInputPath = *file.ConvertedPdfTmpPath
@@ -690,7 +700,7 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 	} else {
 		report("ocr", "", 0)
 	}
-	ocrResult, err := c.runner.OCR(ctx, documentID, ocrInputPath)
+	ocrResult, err := c.runner.OCR(ctx, documentID, ocrInputPath, mode)
 	memAfterOCR := log.ReadMemSnapshot()
 	c.logger.Debug(documentID, "OCR: %s (RSS now %s)", log.FormatMemDelta(memBeforeOCR, memAfterOCR), log.FormatBytes(memAfterOCR.RSS))
 	if err != nil {
@@ -709,6 +719,9 @@ func (c *Consumer) ocrAndReextract(ctx context.Context, file File, documentID st
 	}
 
 	if extractResult.Text != nil && *extractResult.Text != "" {
+		if extractResult.Garbled {
+			c.logger.Warn(documentID, "OCR output for %s is still garbled; check that consumer.ocr.languages matches the document", file.Name)
+		}
 		file.Text = sql.NullString{String: *extractResult.Text, Valid: true}
 	} else {
 		file.Text = sql.NullString{Valid: false}
