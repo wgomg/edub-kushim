@@ -310,15 +310,22 @@ export const api = {
 		provisionalList: (
 			limit = 50,
 			offset = 0,
-			{ criteria = [], states = [], q = '', sort = 'newest', facets = false, signal } = {}
+			{ criteria = [], states = [], q = '', sort = 'newest', signal } = {}
 		) => {
 			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
 			if (q) params.set('q', q);
 			if (criteria.length) params.set('criteria', encodeCriteria(criteria));
 			if (states.length) params.set('state', states.join(','));
 			if (sort === 'oldest') params.set('sort', 'oldest');
-			if (facets) params.set('facets', 'true');
 			return requestRaw(`/api/v1/tags/provisional?${params.toString()}`, { signal });
+		},
+		provisionalCounts: ({ q = '', criteria = [], states = [], facets = false, signal } = {}) => {
+			const params = new URLSearchParams();
+			if (q) params.set('q', q);
+			if (criteria.length) params.set('criteria', encodeCriteria(criteria));
+			if (states.length) params.set('state', states.join(','));
+			if (facets) params.set('facets', 'true');
+			return requestRaw(`/api/v1/tags/provisional/counts?${params.toString()}`, { signal });
 		},
 		promote: (id) => requestRaw(`/api/v1/tags/${id}/promote`, { method: 'POST' }),
 		demote: (id) => requestRaw(`/api/v1/tags/${id}/demote`, { method: 'POST' }),

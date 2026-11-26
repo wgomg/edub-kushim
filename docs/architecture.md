@@ -466,7 +466,8 @@ The enrichment pipeline:
    Those names are resolved later by the scheduled tag reconciliation, whose
     provisional phase re-derives the decision from stored verdicts and
     re-judges the rest, or by an operator through the provisional review queue
-    (`GET /api/v1/tags/provisional`, `POST /api/v1/tags/{id}/promote`,
+     (`GET /api/v1/tags/provisional`, `GET /api/v1/tags/provisional/counts`,
+     `POST /api/v1/tags/{id}/promote`,
     `POST /api/v1/tags/{id}/accept`, `POST /api/v1/tags/{id}/separate`, and the tags
     page's "New tags" tab); a
     rejection there is a normal tag delete and lands in the blocklist, and an

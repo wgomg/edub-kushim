@@ -7,6 +7,7 @@ const apiMocks = vi.hoisted(() => ({
 	list: vi.fn(),
 	reconcileReport: vi.fn(),
 	provisionalList: vi.fn(),
+	provisionalCounts: vi.fn(),
 	deletedList: vi.fn(),
 	auditFlags: vi.fn(),
 	siblings: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('#lib/api.js', () => ({
 			list: apiMocks.list,
 			reconcileReport: apiMocks.reconcileReport,
 			provisionalList: apiMocks.provisionalList,
+			provisionalCounts: apiMocks.provisionalCounts,
 			deletedList: apiMocks.deletedList,
 			auditFlags: apiMocks.auditFlags,
 			siblings: apiMocks.siblings,
@@ -65,6 +67,10 @@ beforeEach(() => {
 	apiMocks.provisionalList.mockResolvedValue({
 		ok: true,
 		data: { results: [], total: 0, pending_identity_total: 0 }
+	});
+	apiMocks.provisionalCounts.mockResolvedValue({
+		ok: true,
+		data: { total: 0, pending_identity_total: 0 }
 	});
 	apiMocks.deletedList.mockResolvedValue({ results: [], total: 0 });
 	apiMocks.auditFlags.mockResolvedValue({ results: [], total: 0 });

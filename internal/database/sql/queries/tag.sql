@@ -93,20 +93,23 @@ GROUP BY t.id
 ORDER BY t.created_at DESC;
 
 -- name: ListTagsWithDocumentCount :many
-SELECT t.*, COUNT(dt.document_id) AS document_count
+SELECT t.*, (SELECT COUNT(*) FROM document_tag dt WHERE dt.tag_id = t.id) AS document_count
 FROM tag t
-LEFT JOIN document_tag dt ON t.id = dt.tag_id
-GROUP BY t.id
-ORDER BY t.created_at DESC LIMIT $1 OFFSET $2;
+JOIN (
+    SELECT id FROM tag ORDER BY created_at DESC LIMIT $1 OFFSET $2
+) page ON page.id = t.id
+ORDER BY t.created_at DESC;
 
 -- name: SearchTagsByNameWithDocumentCount :many
-SELECT t.*, COUNT(dt.document_id) AS document_count
+SELECT t.*, (SELECT COUNT(*) FROM document_tag dt WHERE dt.tag_id = t.id) AS document_count
 FROM tag t
-LEFT JOIN document_tag dt ON t.id = dt.tag_id
-WHERE (t.name ILIKE $1
-    OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id AND ta.alias_name ILIKE $1))
-GROUP BY t.id
-ORDER BY t.name ASC LIMIT $2 OFFSET $3;
+JOIN (
+    SELECT t.id FROM tag t
+    WHERE (t.name ILIKE $1
+        OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.canonical_tag_id = t.id AND ta.alias_name ILIKE $1))
+    ORDER BY t.name ASC LIMIT $2 OFFSET $3
+) page ON page.id = t.id
+ORDER BY t.name ASC;
 
 -- name: DeleteTag :exec
 DELETE FROM tag WHERE id = $1;
@@ -136,158 +139,174 @@ WHERE id = ANY(@tag_ids::bigint[])
   AND orphaned_since IS NOT NULL;
 
 -- name: ListProvisionalTagsWithDocumentCount :many
-SELECT v.id, v.name, v.created_at, v.demoted_at, v.demoted_reason, v.accepted_at,
-       v.document_count, v.standing_source
+SELECT page.id, page.name, page.created_at, page.demoted_at, page.demoted_reason,
+       page.accepted_at, page.standing_source, page.total,
+       (SELECT COUNT(*) FROM document_tag dt
+        JOIN document d ON d.id = dt.document_id
+        WHERE dt.tag_id = page.id AND d.deleted_at IS NULL) AS document_count
 FROM (
-    SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
-           t.demoted_at, t.demoted_reason, t.accepted_at, t.standing_source,
-           (SELECT COUNT(*) FROM document_tag dt
-            JOIN document d ON d.id = dt.document_id
-            WHERE dt.tag_id = t.id AND d.deleted_at IS NULL) AS document_count,
-           qe.pass IS NULL AS no_verdict,
-           coalesce(qe.outcome,
-                    CASE WHEN qe.pass THEN 'admit'
-                         WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
-                         ELSE 'reject' END) AS outcome_class,
-           t.accepted_at IS NOT NULL AS accepted,
-           flag.identity_pending, flag.identity_hold, flag.split_hold,
-           flag.degraded_unversioned, flag.composition_blocks, flag.demoted
-    FROM tag t
-    LEFT JOIN LATERAL (
-        SELECT e.criteria, e.pass, e.outcome
-        FROM tag_quality_event e
-        WHERE e.tag_name = t.name AND e.policy_version = @policy_version
-        ORDER BY e.verdict_at DESC
-        LIMIT 1
-    ) qe ON true
-    -- the journal flags are read only by the journal-backed state values and by the facet counts; the
-    -- journal_flags gate keeps them out of the unfiltered plan and out of all the legacy verdict-only
-    -- paths; each EXISTS mirrors the Go helper the matching response pill reads, so a drift in just
-    -- one cannot possibly diverge from the other: identity_pending mirrors PendingTagIdentityCountsByNames,
-    -- identity_hold reads the same tag_identity_hold_decision view as ListIdentityHeldNamesAnyVersion plus
-    -- the refusal pairing in IdentityHeldNamesAnyVersion (latest decision per candidate and kind across
-    -- rule-set versions), and
-    -- split_hold mirrors CompositionReview's compositionHolds reasons; the composition_blocks mirrors
-    -- CompositionActionFor returning a non-empty action, which is what isBareDeferral tests; a relational
-    -- keep resting on the promoted-parts proxy is store-maturity pending, not a review obligation, so both
-    -- predicates exclude it exactly as ProxyRelationalKeep does in the Go reads
-    LEFT JOIN LATERAL (
-        SELECT
-            CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM tag_identity_event ie
-                        WHERE ie.verdict IS NULL
-                          AND (ie.candidate = t.name OR ie.partner = t.name))
-            ELSE false END AS identity_pending,
-            CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (held.candidate, held.kind)
-                                   held.kind, held.verdict, held.anchor
-                            FROM tag_identity_hold_decision held
-                            WHERE held.candidate = t.name
-                              AND held.kind = ANY(@identity_hold_kinds::text[])
-                              AND EXISTS (SELECT 1 FROM tag anchor_tag
-                                          WHERE anchor_tag.name = held.anchor)
-                            ORDER BY held.candidate, held.kind, held.created_at DESC
-                        ) held
-                        WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
-                           OR held.kind = 'base_form' AND held.verdict = 'stand')
-            ELSE false END AS identity_hold,
-            CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.reading
-                            FROM tag_composition_event ce
-                            WHERE ce.criteria_version = @split_criteria_version
-                              AND ce.candidate = t.name
-                            ORDER BY ce.candidate, ce.created_at DESC
-                        ) held
-                        WHERE held.reason = ANY(@composition_hold_reasons::text[])
-                          AND NOT (held.reason = 'relational_keep'
-                                   AND coalesce(held.reading ->> 'source', '') = 'proxy'))
-            ELSE false END AS split_hold,
-            CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason
-                            FROM tag_composition_event ce
-                            WHERE ce.candidate = t.name
-                            ORDER BY ce.candidate, ce.created_at DESC
-                        ) latest
-                        WHERE latest.reason = 'judge_unavailable')
-            ELSE false END AS degraded_unversioned,
-            CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition, ce.reading
-                            FROM tag_composition_event ce
-                            WHERE ce.candidate = t.name
-                            ORDER BY ce.candidate, ce.created_at DESC
-                        ) latest
-                        WHERE latest.disposition = 'drop'
-                           OR (latest.reason = ANY(@composition_hold_reasons::text[])
-                               AND NOT (latest.reason = 'relational_keep'
-                                        AND coalesce(latest.reading ->> 'source', '') = 'proxy')))
-            ELSE false END AS composition_blocks,
-            t.demoted_at IS NOT NULL AS demoted
-    ) flag ON true
-    WHERE t.promoted_at IS NULL
-      AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
-      AND (@name_pattern::text = '' OR t.name ILIKE @name_pattern::text)
-      AND (@subject_matter_state::text = ''
-           OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
-      AND (@dimension_state::text = ''
-           OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
-      AND (@person_class::text = ''
-           OR coalesce(qe.criteria ->> 'person_class', 'absent') = @person_class::text)
-      AND (@atomic_state::text = ''
-           OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
-      AND (@not_form_genre_state::text = ''
-           OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = @not_form_genre_state::text)
-      AND (@defer_state::text = ''
-           OR coalesce(qe.criteria ->> 'defer', 'absent') = @defer_state::text)
-) v
-  -- legacy rows carry no outcome: derive it the same way the ui's verdict outcome does; the pass guard
-  -- keeps unjudged tags in the 'none' class; an operator acceptance is durable, so the tag reads as
-  -- admitted while it is stamped
-WHERE (@verdict_state::text = ''
-       OR (@verdict_state::text = 'none' AND v.no_verdict)
-       OR (@verdict_state::text <> 'none'
-           AND NOT v.no_verdict
-           AND CASE WHEN v.accepted AND v.outcome_class = 'defer' THEN 'admit'
-                    ELSE v.outcome_class END = @verdict_state::text))
-  -- state values are alternatives, so one matching flag is enough; the accepted class is its own state,
-  -- so the verdict classes exclude an active acceptance
-  AND (coalesce(cardinality(@states::text[]), 0) = 0
-       OR ('no_verdict' = ANY(@states::text[]) AND v.no_verdict)
-       OR ('admitted' = ANY(@states::text[])
-           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
-       OR ('deferred' = ANY(@states::text[])
-           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer')
-       OR ('rejected' = ANY(@states::text[])
-           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'reject')
-       OR ('accepted' = ANY(@states::text[]) AND v.accepted)
-       OR ('identity_pending' = ANY(@states::text[]) AND v.identity_pending)
-       OR ('identity_hold' = ANY(@states::text[]) AND v.identity_hold)
-       OR ('split_hold' = ANY(@states::text[]) AND v.split_hold)
-       OR ('degraded' = ANY(@states::text[]) AND v.degraded_unversioned AND NOT v.split_hold)
-       OR ('demoted' = ANY(@states::text[]) AND v.demoted)
-       OR ('needs_decision' = ANY(@states::text[])
-           AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer'
-           AND NOT v.demoted AND NOT v.identity_hold AND NOT v.composition_blocks)
-       OR ('unblocked' = ANY(@states::text[])
-           AND ((NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
-                OR v.accepted)
-           AND NOT v.identity_pending AND NOT v.identity_hold AND NOT v.split_hold
-           AND NOT v.degraded_unversioned AND NOT v.demoted))
--- one boolean parameter cannot be spliced into an ORDER BY, so each direction gets its own key and the
--- inactive arm collapses to NULL for every row, leaving the active direction to decide the order
-ORDER BY CASE WHEN @oldest_first::boolean THEN v.created_at END ASC,
-         CASE WHEN @oldest_first::boolean THEN v.id END ASC,
-         CASE WHEN NOT @oldest_first::boolean THEN v.created_at END DESC,
-         CASE WHEN NOT @oldest_first::boolean THEN v.id END DESC
-LIMIT @page_limit OFFSET @page_offset;
+    SELECT s.id, s.name, s.created_at, s.demoted_at, s.demoted_reason,
+           s.accepted_at, s.standing_source, s.total
+    FROM (
+        SELECT m.id, m.name, m.created_at, m.demoted_at, m.demoted_reason,
+               m.accepted_at, m.standing_source, m.state_match,
+               count(*) FILTER (WHERE m.state_match) OVER () AS total
+        FROM (
+            SELECT v.id, v.name, v.created_at, v.demoted_at, v.demoted_reason,
+                   v.accepted_at, v.standing_source,
+                   (@verdict_state::text = ''
+                    OR (@verdict_state::text = 'none' AND v.no_verdict)
+                    OR (@verdict_state::text <> 'none'
+                        AND NOT v.no_verdict
+                        AND CASE WHEN v.accepted AND v.outcome_class = 'defer' THEN 'admit'
+                                 ELSE v.outcome_class END = @verdict_state::text))
+                   -- state values are alternatives, so one matching flag is enough; the accepted class is
+                   -- its own state, so the verdict classes exclude an active acceptance
+                   AND (coalesce(cardinality(@states::text[]), 0) = 0
+                        OR ('no_verdict' = ANY(@states::text[]) AND v.no_verdict)
+                        OR ('admitted' = ANY(@states::text[])
+                            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
+                        OR ('deferred' = ANY(@states::text[])
+                            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer')
+                        OR ('rejected' = ANY(@states::text[])
+                            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'reject')
+                        OR ('accepted' = ANY(@states::text[]) AND v.accepted)
+                        OR ('identity_pending' = ANY(@states::text[]) AND v.identity_pending)
+                        OR ('identity_hold' = ANY(@states::text[]) AND v.identity_hold)
+                        OR ('split_hold' = ANY(@states::text[]) AND v.split_hold)
+                        OR ('degraded' = ANY(@states::text[])
+                            AND v.degraded_unversioned AND NOT v.split_hold)
+                        OR ('demoted' = ANY(@states::text[]) AND v.demoted)
+                        OR ('needs_decision' = ANY(@states::text[])
+                            AND NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'defer'
+                            AND NOT v.demoted AND NOT v.identity_hold AND NOT v.composition_blocks)
+                        OR ('unblocked' = ANY(@states::text[])
+                            AND ((NOT v.no_verdict AND NOT v.accepted AND v.outcome_class = 'admit')
+                                 OR v.accepted)
+                            AND NOT v.identity_pending AND NOT v.identity_hold AND NOT v.split_hold
+                            AND NOT v.degraded_unversioned AND NOT v.demoted)) AS state_match
+            FROM (
+                SELECT t.id, t.name, coalesce(t.created_at, now()) AS created_at,
+                       t.demoted_at, t.demoted_reason, t.accepted_at, t.standing_source,
+                       qe.pass IS NULL AS no_verdict,
+                       coalesce(qe.outcome,
+                                CASE WHEN qe.pass THEN 'admit'
+                                     WHEN (qe.criteria ->> 'defer')::boolean IS TRUE THEN 'defer'
+                                     ELSE 'reject' END) AS outcome_class,
+                       t.accepted_at IS NOT NULL AS accepted,
+                       flag.identity_pending, flag.identity_hold, flag.split_hold,
+                       flag.degraded_unversioned, flag.composition_blocks, flag.demoted
+                FROM tag t
+                LEFT JOIN LATERAL (
+                    SELECT e.criteria, e.pass, e.outcome
+                    FROM tag_quality_event e
+                    WHERE e.tag_name = t.name AND e.policy_version = @policy_version
+                    ORDER BY e.verdict_at DESC
+                    LIMIT 1
+                ) qe ON true
+                -- both composition flags read the latest any-version row for the candidate in a single
+                -- probe, and the journal_flags gate keeps it out of the unfiltered plan; the coalesces keep
+                -- both flag columns non-NULL when the gate is closed
+                LEFT JOIN LATERAL (
+                    SELECT ce.reason, ce.disposition, ce.reading
+                    FROM tag_composition_event ce
+                    WHERE @journal_flags::boolean AND ce.candidate = t.name
+                    ORDER BY ce.created_at DESC
+                    LIMIT 1
+                ) comp ON true
+                -- the journal flags are read only by the journal-backed state values and by the facet counts;
+                -- the journal_flags gate keeps them out of the unfiltered plan and out of all the legacy
+                -- verdict-only paths; each probe mirrors the Go helper the matching response pill reads, so a
+                -- drift in just one cannot possibly diverge from the other: identity_pending mirrors
+                -- PendingTagIdentityCountsByNames, identity_hold reads the same tag_identity_hold_decision
+                -- as ListIdentityHeldNamesAnyVersion plus the refusal pairing in IdentityHeldNamesAnyVersion
+                -- (latest decision per candidate and kind across rule-set versions), split_hold mirrors
+                -- CompositionReview's compositionHolds reasons over the latest current-version row, and
+                -- composition_blocks mirrors CompositionActionFor returning a non-empty action, which is what
+                -- isBareDeferral tests; a relational keep over the promoted-parts proxy is store-maturity
+                -- pending, not a review obligation, so both predicates have to exclude it exactly as
+                -- ProxyRelationalKeep does in the Go reads
+                LEFT JOIN LATERAL (
+                    SELECT
+                        CASE WHEN @journal_flags::boolean THEN
+                            EXISTS (SELECT 1 FROM tag_identity_event ie
+                                    WHERE ie.verdict IS NULL
+                                      AND (ie.candidate = t.name OR ie.partner = t.name))
+                        ELSE false END AS identity_pending,
+                        CASE WHEN @journal_flags::boolean THEN
+                            EXISTS (SELECT 1 FROM (
+                                        SELECT DISTINCT ON (held.candidate, held.kind)
+                                               held.kind, held.verdict, held.anchor
+                                        FROM tag_identity_hold_decision held
+                                        WHERE held.candidate = t.name
+                                          AND held.kind = ANY(@identity_hold_kinds::text[])
+                                          AND EXISTS (SELECT 1 FROM tag anchor_tag
+                                                      WHERE anchor_tag.name = held.anchor)
+                                        ORDER BY held.candidate, held.kind, held.created_at DESC
+                                    ) held
+                                    WHERE held.kind = 'fold_gate' AND held.verdict = 'rejected'
+                                       OR held.kind = 'base_form' AND held.verdict = 'stand')
+                        ELSE false END AS identity_hold,
+                        CASE WHEN @journal_flags::boolean THEN
+                            EXISTS (SELECT 1 FROM (
+                                        SELECT ce.reason, ce.reading
+                                        FROM tag_composition_event ce
+                                        WHERE ce.criteria_version = @split_criteria_version
+                                          AND ce.candidate = t.name
+                                        ORDER BY ce.created_at DESC
+                                        LIMIT 1
+                                    ) held
+                                    WHERE held.reason = ANY(@composition_hold_reasons::text[])
+                                      AND NOT (held.reason = 'relational_keep'
+                                               AND coalesce(held.reading ->> 'source', '') = 'proxy'))
+                        ELSE false END AS split_hold,
+                        coalesce(comp.reason = 'judge_unavailable', false) AS degraded_unversioned,
+                        coalesce(comp.disposition = 'drop'
+                                 OR (comp.reason = ANY(@composition_hold_reasons::text[])
+                                     AND NOT (comp.reason = 'relational_keep'
+                                              AND coalesce(comp.reading ->> 'source', '') = 'proxy')),
+                                 false) AS composition_blocks,
+                        t.demoted_at IS NOT NULL AS demoted
+                ) flag ON true
+                WHERE t.promoted_at IS NULL
+                  AND EXISTS (SELECT 1 FROM document_tag dt WHERE dt.tag_id = t.id)
+                  AND (@name_pattern::text = '' OR t.name ILIKE @name_pattern::text)
+                  AND (@subject_matter_state::text = ''
+                       OR coalesce(qe.criteria ->> 'subject_matter', 'absent') = @subject_matter_state::text)
+                  AND (@dimension_state::text = ''
+                       OR coalesce(qe.criteria ->> 'dimension', 'absent') = @dimension_state::text)
+                  AND (@person_class::text = ''
+                       OR coalesce(qe.criteria ->> 'person_class', 'absent') = @person_class::text)
+                  AND (@atomic_state::text = ''
+                       OR coalesce(qe.criteria ->> 'atomic', 'absent') = @atomic_state::text)
+                  AND (@not_form_genre_state::text = ''
+                       OR coalesce(qe.criteria ->> 'not_form_genre', 'absent') = @not_form_genre_state::text)
+                  AND (@defer_state::text = ''
+                       OR coalesce(qe.criteria ->> 'defer', 'absent') = @defer_state::text)
+            ) v
+        ) m
+    ) s
+    -- legacy rows carry no outcome: derive it the same way the ui's verdict outcome does; the pass guard
+    -- keeps unjudged tags in the 'none' class; an operator acceptance is durable, so the tag reads as
+    -- admitted while it is stamped
+    WHERE s.state_match
+    -- one boolean parameter cannot be spliced into an ORDER BY, so each direction gets its own key and the
+    -- inactive arm collapses to NULL for every row, leaving the active direction to decide the order
+    ORDER BY CASE WHEN @oldest_first::boolean THEN s.created_at END ASC,
+             CASE WHEN @oldest_first::boolean THEN s.id END ASC,
+             CASE WHEN NOT @oldest_first::boolean THEN s.created_at END DESC,
+             CASE WHEN NOT @oldest_first::boolean THEN s.id END DESC
+    LIMIT @page_limit OFFSET @page_offset
+) page
+ORDER BY CASE WHEN @oldest_first::boolean THEN page.created_at END ASC,
+         CASE WHEN @oldest_first::boolean THEN page.id END ASC,
+         CASE WHEN NOT @oldest_first::boolean THEN page.created_at END DESC,
+         CASE WHEN NOT @oldest_first::boolean THEN page.id END DESC;
 
 -- counts the provisional queue page total and, when journal flags are requested, the per-state review
--- facet counts; the total filter group must mirror exactly the where clause group of the list query,
--- while the facet columns count the name and rubric base set under those same base filters, and read
--- zero when journal flags are off
+-- facet counts; the total filter group must match exactly the list query's state_match predicate, while
+-- the facet columns count the name and rubric base set under those same base filters, and read zero when
+-- journal flags are off
 -- name: CountProvisionalTags :one
 SELECT
     count(*) FILTER (WHERE
@@ -359,6 +378,16 @@ FROM (
         ORDER BY e.verdict_at DESC
         LIMIT 1
     ) qe ON true
+    -- both composition flags read the latest any-version row for the candidate in a single probe, and
+    -- the journal_flags gate keeps that probe out of the unfiltered plan; the coalesces keep both flag
+    -- columns non-NULL when the gate is closed
+    LEFT JOIN LATERAL (
+        SELECT ce.reason, ce.disposition, ce.reading
+        FROM tag_composition_event ce
+        WHERE @journal_flags::boolean AND ce.candidate = t.name
+        ORDER BY ce.created_at DESC
+        LIMIT 1
+    ) comp ON true
     LEFT JOIN LATERAL (
         SELECT
             CASE WHEN @journal_flags::boolean THEN
@@ -382,37 +411,23 @@ FROM (
             ELSE false END AS identity_hold,
             CASE WHEN @journal_flags::boolean THEN
                 EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.reading
+                            SELECT ce.reason, ce.reading
                             FROM tag_composition_event ce
                             WHERE ce.criteria_version = @split_criteria_version
                               AND ce.candidate = t.name
-                            ORDER BY ce.candidate, ce.created_at DESC
+                            ORDER BY ce.created_at DESC
+                            LIMIT 1
                         ) held
                         WHERE held.reason = ANY(@composition_hold_reasons::text[])
                           AND NOT (held.reason = 'relational_keep'
                                    AND coalesce(held.reading ->> 'source', '') = 'proxy'))
             ELSE false END AS split_hold,
-            CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason
-                            FROM tag_composition_event ce
-                            WHERE ce.candidate = t.name
-                            ORDER BY ce.candidate, ce.created_at DESC
-                        ) latest
-                        WHERE latest.reason = 'judge_unavailable')
-            ELSE false END AS degraded_unversioned,
-            CASE WHEN @journal_flags::boolean THEN
-                EXISTS (SELECT 1 FROM (
-                            SELECT DISTINCT ON (ce.candidate) ce.reason, ce.disposition, ce.reading
-                            FROM tag_composition_event ce
-                            WHERE ce.candidate = t.name
-                            ORDER BY ce.candidate, ce.created_at DESC
-                        ) latest
-                        WHERE latest.disposition = 'drop'
-                           OR (latest.reason = ANY(@composition_hold_reasons::text[])
-                               AND NOT (latest.reason = 'relational_keep'
-                                        AND coalesce(latest.reading ->> 'source', '') = 'proxy')))
-            ELSE false END AS composition_blocks,
+            coalesce(comp.reason = 'judge_unavailable', false) AS degraded_unversioned,
+            coalesce(comp.disposition = 'drop'
+                     OR (comp.reason = ANY(@composition_hold_reasons::text[])
+                         AND NOT (comp.reason = 'relational_keep'
+                                  AND coalesce(comp.reading ->> 'source', '') = 'proxy')),
+                     false) AS composition_blocks,
             t.demoted_at IS NOT NULL AS demoted
     ) flag ON true
     WHERE t.promoted_at IS NULL

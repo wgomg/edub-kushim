@@ -1,5 +1,5 @@
 <script>
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { api } from '#lib/api.js';
 	import { createListQuery, listWindow } from '#lib/list/listQuery.svelte.js';
 	import Icon from '#lib/components/Icon.svelte';
@@ -112,7 +112,6 @@
 			states: query.states,
 			q: query.q,
 			sort: query.sort,
-			facets: facetsOpen,
 			signal
 		});
 		if (!result.ok) throw new Error('Failed to load new tags.');
@@ -120,8 +119,7 @@
 			items: result.data?.results ?? [],
 			total: result.data?.total ?? 0,
 			pendingTotal: result.data?.pending_identity_total ?? 0,
-			stateValues: result.data?.state_values ?? null,
-			stateFacets: result.data?.state_facets ?? null
+			stateValues: result.data?.state_values ?? null
 		};
 	}
 
@@ -156,9 +154,29 @@
 		if (Array.isArray(values) && values.length > 0) stateValues = values;
 	});
 
+	// the counts ride a dedicated endpoint so opening the menu never re-runs the list chain; the effect
+	// keeps them as fresh as the list data they complement, and a closed menu stops requesting
+	let facetsController = null;
+
+	async function loadFacets() {
+		facetsController?.abort();
+		facetsController = new AbortController();
+		try {
+			const result = await api.tags.provisionalCounts({
+				q: provisional.query.q,
+				criteria: provisional.query.criteria,
+				states: provisional.query.states,
+				facets: true,
+				signal: facetsController.signal
+			});
+			if (result.ok) facets = result.data?.state_facets ?? null;
+		} catch (err) {
+			if (err?.name === 'AbortError') return;
+		}
+	}
+
 	$effect(() => {
-		const next = facetsOpen ? provisional.data?.stateFacets : null;
-		if (next != null) facets = next;
+		if (facetsOpen && provisional.data) untrack(() => loadFacets());
 	});
 
 	let hasFilters = $derived(
@@ -207,18 +225,20 @@
 			provisional.update({ q: value });
 		}, 300);
 	}
-	onDestroy(() => clearTimeout(queryTimer));
+	onDestroy(() => {
+		clearTimeout(queryTimer);
+		facetsController?.abort();
+	});
 
-	// the menu shows what each state would add, so opening it asks the API for the facet counts while the
-	// request runs silently so the queue does not flash a loader; closing it stops carrying facets on
-	// later list, paging and keystroke requests
+	// the menu shows what each state would add; the effect above fetches those counts from the dedicated
+	// endpoint without touching the list, and closing the menu aborts any request still running
 	function onFacetsRequested() {
 		facetsOpen = true;
-		provisional.reload({ silent: true });
 	}
 
 	function onFacetsClosed() {
 		facetsOpen = false;
+		facetsController?.abort();
 	}
 
 	function applyFilters(next) {

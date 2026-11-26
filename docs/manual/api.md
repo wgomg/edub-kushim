@@ -278,6 +278,10 @@ always work. Badge meanings, hold reasons and each action's consequences are doc
    - `q=text` — case-insensitive substring match anywhere in the tag name (absent or empty lists
      everything); combines with `criteria`, `state` and `verdict`.
 
+   The Review state menu and the tab badge read the same filters against
+   `GET /api/v1/tags/provisional/counts`, which answers `total`, `pending_identity_total`
+   and — with `facets=true` — `state_facets` without building a page.
+
 2. **Decide**: `POST /api/v1/tags/{id}/promote` → `204` (already promoted → `409`). Rejecting
    uses `DELETE /api/v1/tags/{id}`, which blocklists the name. `POST /api/v1/tags/{id}/demote`
    withdraws a promoted tag's standing (seeded inventory cannot be demoted — `409`); its

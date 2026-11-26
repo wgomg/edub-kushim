@@ -281,6 +281,7 @@ func registerRoutes(
 	mux.Handle("GET /api/v1/tags", RequireRole(viewer...)(http.HandlerFunc(tagHandler.List)))
 	mux.Handle("GET /api/v1/tags/deleted", RequireRole(editor...)(http.HandlerFunc(tagHandler.ListDeleted)))
 	mux.Handle("GET /api/v1/tags/provisional", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListProvisional)))
+	mux.Handle("GET /api/v1/tags/provisional/counts", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListProvisionalCounts)))
 	mux.Handle("GET /api/v1/tags/split-rules", RequireRole(viewer...)(http.HandlerFunc(tagHandler.ListSplitRules)))
 	mux.Handle("GET /api/v1/tags/reconciliation/report", RequireRole(viewer...)(http.HandlerFunc(taskHandler.GetTagReconcileReport)))
 	mux.Handle("POST /api/v1/tags", RequireRole(editor...)(http.HandlerFunc(tagHandler.Create)))

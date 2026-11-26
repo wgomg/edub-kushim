@@ -586,6 +586,29 @@ ListProvisional serves the paged provisional tag list with its quality verdicts,
 | 409 | object |
 | 500 | string |
 
+#### `GET /api/v1/tags/provisional/counts`
+
+ListProvisionalCounts answers the review queue's total and per-state facet counts without building a page: the Review state menu and the New tags badge read it instead of the list endpoint.
+
+It takes the same name, criteria, verdict, review-state and facets parameters as the list and ignores paging; the facet counts cover the name and rubric base set and ignore the selected states by design.
+
+| Parameter | In | Type | Required | Default |
+|---|---|---|---|---|
+| `q` | query | string | no | "" |
+| `criteria` | query | array of string | no | — |
+| `verdict` | query | string | no | "" |
+| `sort` | query | string | no | "" |
+| `state` | query | array of string | no | — |
+| `facets` | query | boolean | no | — |
+
+| Status | Body |
+|---|---|
+| 200 | [ProvisionalTagCountsResponse](#provisionaltagcountsresponse) |
+| 400 | object |
+| 404 | no body |
+| 409 | object |
+| 500 | string |
+
 #### `GET /api/v1/tags/reconciliation/report`
 
 GetTagReconcileReport serves the latest completed reconcile task's report.
@@ -3001,6 +3024,16 @@ ProviderSuggestion is what the provider form takes from models.dev: the endpoint
 |---|---|---|
 | `adapter` | string | no |
 | `official_url` | string | no |
+
+### ProvisionalTagCountsResponse
+
+ProvisionalTagCountsResponse is the review queue's counts without a page: the filtered total for the badge, the queue-level pending identity count that drives the reevaluation affordance, plus the optional per-state facet counts that the Review state menu reads.
+
+| Field | Type | Required |
+|---|---|---|
+| `pending_identity_total` | integer | yes |
+| `state_facets` | object | no |
+| `total` | integer | yes |
 
 ### ProvisionalTagListResponse
 

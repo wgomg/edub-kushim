@@ -4697,6 +4697,130 @@ func TestListProvisionalStateFilter(t *testing.T) {
 	})
 }
 
+// TestListProvisionalCounts pins the counts endpoint the Review state menu and the New tags badge read:
+// it serves the filtered total and the queue-level pending identity count without a page, and the facet
+// counts stay base-set while total narrows by the selected states, like the list endpoint's contract.
+func TestListProvisionalCounts(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "counts doc")
+	seed := func(name string) int64 {
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+		return id
+	}
+	seedVerdict := func(name, criteria string, pass bool, outcome string) {
+		seed(name)
+		_, err := env.client.Queries.InsertTagQualityEvent(ctx, database.InsertTagQualityEventParams{
+			DocumentID:    docID,
+			TagName:       name,
+			Criteria:      json.RawMessage(criteria),
+			Pass:          pass,
+			Outcome:       sql.NullString{String: outcome, Valid: outcome != ""},
+			VerdictModel:  sql.NullString{String: "test-judge", Valid: true},
+			PolicyVersion: analyzer.TagQualityVersion,
+		})
+		testutil.AssertNoError(t, err, "insert quality event")
+	}
+
+	seedVerdict("counts admitted", `{"defer":false}`, true, "admit")
+	seedVerdict("counts deferred", `{"defer":true}`, false, "")
+	seed("counts unjudged")
+
+	_, err := env.client.Queries.InsertTagIdentityEvent(ctx, database.InsertTagIdentityEventParams{
+		Kind:           tags.IdentityKindFoldGate,
+		Candidate:      "counts pending identity",
+		Criteria:       json.RawMessage(`{"proposed_fold":"counts admitted"}`),
+		RuleSetVersion: tags.IdentityRuleSetVersion,
+	})
+	testutil.AssertNoError(t, err, "seed pending identity judgment")
+
+	t.Run("total and pending count without facets", func(t *testing.T) {
+		w := rec()
+		h.ListProvisionalCounts(w, req(t, "GET", "/api/v1/tags/provisional/counts", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var raw map[string]json.RawMessage
+		testutil.AssertNoError(t, json.Unmarshal(w.Body.Bytes(), &raw), "decode keys")
+		if _, ok := raw["state_facets"]; ok {
+			t.Error("state_facets must stay absent unless facets are requested")
+		}
+		var resp ProvisionalTagCountsResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(3), "base total")
+		testutil.AssertEqual(t, resp.PendingIdentityTotal, int64(1), "pending identity total")
+	})
+
+	t.Run("facets count the base set while total narrows", func(t *testing.T) {
+		w := rec()
+		h.ListProvisionalCounts(w, req(t, "GET", "/api/v1/tags/provisional/counts?state=deferred&facets=true", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+
+		var resp ProvisionalTagCountsResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		testutil.AssertEqual(t, resp.Total, int64(1), "state-narrowed total")
+		testutil.AssertEqual(t, resp.StateFacets, map[string]int64{
+			"no_verdict":       1,
+			"admitted":         1,
+			"deferred":         1,
+			"rejected":         0,
+			"accepted":         0,
+			"identity_pending": 0,
+			"identity_hold":    0,
+			"split_hold":       0,
+			"degraded":         0,
+			"demoted":          0,
+			"needs_decision":   1,
+			"unblocked":        1,
+		}, "state facets")
+	})
+
+	t.Run("invalid state fails at the boundary", func(t *testing.T) {
+		w := rec()
+		h.ListProvisionalCounts(w, req(t, "GET", "/api/v1/tags/provisional/counts?state=bogus", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusBadRequest, "status")
+	})
+}
+
+// TestListProvisionalOutOfRangePageKeepsTotal pins the recovery path for an out-of-range page: when
+// the window total has no row to ride on, the handler must recover it so the UI pager lands on the
+// correct last page instead of snapping to page zero.
+func TestListProvisionalOutOfRangePageKeepsTotal(t *testing.T) {
+	env := newHandlerTestEnv(t)
+	ctx := context.Background()
+	h := NewTagHandler(env.tagSvc, env.tagIdentity, env.tagAudit, env.tagRejudge, func() *config.Config { return config.DefaultConfig("/tmp/test") }, env.logger)
+
+	docID := database.CreateUniqueDocument(t, env.client.Queries, "page recovery doc")
+	for _, name := range []string{"page recovery one", "page recovery two"} {
+		id := database.MustCreateTag(t, env.client.Queries, name)
+		_, err := env.client.DB().ExecContext(ctx, "UPDATE tag SET promoted_at = NULL WHERE id = $1", id)
+		testutil.AssertNoError(t, err, "set provisional")
+		database.MustAddDocumentTag(t, env.client.Queries, docID, id)
+	}
+
+	get := func(path string) ProvisionalTagListResponse {
+		t.Helper()
+		w := rec()
+		h.ListProvisional(w, req(t, "GET", path, nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK, "status")
+		var resp ProvisionalTagListResponse
+		testutil.AssertNoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+		return resp
+	}
+
+	first := get("/api/v1/tags/provisional?limit=1")
+	testutil.AssertEqual(t, first.Total, int64(2), "first page total")
+	testutil.AssertEqual(t, len(first.Results), 1, "first page rows")
+
+	empty := get("/api/v1/tags/provisional?limit=1&offset=5")
+	testutil.AssertEqual(t, empty.Total, int64(2), "out-of-range total")
+	testutil.AssertEqual(t, len(empty.Results), 0, "out-of-range rows")
+}
+
 // TestListProvisionalCompositionAction pins the actionability class the queue derives from each
 // journal row: it is what drives which inline actions an entry offers, so a policy change in Go must
 // surface here.

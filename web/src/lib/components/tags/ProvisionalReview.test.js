@@ -4,6 +4,7 @@ import ProvisionalReview from './ProvisionalReview.svelte';
 
 const {
 	provisionalList,
+	provisionalCounts,
 	promoteTag,
 	deleteTag,
 	reevaluateIdentity,
@@ -22,6 +23,7 @@ const {
 	forgetTerm
 } = vi.hoisted(() => ({
 	provisionalList: vi.fn(),
+	provisionalCounts: vi.fn(),
 	promoteTag: vi.fn(),
 	deleteTag: vi.fn(),
 	reevaluateIdentity: vi.fn(),
@@ -86,6 +88,7 @@ vi.mock('#lib/api.js', async (importOriginal) => {
 		api: {
 			tags: {
 				provisionalList,
+				provisionalCounts,
 				promote: promoteTag,
 				delete: deleteTag,
 				reevaluateIdentity,
@@ -167,6 +170,8 @@ async function renderLabel(t, want) {
 
 beforeEach(() => {
 	provisionalList.mockReset();
+	provisionalCounts.mockReset();
+	provisionalCounts.mockResolvedValue({ ok: true, data: { total: 0 } });
 	promoteTag.mockReset();
 	deleteTag.mockReset();
 	reevaluateIdentity.mockReset();
@@ -336,8 +341,7 @@ describe('ProvisionalReview filters and paging', () => {
 					criteria: [{ key: 'atomic', state: 'fail' }],
 					states: [],
 					q: '',
-					sort: 'newest',
-					facets: false
+					sort: 'newest'
 				})
 			)
 		);
@@ -365,8 +369,7 @@ describe('ProvisionalReview filters and paging', () => {
 					criteria: [{ key: 'person_class', state: 'real_individual' }],
 					states: [],
 					q: '',
-					sort: 'newest',
-					facets: false
+					sort: 'newest'
 				})
 			)
 		);
@@ -395,8 +398,7 @@ describe('ProvisionalReview filters and paging', () => {
 					criteria: [],
 					states: ['no_verdict'],
 					q: '',
-					sort: 'newest',
-					facets: true
+					sort: 'newest'
 				})
 			)
 		);
@@ -406,29 +408,30 @@ describe('ProvisionalReview filters and paging', () => {
 		});
 	});
 
-	it('requests facet counts only while the review state menu is open', async () => {
+	it('requests facet counts from the counts endpoint only while the review state menu is open', async () => {
 		provisionalList.mockResolvedValue({
 			ok: true,
 			data: {
 				results: [tag()],
 				total: 1,
-				state_values: ALL_STATES,
-				state_facets: { identity_hold: 7, deferred: 2 }
+				state_values: ALL_STATES
 			}
+		});
+		provisionalCounts.mockResolvedValue({
+			ok: true,
+			data: { total: 1, state_facets: { identity_hold: 7, deferred: 2 } }
 		});
 		render(ProvisionalReview);
 		await screen.findByText('sample tag');
+		expect(provisionalCounts).not.toHaveBeenCalled();
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Review state' }));
 		await waitFor(() =>
-			expect(provisionalList).toHaveBeenLastCalledWith(
-				50,
-				0,
+			expect(provisionalCounts).toHaveBeenLastCalledWith(
 				expect.objectContaining({
 					criteria: [],
 					states: [],
 					q: '',
-					sort: 'newest',
 					facets: true
 				})
 			)
@@ -437,6 +440,7 @@ describe('ProvisionalReview filters and paging', () => {
 			const box = screen.getByRole('checkbox', { name: /identity hold/ });
 			expect(box.parentElement.textContent).toContain('7');
 		});
+		expect(provisionalList).toHaveBeenCalledTimes(1);
 
 		await fireEvent.keyDown(document, { key: 'Escape' });
 		await fireEvent.click(screen.getByRole('button', { name: 'Rubric' }));
@@ -449,11 +453,11 @@ describe('ProvisionalReview filters and paging', () => {
 					criteria: [{ key: 'atomic', state: 'fail' }],
 					states: [],
 					q: '',
-					sort: 'newest',
-					facets: false
+					sort: 'newest'
 				})
 			)
 		);
+		expect(provisionalCounts).toHaveBeenCalledTimes(1);
 	});
 
 	it('translates a legacy admit verdict link into both states', async () => {
@@ -472,8 +476,7 @@ describe('ProvisionalReview filters and paging', () => {
 					criteria: [],
 					states: ['admitted', 'accepted'],
 					q: '',
-					sort: 'newest',
-					facets: false
+					sort: 'newest'
 				})
 			)
 		);
@@ -516,8 +519,7 @@ describe('ProvisionalReview filters and paging', () => {
 					criteria: [],
 					states: [],
 					q: 'politic',
-					sort: 'newest',
-					facets: false
+					sort: 'newest'
 				})
 			)
 		);
@@ -542,8 +544,7 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [{ key: 'atomic', state: 'fail' }],
 				states: ['no_verdict'],
 				q: '',
-				sort: 'newest',
-				facets: false
+				sort: 'newest'
 			})
 		);
 		await waitFor(() => {
@@ -584,8 +585,7 @@ describe('ProvisionalReview filters and paging', () => {
 				criteria: [],
 				states: [],
 				q: '',
-				sort: 'newest',
-				facets: false
+				sort: 'newest'
 			})
 		);
 		expect(screen.getByRole('button', { name: 'Prev' }).disabled).toBe(false);

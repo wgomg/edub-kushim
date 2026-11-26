@@ -44,6 +44,7 @@
 	let folding = $state(null);
 	let splitting = $state(null);
 	let counts = $state({ provisional: 0, deleted: 0, coverage: 0, siblings: 0, splitRules: 0 });
+	let vocabularyDirty = $state(false);
 
 	let activeTab = $derived(
 		TABS.includes(effectiveUrl().hash.slice(1)) ? effectiveUrl().hash.slice(1) : 'vocabulary'
@@ -96,7 +97,7 @@
 
 	async function refreshCounts() {
 		const [provisional, deleted, coverage, splitRules] = await Promise.all([
-			api.tags.provisionalList(1, 0),
+			api.tags.provisionalCounts({}),
 			api.tags.deletedList({ limit: 1 }),
 			api.tags.auditFlags(1, 0),
 			api.tags.splitRulesList({ limit: 1 })
@@ -118,9 +119,19 @@
 	}
 
 	function onReviewChanged() {
-		vocabulary.reload();
+		if (activeTab === 'vocabulary') vocabulary.reload();
+		else vocabularyDirty = true;
 		refreshCounts();
 	}
+
+	// an entry action from another tab defers the vocabulary refresh; activating the tab flushes it, so
+	// the hidden list never refetches while the operator works the review queue
+	$effect(() => {
+		if (activeTab === 'vocabulary' && vocabularyDirty) {
+			vocabularyDirty = false;
+			vocabulary.reload();
+		}
+	});
 
 	function filterByTag(row) {
 		const params = new URLSearchParams({ tag: row.name });

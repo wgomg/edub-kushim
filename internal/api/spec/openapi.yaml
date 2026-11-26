@@ -4409,6 +4409,82 @@ paths:
             text/plain; charset=utf-8:
               schema:
                 type: string
+  /api/v1/tags/provisional/counts:
+    get:
+      summary: 'ListProvisionalCounts answers the review queue''s total and per-state facet counts without building a page: the Review state menu and the New tags badge read it instead of the list endpoint.'
+      description: |-
+        It takes the
+        same name, criteria, verdict, review-state and facets parameters as the list and ignores paging; the
+        facet counts cover the name and rubric base set and ignore the selected states by design.
+      operationId: getApiV1TagsProvisionalCounts
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+            default: ""
+        - name: criteria
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+        - name: verdict
+          in: query
+          schema:
+            type: string
+            default: ""
+        - name: sort
+          in: query
+          schema:
+            type: string
+            default: ""
+        - name: state
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+        - name: facets
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisionalTagCountsResponse'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+            text/plain; charset=utf-8:
+              schema:
+                type: string
+        "404":
+          description: Not Found
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal Server Error
+          content:
+            text/plain; charset=utf-8:
+              schema:
+                type: string
   /api/v1/tags/reconciliation/report:
     get:
       summary: GetTagReconcileReport serves the latest completed reconcile task's report.
@@ -7652,6 +7728,24 @@ components:
           type: string
         official_url:
           type: string
+    ProvisionalTagCountsResponse:
+      type: object
+      description: |-
+        ProvisionalTagCountsResponse is the review queue's counts without a page: the filtered total for the
+        badge, the queue-level pending identity count that drives the reevaluation affordance, plus the optional
+        per-state facet counts that the Review state menu reads.
+      properties:
+        pending_identity_total:
+          type: integer
+        state_facets:
+          type: object
+          additionalProperties:
+            type: integer
+        total:
+          type: integer
+      required:
+        - total
+        - pending_identity_total
     ProvisionalTagListResponse:
       type: object
       description: |-

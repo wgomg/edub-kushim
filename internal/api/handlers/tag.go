@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wgomg/edub-kushim/internal/config"
+	"github.com/wgomg/edub-kushim/internal/database"
 	"github.com/wgomg/edub-kushim/internal/errs"
 	"github.com/wgomg/edub-kushim/internal/log"
 	"github.com/wgomg/edub-kushim/internal/matcher"
@@ -332,22 +334,31 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 
 	limit := pb.GetInt64("limit", 50, 1, 100)
 	offset := max(pb.GetInt64("offset", 0, 0, 100000), 0)
+	facets := pb.GetBool("facets", false)
 
-	rows, err := h.tag.ListProvisional(ctx, filter, int32(limit), int32(offset))
-	if err != nil {
-		writeServiceError(w, h.logger, reqID, "list provisional tags", err)
+	// the list query returns the state-filtered page and its total from one pass, so the separate count
+	// runs only for the legacy facets parameter and for an out-of-range page whose rows cannot carry the
+	// window total; the global pending count is independent of the list, so both run together
+	errs := make([]error, 8)
+	var rows []database.ListProvisionalTagsWithDocumentCountRow
+	var pendingIdentityTotal int64
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		pendingIdentityTotal, errs[2] = h.tag.CountPendingIdentity(ctx)
+	})
+	rows, errs[0] = h.tag.ListProvisional(ctx, filter, int32(limit), int32(offset))
+	wg.Wait()
+	if errs[0] != nil {
+		writeServiceError(w, h.logger, reqID, "list provisional tags", errs[0])
 		return
 	}
-	total, stateFacets, err := h.tag.CountProvisional(ctx, filter, pb.GetBool("facets", false))
-	if err != nil {
-		writeServiceError(w, h.logger, reqID, "count provisional tags", err)
-		return
+
+	total := int64(0)
+	if len(rows) > 0 {
+		total = rows[0].Total
 	}
-	pendingIdentityTotal, err := h.tag.CountPendingIdentity(ctx)
-	if err != nil {
-		writeServiceError(w, h.logger, reqID, "count pending identity events", err)
-		return
-	}
+	needCount := facets || (len(rows) == 0 && offset > 0)
+	var stateFacets map[string]int64
 
 	responses := make([]ProvisionalTagResponse, len(rows))
 	if len(rows) > 0 {
@@ -355,11 +366,35 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		for i, t := range rows {
 			names[i] = t.Name
 		}
-		events, err := h.tag.LatestQualityEventsForNames(ctx, names)
-		if err != nil {
-			writeServiceError(w, h.logger, reqID, "provisional tag verdicts", err)
-			return
+		var (
+			events            []database.LatestTagQualityEventsForNamesRow
+			pending           map[string]int64
+			held              map[string]tags.IdentityHold
+			compositionHeld   map[string]string
+			compositionEvents []database.LatestCompositionEventsForNamesRow
+		)
+		if needCount {
+			wg.Go(func() {
+				total, stateFacets, errs[1] = h.tag.CountProvisional(ctx, filter, facets)
+			})
 		}
+		wg.Go(func() {
+			events, errs[3] = h.tag.LatestQualityEventsForNames(ctx, names)
+		})
+		wg.Go(func() {
+			pending, errs[4] = h.tag.PendingIdentityCounts(ctx, names)
+		})
+		wg.Go(func() {
+			held, errs[5] = h.tag.IdentityHeldNamesAnyVersion(ctx, names)
+		})
+		wg.Go(func() {
+			compositionHeld, errs[6] = h.tag.CompositionHeldNames(ctx, names)
+		})
+		wg.Go(func() {
+			compositionEvents, errs[7] = h.tag.LatestCompositionEventsForNames(ctx, names)
+		})
+		wg.Wait()
+
 		verdicts := make(map[string]TagQualityVerdictInfo, len(events))
 		disagreements := make(map[string]string, len(events))
 		for _, e := range events {
@@ -377,26 +412,6 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 			if decision := admission.DecisionFromStored(e.Criteria, e.Pass, tags.AdmissionFeatures{}); decision.Outcome != tags.AdmissionAdmit {
 				disagreements[e.TagName] = decision.Reason
 			}
-		}
-		pending, err := h.tag.PendingIdentityCounts(ctx, names)
-		if err != nil {
-			writeServiceError(w, h.logger, reqID, "provisional tag identity evidence", err)
-			return
-		}
-		held, err := h.tag.IdentityHeldNamesAnyVersion(ctx, names)
-		if err != nil {
-			writeServiceError(w, h.logger, reqID, "provisional tag identity holds", err)
-			return
-		}
-		compositionHeld, err := h.tag.CompositionHeldNames(ctx, names)
-		if err != nil {
-			writeServiceError(w, h.logger, reqID, "provisional tag composition holds", err)
-			return
-		}
-		compositionEvents, err := h.tag.LatestCompositionEventsForNames(ctx, names)
-		if err != nil {
-			writeServiceError(w, h.logger, reqID, "provisional tag composition events", err)
-			return
 		}
 		compositionByCandidate := make(map[string]compositionView, len(compositionEvents))
 		for _, e := range compositionEvents {
@@ -447,6 +462,27 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 				responses[i].Verdict = &v
 			}
 		}
+	} else if needCount {
+		total, stateFacets, errs[1] = h.tag.CountProvisional(ctx, filter, facets)
+	}
+
+	// the error slots are checked in the sequential order this handler used to run its calls, so a single
+	// failure answers and logs with the same label as before
+	failureLabels := [8]string{
+		"list provisional tags",
+		"count provisional tags",
+		"count pending identity events",
+		"provisional tag verdicts",
+		"provisional tag identity evidence",
+		"provisional tag identity holds",
+		"provisional tag composition holds",
+		"provisional tag composition events",
+	}
+	for i, callErr := range errs {
+		if callErr != nil {
+			writeServiceError(w, h.logger, reqID, failureLabels[i], callErr)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, ProvisionalTagListResponse{
@@ -454,6 +490,44 @@ func (h *TagHandler) ListProvisional(w http.ResponseWriter, r *http.Request) {
 		Total:                total,
 		PendingIdentityTotal: pendingIdentityTotal,
 		StateValues:          curation.ProvisionalStateValues(),
+		StateFacets:          stateFacets,
+	})
+}
+
+// ListProvisionalCounts answers the review queue's total and per-state facet counts without building a
+// page: the Review state menu and the New tags badge read it instead of the list endpoint. It takes the
+// same name, criteria, verdict, review-state and facets parameters as the list and ignores paging; the
+// facet counts cover the name and rubric base set and ignore the selected states by design.
+func (h *TagHandler) ListProvisionalCounts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reqID := log.ReqIDFrom(ctx)
+
+	pb := GetParamBag(r)
+	if pb == nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	filter, err := parseProvisionalFilter(pb)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	total, stateFacets, err := h.tag.CountProvisional(ctx, filter, pb.GetBool("facets", false))
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "count provisional tags", err)
+		return
+	}
+	pendingIdentityTotal, err := h.tag.CountPendingIdentity(ctx)
+	if err != nil {
+		writeServiceError(w, h.logger, reqID, "count pending identity events", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ProvisionalTagCountsResponse{
+		Total:                total,
+		PendingIdentityTotal: pendingIdentityTotal,
 		StateFacets:          stateFacets,
 	})
 }
@@ -1445,6 +1519,15 @@ type ProvisionalTagListResponse struct {
 	PendingIdentityTotal int64                    `json:"pending_identity_total"`
 	StateValues          []string                 `json:"state_values"`
 	StateFacets          map[string]int64         `json:"state_facets,omitempty"`
+}
+
+// ProvisionalTagCountsResponse is the review queue's counts without a page: the filtered total for the
+// badge, the queue-level pending identity count that drives the reevaluation affordance, plus the optional
+// per-state facet counts that the Review state menu reads.
+type ProvisionalTagCountsResponse struct {
+	Total                int64            `json:"total"`
+	PendingIdentityTotal int64            `json:"pending_identity_total"`
+	StateFacets          map[string]int64 `json:"state_facets,omitempty"`
 }
 
 // CreateTagRequest is the body of POST /api/v1/tags.

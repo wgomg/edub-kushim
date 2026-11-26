@@ -390,7 +390,10 @@ rejection is judged during emission before persist, so it does not enter this se
 
 Operators resolve what remains from the tags page's "New tags" tab or the API:
 `GET /api/v1/tags/provisional` lists provisional tags with a live `document_count` and
-the latest verdict; `POST /api/v1/tags/{id}/promote` promotes one through the same path
+the latest verdict, returning the page and its filtered total from one pass; the tab badge
+and the Review state menu read `GET /api/v1/tags/provisional/counts` for the total and the
+per-state facet counts without building a page;
+`POST /api/v1/tags/{id}/promote` promotes one through the same path
 the sweep uses; `POST /api/v1/tags/{id}/accept` waives a recorded deferral so the value
 stops being parked for review and answers to the promotion floor like any admitted value,
 the waiver durable: a newer verdict, including a rubric version change or a re-judge, does
