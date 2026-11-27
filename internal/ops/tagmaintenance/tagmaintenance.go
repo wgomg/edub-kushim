@@ -39,6 +39,15 @@ const helpText = "Usage: kushim tagmaintenance [--from-batch <id> --exec-token <
 // routineTimeout bounds one direct routine: five long but finite sweeps under a single lock hold.
 const routineTimeout = 24 * time.Hour
 
+// the routine's chained steps activate under these maintenance-scoped keys so a pending daily or manually
+// enqueued pass of the same type cannot collide and discard the step with its branch
+const (
+	routineReconcileDedupKey = "tagmaintenance:tagreconcile"
+	routineIdentityDedupKey  = "tagmaintenance:tagidentity"
+	routineAuditDedupKey     = "tagmaintenance:tagaudit"
+	routineMeasureDedupKey   = "tagmaintenance:tagmeasure"
+)
+
 // Run is the kushim tagmaintenance verb. With --from-batch it executes one claimed maintenance batch under
 // the execution token the dispatcher or batch run passed; otherwise it runs the routine immediately,
 // creating no batch or task rows. Use "kushim batch create tagmaintenance" to enqueue a run for the queue
@@ -161,9 +170,11 @@ func runBatchMode(c *container.Container, batchID, execTokenParam string) error 
 // and batch run own the claim and pass the execution token, so this child adopts the lease, runs the batch's
 // chained tag tasks through the registry its command assembled and settles. The caller supplies the store
 // and the registry because the handlers act on the same store the run does. The catalog is this package's
-// own: it names the five tag types with their constant dedup keys, which waiting-successor activation
-// derives through this process's catalog — a type without a hook here would be discarded instead of
-// activated. An error means the run was interrupted or could not start, and the process must exit non-zero.
+// own: it keeps the split re-ask root on the shared key while each chained successor activates under a
+// maintenance-scoped key, so a pending daily or manually enqueued pass of the same type can never collide
+// with the routine's activation and truncate its waiting branch; a type without a hook here would be
+// discarded instead of activated. An error means the run was interrupted or could not start, and the
+// process must exit non-zero.
 func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, store *task.Store, registry *task.Registry) (task.BatchRunResult, error) {
 	token, err := parseExecToken(execTokenParam)
 	if err != nil {
@@ -177,10 +188,10 @@ func RunClaimedBatch(c *container.Container, batchID, execTokenParam string, sto
 
 	catalog, err := task.NewCatalog(map[types.TaskType]task.TypeWiring{
 		types.Task.Type.TagSplitReask: {DedupKey: task.ConstantDedupKey(curation.TagSplitReaskDedupKey)},
-		types.Task.Type.TagReconcile:  {DedupKey: task.ConstantDedupKey(curation.TagReconcileDedupKey)},
-		types.Task.Type.TagIdentity:   {DedupKey: task.ConstantDedupKey(curation.TagIdentityDedupKey)},
-		types.Task.Type.TagAudit:      {DedupKey: task.ConstantDedupKey(curation.TagAuditDedupKey)},
-		types.Task.Type.TagMeasure:    {DedupKey: task.ConstantDedupKey(tags.TagMeasureDedupKey)},
+		types.Task.Type.TagReconcile:  {DedupKey: task.ConstantDedupKey(routineReconcileDedupKey)},
+		types.Task.Type.TagIdentity:   {DedupKey: task.ConstantDedupKey(routineIdentityDedupKey)},
+		types.Task.Type.TagAudit:      {DedupKey: task.ConstantDedupKey(routineAuditDedupKey)},
+		types.Task.Type.TagMeasure:    {DedupKey: task.ConstantDedupKey(routineMeasureDedupKey)},
 	})
 	if err != nil {
 		return task.BatchRunResult{}, fmt.Errorf("task catalog: %w", err)

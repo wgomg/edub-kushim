@@ -561,15 +561,17 @@ Key formats in use:
 | mirror | `mirror:<UTC date>` |
 | tag passes | fixed per type: `tagreconcile`, `tagmeasure`, `tagidentity`, `tagaudit`, `tagsplitreask` |
 | tagrejudge | payload-derived: `tagrejudge:<tag_id>:<scope>` (one live re-judge per tag and scope) |
-| maintenance routine | the tag passes' fixed keys: the split re-ask root at enqueue, each chained successor at activation |
+| maintenance routine | the split re-ask root under the shared `tagsplitreask` key at enqueue; each chained successor under its routine-scoped `tagmaintenance:<pass>` key at activation |
 | migrations | fixed per type: `migrate-db`, `migrate-storage` |
 
 Activation is the only path that puts a key on a waiting successor, and a conflicting
-activation loses to the index (§7). A duplicate enqueue of keyed work loses the dedup
-conflict: `EnqueueBatch` skips the task, no batch is created, and the boundary reports
-the work as already queued ("re-enrich already queued"). Only a violation of the dedup
-index counts as a skip — a collision on any other unique constraint (the task id above
-all) aborts the enqueue and creates nothing.
+activation loses to the index (§7). The maintenance routine's chained successors therefore
+carry routine-scoped keys: a pending daily or manually enqueued pass of the same type can
+never collide with their activation and discard the branch below them. A duplicate enqueue
+of keyed work loses the dedup conflict: `EnqueueBatch` skips the task, no batch is created,
+and the boundary reports the work as already queued ("re-enrich already queued"). Only a
+violation of the dedup index counts as a skip — a collision on any other unique constraint
+(the task id above all) aborts the enqueue and creates nothing.
 
 ## 9. Reclamation after crashes
 
@@ -858,8 +860,10 @@ claims when the locks free.
   always closes the cycle on fresh evidence. The dispatcher resolves a batch carrying more
   than one distinct tag type to the `tagmaintenance` child, the way a mixed ingest batch
   resolves to `consume` (ADR 0003); a single-type batch keeps its own command. The child
-  runs the five pass handlers in order through its own catalog, whose wiring carries the
-  passes' constant dedup keys so the waiting successors activate. A bare
+  runs the five pass handlers in order through its own catalog, which keeps the split
+  re-ask root on the shared `tagsplitreask` key and gives each chained successor a
+  routine-scoped `tagmaintenance:<pass>` key, so a pending daily or manually enqueued
+  pass of the same type cannot collide with their activation. A bare
   `kushim tagmaintenance` runs the same five handlers directly under the manual holder
   path. The schedule (`enricher.tag_maintenance`, weekly at 02:00 by default) idles the
   individual reconcile, measure and audit schedules while it is enabled; the identity and
