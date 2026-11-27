@@ -171,33 +171,44 @@ are interned once per reduction from a vocabulary shared by every chunk in
 
 ## 5. TF-IDF chunk scoring
 
-`tfScores` (`textrank.go:313-354`) treats each chunk as a "document" and the
+`tfScores` (`textrank.go:313-361`) treats each chunk as a "document" and the
 whole text as the corpus — classic TF-IDF, per chunk:
 
 ```go
-for token, localFreq := range chunk.TokenFrequencies {
+seen := make(map[string]bool, len(chunk.TokenFrequencies))
+for _, token := range chunk.Tokens {
+    if seen[token] {
+        continue
+    }
+    seen[token] = true
     df := docFreq[token]
     idf := math.Log((N + 1) / (float64(df) + 1))
-    tf := float64(localFreq) / float64(len(chunk.Tokens))
+    tf := float64(chunk.TokenFrequencies[token]) / float64(len(chunk.Tokens))
     totalWeight += tf * idf
 }
 chunk.TFScore = totalWeight
 ```
 
+The terms are summed in first-occurrence token order, not over the frequency
+map: Go randomizes map iteration and floating-point addition is not
+associative, so a map-order sum would let the last bits of `TFScore` vary
+between runs. The fixed order makes the score, the normalized score and the
+resulting chunk selection reproducible for identical input and parameters.
+
 The `+1` smoothing keeps `idf` defined for tokens in every chunk and
 down-weights *stopword-like* tokens that appear everywhere. Document
-frequency counts a token **once per chunk** (`seen` map,
-`textrank.go:318-323`).
+frequency counts a token **once per chunk** (the document-frequency `seen`
+map, `textrank.go:318-323`).
 
 Scores are then normalized to sum to 1 across chunks
-(`NormalizedTFScore`, `textrank.go:348-351`) so the three score components
+(`NormalizedTFScore`, `textrank.go:355-358`) so the three score components
 are comparable in the blend.
 
 ---
 
 ## 6. The similarity graph and weighted PageRank
 
-`buildGraph` (`textrank.go:356-380`) creates the chunk-similarity graph:
+`buildGraph` (`textrank.go:363-387`) creates the chunk-similarity graph:
 
 ```go
 // self-similarity
@@ -215,7 +226,7 @@ for i := range chunksLength {
 ```
 
 - Similarity is **Jaccard on sorted unique token IDs** (`jaccardIDs`,
-  `textrank.go:384-406`): `|A ∩ B| / |A ∪ B|`, computed by a linear merge over
+  `textrank.go:391-413`): `|A ∩ B| / |A ∪ B|`, computed by a linear merge over
   two ascending, duplicate-free `[]uint32` slices, with an explicit
   empty/empty → 0 guard. No map is allocated per pair.
 - The diagonal is 1.0 (self-similarity), which anchors the graph and keeps
@@ -223,16 +234,16 @@ for i := range chunksLength {
 - Edges with similarity 0 are omitted (adjacency stays 0), so the graph is
   sparse for dissimilar chunks.
 
-`weightedPageRank` (`textrank.go:408-463`) is the iteration, run with
+`weightedPageRank` (`textrank.go:415-470`) is the iteration, run with
 **damping 0.85, max 100 iterations, tolerance 1e-4**
-(`textrank.go:408-413,467`): scores start uniform (`1/N`), outgoing weight sums are
+(`textrank.go:415-420,474`): scores start uniform (`1/N`), outgoing weight sums are
 precomputed, and each iteration recomputes
 `newScores[i] = (1−damping)/N + damping · Σ_j score[j] · (edge[j][i] / outgoingSums[j])`
 — a node's importance flows to its neighbors *proportionally to edge weight*.
 The random jump (`(1-damping)/N`) keeps the chain ergodic. Convergence is
 checked on total absolute change.
 
-`calculateGraphScores` (`textrank.go:465-485`) normalizes the PageRank
+`calculateGraphScores` (`textrank.go:472-492`) normalizes the PageRank
 scores to sum 1 (guarding `sumScores > 0`).
 
 ---
@@ -266,7 +277,7 @@ Position scores are normalized to sum 1 before blending.
 
 ## 8. The final score blend
 
-`calculateFinalScore` (`textrank.go:487-511`) combines the three normalized
+`calculateFinalScore` (`textrank.go:494-518`) combines the three normalized
 components with the weights 0.4 / 0.4 / 0.2:
 
 ```go
@@ -276,7 +287,7 @@ chunks[i].FinalScore = (tf_weight * chunks[i].NormalizedTFScore) +
 ```
 
 All three components sum to 1 individually, so `FinalScore` is a proper
-weighted average. `cmpChunk` (`textrank.go:513-515`) sorts chunks by
+weighted average. `cmpChunk` (`textrank.go:520-522`) sorts chunks by
 `FinalScore` descending (`cmp.Compare(b.FinalScore, a.FinalScore)`).
 
 ---

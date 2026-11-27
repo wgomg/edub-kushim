@@ -264,6 +264,7 @@ test-short:
 		./internal/llm/ \
 		./internal/config/ \
 		./internal/tools/ \
+		./internal/tools/textreducer/ \
 		./internal/log/ \
 		./internal/textnorm/ \
 		./internal/matcher/ \
@@ -291,6 +292,7 @@ test-verbose:
 		./internal/llm/ \
 		./internal/config/ \
 		./internal/tools/ \
+		./internal/tools/textreducer/ \
 		./internal/log/ \
 		./internal/textnorm/ \
 		./internal/matcher/ \

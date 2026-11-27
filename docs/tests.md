@@ -9,7 +9,8 @@ behind them.
 
 - **`make test`** — the fast CGO_ENABLED=0 tier, no database required: pure-logic packages across
   the backend (LLM registry and analyzer, configuration, auth, logging, text normalization, task
-  vocabulary, tools runner, mirror helpers, API middleware, flag parser, the API-docs renderer).
+  vocabulary, tools runner, TextRank reduction, mirror helpers, API middleware, flag parser, the
+  API-docs renderer).
 - **`make test-db`** / **`make test-backup`** — the PostgreSQL-backed suites: database queries,
   search, task system, service layer, API handlers, consumption pipeline, tag measurement.
 - **`make test-cgo`** / **`make test-cgo-db`** — packages that only compile with CGo plus those
@@ -170,8 +171,8 @@ The Makefile explicitly sets `CGO_ENABLED=0` for test targets, overriding the
 any environment regardless of C library availability.
 
 The `make test` target list in the Makefile is the authoritative set. The DB-backed tests inside
-`task`, `backup` and `tags` `t.Skip` when `TEST_DATABASE_URL` is unset, so each of these packages
-runs in this tier and again under `make test-db` / `make test-backup`.
+`task`, `backup`, `tags` and `tools/textreducer` `t.Skip` when `TEST_DATABASE_URL` is unset, so each
+of these packages runs in this tier and again under `make test-db` / `make test-backup`.
 
 ### Database-dependent tests (`make test-db`)
 

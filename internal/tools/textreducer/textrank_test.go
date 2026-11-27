@@ -227,3 +227,51 @@ func TestJaccardIDSEqualsSetJaccard(t *testing.T) {
 		})
 	}
 }
+
+func TestTFScores_Deterministic(t *testing.T) {
+	content := vocabularyWords(1200) + " " + numberedSentences(300)
+	chunks := createChunks(strings.Fields(cleanUp(content)), ReduceChunkSize)
+	if len(chunks) < 2 {
+		t.Fatalf("expected several chunks, got %d", len(chunks))
+	}
+
+	want := tfScores(chunks)
+	tf := make([]float64, len(want))
+	normalized := make([]float64, len(want))
+	for i := range want {
+		tf[i] = want[i].TFScore
+		normalized[i] = want[i].NormalizedTFScore
+	}
+
+	for run := 1; run < 20; run++ {
+		got := tfScores(chunks)
+		for i := range got {
+			if got[i].TFScore != tf[i] {
+				t.Fatalf("run %d, chunk %d: TFScore = %v, want %v", run, i, got[i].TFScore, tf[i])
+			}
+			if got[i].NormalizedTFScore != normalized[i] {
+				t.Fatalf("run %d, chunk %d: NormalizedTFScore = %v, want %v", run, i, got[i].NormalizedTFScore, normalized[i])
+			}
+		}
+	}
+}
+
+func TestReduce_ByteIdentical(t *testing.T) {
+	tr := newTestTextRank(t)
+	content := vocabularyWords(1200) + " " + numberedSentences(300)
+	const target = 500
+
+	want, err := tr.Reduce(context.Background(), content, ReduceChunkSize, target)
+	if err != nil {
+		t.Fatalf("Reduce: %v", err)
+	}
+	for run := 1; run < 20; run++ {
+		got, err := tr.Reduce(context.Background(), content, ReduceChunkSize, target)
+		if err != nil {
+			t.Fatalf("Reduce run %d: %v", run, err)
+		}
+		if *got != *want {
+			t.Fatalf("Reduce run %d produced different text", run)
+		}
+	}
+}

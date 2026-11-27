@@ -329,10 +329,17 @@ func tfScores(chunks []Chunk) []Chunk {
 		chunk := &chunks[i]
 		totalWeight := 0.0
 
-		for token, localFreq := range chunk.TokenFrequencies {
+		// first-occurrence token order: map iteration is randomized and float addition is not
+		// associative, so ranging the map would let TFScore vary in its last bits between runs
+		seen := make(map[string]bool, len(chunk.TokenFrequencies))
+		for _, token := range chunk.Tokens {
+			if seen[token] {
+				continue
+			}
+			seen[token] = true
 			df := docFreq[token]
 			idf := math.Log((N + 1) / (float64(df) + 1))
-			tf := float64(localFreq) / float64(len(chunk.Tokens))
+			tf := float64(chunk.TokenFrequencies[token]) / float64(len(chunk.Tokens))
 			totalWeight += tf * idf
 		}
 
